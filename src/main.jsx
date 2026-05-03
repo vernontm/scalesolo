@@ -5,6 +5,7 @@ import App from './App.jsx'
 import { ThemeProvider } from './context/ThemeContext.jsx'
 import { AuthProvider } from './context/AuthContext.jsx'
 import { ProfileProvider } from './context/ProfileContext.jsx'
+import { CreditsProvider } from './context/CreditsContext.jsx'
 import './styles/global.css'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
@@ -13,7 +14,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
       <BrowserRouter>
         <AuthProvider>
           <ProfileProvider>
-            <App />
+            <CreditsProvider>
+              <App />
+            </CreditsProvider>
           </ProfileProvider>
         </AuthProvider>
       </BrowserRouter>

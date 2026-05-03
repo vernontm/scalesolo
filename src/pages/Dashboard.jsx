@@ -1,13 +1,8 @@
-import { Sparkles, TrendingUp, Mail, Users, Zap } from 'lucide-react'
+import { Sparkles, Zap, TrendingUp, Mail, Users } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
+import CreditsPanel from '../components/CreditsPanel.jsx'
 
-const grid = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-  gap: 18,
-  marginTop: 24,
-}
 const heroStyle = {
   background: 'linear-gradient(135deg, rgba(239,68,68,0.18), rgba(185,28,28,0.10))',
   border: '1px solid rgba(239,68,68,0.25)',
@@ -18,15 +13,10 @@ const heroStyle = {
   gap: 18,
 }
 const heroIcon = {
-  width: 54,
-  height: 54,
-  borderRadius: 14,
-  display: 'grid',
-  placeItems: 'center',
+  width: 54, height: 54, borderRadius: 14,
+  display: 'grid', placeItems: 'center',
   background: 'linear-gradient(135deg, var(--red), var(--red-dark))',
-  color: '#fff',
-  boxShadow: '0 8px 24px rgba(239,68,68,0.4)',
-  flexShrink: 0,
+  color: '#fff', boxShadow: '0 8px 24px rgba(239,68,68,0.4)', flexShrink: 0,
 }
 const heroTitle = {
   fontFamily: 'var(--font-display)',
@@ -35,30 +25,44 @@ const heroTitle = {
   letterSpacing: '-0.01em',
 }
 const heroSub = { color: 'var(--text-soft)', fontSize: 14, marginTop: 4 }
-const metricLabel = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 8,
-  color: 'var(--muted)',
-  fontSize: 12,
-  fontWeight: 600,
-  letterSpacing: '0.06em',
-  textTransform: 'uppercase',
+const sectionLabel = {
+  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
   fontFamily: 'var(--font-display)',
+  fontSize: 12,
+  fontWeight: 700,
+  letterSpacing: '0.1em',
+  textTransform: 'uppercase',
+  color: 'var(--muted)',
+  marginTop: 28,
+  marginBottom: 14,
+}
+const metricGrid = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+  gap: 14,
+  marginTop: 14,
+}
+const metricCard = {
+  background: 'var(--surface)',
+  border: '1px solid var(--border)',
+  borderRadius: 14,
+  padding: 18,
+}
+const metricLabel = {
+  display: 'flex', alignItems: 'center', gap: 8,
+  color: 'var(--muted)', fontSize: 11, fontWeight: 700, letterSpacing: '0.08em',
+  textTransform: 'uppercase', fontFamily: 'var(--font-display)',
 }
 const metricValue = {
   fontFamily: 'var(--font-display)',
-  fontSize: 28,
-  fontWeight: 700,
-  color: 'var(--text)',
-  marginTop: 8,
+  fontSize: 26, fontWeight: 800, color: 'var(--text)', marginTop: 8, letterSpacing: '-0.01em',
 }
 const metricHint = { fontSize: 12, color: 'var(--muted)', marginTop: 6 }
 
 function Metric({ icon: Icon, label, value, hint }) {
   return (
-    <div className="card">
-      <div style={metricLabel}><Icon size={14} strokeWidth={2.4} />{label}</div>
+    <div style={metricCard}>
+      <div style={metricLabel}><Icon size={13} strokeWidth={2.4} />{label}</div>
       <div style={metricValue}>{value}</div>
       <div style={metricHint}>{hint}</div>
     </div>
@@ -96,15 +100,23 @@ export default function Dashboard() {
         </button>
       </section>
 
-      <div style={grid}>
-        <Metric icon={Sparkles}   label="AI tokens"     value="—"  hint="Plug in tier credits in Milestone 2" />
-        <Metric icon={TrendingUp} label="Posts this wk" value="—"  hint="Wires up after content engine port" />
-        <Metric icon={Mail}       label="Emails sent"   value="—"  hint="Postmark integration in Milestone 4" />
-        <Metric icon={Users}      label="Contacts"      value="—"  hint="CRM expansion in Milestone 5" />
+      <div style={sectionLabel}>
+        <span>Credits</span>
+        <a href="/billing" style={{ color: 'var(--muted)', fontSize: 11, fontWeight: 600 }}>View all →</a>
+      </div>
+      <CreditsPanel />
+
+      <div style={sectionLabel}>
+        <span>This week</span>
+      </div>
+      <div style={metricGrid}>
+        <Metric icon={TrendingUp} label="Posts" value="—" hint="Connects when content engine ports (M6)" />
+        <Metric icon={Mail}       label="Emails sent" value="—" hint="Live after Postmark integration (M4)" />
+        <Metric icon={Users}      label="Contacts" value="—" hint="Pipeline + activity timeline land in M5" />
       </div>
 
-      <div style={{ marginTop: 28, color: 'var(--muted)', fontSize: 12.5 }}>
-        v0.1.0 · Milestone 0 skeleton · See <code>SCALESOLO_PHASE_1_PLAN.md</code> for what ships next.
+      <div style={{ marginTop: 32, color: 'var(--muted)', fontSize: 12.5 }}>
+        v0.2.0 · Milestone 2 · Credits live · See <code>SCALESOLO_PHASE_1_PLAN.md</code> for what ships next.
       </div>
     </div>
   )

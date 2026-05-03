@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
-import { CreditCard, ExternalLink, Sparkles, Crown } from 'lucide-react'
+import { CreditCard, ExternalLink, Sparkles, Crown, Receipt } from 'lucide-react'
 import { supabase } from '../lib/supabase.js'
+import { useCredits, fmtCount, POOL_META } from '../context/CreditsContext.jsx'
+import CreditsPanel from '../components/CreditsPanel.jsx'
 
 const sectionTitle = {
   fontFamily: 'var(--font-display)',
@@ -24,11 +26,11 @@ const planCardStyle = {
 const tierIcon = {
   width: 50, height: 50, borderRadius: 12, display: 'grid', placeItems: 'center',
   background: 'linear-gradient(135deg, var(--red), var(--red-dark))',
-  color: '#fff', boxShadow: '0 6px 18px rgba(239,68,68,0.32)',
-  flexShrink: 0,
+  color: '#fff', boxShadow: '0 6px 18px rgba(239,68,68,0.32)', flexShrink: 0,
 }
 const planName = { fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700 }
 const planMeta = { color: 'var(--text-soft)', fontSize: 13, marginTop: 4 }
+const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '—'
 
 const statusPill = (status) => {
   const map = {
@@ -42,9 +44,20 @@ const statusPill = (status) => {
   return map[status] || { bg: 'rgba(255,255,255,0.06)', fg: 'var(--muted)', label: status || 'Unknown' }
 }
 
-const fmtDate = (iso) => {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+const txTable = {
+  width: '100%',
+  borderCollapse: 'collapse',
+  fontSize: 13,
+}
+const th = { textAlign: 'left', color: 'var(--muted)', fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '10px 12px', borderBottom: '1px solid var(--border)' }
+const td = { padding: '12px', borderBottom: '1px solid var(--border)', color: 'var(--text-soft)' }
+
+function ActionLabel({ action }) {
+  if (action === 'subscription_initial') return <span className="pill pill-success">Subscription</span>
+  if (action === 'monthly_grant')        return <span className="pill pill-success">Monthly grant</span>
+  if (action === 'topup')                return <span className="pill pill-success">Top-up</span>
+  if (action?.startsWith('consume:'))    return <span className="pill pill-warning">{action.replace('consume:', '')}</span>
+  return <span className="pill pill-muted">{action}</span>
 }
 
 export default function Billing() {
@@ -52,19 +65,24 @@ export default function Billing() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [portalBusy, setPortalBusy] = useState(false)
+  const [tx, setTx] = useState([])
+  const { refresh: refreshCredits } = useCredits()
 
   useEffect(() => {
     let active = true
     ;(async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession()
-        const r = await fetch('/api/billing', {
-          headers: { Authorization: `Bearer ${session?.access_token}` },
-        })
-        const body = await r.json()
+        const [billingRes, txRes] = await Promise.all([
+          fetch('/api/billing', { headers: { Authorization: `Bearer ${session?.access_token}` } }),
+          fetch('/api/credits/transactions?limit=20', { headers: { Authorization: `Bearer ${session?.access_token}` } }),
+        ])
+        const billingBody = await billingRes.json()
+        const txBody = await txRes.json()
         if (!active) return
-        if (!r.ok) throw new Error(body.error || 'Failed to load billing')
-        setData(body)
+        if (!billingRes.ok) throw new Error(billingBody.error || 'Failed to load billing')
+        setData(billingBody)
+        setTx(txBody.transactions || [])
       } catch (e) {
         if (active) setError(e.message)
       } finally {
@@ -148,6 +166,45 @@ export default function Billing() {
               <Field label="Cancels at period end" value={sub.cancel_at_period_end ? 'Yes' : 'No'} />
             </div>
           </div>
+        )}
+      </div>
+
+      <div className="card-flat" style={{ marginBottom: 18 }}>
+        <div style={sectionTitle}>Credit balances</div>
+        <CreditsPanel />
+      </div>
+
+      <div className="card-flat" style={{ marginBottom: 18 }}>
+        <div style={sectionTitle}>Recent activity</div>
+        {tx.length === 0 ? (
+          <div style={{ padding: '24px 12px', color: 'var(--muted)', fontSize: 13, textAlign: 'center' }}>
+            No transactions yet. Your first month's credits will appear here once your subscription activates.
+          </div>
+        ) : (
+          <table style={txTable}>
+            <thead>
+              <tr>
+                <th style={th}>Date</th>
+                <th style={th}>Pool</th>
+                <th style={th}>Action</th>
+                <th style={{ ...th, textAlign: 'right' }}>Delta</th>
+                <th style={{ ...th, textAlign: 'right' }}>Balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tx.map((t) => (
+                <tr key={t.id}>
+                  <td style={td}>{new Date(t.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</td>
+                  <td style={td}>{POOL_META[t.pool_type]?.short || t.pool_type}</td>
+                  <td style={td}><ActionLabel action={t.action} /></td>
+                  <td style={{ ...td, textAlign: 'right', color: t.delta >= 0 ? 'var(--green, #2ecc71)' : 'var(--red)' }}>
+                    {t.delta >= 0 ? '+' : ''}{fmtCount(Math.abs(t.delta))}
+                  </td>
+                  <td style={{ ...td, textAlign: 'right' }}>{fmtCount(t.balance_after)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
 

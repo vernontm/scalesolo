@@ -1,7 +1,7 @@
 // Stripe webhook handler — Edge Runtime so we get raw body cleanly via req.text().
 // Node Functions on Vercel auto-parse req.body, breaking signature verification.
 
-import { tierForPriceId, billingCycleForPriceId, profileLimitForTier } from './_lib/billing.js'
+import { TIERS, tierForPriceId, billingCycleForPriceId, profileLimitForTier } from './_lib/billing.js'
 
 export const config = { runtime: 'edge' }
 
@@ -94,6 +94,58 @@ async function upsertSubscription(sub) {
   } else {
     await supa('billing_subscriptions', { method: 'POST', body: row })
   }
+
+  // M2: keep monthly_grant amounts in sync with the current tier (for the cron).
+  const credits = TIERS[tier]?.credits || { ai_tokens: 0, video_units: 0, voice_minutes: 0 }
+  await supa('rpc/set_pool_grants', {
+    method: 'POST',
+    body: {
+      p_customer_id: customerRow.id,
+      p_ai_tokens:   credits.ai_tokens,
+      p_video_units: credits.video_units,
+      p_voice_min:   credits.voice_minutes,
+    },
+  }).catch((e) => console.warn('set_pool_grants failed:', e.message))
+
+  // Initial credit grant — idempotent on stripe_subscription_id.
+  await Promise.all(['ai_tokens','video_units','voice_minutes'].map((p) =>
+    supa('rpc/grant_credits', {
+      method: 'POST',
+      body: {
+        p_customer_id: customerRow.id,
+        p_pool_type: p,
+        p_amount: credits[p] || 0,
+        p_action: 'subscription_initial',
+        p_ref_id: sub.id,
+        p_metadata: { tier },
+      },
+    }).catch((e) => console.warn(`initial grant ${p} failed:`, e.message))
+  ))
+}
+
+// M2: top-up Checkout completed → grant credits to the matching pool.
+async function onTopupCompleted(session) {
+  const meta = session.metadata || {}
+  if (meta.kind !== 'credit_topup') return
+
+  const customerRow = await findCustomerRowByStripeId(session.customer)
+  if (!customerRow) return
+
+  const pool = meta.pool
+  const amount = Number(meta.amount)
+  if (!pool || !amount) return
+
+  await supa('rpc/grant_credits', {
+    method: 'POST',
+    body: {
+      p_customer_id: customerRow.id,
+      p_pool_type: pool,
+      p_amount: amount,
+      p_action: 'topup',
+      p_ref_id: session.id,
+      p_metadata: { pack: meta.pack, stripe_session_id: session.id },
+    },
+  })
 }
 
 async function onSubscriptionDeleted(sub) {
@@ -107,8 +159,9 @@ async function onSubscriptionDeleted(sub) {
 async function routeEvent(event) {
   switch (event.type) {
     case 'checkout.session.completed':
-      // Subscription will follow via subscription.created; nothing critical to do here.
-      return
+      // Top-up purchases are one-shot (mode=payment) — grant credits here.
+      // Subscription Checkouts trigger customer.subscription.created separately.
+      return onTopupCompleted(event.data.object)
     case 'customer.subscription.created':
     case 'customer.subscription.updated':
     case 'customer.subscription.trial_will_end':
