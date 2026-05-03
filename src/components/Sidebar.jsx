@@ -11,6 +11,7 @@ import {
   BarChart3,
   Bot,
   Building2,
+  CreditCard,
   Settings,
   Zap,
   LogOut,
@@ -47,6 +48,7 @@ const navGroups = [
     label: 'Account',
     items: [
       { to: '/profiles', label: 'Brand profiles', icon: Building2 },
+      { to: '/billing',  label: 'Billing',        icon: CreditCard },
       { to: '/settings', label: 'Settings',       icon: Settings },
     ],
   },

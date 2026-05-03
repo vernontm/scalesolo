@@ -14,6 +14,7 @@ const titles = {
   '/forms':     { t: 'Forms',            s: 'Capture leads on autopilot.' },
   '/analytics': { t: 'Analytics',        s: 'Performance with insights.' },
   '/profiles':  { t: 'Brand profiles',   s: 'Switch and manage brands.' },
+  '/billing':   { t: 'Billing',          s: 'Plan, payment, invoices.' },
   '/settings':  { t: 'Settings',         s: 'Your workspace, your rules.' },
 }
 

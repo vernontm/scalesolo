@@ -6,6 +6,8 @@ import Login from './pages/Login.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Placeholder from './pages/Placeholder.jsx'
 import Settings from './pages/Settings.jsx'
+import Pricing from './pages/Pricing.jsx'
+import Billing from './pages/Billing.jsx'
 import { useAuth } from './context/AuthContext.jsx'
 
 const layoutStyle = { display: 'flex', minHeight: '100vh' }
@@ -86,6 +88,7 @@ function AppShell() {
             <Route path="/analytics" element={<Placeholder title="Analytics" hint="Cross-platform performance with AI-narrated insights. Polished in Milestone 6." />} />
             <Route path="/agent"     element={<Placeholder title="AI CEO" hint="Persistent memory and pinned facts land in Milestone 3." />} />
             <Route path="/profiles"  element={<Placeholder title="Brand profiles" hint="Multi-brand management. Functional now, polished alongside billing in Milestone 1." />} />
+            <Route path="/billing"   element={<Billing />} />
             <Route path="/settings"  element={<Settings />} />
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
@@ -103,10 +106,16 @@ export default function App() {
   if (!session) {
     return (
       <Routes>
+        <Route path="/pricing" element={<Pricing />} />
         <Route path="*" element={<Login />} />
       </Routes>
     )
   }
 
-  return <AppShell />
+  return (
+    <Routes>
+      <Route path="/pricing" element={<Pricing />} />
+      <Route path="/*" element={<AppShell />} />
+    </Routes>
+  )
 }

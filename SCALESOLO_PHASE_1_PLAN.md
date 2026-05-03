@@ -78,13 +78,13 @@ Each milestone has:
    - Stripe products + prices already exist in the new ScaleSolo Stripe account (created in M0); webhook handler wired to them
    - Public pricing page (`scalesolo/public/pricing.html`) with 3 tier cards + founding-100 CTA → checkout
    - Sign-up tier preselect: `?tier=solo_pro` query param → form persists → linked to created sub
-   - 14-day free trial on all tiers (`trial_period_days: 14` on Checkout)
+   - 3-day free trial on all tiers (`trial_period_days: 3` on Checkout)
    - Stripe webhook idempotency: every event written to a `stripe_events` table keyed on `stripe_event_id` before any state change (re-deliveries are no-ops)
 3. Confirm v1 sidebar shows only what's planned for ship: Dashboard, Content, Email, Contacts, Pipeline (placeholder), Forms (placeholder), Landing Pages (placeholder), Avatars, Analytics, AI CEO, Settings, Profiles. Anything else copied over from VTM stays on disk but is unrouted.
 
 **Done when:**
 - Open the staging URL, see ScaleSolo branding end-to-end.
-- New user signs up at `scalesolo-staging.vercel.app/pricing?tier=solo_pro`, completes Stripe Checkout, lands in onboarding, `billing_subscriptions` row exists with `tier='solo_pro'`, `status='trialing'`, `trial_end` 14 days out.
+- New user signs up at `scalesolo-staging.vercel.app/pricing?tier=solo_pro`, completes Stripe Checkout, lands in onboarding, `billing_subscriptions` row exists with `tier='solo_pro'`, `status='trialing'`, `trial_end` 3 days out.
 - Brand profile switching, "View as" admin impersonation, and admin user grants all work in the new project (independently of VTM).
 - Re-delivering a Stripe webhook event in test mode results in no duplicate state changes.
 

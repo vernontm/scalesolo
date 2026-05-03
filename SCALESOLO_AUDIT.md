@@ -467,7 +467,7 @@ Status legend:
 |---|---|---|---|
 | 1.1 Public landing page | `vernontm.com/` static HTML, `New/*.html` | Port (rebrand, replace copy + screenshots) | M |
 | 1.2 Pricing page (3 tiers + founding-100) | No dedicated tier page yet; Stripe Checkout via `academy/billing.js` is closest reference | Greenfield (small) — static page + Stripe | M |
-| 1.3 Sign-up + login (tier preselect, 14-day trial) | `Login.jsx` + `AuthContext.jsx` (Supabase Auth) | Port+ (add `?tier=` param + trial activation) | S |
+| 1.3 Sign-up + login (tier preselect, 3-day trial) | `Login.jsx` + `AuthContext.jsx` (Supabase Auth) | Port+ (add `?tier=` param + trial activation) | S |
 
 ### Section 2 — Onboarding
 

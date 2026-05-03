@@ -1,7 +1,16 @@
-import { useState } from 'react'
-import { Zap } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { Zap, Sparkles } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
+import { supabase } from '../lib/supabase.js'
 import ThemeToggle from '../components/ThemeToggle.jsx'
+
+const TIER_LABELS = {
+  solo_starter: 'Solo Starter',
+  solo_pro: 'Solo Pro',
+  solo_studio: 'Solo Studio',
+  founding: 'Founding Member',
+}
 
 const page = {
   minHeight: '100vh',
@@ -68,12 +77,56 @@ const switchBtn = {
 
 export default function Login() {
   const { signIn, signUp } = useAuth()
-  const [mode, setMode] = useState('signin') // 'signin' | 'signup'
+  const [params] = useSearchParams()
+
+  // Pull intent from query string OR localStorage (Pricing page stashes it before routing here).
+  const initialTier = params.get('tier') || (typeof window !== 'undefined' ? localStorage.getItem('scalesolo.signup.tier') : null)
+  const initialCycle = params.get('cycle') || (typeof window !== 'undefined' ? localStorage.getItem('scalesolo.signup.cycle') : null) || 'monthly'
+
+  const [mode, setMode] = useState(initialTier ? 'signup' : 'signin')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [tier] = useState(initialTier)
+  const [cycle] = useState(initialCycle)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [info, setInfo] = useState(null)
+
+  // If there's a pending tier and the user is already signed in (e.g. came back from confirm email),
+  // bounce them straight to checkout.
+  useEffect(() => {
+    if (!tier) return
+    let cancelled = false
+    ;(async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (cancelled || !session) return
+      await startCheckout()
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tier])
+
+  async function startCheckout() {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error('Not signed in.')
+      const r = await fetch('/api/stripe-checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ tier, billing_cycle: cycle }),
+      })
+      const body = await r.json()
+      if (!r.ok || !body.url) throw new Error(body.error || 'Checkout could not start.')
+      try {
+        localStorage.removeItem('scalesolo.signup.tier')
+        localStorage.removeItem('scalesolo.signup.cycle')
+      } catch {}
+      window.location.href = body.url
+    } catch (e) {
+      setError(e.message)
+      setBusy(false)
+    }
+  }
 
   async function onSubmit(e) {
     e.preventDefault()
@@ -82,10 +135,18 @@ export default function Login() {
       if (mode === 'signin') {
         const { error: err } = await signIn(email, password)
         if (err) throw err
+        // sign-in success — if there's a pending tier, the useEffect above will fire after session lands
       } else {
         const { error: err } = await signUp(email, password)
         if (err) throw err
-        setInfo('Check your email to confirm your account.')
+        // If Supabase email confirmation is OFF, signUp returns a session immediately.
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session && tier) {
+          await startCheckout()
+          return
+        }
+        if (session && !tier) return // App will route to dashboard
+        setInfo('Check your email to confirm your account, then come back to finish checkout.')
       }
     } catch (err) {
       setError(err.message || 'Something went wrong.')
@@ -109,7 +170,11 @@ export default function Login() {
         </div>
 
         <div style={subtitle}>
-          {mode === 'signin' ? 'Sign in to your workspace.' : 'Create your ScaleSolo account.'}
+          {mode === 'signin'
+            ? 'Sign in to your workspace.'
+            : tier
+              ? <>You're starting <strong style={{ color: 'var(--text)' }}>{TIER_LABELS[tier] || tier}</strong> — create your account to begin your 3-day free trial.</>
+              : 'Create your ScaleSolo account.'}
         </div>
 
         <form style={formStack} onSubmit={onSubmit}>
@@ -146,8 +211,8 @@ export default function Login() {
           {info && <div className="pill pill-success" style={{ alignSelf: 'flex-start' }}>{info}</div>}
 
           <button type="submit" className="btn-primary" disabled={busy} style={{ marginTop: 6 }}>
-            {busy ? <span className="spinner" /> : null}
-            {mode === 'signin' ? 'Sign in' : 'Create account'}
+            {busy ? <span className="spinner" /> : <Sparkles size={15} />}
+            {mode === 'signin' ? 'Sign in' : (tier ? 'Continue to checkout' : 'Create account')}
           </button>
         </form>
 
