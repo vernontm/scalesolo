@@ -1,6 +1,4 @@
 // Lightweight Stripe REST wrapper — no SDK dependency.
-// We only call a handful of endpoints; raw fetch keeps cold-start time small.
-
 const STRIPE_API = 'https://api.stripe.com/v1'
 
 function key() {
@@ -9,7 +7,6 @@ function key() {
   return k
 }
 
-// form-urlencoded with bracket notation for nested keys (Stripe convention)
 function encode(obj, prefix) {
   const parts = []
   for (const [k, v] of Object.entries(obj)) {
@@ -29,14 +26,13 @@ function encode(obj, prefix) {
   return parts.join('&')
 }
 
-async function call(method, path, body, opts = {}) {
+export async function call(method, path, body, opts = {}) {
   const url = `${STRIPE_API}${path}`
   const headers = {
     Authorization: `Bearer ${key()}`,
     'Content-Type': 'application/x-www-form-urlencoded',
   }
   if (opts.idempotencyKey) headers['Idempotency-Key'] = opts.idempotencyKey
-  if (opts.stripeAccount) headers['Stripe-Account'] = opts.stripeAccount
 
   const resp = await fetch(url, {
     method,
@@ -55,9 +51,7 @@ async function call(method, path, body, opts = {}) {
   return data
 }
 
-// Verifies a Stripe webhook signature using the shared secret.
-// Stripe signs with HMAC-SHA256 of `${timestamp}.${rawBody}`.
-async function verifyWebhookSignature(rawBody, signatureHeader, secret) {
+export async function verifyWebhookSignature(rawBody, signatureHeader, secret) {
   if (!signatureHeader || !secret) return false
   const parts = Object.fromEntries(
     signatureHeader.split(',').map((p) => {
@@ -81,20 +75,14 @@ async function verifyWebhookSignature(rawBody, signatureHeader, secret) {
   const expected = Array.from(new Uint8Array(sig))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('')
-  // constant-time compare
   if (expected.length !== v1.length) return false
   let diff = 0
   for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ v1.charCodeAt(i)
   return diff === 0
 }
 
-module.exports = {
-  call,
-  verifyWebhookSignature,
-  // Convenience helpers
-  createCheckoutSession: (body, opts) => call('POST', '/checkout/sessions', body, opts),
-  createBillingPortalSession: (body) => call('POST', '/billing_portal/sessions', body),
-  retrieveSubscription: (id) => call('GET', `/subscriptions/${id}`),
-  retrieveCustomer: (id) => call('GET', `/customers/${id}`),
-  createCustomer: (body, opts) => call('POST', '/customers', body, opts),
-}
+export const createCheckoutSession    = (body, opts) => call('POST', '/checkout/sessions',    body, opts)
+export const createBillingPortalSession = (body)     => call('POST', '/billing_portal/sessions', body)
+export const retrieveSubscription     = (id)         => call('GET',  `/subscriptions/${id}`)
+export const retrieveCustomer         = (id)         => call('GET',  `/customers/${id}`)
+export const createCustomer           = (body, opts) => call('POST', '/customers',             body, opts)

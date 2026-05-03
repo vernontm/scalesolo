@@ -1,10 +1,7 @@
-// GET /api/billing — current plan + sub state for the signed-in user.
-// Also returns founding_member_count for public consumption (no profile data leaked).
+import { setCors, requireUser, supaFetch } from './_lib/supabase.js'
+import { TIERS } from './_lib/billing.js'
 
-const { setCors, requireUser, supaFetch } = require('./_lib/supabase')
-const { TIERS } = require('./_lib/billing')
-
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   setCors(req, res)
   if (req.method === 'OPTIONS') return res.status(204).end()
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
@@ -26,7 +23,6 @@ module.exports = async function handler(req, res) {
       subscription = subs?.[0] || null
     }
 
-    // Public-facing tier catalog (strip price ids that might be sensitive — keep only IDs).
     const catalog = Object.fromEntries(
       Object.entries(TIERS).map(([k, v]) => [k, {
         name: v.name,

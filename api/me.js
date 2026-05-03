@@ -1,12 +1,12 @@
-const { setCors, requireUser, supaFetch } = require('./_lib/supabase')
+import { setCors, requireUser, supaFetch } from './_lib/supabase.js'
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   setCors(req, res)
   if (req.method === 'OPTIONS') return res.status(204).end()
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
 
   const auth = await requireUser(req, res)
-  if (!auth) return // 401 already sent
+  if (!auth) return
 
   try {
     const access = await supaFetch(

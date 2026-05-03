@@ -1,7 +1,6 @@
-// Brand profile CRUD, scoped by profile_access.
-const { setCors, requireUser, supaFetch, assertProfileAccess } = require('./_lib/supabase')
+import { setCors, requireUser, supaFetch, assertProfileAccess } from './_lib/supabase.js'
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   setCors(req, res)
   if (req.method === 'OPTIONS') return res.status(204).end()
 
@@ -32,7 +31,6 @@ module.exports = async function handler(req, res) {
         },
       })
       const profile = Array.isArray(created) ? created[0] : created
-      // grant the creating user owner access
       await supaFetch('profile_access', {
         method: 'POST',
         body: {

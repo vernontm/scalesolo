@@ -1,7 +1,6 @@
-// Public endpoint: how many founding member spots remain.
-const { setCors, supaFetch } = require('./_lib/supabase')
+import { setCors, supaFetch } from './_lib/supabase.js'
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   setCors(req, res)
   if (req.method === 'OPTIONS') return res.status(204).end()
   if (req.method !== 'GET') return res.status(405).end()
@@ -15,8 +14,7 @@ module.exports = async function handler(req, res) {
       remaining: Math.max(0, row.cap - row.claimed),
       sold_out: row.claimed >= row.cap,
     })
-  } catch (err) {
-    // public endpoint — return safe defaults rather than 500 to avoid leaking errors
+  } catch {
     return res.status(200).json({ claimed: 0, cap: 100, remaining: 100, sold_out: false })
   }
 }

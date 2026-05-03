@@ -1,6 +1,6 @@
-// Billing constants. Tier definitions live in code (not DB) so they version-control.
+// Tier catalog. Lives in code (not DB) so it's version-controlled.
 
-const TIERS = {
+export const TIERS = {
   solo_starter: {
     name: 'Solo Starter',
     profile_limit: 1,
@@ -44,7 +44,7 @@ const TIERS = {
   },
 }
 
-function tierForPriceId(priceId) {
+export function tierForPriceId(priceId) {
   if (!priceId) return null
   for (const [tier, def] of Object.entries(TIERS)) {
     if (def.monthly_price_id === priceId || def.annual_price_id === priceId) return tier
@@ -52,7 +52,7 @@ function tierForPriceId(priceId) {
   return null
 }
 
-function billingCycleForPriceId(priceId) {
+export function billingCycleForPriceId(priceId) {
   if (!priceId) return 'monthly'
   for (const def of Object.values(TIERS)) {
     if (def.monthly_price_id === priceId) return 'monthly'
@@ -61,13 +61,6 @@ function billingCycleForPriceId(priceId) {
   return 'monthly'
 }
 
-function profileLimitForTier(tier) {
+export function profileLimitForTier(tier) {
   return TIERS[tier]?.profile_limit ?? 1
-}
-
-module.exports = {
-  TIERS,
-  tierForPriceId,
-  billingCycleForPriceId,
-  profileLimitForTier,
 }

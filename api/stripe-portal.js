@@ -1,10 +1,9 @@
-// Returns a Stripe Customer Portal URL for the signed-in user.
-const { setCors, requireUser, supaFetch } = require('./_lib/supabase')
-const stripe = require('./_lib/stripe')
+import { setCors, requireUser, supaFetch } from './_lib/supabase.js'
+import * as stripe from './_lib/stripe.js'
 
 const APP_URL = process.env.SCALESOLO_DOMAIN || process.env.FRONTEND_URL || 'https://scalesolo.app'
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   setCors(req, res)
   if (req.method === 'OPTIONS') return res.status(204).end()
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })

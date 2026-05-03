@@ -10,7 +10,7 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
   .map((s) => s.trim())
   .filter(Boolean)
 
-function setCors(req, res) {
+export function setCors(req, res) {
   const origin = req.headers.origin
   if (origin && (ALLOWED_ORIGINS.length === 0 || ALLOWED_ORIGINS.includes(origin))) {
     res.setHeader('Access-Control-Allow-Origin', origin)
@@ -26,8 +26,7 @@ function getBearer(req) {
   return h.toLowerCase().startsWith('bearer ') ? h.slice(7).trim() : null
 }
 
-// Validates a Supabase JWT by calling the auth REST endpoint.
-async function getUserFromRequest(req) {
+export async function getUserFromRequest(req) {
   const token = getBearer(req)
   if (!token) return { user: null, token: null }
   try {
@@ -45,7 +44,7 @@ async function getUserFromRequest(req) {
   }
 }
 
-async function requireUser(req, res) {
+export async function requireUser(req, res) {
   const { user, token } = await getUserFromRequest(req)
   if (!user || !user.id) {
     res.status(401).json({ error: 'Unauthorized' })
@@ -54,9 +53,7 @@ async function requireUser(req, res) {
   return { user, token }
 }
 
-// Generic supabase REST passthrough using the service key (server-side only).
-// `path` example: 'profiles?id=eq.<uuid>&select=*'
-async function supaFetch(path, options = {}) {
+export async function supaFetch(path, options = {}) {
   const url = `${SUPABASE_URL}/rest/v1/${path}`
   const headers = {
     apikey: SERVICE_KEY,
@@ -82,8 +79,7 @@ async function supaFetch(path, options = {}) {
   return data
 }
 
-// Confirm the user has access to a profile via profile_access.
-async function assertProfileAccess(userId, profileId) {
+export async function assertProfileAccess(userId, profileId) {
   const rows = await supaFetch(
     `profile_access?user_id=eq.${userId}&profile_id=eq.${profileId}&select=role`
   )
@@ -93,12 +89,4 @@ async function assertProfileAccess(userId, profileId) {
     throw err
   }
   return rows[0].role
-}
-
-module.exports = {
-  setCors,
-  requireUser,
-  getUserFromRequest,
-  supaFetch,
-  assertProfileAccess,
 }

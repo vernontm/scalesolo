@@ -1,12 +1,12 @@
-// Stripe webhook handler with replay-safe idempotency.
-// IMPORTANT: Vercel must NOT auto-parse the body for this route — we need the raw bytes
-// to verify the signature. We turn off the parser via the config export below.
+// Stripe webhook handler — signature-verified, raw-body, idempotent.
+import { setCors, supaFetch } from './_lib/supabase.js'
+import * as stripe from './_lib/stripe.js'
+import { tierForPriceId, billingCycleForPriceId, profileLimitForTier } from './_lib/billing.js'
 
-const { setCors, supaFetch } = require('./_lib/supabase')
-const stripe = require('./_lib/stripe')
-const { tierForPriceId, billingCycleForPriceId, profileLimitForTier } = require('./_lib/billing')
+// Tell Vercel we want the raw body for signature verification.
+export const config = { api: { bodyParser: false } }
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   setCors(req, res)
   if (req.method === 'OPTIONS') return res.status(204).end()
   if (req.method !== 'POST') return res.status(405).end()
@@ -17,9 +17,9 @@ module.exports = async function handler(req, res) {
     return res.status(500).end()
   }
 
-  // Read raw body
+  // Read raw body (Vercel passes a Node Readable stream when bodyParser is off).
   const chunks = []
-  for await (const chunk of req) chunks.push(chunk)
+  for await (const chunk of req) chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk)
   const rawBody = Buffer.concat(chunks).toString('utf8')
 
   const sig = req.headers['stripe-signature']
@@ -36,7 +36,7 @@ module.exports = async function handler(req, res) {
     return res.status(400).json({ error: 'Invalid JSON' })
   }
 
-  // Idempotency: insert the event row, return early if it already exists.
+  // Idempotency: insert event row, return early if already processed.
   try {
     await supaFetch('stripe_events', {
       method: 'POST',
@@ -44,11 +44,10 @@ module.exports = async function handler(req, res) {
       prefer: 'return=minimal',
     })
   } catch (err) {
-    if (err.status === 409 || (err.data?.code === '23505')) {
-      // Already processed — ack to Stripe so they stop retrying.
+    if (err.status === 409 || err.data?.code === '23505') {
       return res.status(200).json({ received: true, duplicate: true })
     }
-    console.error('[stripe-webhook] insert failed', err)
+    console.error('[stripe-webhook] idempotency insert failed', err)
     return res.status(500).json({ error: 'idempotency insert failed' })
   }
 
@@ -60,7 +59,6 @@ module.exports = async function handler(req, res) {
     handlerError = err.message || String(err)
   }
 
-  // Mark processed (or record error) so we have observability without re-querying Stripe.
   try {
     await supaFetch(`stripe_events?stripe_event_id=eq.${encodeURIComponent(event.id)}`, {
       method: 'PATCH',
@@ -72,10 +70,6 @@ module.exports = async function handler(req, res) {
   return res.status(200).json({ received: true })
 }
 
-// Tell Vercel/Next we want the raw body. (Vercel respects this in serverless functions.)
-module.exports.config = { api: { bodyParser: false } }
-
-// ──────────────────────────────────────────────────────────────────────────
 async function routeEvent(event) {
   switch (event.type) {
     case 'checkout.session.completed':
@@ -88,14 +82,12 @@ async function routeEvent(event) {
       return onSubscriptionDeleted(event.data.object)
     case 'invoice.payment_succeeded':
     case 'invoice.payment_failed':
-      // Subscription status reflects this; just refresh from Stripe to be safe.
       if (event.data.object.subscription) {
         const sub = await stripe.retrieveSubscription(event.data.object.subscription)
         return upsertSubscription(sub)
       }
       return
     default:
-      // Recorded in stripe_events; nothing to do.
       return
   }
 }
@@ -108,9 +100,6 @@ async function findCustomerRowByStripeId(stripeCustomerId) {
 }
 
 async function onCheckoutCompleted(session) {
-  // The subscription gets created right after; the subsequent
-  // customer.subscription.created event will populate billing_subscriptions.
-  // Here we only ensure the customer row is up to date.
   if (session.customer && session.customer_email) {
     const row = await findCustomerRowByStripeId(session.customer)
     if (row && !row.email) {
@@ -149,7 +138,6 @@ async function upsertSubscription(sub) {
     profile_limit: profileLimit,
   }
 
-  // Upsert by stripe_subscription_id
   const existing = await supaFetch(
     `billing_subscriptions?stripe_subscription_id=eq.${encodeURIComponent(sub.id)}&select=id`
   )
