@@ -41,7 +41,7 @@ create index credit_tx_customer_created on public.credit_transactions(customer_i
 create index credit_tx_action on public.credit_transactions(action);
 -- Idempotency: a single (customer, action, ref_id) tuple can only land once
 -- (e.g. Stripe topup checkout id, monthly grant year+month, subscription initial id).
-create unique index credit_tx_idem on public.credit_transactions(customer_id, action, ref_id) where ref_id is not null;
+create unique index credit_tx_idem on public.credit_transactions(customer_id, pool_type, action, ref_id) where ref_id is not null;
 
 -- ──────────────────────────────────────────────────────────────────────────
 -- Atomic consume: SELECT FOR UPDATE → check → decrement → log
@@ -122,10 +122,13 @@ declare
 begin
   if p_amount <= 0 then return null; end if;
 
-  -- Idempotency check
+  -- Idempotency check (per pool — different pools can share a ref_id, e.g. one subscription_id)
   if p_ref_id is not null and exists (
     select 1 from public.credit_transactions
-    where customer_id = p_customer_id and action = p_action and ref_id = p_ref_id
+    where customer_id = p_customer_id
+      and pool_type   = p_pool_type
+      and action      = p_action
+      and ref_id      = p_ref_id
   ) then
     return null;
   end if;
