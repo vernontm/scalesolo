@@ -214,15 +214,32 @@ const ctaBtnPrimary = { width: '100%', justifyContent: 'center' }
 const ctaBtnSecondary = { width: '100%', justifyContent: 'center' }
 const foundingBanner = {
   maxWidth: 1180,
-  margin: '40px auto 0',
-  background: 'linear-gradient(135deg, rgba(239,68,68,0.16), rgba(185,28,28,0.10))',
-  border: '1px solid rgba(239,68,68,0.35)',
+  margin: '0 auto 32px',
+  background: 'linear-gradient(135deg, rgba(239,68,68,0.18), rgba(185,28,28,0.10))',
+  border: '1px solid rgba(239,68,68,0.40)',
   borderRadius: 18,
   padding: '28px 32px',
   display: 'flex',
   alignItems: 'center',
   gap: 24,
   flexWrap: 'wrap',
+  boxShadow: '0 18px 48px rgba(239,68,68,0.16)',
+  position: 'relative',
+}
+const foundingTopBadge = {
+  position: 'absolute',
+  top: -12,
+  left: 32,
+  background: 'linear-gradient(135deg, var(--red), var(--red-dark))',
+  color: '#fff',
+  fontFamily: 'var(--font-display)',
+  fontSize: 11,
+  fontWeight: 700,
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase',
+  padding: '5px 12px',
+  borderRadius: 999,
+  boxShadow: '0 6px 16px rgba(239,68,68,0.35)',
 }
 const foundingMeta = { display: 'flex', alignItems: 'center', gap: 12 }
 const foundingIcon = {
@@ -302,6 +319,39 @@ export default function Pricing() {
           Pick a plan. 3-day free trial, cancel anytime.
         </p>
 
+        {/* Founding member — shown above the standard tiers for urgency */}
+        <div style={foundingBanner} className="fade-up">
+          <div style={foundingTopBadge}>Limited — first 100 only</div>
+          <div style={foundingMeta}>
+            <div style={foundingIcon}><Crown size={20} strokeWidth={2.4} /></div>
+            <div>
+              <div style={foundingTitle}>{FOUNDING.name} — ${FOUNDING.monthly}/mo lifetime lock</div>
+              <div style={foundingSub}>{FOUNDING.blurb}</div>
+            </div>
+          </div>
+          <ul style={{ ...featureList, marginTop: 0, marginBottom: 0, marginRight: 'auto', minWidth: 280 }}>
+            {FOUNDING.features.map((f) => (
+              <li key={f} style={featureRow}>
+                <BadgeCheck size={15} strokeWidth={2.5} style={checkIcon} /> {f}
+              </li>
+            ))}
+          </ul>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10 }}>
+            <span style={remainingPill}>
+              {foundingSoldOut ? 'Sold out' : `${foundingRemaining} of ${FOUNDING.cap} spots left`}
+            </span>
+            <button
+              className="btn-primary"
+              style={{ minWidth: 200 }}
+              disabled={foundingSoldOut || loadingTier === 'founding'}
+              onClick={() => handleSubscribe('founding')}
+            >
+              {loadingTier === 'founding' ? <span className="spinner" /> : <Crown size={15} />}
+              {foundingSoldOut ? 'Sold out' : 'Claim founding price'}
+            </button>
+          </div>
+        </div>
+
         <div style={cycleToggleWrap}>
           <div style={cycleToggle}>
             <button style={cycleBtn(cycle === 'monthly')} onClick={() => setCycle('monthly')}>Monthly</button>
@@ -346,37 +396,6 @@ export default function Pricing() {
               </div>
             )
           })}
-        </div>
-
-        <div style={foundingBanner} className="fade-up">
-          <div style={foundingMeta}>
-            <div style={foundingIcon}><Crown size={20} strokeWidth={2.4} /></div>
-            <div>
-              <div style={foundingTitle}>{FOUNDING.name} — ${FOUNDING.monthly}/mo lifetime lock</div>
-              <div style={foundingSub}>{FOUNDING.blurb}</div>
-            </div>
-          </div>
-          <ul style={{ ...featureList, marginTop: 0, marginBottom: 0, marginRight: 'auto', minWidth: 280 }}>
-            {FOUNDING.features.map((f) => (
-              <li key={f} style={featureRow}>
-                <BadgeCheck size={15} strokeWidth={2.5} style={checkIcon} /> {f}
-              </li>
-            ))}
-          </ul>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10 }}>
-            <span style={remainingPill}>
-              {foundingSoldOut ? 'Sold out' : `${foundingRemaining} of ${FOUNDING.cap} spots left`}
-            </span>
-            <button
-              className="btn-primary"
-              style={{ minWidth: 200 }}
-              disabled={foundingSoldOut || loadingTier === 'founding'}
-              onClick={() => handleSubscribe('founding')}
-            >
-              {loadingTier === 'founding' ? <span className="spinner" /> : <Crown size={15} />}
-              {foundingSoldOut ? 'Sold out' : 'Claim founding price'}
-            </button>
-          </div>
         </div>
 
         {error && (
