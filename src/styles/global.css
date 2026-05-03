@@ -1,0 +1,304 @@
+/* ============================================================================
+   ScaleSolo design system
+   - Red primary (ef4444 → b91c1c) with radial gradient backdrop.
+   - Dark theme by default, light theme via [data-theme="light"].
+   - Set/persist via ThemeContext; pre-applied in index.html to avoid flash.
+   ============================================================================ */
+
+:root {
+  /* brand — same in both modes */
+  --red:        #ef4444;
+  --red-dark:   #b91c1c;
+  --red-soft:   rgba(239, 68, 68, 0.12);
+  --green:      #2ecc71;
+  --green-soft: rgba(46, 204, 113, 0.12);
+  --amber:      #f59e0b;
+  --amber-soft: rgba(245, 158, 11, 0.12);
+
+  /* fonts */
+  --font-display: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --font-body:    'DM Sans', system-ui, -apple-system, sans-serif;
+
+  /* radii */
+  --r-sm: 8px;
+  --r-md: 10px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+
+  /* motion */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Dark theme (default) */
+:root,
+[data-theme="dark"] {
+  --bg:         #111112;
+  --surface:    #1a1a1c;
+  --surface-2:  #222226;
+  --surface-3:  #2a2a30;
+  --border:     rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --text:       #f0f0f0;
+  --text-soft:  #c4c4c8;
+  --muted:      #6b6b72;
+  --shadow-card: 0 12px 32px rgba(0, 0, 0, 0.35);
+  --shadow-pop:  0 20px 50px rgba(0, 0, 0, 0.55);
+
+  --gradient-1: rgba(239, 68, 68, 0.12);
+  --gradient-2: rgba(185, 28, 28, 0.10);
+
+  color-scheme: dark;
+}
+
+/* Light theme */
+[data-theme="light"] {
+  --bg:         #f7f6f4;
+  --surface:    #ffffff;
+  --surface-2:  #f3f1ee;
+  --surface-3:  #ebe8e3;
+  --border:     rgba(17, 17, 17, 0.08);
+  --border-strong: rgba(17, 17, 17, 0.16);
+  --text:       #18181a;
+  --text-soft:  #3f3f46;
+  --muted:      #6b6b72;
+  --shadow-card: 0 6px 20px rgba(17, 17, 17, 0.06);
+  --shadow-pop:  0 16px 40px rgba(17, 17, 17, 0.12);
+
+  --gradient-1: rgba(239, 68, 68, 0.10);
+  --gradient-2: rgba(185, 28, 28, 0.08);
+
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background 0.3s var(--ease), color 0.3s var(--ease);
+}
+
+body { position: relative; overflow-x: hidden; }
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(circle at 12% 18%, var(--gradient-1) 0%, transparent 45%),
+    radial-gradient(circle at 88% 84%, var(--gradient-2) 0%, transparent 50%);
+  pointer-events: none;
+  z-index: 0;
+  transition: background 0.3s var(--ease);
+}
+
+#root { position: relative; z-index: 1; min-height: 100vh; }
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+button, input, select, textarea {
+  font-family: inherit;
+  color: inherit;
+}
+
+a { color: inherit; text-decoration: none; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+/* ── Animations ───────────────────────────────────────────────────────────── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5); }
+  50%      { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+}
+
+.fade-up { animation: fadeUp 0.5s var(--ease) forwards; opacity: 0; }
+.fade-in { animation: fadeIn 0.4s var(--ease) forwards; opacity: 0; }
+.spin    { animation: spin 0.9s linear infinite; }
+.pulse   { animation: pulseGlow 1.8s var(--ease) infinite; }
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 13px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--red), var(--red-dark));
+  border: none;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(239, 68, 68, 0.25);
+  transition: transform 0.18s var(--ease), box-shadow 0.18s var(--ease);
+}
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 28px rgba(239, 68, 68, 0.35);
+}
+.btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: transform 0.18s var(--ease), border-color 0.18s var(--ease);
+}
+.btn-secondary:hover {
+  transform: translateY(-2px);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: color 0.15s var(--ease), background 0.15s var(--ease);
+}
+.btn-ghost:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+/* ── Cards ───────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 22px;
+  transition: transform 0.22s var(--ease), border-color 0.22s var(--ease), box-shadow 0.22s var(--ease);
+}
+.card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(239, 68, 68, 0.25);
+  box-shadow: var(--shadow-card);
+}
+.card-flat {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 22px;
+}
+
+/* ── Inputs ──────────────────────────────────────────────────────────────── */
+.input,
+.textarea,
+.select {
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.18s var(--ease), box-shadow 0.18s var(--ease);
+}
+.input::placeholder,
+.textarea::placeholder { color: var(--muted); }
+.input:focus,
+.textarea:focus,
+.select:focus {
+  border-color: rgba(239, 68, 68, 0.4);
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.08);
+}
+.textarea { min-height: 100px; resize: vertical; }
+.label {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-soft);
+  margin-bottom: 6px;
+  letter-spacing: 0.02em;
+}
+
+/* ── Pills ───────────────────────────────────────────────────────────────── */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: var(--r-pill);
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.pill-success { background: var(--green-soft); color: var(--green); }
+.pill-warning { background: var(--amber-soft); color: var(--amber); }
+.pill-danger  { background: var(--red-soft);   color: var(--red); }
+.pill-muted   { background: var(--surface-3);  color: var(--muted); }
+
+/* ── Utility ─────────────────────────────────────────────────────────────── */
+.muted   { color: var(--muted); }
+.soft    { color: var(--text-soft); }
+.brand-text {
+  background: linear-gradient(135deg, var(--red), var(--red-dark));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.divider {
+  height: 1px;
+  background: var(--border);
+  width: 100%;
+}
+.spinner {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--red);
+  animation: spin 0.9s linear infinite;
+}
