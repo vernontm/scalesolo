@@ -6,13 +6,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ReactFlow, Controls, Background, Handle, Position, addEdge,
-  applyNodeChanges, applyEdgeChanges, MarkerType,
+  applyNodeChanges, applyEdgeChanges, MarkerType, useReactFlow,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
 import {
   Plus, Play, Save, Trash2, ArrowLeft, Sparkles, Zap, Boxes, AlertCircle,
   GripHorizontal, Minimize2, Maximize2, Wand2, MessageSquare, Send,
+  ZoomIn, ZoomOut, Maximize,
 } from 'lucide-react'
 import { useRef } from 'react'
 // (useEffect already imported above for other effects in this file)
@@ -185,6 +186,52 @@ function SpacesList({ spaces, onCreate, onOpen, onDelete, error }) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Floating, draggable, minimizable node palette
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Zoom controls (bottom-left). Custom-styled +/- + fit-view.
+
+function ZoomControls() {
+  const { zoomIn, zoomOut, fitView } = useReactFlow()
+  const btn = {
+    width: 34,
+    height: 34,
+    border: 'none',
+    background: 'var(--surface)',
+    color: 'var(--text)',
+    display: 'grid',
+    placeItems: 'center',
+    cursor: 'pointer',
+    transition: 'background 0.15s',
+  }
+  const wrap = {
+    position: 'absolute',
+    left: 16,
+    bottom: 16,
+    zIndex: 5,
+    display: 'flex',
+    flexDirection: 'column',
+    borderRadius: 10,
+    overflow: 'hidden',
+    border: '1px solid var(--border)',
+    boxShadow: '0 6px 18px rgba(0,0,0,0.12)',
+  }
+  const sep = { height: 1, background: 'var(--border)' }
+  return (
+    <div style={wrap}>
+      <button type="button" style={btn} onClick={() => zoomIn({ duration: 200 })} title="Zoom in" aria-label="Zoom in">
+        <ZoomIn size={16} />
+      </button>
+      <div style={sep} />
+      <button type="button" style={btn} onClick={() => zoomOut({ duration: 200 })} title="Zoom out" aria-label="Zoom out">
+        <ZoomOut size={16} />
+      </button>
+      <div style={sep} />
+      <button type="button" style={btn} onClick={() => fitView({ duration: 300, padding: 0.2 })} title="Fit view" aria-label="Fit view">
+        <Maximize size={14} />
+      </button>
+    </div>
+  )
+}
 
 function FloatingPalette({ onAdd }) {
   const grouped = useMemo(() => {
@@ -630,7 +677,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
           proOptions={{ hideAttribution: true }}
         >
           <Background color="var(--border)" gap={20} size={1} />
-          <Controls position="bottom-left" showInteractive={false} />
+          <ZoomControls />
         </ReactFlow>
 
         <FloatingPalette onAdd={(type) => addNode(type)} />
