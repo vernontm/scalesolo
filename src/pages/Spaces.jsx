@@ -253,31 +253,21 @@ function SpaceNode({ id, data, selected }) {
 const NODE_TYPES = { space: SpaceNode }
 const EDGE_TYPES = { scissor: ScissorEdge }
 
-// Which source handle ids each target handle id is willing to accept.
-// '*' means "anything is fine" — used by collection/save_library that take
-// a heterogeneous bag of upstream outputs.
-const HANDLE_COMPAT = {
-  topic:      ['text', 'script', 'caption', 'hashtags', 'title'],
-  brand:      ['brand'],
-  script:     ['script', 'text'],
-  references: ['images', 'image'],
-  prompt:     ['text', 'caption', 'script'],
-  avatar:     ['avatar'],
-  video:      ['video'],
-  image:      ['images', 'image'],
-  caption:    ['caption', 'text'],
-  hashtags:   ['hashtags', 'text'],
-  items:      ['*'],
-  more:       ['*'],
-}
-
+// With the simplified handle scheme there's just one "in" handle (and an
+// optional "ref" handle on image_gen / avatar_render). Validation is just:
+// no self-loops, source must be 'out', target must be 'in' or 'ref'.
 function isValidSpaceConnection(conn) {
   if (!conn?.source || !conn?.target) return false
-  if (conn.source === conn.target) return false                    // no self-loops
-  const allowed = HANDLE_COMPAT[conn.targetHandle]
-  if (!allowed) return true                                        // unknown target → permissive
-  if (allowed.includes('*')) return true
-  return allowed.includes(conn.sourceHandle)
+  if (conn.source === conn.target) return false
+  if (conn.sourceHandle && conn.sourceHandle !== 'out') return false
+  if (conn.targetHandle && conn.targetHandle !== 'in') return false
+  return true
+}
+
+// Old saved spaces used per-field handle ids (topic, brand, script, ref, etc.).
+// Normalize all edges to the simplified 'out' → 'in' scheme.
+function normalizeEdgeHandles(e) {
+  return { ...e, sourceHandle: 'out', targetHandle: 'in' }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -507,7 +497,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
   const [nodes, setNodes] = useState(Array.isArray(space.nodes) ? space.nodes : [])
   const [edges, setEdges] = useState(
     Array.isArray(space.edges)
-      ? space.edges.map((e) => ({ ...e, type: 'scissor' }))
+      ? space.edges.map((e) => ({ ...normalizeEdgeHandles(e), type: 'scissor' }))
       : []
   )
   const [running, setRunning] = useState(false)
@@ -563,30 +553,26 @@ function SpaceBuilder({ space, onSave, onClose }) {
     // "brand" output to every node that has a "brand" input.
     window.__spaceSyncBrandAll = (brandId, enabled) => {
       setEdges((prev) => {
-        // Remove any existing brand edges originating from this node first
-        const filtered = prev.filter((e) => !(e.source === brandId && e.sourceHandle === 'brand'))
+        // Tear down ANY edge that originates from this brand node — sync mode
+        // owns its outgoing edges.
+        const filtered = prev.filter((e) => e.source !== brandId)
         if (!enabled) return filtered
-        // Find every node that exposes a "brand" input
         const targets = nodesRef.current.filter((n) => {
           if (n.id === brandId) return false
-          const def = n.data?.type
-          return ['script_gen', 'caption_gen', 'image_gen'].includes(def)
+          return ['script_gen', 'caption_gen', 'image_gen'].includes(n.data?.type)
         })
         const newEdges = targets.map((t) => ({
           id: `e_${brandId}_${t.id}_brand`,
-          source: brandId,
-          sourceHandle: 'brand',
-          target: t.id,
-          targetHandle: 'brand',
+          source: brandId, sourceHandle: 'out',
+          target: t.id, targetHandle: 'in',
           type: 'scissor',
           animated: true,
           markerEnd: { type: MarkerType.ArrowClosed },
           style: { stroke: 'var(--red)', strokeWidth: 1.5 },
         }))
-        // Drop any edges we already had on those exact pairs (avoid dupes)
-        const dropKeys = new Set(newEdges.map((e) => `${e.source}|${e.target}|${e.targetHandle}`))
-        const cleaned = filtered.filter((e) => !dropKeys.has(`${e.source}|${e.target}|${e.targetHandle}`))
-        return [...cleaned, ...newEdges]
+        const haveKeys = new Set(filtered.map((e) => `${e.source}|${e.target}|${e.targetHandle}`))
+        const additions = newEdges.filter((e) => !haveKeys.has(`${e.source}|${e.target}|${e.targetHandle}`))
+        return [...filtered, ...additions]
       })
     }
     window.__spaceAddNodeFromItem = ({ url, type, from }) => {
@@ -640,10 +626,8 @@ function SpaceBuilder({ space, onSave, onClose }) {
         setEdges((prev) => {
           const additions = syncSources.map((b) => ({
             id: `e_${b.id}_${id}_brand`,
-            source: b.id,
-            sourceHandle: 'brand',
-            target: id,
-            targetHandle: 'brand',
+            source: b.id, sourceHandle: 'out',
+            target: id, targetHandle: 'in',
             type: 'scissor',
             animated: true,
             markerEnd: { type: MarkerType.ArrowClosed },
@@ -707,28 +691,27 @@ function SpaceBuilder({ space, onSave, onClose }) {
       if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
       if (Array.isArray(body.nodes)) setNodes(body.nodes)
       if (Array.isArray(body.edges)) {
-        // Force the scissor edge type for AI-generated edges too
-        body.edges.forEach((e) => { e.type = 'scissor' })
-        // Auto-wire any sync-to-all brand profile to new brand-aware nodes
+        // Normalize handles + force scissor type for AI-generated edges
+        const normalized = body.edges.map((e) => ({ ...normalizeEdgeHandles(e), type: 'scissor' }))
         const newNodes = Array.isArray(body.nodes) ? body.nodes : []
         const syncSources = newNodes.filter((n) => n.data?.type === 'brand_profile' && n.data?.props?.sync_all)
         for (const b of syncSources) {
           for (const t of newNodes) {
             if (t.id === b.id) continue
             if (!['script_gen', 'caption_gen', 'image_gen'].includes(t.data?.type)) continue
-            const k = `${b.id}|${t.id}|brand`
-            if (body.edges.some((e) => `${e.source}|${e.target}|${e.targetHandle}` === k)) continue
-            body.edges.push({
+            const k = `${b.id}|${t.id}|in`
+            if (normalized.some((e) => `${e.source}|${e.target}|${e.targetHandle}` === k)) continue
+            normalized.push({
               id: `e_${b.id}_${t.id}_brand`,
-              source: b.id, sourceHandle: 'brand',
-              target: t.id, targetHandle: 'brand',
+              source: b.id, sourceHandle: 'out',
+              target: t.id, targetHandle: 'in',
               type: 'scissor', animated: true,
               markerEnd: { type: MarkerType.ArrowClosed },
               style: { stroke: 'var(--red)', strokeWidth: 1.5 },
             })
           }
         }
-        setEdges(body.edges)
+        setEdges(normalized)
       }
       setAiSuggestion(body.suggestions || null)
       setAiPrompt('')

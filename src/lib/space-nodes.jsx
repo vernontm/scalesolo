@@ -141,6 +141,48 @@ function readInput(inputs, props, key) {
   return (v == null || v === '') ? (props?.[key] ?? '') : v
 }
 
+// ── Shape-aware pickers from a single "in" handle ───────────────────────────
+// All non-aggregator nodes now expose ONE "in" handle (and image/video gens
+// add a second "ref" handle). Each node's run() picks what it needs from
+// the bag of upstream values by inspecting the shape.
+function asArr(v) { if (v == null) return []; return Array.isArray(v) ? v : [v] }
+function pickBrand(v) {
+  for (const x of asArr(v)) {
+    if (x && typeof x === 'object' && x.brand && typeof x.brand === 'object') return x.brand
+    if (x && typeof x === 'object' && x.profile_id && (x.name != null || x.voice != null)) return x
+  }
+  return null
+}
+function pickAvatarConfig(v) {
+  for (const x of asArr(v)) {
+    if (x && typeof x === 'object' && x.avatar && x.avatar.avatar_id) return x.avatar
+    if (x && typeof x === 'object' && x.avatar_id && x.voice_id) return x
+  }
+  return null
+}
+function pickScript(v) {
+  for (const x of asArr(v)) {
+    if (typeof x === 'string') return x
+    if (x && typeof x === 'object') {
+      if (x.script) return x.script
+      if (x.full_script) return x.full_script
+      if (x.text) return x.text
+      if (x.caption) return x.caption
+    }
+  }
+  return ''
+}
+function pickImageUrls(v) {
+  const out = []
+  for (const x of asArr(v)) {
+    if (!x) continue
+    if (Array.isArray(x.images)) for (const im of x.images) { if (im?.url) out.push(im.url) }
+    else if (x.url) out.push(x.url)
+    else if (typeof x === 'string' && /^https?:/.test(x)) out.push(x)
+  }
+  return out
+}
+
 // ── @-mention substitution ──────────────────────────────────────────────────
 // Replaces @name and @"two word name" with the matching upstream output.
 // inputsByName: { "<lowercased,nospace name>": { handleId: value, ... } }
@@ -618,7 +660,22 @@ function CollectionBody({ data }) {
 }
 
 // ─── 9. SAVE TO LIBRARY ─────────────────────────────────────────────────────
+const PLATFORMS = [
+  { id: 'instagram', label: 'Instagram', kinds: ['image', 'video'] },
+  { id: 'tiktok',    label: 'TikTok',    kinds: ['video'] },
+  { id: 'youtube',   label: 'YouTube',   kinds: ['video'] },
+  { id: 'x',         label: 'X',         kinds: ['text', 'image', 'video'] },
+  { id: 'threads',   label: 'Threads',   kinds: ['text', 'image', 'video'] },
+  { id: 'linkedin',  label: 'LinkedIn',  kinds: ['text', 'image', 'video'] },
+  { id: 'facebook',  label: 'Facebook',  kinds: ['text', 'image', 'video'] },
+]
+
 function SaveBody({ data, onPatch }) {
+  const platforms = Array.isArray(data.props?.platforms) ? data.props.platforms : []
+  const togglePlatform = (id) => {
+    const next = platforms.includes(id) ? platforms.filter((p) => p !== id) : [...platforms, id]
+    onPatch({ platforms: next })
+  }
   return (
     <>
       <NodeField label="Title (optional)">
@@ -627,9 +684,36 @@ function SaveBody({ data, onPatch }) {
       <NodeField label="Status">
         <select style={tinyInput} value={data.props?.status || 'draft'} onChange={(e) => onPatch({ status: e.target.value })}>
           <option value="draft">Draft</option>
-          <option value="caption_ready">Caption ready</option>
+          <option value="caption_ready">Ready to schedule</option>
           <option value="scheduled">Scheduled</option>
         </select>
+      </NodeField>
+      <NodeField label="Schedule for">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {PLATFORMS.map((p) => {
+            const on = platforms.includes(p.id)
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={(e) => { e.stopPropagation(); togglePlatform(p.id) }}
+                style={{
+                  fontSize: 10.5, padding: '4px 9px', borderRadius: 999,
+                  border: `1px solid ${on ? '#2ecc71' : 'var(--border)'}`,
+                  background: on ? 'rgba(46,204,113,0.16)' : 'var(--surface-2)',
+                  color: on ? '#2ecc71' : 'var(--text-soft)',
+                  cursor: 'pointer',
+                  fontFamily: 'var(--font-display)', fontWeight: 700,
+                }}
+              >{p.label}</button>
+            )
+          })}
+        </div>
+        {platforms.length > 0 && (
+          <div style={{ marginTop: 6, fontSize: 10, color: 'var(--muted)', lineHeight: 1.4 }}>
+            Saved with these platforms tagged. Schedule from the Library page.
+          </div>
+        )}
       </NodeField>
       <NodePreview status={data.status} output={data.output} error={data.error} />
     </>
@@ -641,7 +725,7 @@ export const NODE_REGISTRY = {
   text_input: {
     label: 'Text', description: 'Topic, hook, or any raw text.',
     icon: Type, category: 'inputs', color: '#94a3b8',
-    inputs: [], outputs: [{ id: 'text', label: 'Text' }],
+    inputs: [], outputs: [{ id: 'out', label: 'Out' }],
     initialProps: { text: '' },
     Body: TextInputBody,
     run: async ({ data }) => ({ text: data.props?.text || '' }),
@@ -650,7 +734,7 @@ export const NODE_REGISTRY = {
   image_upload: {
     label: 'Reference images', description: 'Upload images to use as references in image gen.',
     icon: Upload, category: 'inputs', color: '#0ea5e9',
-    inputs: [], outputs: [{ id: 'images', label: 'Images' }],
+    inputs: [], outputs: [{ id: 'out', label: 'Out' }],
     initialProps: { urls: [] },
     Body: ImageUploadBody,
     run: async ({ data }) => {
@@ -662,7 +746,7 @@ export const NODE_REGISTRY = {
   brand_profile: {
     label: 'Brand profile', description: 'Pulls in a brand profile (voice, audience, brand bible, hashtags) to use as context for downstream generators.',
     icon: Building2, category: 'inputs', color: '#ec4899',
-    inputs: [], outputs: [{ id: 'brand', label: 'Brand' }],
+    inputs: [], outputs: [{ id: 'out', label: 'Out' }],
     initialProps: { profile_id: '' },
     Body: BrandProfileBody,
     run: async ({ data, ctx }) => {
@@ -693,15 +777,16 @@ export const NODE_REGISTRY = {
   script_gen: {
     label: 'Script generator', description: 'Claude writes a script from a topic. Supports @-mentions and an optional brand profile input.',
     icon: Wand2, category: 'generators', color: '#ef4444',
-    inputs: [{ id: 'topic', label: 'Topic / hook' }, { id: 'brand', label: 'Brand' }],
-    outputs: [{ id: 'script', label: 'Script' }, { id: 'title', label: 'Title' }],
+    inputs: [{ id: 'in', label: 'In (topic / brand)' }],
+    outputs: [{ id: 'out', label: 'Out' }],
     initialProps: { format: 'tiktok-script', topic: '' },
     Body: ScriptGenBody,
     run: async ({ data, inputs, inputsByName, ctx }) => {
-      let topic = readInput(inputs, data.props, 'topic') || readInput(inputs, data.props, 'text')
+      const incoming = inputs?.in
+      const brand = pickBrand(incoming)
+      let topic = (data.props?.topic || '').trim() || pickScript(incoming)
       if (!topic) throw new Error('No topic / text provided')
       topic = expandMentions(topic, inputsByName)
-      const brand = inputs?.brand
       const profileId = brand?.profile_id || ctx.profileId
       const r = await fetch('/api/content/generate', {
         method: 'POST',
@@ -719,16 +804,17 @@ export const NODE_REGISTRY = {
   caption_gen: {
     label: 'Caption + hashtags', description: 'Generates a platform caption AND hashtag block from a script. Optional brand profile input.',
     icon: Captions, category: 'generators', color: '#f59e0b',
-    inputs: [{ id: 'script', label: 'Script' }, { id: 'brand', label: 'Brand' }],
-    outputs: [{ id: 'caption', label: 'Caption' }, { id: 'hashtags', label: 'Hashtags' }],
+    inputs: [{ id: 'in', label: 'In (script / brand)' }],
+    outputs: [{ id: 'out', label: 'Out' }],
     initialProps: { platform: 'instagram', hashtag_count: 10 },
     Body: CaptionGenBody,
     run: async ({ data, inputs, ctx }) => {
-      const script = readInput(inputs, {}, 'script') || readInput(inputs, {}, 'text')
+      const incoming = inputs?.in
+      const script = pickScript(incoming)
       if (!script) throw new Error('No script provided')
       const platform = data.props?.platform || 'instagram'
       const count = data.props?.hashtag_count || 10
-      const brand = inputs?.brand
+      const brand = pickBrand(incoming)
       const profileId = brand?.profile_id || ctx.profileId
       const r = await fetch('/api/content/generate', {
         method: 'POST',
@@ -762,25 +848,22 @@ export const NODE_REGISTRY = {
   },
 
   image_gen: {
-    label: 'Image generator', description: 'KIE image gen (Nano Banana, Flux). Aspect, count, quality. Supports @-mentions and an optional brand profile input.',
+    label: 'Image generator', description: 'KIE image gen (Nano Banana, Flux). Aspect, count, quality. The single In handle accepts brand context, text prompts, AND reference images — they\'re sorted by shape.',
     icon: ImageIcon, category: 'generators', color: '#a855f7',
-    inputs: [
-      { id: 'references', label: 'References' },
-      { id: 'prompt', label: 'Prompt' },
-      { id: 'brand', label: 'Brand' },
-    ],
-    outputs: [{ id: 'images', label: 'Images' }],
+    inputs: [{ id: 'in',  label: 'In (prompt / brand / refs)' }],
+    outputs: [{ id: 'out', label: 'Out' }],
     initialProps: { prompt: '', model: 'nano-banana', aspect: '1:1', count: 1, quality: '2K' },
     Body: ImageGenBody,
     run: async ({ data, inputs, inputsByName, ctx }) => {
-      let prompt = readInput(inputs, data.props, 'prompt')
+      const incoming = inputs?.in
+      // Prompt: prefer the node's own prompt prop; if blank, fall back to any
+      // text-shaped value from upstream.
+      let prompt = (data.props?.prompt || '').trim() || pickScript(incoming)
       if (!prompt) throw new Error('Prompt required')
       prompt = expandMentions(prompt, inputsByName)
 
-      // If a brand profile is connected, prepend a short style hint so the
-      // image stays on-brand. We keep it short — image models lose focus
-      // on long prompts.
-      const brand = inputs?.brand
+      // Brand context (if any) prepended as a short style hint.
+      const brand = pickBrand(incoming)
       if (brand) {
         const bits = []
         if (brand.name) bits.push(`Brand: ${brand.name}`)
@@ -790,13 +873,9 @@ export const NODE_REGISTRY = {
         if (bits.length) prompt = `${bits.join('. ')}.\n\n${prompt}`
       }
 
-      const refs = []
-      const incomingRefs = inputs?.references
-      if (incomingRefs) {
-        if (Array.isArray(incomingRefs)) refs.push(...incomingRefs.map((x) => x.url || x).filter(Boolean))
-        else if (incomingRefs.url) refs.push(incomingRefs.url)
-        else if (Array.isArray(incomingRefs.images)) refs.push(...incomingRefs.images.map((x) => x.url).filter(Boolean))
-      }
+      // Reference images are auto-detected from the same In handle:
+      // anything with a url or images array, that isn't the brand object.
+      const refs = pickImageUrls(incoming)
 
       const r = await fetch('/api/images/generate', {
         method: 'POST',
@@ -820,7 +899,7 @@ export const NODE_REGISTRY = {
   avatar_picker: {
     label: 'Avatar', description: 'Pick avatar, look, voice for the render step.',
     icon: UserCircle2, category: 'inputs', color: '#60a5fa',
-    inputs: [], outputs: [{ id: 'avatar', label: 'Avatar' }],
+    inputs: [], outputs: [{ id: 'out', label: 'Out' }],
     initialProps: { avatar_id: '', look_id: '', voice_id: '', model_version: '' },
     Body: AvatarPickerBody,
     run: async ({ data }) => {
@@ -832,16 +911,17 @@ export const NODE_REGISTRY = {
   },
 
   avatar_render: {
-    label: 'Avatar render', description: 'HeyGen renders the avatar speaking the script.',
+    label: 'Avatar render', description: 'HeyGen renders the avatar speaking the script. Wire BOTH the script and the avatar config into the single In handle.',
     icon: FileVideo, category: 'generators', color: '#ef4444',
-    inputs: [{ id: 'script', label: 'Script' }, { id: 'avatar', label: 'Avatar' }],
-    outputs: [{ id: 'video', label: 'Video' }],
+    inputs: [{ id: 'in',  label: 'In (script + avatar)' }],
+    outputs: [{ id: 'out', label: 'Out' }],
     initialProps: {},
     Body: AvatarRenderBody,
     run: async ({ inputs, ctx }) => {
-      const script = readInput(inputs, {}, 'script') || readInput(inputs, {}, 'text')
+      const incoming = inputs?.in
+      const script = pickScript(incoming)
       if (!script) throw new Error('No script provided')
-      const avatar = inputs?.avatar
+      const avatar = pickAvatarConfig(incoming)
       if (!avatar?.avatar_id) throw new Error('Connect an Avatar picker')
       if (!avatar?.voice_id)  throw new Error('Voice ID missing on avatar config')
       const r = await fetch('/api/avatars/render', {
@@ -873,8 +953,8 @@ export const NODE_REGISTRY = {
   collection: {
     label: 'Collection', description: 'Catches outputs from any connected node and gathers them into a growing list (scripts, images, videos). Accumulates across runs — every time an upstream node re-runs, new items are appended (deduped by URL/text).',
     icon: ListChecks, category: 'outputs', color: '#10b981',
-    inputs: [{ id: 'items', label: 'Items' }, { id: 'more', label: '+ more' }],
-    outputs: [{ id: 'items', label: 'Items' }],
+    inputs: [{ id: 'in', label: 'In (anything)' }],
+    outputs: [{ id: 'out', label: 'Out' }],
     initialProps: {},
     Body: CollectionBody,
     run: async ({ data, inputs }) => {
@@ -909,40 +989,49 @@ export const NODE_REGISTRY = {
   },
 
   save_library: {
-    label: 'Save to library', description: 'Persist as a content_scripts entry.',
+    label: 'Save to library', description: 'Bundles the incoming script + caption + hashtags + media into one library entry, tagged with the platforms you chose. Accepts script, caption + hashtags, image(s), or video — whatever upstream nodes are wired.',
     icon: Save, category: 'outputs', color: '#2ecc71',
-    inputs: [
-      { id: 'script', label: 'Script' }, { id: 'caption', label: 'Caption' },
-      { id: 'hashtags', label: 'Hashtags' }, { id: 'video', label: 'Video' },
-      { id: 'image', label: 'Image' },
-    ],
+    inputs: [{ id: 'in', label: 'In (script / caption / image / video)' }],
     outputs: [],
-    initialProps: { title: '', status: 'draft' },
+    initialProps: { title: '', status: 'draft', platforms: [] },
     Body: SaveBody,
     run: async ({ data, inputs, ctx }) => {
-      const script = readInput(inputs, {}, 'script') || readInput(inputs, {}, 'text') || ''
-      const caption = readInput(inputs, {}, 'caption') || ''
-      const hashtags = readInput(inputs, {}, 'hashtags') || ''
-      const video = inputs?.video
-      const image = inputs?.image
+      const arr = asArr(inputs?.in)
+      let script = '', caption = '', hashtags = '', videoUrl = null
+      const imageUrls = []
+      for (const v of arr) {
+        if (!v) continue
+        if (typeof v === 'string') { if (!script) script = v; continue }
+        if (typeof v !== 'object') continue
+        if (v.script || v.full_script) script = script || v.script || v.full_script
+        if (v.caption) caption = caption || v.caption
+        if (v.hashtags) hashtags = hashtags || v.hashtags
+        if (v.video?.video_url) videoUrl = videoUrl || v.video.video_url
+        if (v.video_url) videoUrl = videoUrl || v.video_url
+        if (Array.isArray(v.images)) for (const im of v.images) { if (im?.url) imageUrls.push(im.url) }
+        else if (v.url) imageUrls.push(v.url)
+      }
       const title = data.props?.title?.trim() || (script.slice(0, 60)) || 'Untitled'
-      const mediaUrls = video?.video_url ? [video.video_url]
-        : image?.url ? [image.url]
-        : Array.isArray(image?.images) ? image.images.map((x) => x.url).filter(Boolean)
+      const mediaUrls = videoUrl ? [videoUrl] : (imageUrls.length ? imageUrls : null)
+      const mediaType = videoUrl ? 'video' : (imageUrls.length ? 'image' : 'text')
+      const platforms = Array.isArray(data.props?.platforms) && data.props.platforms.length
+        ? data.props.platforms
         : null
-      const mediaType = video?.video_url ? 'video' : (mediaUrls && mediaUrls.length ? 'image' : 'text')
+      const postType = mediaType === 'video' ? 'video' : (mediaType === 'image' ? 'post' : 'post')
       const r = await fetch('/api/content', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
         body: JSON.stringify({
           profile_id: ctx.profileId, title, full_script: script, caption, hashtags,
           media_urls: mediaUrls, media_type: mediaType,
+          post_type: postType,
+          platforms,
           status: data.props?.status || 'draft', generated_by: 'space',
         }),
       })
       const body = await r.json()
       if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
-      return { content_id: body.item?.id }
+      return { content_id: body.item?.id, platforms, media_type: mediaType }
     },
   },
 }
@@ -1009,7 +1098,11 @@ export async function runSpace({ ctx, nodes, edges, onNodeChange }) {
     for (const e of inboundEdges) {
       const sourceOut = outputsById.get(e.source)
       if (!sourceOut) continue
-      const value = sourceOut[e.sourceHandle] ?? sourceOut[Object.keys(sourceOut)[0]]
+      // sourceHandle 'out' = pass the whole result. Legacy/specific handles
+      // still look up the matching key (with first-key fallback).
+      const value = e.sourceHandle === 'out'
+        ? sourceOut
+        : (sourceOut[e.sourceHandle] ?? sourceOut[Object.keys(sourceOut)[0]])
       const handle = e.targetHandle || Object.keys(inputObj).length
       // Multi-edge to same handle → coerce to array
       if (inputObj[handle] != null) {

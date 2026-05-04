@@ -2,12 +2,10 @@
 // Body: { profile_id, instruction, current_nodes?, current_edges? }
 // Returns: { nodes, edges, suggestions? }
 //
-// Claude reads a description (e.g. "create scripts then turn them into avatar
-// videos and save to library") and emits a complete reactflow-compatible node
-// graph. We auto-layout positions if Claude doesn't supply good ones.
-//
-// Mirrors the client-side NODE_REGISTRY in src/lib/space-nodes.jsx — keep
-// these in sync.
+// Claude reads a description and emits a node graph. Every node now has at
+// most ONE input handle (id 'in'), with image_gen and avatar_render also
+// exposing a 'ref' handle for reference media. Every node has ONE output
+// handle (id 'out'). Edges connect 'out' → 'in' (or 'out' → 'ref').
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { message } from '../_lib/anthropic.js'
@@ -17,71 +15,71 @@ const NODE_CATALOG = {
     label: 'Text',
     description: 'Holds raw text the user types in (a topic, hook, brief).',
     inputs: [],
-    outputs: ['text'],
+    outputs: ['out'],
     initialProps: { text: '' },
   },
   image_upload: {
     label: 'Reference images',
-    description: 'User-uploaded reference images (urls). Connect to image_gen "references" input to influence generation.',
+    description: 'User-uploaded reference images. Wire its "out" into image_gen "ref" for image-to-image generation.',
     inputs: [],
-    outputs: ['images'],
+    outputs: ['out'],
     initialProps: { urls: [] },
   },
   brand_profile: {
     label: 'Brand profile',
-    description: 'Pulls in a saved brand profile (voice, audience, brand bible, hashtags) and exposes it as context. Connect to script_gen / caption_gen / image_gen "brand" input to keep generations on-brand. Props: profile_id (leave blank for the user to pick in the UI), sync_all (boolean — when true, auto-connects this brand to every node with a "brand" input now and as new ones are added). Set sync_all true when the user wants the entire workflow on a single brand.',
+    description: 'Pulls in a saved brand profile (voice, audience, brand bible, hashtags). Wire its "out" into any generator\'s "in" to keep generations on-brand. Props: profile_id (leave blank for the user to pick), sync_all (boolean — when true, the client auto-wires this brand to every script_gen/caption_gen/image_gen now and as new ones are added; do NOT add manual brand edges yourself when sync_all is true).',
     inputs: [],
-    outputs: ['brand'],
+    outputs: ['out'],
     initialProps: { profile_id: '', sync_all: false },
+  },
+  avatar_picker: {
+    label: 'Avatar',
+    description: 'Selects a HeyGen avatar + optional look + voice. Wire its "out" into avatar_render "in".',
+    inputs: [],
+    outputs: ['out'],
+    initialProps: { avatar_id: '', look_id: '', voice_id: '', model_version: '' },
   },
   script_gen: {
     label: 'Script generator',
-    description: 'Claude writes a script. Pick a format like tiktok-script, ig-post, thread, youtube-short, email-subject, blog-post. Topic supports @-mentions. Optionally connect a brand_profile to its "brand" input.',
-    inputs: ['topic', 'brand'],
-    outputs: ['script', 'title'],
+    description: 'Claude writes a script. props: format (tiktok-script | ig-post | thread | youtube-short | email-subject | blog-post), topic (string, supports @-mentions). The single "in" handle accepts upstream text (topic) and/or a brand profile.',
+    inputs: ['in'],
+    outputs: ['out'],
     initialProps: { format: 'tiktok-script', topic: '' },
   },
   caption_gen: {
     label: 'Caption + hashtags',
-    description: 'Generates a platform caption AND hashtags from a script in one step. props: platform (instagram/tiktok/youtube/x/linkedin), hashtag_count (number). Optional brand_profile input.',
-    inputs: ['script', 'brand'],
-    outputs: ['caption', 'hashtags'],
+    description: 'Generates a platform caption AND hashtags from a script in one step. props: platform (instagram/tiktok/youtube/x/linkedin), hashtag_count (number). The "in" handle accepts the upstream script and an optional brand profile.',
+    inputs: ['in'],
+    outputs: ['out'],
     initialProps: { platform: 'instagram', hashtag_count: 10 },
   },
   image_gen: {
     label: 'Image generator',
-    description: 'KIE image generation. props: prompt (string, supports @-mentions), model (nano-banana/flux-pro/flux-kontext/gpt-image), aspect (1:1/16:9/9:16/4:3/3:4), count (1-8), quality (1K/2K/4K). Connect "references" from an image_upload or image_gen for image-to-image. Optional brand_profile on "brand" prepends voice/style hints to the prompt.',
-    inputs: ['references', 'prompt', 'brand'],
-    outputs: ['images'],
+    description: 'KIE image generation. props: prompt (string, supports @-mentions), model (nano-banana/flux-pro/flux-kontext/gpt-image), aspect (1:1/16:9/9:16/4:3/3:4), count (1-8), quality (1K/2K/4K). The single "in" handle accepts brand context, prompts, AND reference images (image_upload or another image_gen out) — they\'re sorted by data shape.',
+    inputs: ['in'],
+    outputs: ['out'],
     initialProps: { prompt: '', model: 'nano-banana', aspect: '1:1', count: 1, quality: '2K' },
-  },
-  avatar_picker: {
-    label: 'Avatar',
-    description: 'Selects a HeyGen avatar + optional look + voice. Required props: avatar_id, voice_id. Optional: look_id, model_version (v3/v4/v5).',
-    inputs: [],
-    outputs: ['avatar'],
-    initialProps: { avatar_id: '', look_id: '', voice_id: '', model_version: '' },
   },
   avatar_render: {
     label: 'Avatar render',
-    description: 'HeyGen renders the avatar speaking the script. Connect script + avatar.',
-    inputs: ['script', 'avatar'],
-    outputs: ['video'],
+    description: 'HeyGen renders the avatar speaking the script. Wire BOTH the script_gen and the avatar_picker "out" into this node\'s "in" handle (multiple connections to a single handle are allowed and sorted by shape).',
+    inputs: ['in'],
+    outputs: ['out'],
     initialProps: {},
   },
   collection: {
     label: 'Collection',
-    description: 'Catches outputs from any connected node and gathers them into a list (scripts, images, videos, captions). Use to organize/keep multiple results.',
-    inputs: ['items', 'more'],
-    outputs: ['items'],
+    description: 'Catches outputs from any connected node and gathers them into a growing list. Accumulates across runs (deduped by URL/text). Use as a final aggregator for scripts, images, or videos.',
+    inputs: ['in'],
+    outputs: ['out'],
     initialProps: {},
   },
   save_library: {
     label: 'Save to library',
-    description: 'Persist outputs as a content_scripts row. Connect any of: script, caption, hashtags, video, image.',
-    inputs: ['script', 'caption', 'hashtags', 'video', 'image'],
+    description: 'Bundles the incoming script + caption + hashtags + media into a single library entry, tagged with the platforms it should be scheduled for. props: title (optional, auto-derives from script), status (draft|caption_ready|scheduled), platforms (array of strings — any of: instagram, tiktok, youtube, x, threads, linkedin, facebook). The single "in" handle accepts script, caption + hashtags, image(s), or video; the node figures out the post type. For an image+caption Instagram post, set platforms=["instagram"]; for a TikTok video, ["tiktok"]; for a thread/X text post, ["threads","x"]. If unsure, leave platforms empty and the user picks in the UI.',
+    inputs: ['in'],
     outputs: [],
-    initialProps: { title: '', status: 'draft' },
+    initialProps: { title: '', status: 'draft', platforms: [] },
   },
 }
 
@@ -116,9 +114,9 @@ const SYSTEM = `You are a workflow designer for ScaleSolo's node-based content c
     {
       "id": "<short-unique-id>",
       "source": "<node id>",
-      "sourceHandle": "<output handle name>",
+      "sourceHandle": "out",
       "target": "<node id>",
-      "targetHandle": "<input handle name>"
+      "targetHandle": "in"
     }
   ],
   "suggestions": "<one-sentence note to the user about anything they need to fill in (e.g. avatar selection, voice id) — optional>"
@@ -129,21 +127,20 @@ ${nodeRegistryAsText()}
 
 Rules:
 - ONLY use the node types listed above.
-- Always set every node's "type" to "space" — the actual logical type goes inside data.type.
+- Every node's "type" MUST be exactly "space" — the actual logical type goes inside data.type.
 - Every node needs a unique id (short like "n1", "n2", or "n_abc"). Edges reference those ids in source/target.
-- sourceHandle MUST match an output name of the source node's data.type. targetHandle MUST match an input name of the target node's data.type.
-- If the user mentions a specific topic / hook / format, set the corresponding props on text_input or script_gen.
-- For avatar workflows, ALWAYS include an avatar_picker node connected to avatar_render's "avatar" input. Leave avatar_id, voice_id, etc. blank ("") unless the user provides them — they pick those in the UI.
-- Always end with a save_library node when the workflow produces script/caption/hashtags/video.
-- Position nodes left-to-right, top-to-bottom — set rough x/y coordinates (e.g. inputs at x=80, generators at x=460, terminals at x=840). The client will refine the layout.
+- sourceHandle MUST always be "out". targetHandle MUST always be "in".
+- Multiple edges may target the SAME "in" handle on a node; the runtime aggregates them by content shape. So wire BOTH a script and an avatar into avatar_render's single "in" handle.
+- For brand_profile: if the user wants the entire workflow on one brand, set sync_all=true and DO NOT add manual brand edges — the client wires them automatically. Otherwise add explicit "out" → "in" edges to the generators that should receive the brand.
+- For avatar workflows ALWAYS include an avatar_picker connected to avatar_render's "in". Leave avatar_id, voice_id, etc. blank ("") unless the user provides them.
+- Always end pipelines that produce shareable assets with either a save_library or a collection.
+- Position nodes left-to-right by depth (inputs at x≈80, generators at x≈460, terminals at x≈840). The client will refine the layout.
 - Output ONLY the JSON object — no commentary, no code fences.
 - Never use em dashes anywhere. Use commas, periods, or restructured sentences.`
 
-// Auto-layout: if Claude's positions are weird (overlapping, all at 0,0,
-// or just sequential), recompute them via topological depth.
+// Auto-layout: if Claude's positions are weird, recompute them via topo depth.
 function autoLayout(nodes, edges) {
   if (!Array.isArray(nodes) || nodes.length === 0) return nodes
-  // Build inDegree + outgoing
   const inDegree = new Map(nodes.map((n) => [n.id, 0]))
   const outgoing = new Map(nodes.map((n) => [n.id, []]))
   for (const e of edges) {
@@ -152,7 +149,6 @@ function autoLayout(nodes, edges) {
     inDegree.set(e.target, (inDegree.get(e.target) || 0) + 1)
     outgoing.get(e.source).push(e.target)
   }
-  // Kahn's algorithm with depth tracking
   const depth = new Map()
   const queue = nodes.filter((n) => (inDegree.get(n.id) || 0) === 0)
   for (const n of queue) depth.set(n.id, 0)
@@ -166,7 +162,6 @@ function autoLayout(nodes, edges) {
       if (next === 0) queue.push(nodes.find((x) => x.id === tid))
     }
   }
-  // Group by depth
   const byDepth = new Map()
   for (const n of nodes) {
     const d = depth.get(n.id) ?? 0
@@ -197,7 +192,6 @@ export default async function handler(req, res) {
     if (!profile_id || !instruction) return res.status(400).json({ error: 'profile_id + instruction required' })
     await assertProfileAccess(auth.user.id, profile_id)
 
-    // Pre-flight credit check
     const cust = await supaFetch(`billing_customers?user_id=eq.${auth.user.id}&select=id`)
     const customerId = cust?.[0]?.id
     if (customerId) {
@@ -237,7 +231,6 @@ export default async function handler(req, res) {
       return res.status(502).json({ error: 'AI returned invalid JSON', raw: text.slice(0, 800) })
     }
 
-    // Validate + sanitize nodes
     const nodes = (Array.isArray(parsed.nodes) ? parsed.nodes : [])
       .filter((n) => n && n.data && VALID_TYPES.has(n.data.type))
       .map((n) => {
@@ -266,18 +259,17 @@ export default async function handler(req, res) {
         id: e.id || `e_${Math.random().toString(36).slice(2, 8)}`,
         source: e.source,
         target: e.target,
-        sourceHandle: e.sourceHandle || null,
-        targetHandle: e.targetHandle || null,
+        // Force the simplified handle scheme regardless of what the model returns.
+        sourceHandle: 'out',
+        targetHandle: 'in',
         type: 'smoothstep',
         animated: true,
         markerEnd: { type: 'arrowclosed' },
         style: { stroke: '#ef4444', strokeWidth: 1.5 },
       }))
 
-    // Auto-layout overrides Claude's positions for consistency.
     autoLayout(nodes, edges)
 
-    // Meter credits (best-effort)
     if (customerId && resp.usage) {
       const total = (resp.usage.input_tokens || 0) + (resp.usage.output_tokens || 0)
       if (total > 0) {
