@@ -97,14 +97,8 @@ function GenerateModal({ profileId, onClose, onCreated }) {
   }
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)',
-      display: 'grid', placeItems: 'center', zIndex: 100, padding: 24,
-    }} onClick={onClose}>
-      <div style={{
-        width: '100%', maxWidth: 560, background: 'var(--surface)',
-        border: '1px solid var(--border)', borderRadius: 16, padding: 28,
-      }} onClick={(e) => e.stopPropagation()} className="fade-up">
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card modal-card-md" onClick={(e) => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 18 }}>
           <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg, var(--red), var(--red-dark))', color: '#fff', display: 'grid', placeItems: 'center', marginRight: 10 }}>
             <Wand2 size={16} />
@@ -202,14 +196,8 @@ function ItemDetail({ item, onClose, onUpdate }) {
   const pill = STATUS_PILL[item.status] || STATUS_PILL.draft
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)',
-      display: 'grid', placeItems: 'center', zIndex: 100, padding: 24,
-    }} onClick={onClose}>
-      <div style={{
-        width: '100%', maxWidth: 720, maxHeight: '90vh', overflow: 'auto',
-        background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: 28,
-      }} onClick={(e) => e.stopPropagation()} className="fade-up">
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card modal-card-lg" onClick={(e) => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, flex: 1, lineHeight: 1.3 }}>
             {item.title || 'Untitled'}

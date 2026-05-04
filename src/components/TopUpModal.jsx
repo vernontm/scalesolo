@@ -3,26 +3,7 @@ import { X, Sparkles, Video, Mic, ExternalLink } from 'lucide-react'
 import { useCredits, POOL_META } from '../context/CreditsContext.jsx'
 import { supabase } from '../lib/supabase.js'
 
-const overlay = {
-  position: 'fixed', inset: 0, zIndex: 100,
-  background: 'rgba(0,0,0,0.55)',
-  display: 'grid', placeItems: 'center',
-  padding: 24,
-  backdropFilter: 'blur(4px)',
-  animation: 'fadeIn 0.2s ease forwards',
-}
-const card = {
-  width: '100%',
-  maxWidth: 520,
-  background: 'var(--surface)',
-  border: '1px solid var(--border)',
-  borderRadius: 18,
-  padding: 28,
-  boxShadow: 'var(--shadow-pop)',
-  position: 'relative',
-  maxHeight: '85vh',
-  overflowY: 'auto',
-}
+// (uses .modal-overlay + .modal-card from global.css)
 const close = {
   position: 'absolute', top: 14, right: 14,
   background: 'transparent', border: 'none',
@@ -122,8 +103,8 @@ export default function TopUpModal({ pool, onClose }) {
   }
 
   return (
-    <div style={overlay} onClick={onClose}>
-      <div style={card} onClick={(e) => e.stopPropagation()} className="fade-up">
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card modal-card-md" style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
         <button style={close} onClick={onClose} aria-label="Close"><X size={18} /></button>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>

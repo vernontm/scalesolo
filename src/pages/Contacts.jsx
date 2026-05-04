@@ -90,14 +90,8 @@ function ImportModal({ profileId, onClose, onDone }) {
   }
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)',
-      display: 'grid', placeItems: 'center', zIndex: 100, padding: 24,
-    }} onClick={onClose}>
-      <div style={{
-        width: '100%', maxWidth: 720, maxHeight: '85vh', overflow: 'auto',
-        background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: 28,
-      }} onClick={(e) => e.stopPropagation()} className="fade-up">
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card modal-card-lg" onClick={(e) => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 20 }}>
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, flex: 1 }}>Import contacts from CSV</h3>
           <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}><X size={20} /></button>
