@@ -347,6 +347,24 @@ function ImageGenBody({ data, onPatch }) {
         value={data.props?.prompt || ''}
         onChange={(e) => onPatch({ prompt: e.target.value })}
       />
+      {(() => {
+        const tokens = Array.from(new Set(
+          (data.props?.prompt || '').match(/@(?:"[^"]+"|[A-Za-z0-9_-]+)/g) || []
+        ))
+        if (!tokens.length) return null
+        return (
+          <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {tokens.map((t) => (
+              <span key={t} style={{
+                fontSize: 10, padding: '2px 7px', borderRadius: 999,
+                background: 'rgba(168,85,247,0.18)', color: '#c4b5fd',
+                border: '1px solid rgba(168,85,247,0.5)',
+                fontFamily: 'var(--font-display)', fontWeight: 700,
+              }}>{t}</span>
+            ))}
+          </div>
+        )
+      })()}
 
       <div style={pillRow}>
         <select style={pillSelect} value={data.props?.model || 'nano-banana-2'} onChange={(e) => onPatch({ model: e.target.value })}>

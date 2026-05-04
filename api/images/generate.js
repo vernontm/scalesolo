@@ -10,15 +10,19 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 
-// UI model id → KIE model slug.
+// UI model id → KIE model slug. KIE's catalog is the source of truth here;
+// guessed names like "nano-banana-2" / "nano-banana-pro" don't exist on
+// their side, so we map our friendly labels to real KIE models.
 const MODEL_MAP = {
-  'nano-banana-2':    'google/nano-banana-2',
-  'nano-banana-pro':  'google/nano-banana-pro',
-  'gpt-2':            'openai/gpt-image-2',
-  // Back-compat aliases for older saved nodes
-  'nano-banana':      'google/nano-banana-2',
-  'flux-pro':         'google/nano-banana-pro',
-  'gpt-image':        'openai/gpt-image-2',
+  // Friendly labels used by the UI dropdown
+  'nano-banana-2':    'google/nano-banana',          // basic text→image
+  'nano-banana-pro':  'google/nano-banana-edit',     // image→image / multi-ref
+  'gpt-2':            'openai/gpt-image-1',
+  // Back-compat aliases for older saved values
+  'nano-banana':      'google/nano-banana',
+  'flux-pro':         'google/nano-banana-edit',
+  'flux-kontext':     'google/nano-banana-edit',
+  'gpt-image':        'openai/gpt-image-1',
 }
 
 // KIE accepts "auto" or specific aspect strings like "1:1". For the unified
