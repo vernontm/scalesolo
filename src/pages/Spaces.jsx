@@ -12,7 +12,7 @@ import '@xyflow/react/dist/style.css'
 
 import {
   Plus, Play, Save, Trash2, ArrowLeft, Sparkles, Zap, Boxes, AlertCircle,
-  GripHorizontal, Minimize2, Maximize2,
+  GripHorizontal, Minimize2, Maximize2, Wand2, MessageSquare, Send,
 } from 'lucide-react'
 import { useRef } from 'react'
 // (useEffect already imported above for other effects in this file)
@@ -353,6 +353,10 @@ function SpaceBuilder({ space, onSave, onClose }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [avatars, setAvatars] = useState([])
+  // AI workflow build
+  const [aiPrompt, setAiPrompt] = useState('')
+  const [aiBuilding, setAiBuilding] = useState(false)
+  const [aiSuggestion, setAiSuggestion] = useState(null)
 
   // Load avatars for the profile so the AvatarPicker node can list them.
   useEffect(() => {
@@ -426,6 +430,34 @@ function SpaceBuilder({ space, onSave, onClose }) {
     finally { setBusy(false) }
   }
 
+  const aiBuild = async () => {
+    if (!aiPrompt.trim()) return
+    setAiBuilding(true); setError(null); setAiSuggestion(null)
+    try {
+      const r = await fetch('/api/spaces/build', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({
+          profile_id: selectedProfileId,
+          instruction: aiPrompt,
+          current_nodes: nodes.length ? nodes : null,
+          current_edges: edges.length ? edges : null,
+        }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
+      if (Array.isArray(body.nodes)) setNodes(body.nodes)
+      if (Array.isArray(body.edges)) setEdges(body.edges)
+      setAiSuggestion(body.suggestions || null)
+      setAiPrompt('')
+      refreshCredits()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setAiBuilding(false)
+    }
+  }
+
   const run = async () => {
     if (running) return
     setRunning(true); setError(null)
@@ -494,18 +526,83 @@ function SpaceBuilder({ space, onSave, onClose }) {
     <div className="space-builder-overlay" style={overlayStyle}>
       <div style={toolbarStyle}>
         <button className="btn-ghost" onClick={onClose}><ArrowLeft size={14} /> Spaces</button>
-        <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Space name" style={{ flex: 1, fontWeight: 600 }} />
+        <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Space name" style={{ width: 220, flex: '0 0 220px', fontWeight: 600 }} />
+
+        {/* AI workflow build chat input — always available */}
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '0 4px 0 10px' }}>
+          {nodes.length === 0 ? <Wand2 size={14} style={{ color: 'var(--red)' }} /> : <MessageSquare size={14} style={{ color: 'var(--red)' }} />}
+          <input
+            type="text"
+            placeholder={nodes.length === 0
+              ? "Describe a workflow (e.g. 'create scripts then turn them into avatar videos')"
+              : "Tell the AI what to add or change…"}
+            value={aiPrompt}
+            onChange={(e) => setAiPrompt(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') aiBuild() }}
+            disabled={aiBuilding}
+            style={{
+              flex: 1, height: 36,
+              background: 'transparent', border: 'none', outline: 'none',
+              color: 'var(--text)', fontSize: 13, fontFamily: 'inherit',
+            }}
+          />
+          <button
+            onClick={aiBuild}
+            disabled={aiBuilding || !aiPrompt.trim()}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              height: 30, padding: '0 12px', borderRadius: 7,
+              background: aiPrompt.trim() ? 'linear-gradient(135deg, var(--red), var(--red-dark))' : 'var(--surface-2)',
+              color: aiPrompt.trim() ? '#fff' : 'var(--muted)',
+              border: 'none', cursor: aiPrompt.trim() ? 'pointer' : 'not-allowed',
+              fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 12,
+            }}
+          >
+            {aiBuilding ? <span className="spinner" /> : <Send size={12} />}
+            {nodes.length === 0 ? 'Build' : 'Update'}
+          </button>
+        </div>
+
         <button className="btn-secondary" onClick={save} disabled={busy}>
           {busy ? <span className="spinner" /> : <Save size={13} />} Save
         </button>
         <button className="btn-primary" onClick={run} disabled={running || nodes.length === 0}>
-          {running ? <span className="spinner" /> : <Play size={13} />} Run workflow
+          {running ? <span className="spinner" /> : <Play size={13} />} Run
         </button>
       </div>
 
       {error && (
         <div style={{ padding: '10px 14px', background: 'var(--red-soft)', color: 'var(--red)', fontSize: 12.5, borderBottom: '1px solid rgba(239,68,68,0.25)' }}>
           <AlertCircle size={13} style={{ verticalAlign: '-2px' }} /> {error}
+        </div>
+      )}
+      {aiSuggestion && (
+        <div style={{ padding: '8px 14px', background: 'rgba(245,158,11,0.10)', color: '#f59e0b', fontSize: 12.5, borderBottom: '1px solid rgba(245,158,11,0.25)' }}>
+          <Wand2 size={12} style={{ verticalAlign: '-2px', marginRight: 6 }} />
+          {aiSuggestion}
+          <button onClick={() => setAiSuggestion(null)} style={{ float: 'right', background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, fontSize: 14 }}>×</button>
+        </div>
+      )}
+      {aiBuilding && (
+        <div className="modal-overlay" style={{ zIndex: 110 }}>
+          <div className="modal-card modal-card-md" style={{ textAlign: 'center', padding: 36 }}>
+            <div style={{ width: 52, height: 52, borderRadius: 14, margin: '0 auto 14px', background: 'linear-gradient(135deg, var(--red), var(--red-dark))', color: '#fff', display: 'grid', placeItems: 'center', boxShadow: '0 8px 24px rgba(239,68,68,0.32)' }} className="pulse">
+              <Wand2 size={22} />
+            </div>
+            <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 18, marginBottom: 6 }}>Designing your workflow</div>
+            <div style={{ color: 'var(--muted)', fontSize: 13.5, marginBottom: 14 }}>
+              Picking nodes, wiring inputs and outputs, and laying it out on the canvas.
+            </div>
+            <div style={{ height: 6, background: 'var(--surface-2)', borderRadius: 999, overflow: 'hidden', border: '1px solid var(--border)' }}>
+              <div style={{
+                width: '70%', height: '100%',
+                background: 'linear-gradient(90deg, var(--red), var(--red-dark), var(--red))',
+                backgroundSize: '200% 100%',
+                animation: 'shimmer 1.4s linear infinite',
+                boxShadow: '0 0 12px rgba(239,68,68,0.5)',
+              }} />
+            </div>
+          </div>
         </div>
       )}
 
@@ -538,17 +635,20 @@ function SpaceBuilder({ space, onSave, onClose }) {
 
         <FloatingPalette onAdd={(type) => addNode(type)} />
 
-        {nodes.length === 0 && (
+        {nodes.length === 0 && !aiBuilding && (
           <div style={{
             position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-            textAlign: 'center', color: 'var(--muted)', pointerEvents: 'none', maxWidth: 420,
+            textAlign: 'center', color: 'var(--muted)', pointerEvents: 'none', maxWidth: 480,
           }}>
-            <Sparkles size={32} style={{ marginBottom: 12 }} />
+            <Wand2 size={32} style={{ marginBottom: 12 }} />
             <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--text)', fontSize: 16, marginBottom: 6 }}>
-              Build a content workflow
+              Describe a workflow and the AI builds it
             </div>
-            <div style={{ fontSize: 13, lineHeight: 1.55 }}>
-              Drag a node from the floating palette, drop it on the canvas, then drag handle to handle to wire it up. Two-finger trackpad scrolls the canvas. Cmd/Ctrl + scroll zooms.
+            <div style={{ fontSize: 13, lineHeight: 1.55, marginBottom: 14 }}>
+              Type something like <em>“create scripts, then render avatar videos and save to library”</em> in the bar above, hit Build, and a connected node graph appears.
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.55 }}>
+              Or drag nodes from the floating palette manually. Two-finger trackpad pans the canvas. Cmd/Ctrl + scroll zooms.
             </div>
           </div>
         )}
