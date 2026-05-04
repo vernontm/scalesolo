@@ -14,6 +14,7 @@ import Forms from './pages/Forms.jsx'
 import Contacts from './pages/Contacts.jsx'
 import Profiles from './pages/Profiles.jsx'
 import Content from './pages/Content.jsx'
+import Avatars from './pages/Avatars.jsx'
 import FormPublic from './pages/FormPublic.jsx'
 import GlobalAgent from './components/GlobalAgent.jsx'
 import { useAuth } from './context/AuthContext.jsx'
@@ -92,7 +93,7 @@ function AppShell() {
             <Route path="/pipeline"  element={<Pipeline />} />
             <Route path="/forms"     element={<Forms />} />
             <Route path="/landing"   element={<Placeholder title="Landing pages" hint="Section-based page builder. Built in Milestone 7." />} />
-            <Route path="/avatars"   element={<Placeholder title="Avatars & voice" hint="HeyGen avatars, ElevenLabs voice clones, render composer. Polished in Milestone 6." />} />
+            <Route path="/avatars"   element={<Avatars />} />
             <Route path="/analytics" element={<Placeholder title="Analytics" hint="Cross-platform performance with AI-narrated insights. Polished in Milestone 6." />} />
             <Route path="/agent"     element={<Agent />} />
             <Route path="/profiles"  element={<Profiles />} />
