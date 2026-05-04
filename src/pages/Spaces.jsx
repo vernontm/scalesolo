@@ -169,7 +169,7 @@ function SpaceNode({ id, data, selected }) {
 
   return (
     <div style={card}>
-      {/* Inputs — small "in" pill, hover the dot for a tooltip with the full label. */}
+      {/* Inputs — drop-only (can't start a drag from here, no backward edges). */}
       {def.inputs.map((inp, i) => (
         <Handle
           key={`in-${inp.id}`}
@@ -178,6 +178,7 @@ function SpaceNode({ id, data, selected }) {
           id={inp.id}
           title={inp.label}
           className="space-handle"
+          isConnectableStart={false}
           style={{
             top: `${(i + 1) * inHandleSpacing}%`,
             background: def.color || 'var(--red)',
@@ -195,7 +196,7 @@ function SpaceNode({ id, data, selected }) {
         </Handle>
       ))}
 
-      {/* Outputs */}
+      {/* Outputs — drag-only source. Cannot be dropped onto. */}
       {def.outputs.map((out, i) => (
         <Handle
           key={`out-${out.id}`}
@@ -204,6 +205,7 @@ function SpaceNode({ id, data, selected }) {
           id={out.id}
           title={out.label}
           className="space-handle"
+          isConnectableEnd={false}
           style={{
             top: `${(i + 1) * outHandleSpacing}%`,
             background: def.color || 'var(--red)',
@@ -250,6 +252,33 @@ function SpaceNode({ id, data, selected }) {
 
 const NODE_TYPES = { space: SpaceNode }
 const EDGE_TYPES = { scissor: ScissorEdge }
+
+// Which source handle ids each target handle id is willing to accept.
+// '*' means "anything is fine" — used by collection/save_library that take
+// a heterogeneous bag of upstream outputs.
+const HANDLE_COMPAT = {
+  topic:      ['text', 'script', 'caption', 'hashtags', 'title'],
+  brand:      ['brand'],
+  script:     ['script', 'text'],
+  references: ['images', 'image'],
+  prompt:     ['text', 'caption', 'script'],
+  avatar:     ['avatar'],
+  video:      ['video'],
+  image:      ['images', 'image'],
+  caption:    ['caption', 'text'],
+  hashtags:   ['hashtags', 'text'],
+  items:      ['*'],
+  more:       ['*'],
+}
+
+function isValidSpaceConnection(conn) {
+  if (!conn?.source || !conn?.target) return false
+  if (conn.source === conn.target) return false                    // no self-loops
+  const allowed = HANDLE_COMPAT[conn.targetHandle]
+  if (!allowed) return true                                        // unknown target → permissive
+  if (allowed.includes('*')) return true
+  return allowed.includes(conn.sourceHandle)
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // List view
@@ -859,6 +888,8 @@ function SpaceBuilder({ space, onSave, onClose }) {
           onConnect={onConnect}
           nodeTypes={NODE_TYPES}
           edgeTypes={EDGE_TYPES}
+          isValidConnection={isValidSpaceConnection}
+          connectionMode="strict"
           fitView
           /* Two-finger trackpad vertical scroll → zoom in/out.
              Horizontal scroll still pans sideways. Drag pans the canvas. */
