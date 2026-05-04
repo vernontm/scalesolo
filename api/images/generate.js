@@ -25,8 +25,7 @@ const MODEL_MAP = {
   'gpt-image':        'openai/gpt-image-1',
 }
 
-// KIE accepts "auto" or specific aspect strings like "1:1". For the unified
-// jobs API the canonical input field name is "image_size".
+// KIE accepts "auto" or specific aspect strings like "1:1".
 function buildInput(model, { prompt, aspect, count, quality, reference_urls }) {
   const base = {
     prompt,
@@ -35,12 +34,24 @@ function buildInput(model, { prompt, aspect, count, quality, reference_urls }) {
     num_images: Math.max(1, Math.min(8, Number(count) || 1)),
   }
   if (Array.isArray(reference_urls) && reference_urls.length) {
-    // KIE uses image_url (array) for reference / image-to-image
-    base.image_url = reference_urls
+    // Different KIE models accept slightly different field names — set both
+    // forms so whichever the model expects gets through.
+    base.image_urls = reference_urls
+    base.image_url = reference_urls.length === 1 ? reference_urls[0] : reference_urls
   }
-  // Quality tweak — only some models accept this; harmless extra key for others.
   if (quality) base.quality = quality
   return base
+}
+
+// If the user picked a text-only model but wired up reference images, auto
+// upgrade to the edit/multi-reference variant of the same family. Image
+// models that don't support refs silently drop them, which is exactly what
+// confused us before — the woman in the prompt looked nothing like the
+// uploaded references.
+function upgradeIfReferences(kieModel, hasRefs) {
+  if (!hasRefs) return kieModel
+  if (kieModel === 'google/nano-banana') return 'google/nano-banana-edit'
+  return kieModel
 }
 
 function pickError(body, fallbackStatus) {
@@ -103,7 +114,9 @@ export default async function handler(req, res) {
       }
     }
 
-    const kieModel = MODEL_MAP[model] || MODEL_MAP['nano-banana']
+    const baseKieModel = MODEL_MAP[model] || MODEL_MAP['nano-banana-2']
+    const hasRefs = Array.isArray(reference_urls) && reference_urls.length > 0
+    const kieModel = upgradeIfReferences(baseKieModel, hasRefs)
     const input = buildInput(kieModel, { prompt, aspect, count, quality, reference_urls })
 
     // Submit task via the unified jobs endpoint
