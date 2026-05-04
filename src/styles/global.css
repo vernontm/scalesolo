@@ -334,6 +334,13 @@ a { color: inherit; text-decoration: none; }
 @media (max-width: 900px) {
   .app-main { margin-left: 0 !important; }
 }
+
+/* Spaces builder: full-viewport canvas. On desktop the sidebar (240px) stays
+   visible; the overlay starts to its right. On mobile (<900px) the overlay
+   covers the whole viewport since the sidebar is a drawer. */
+@media (min-width: 901px) {
+  .space-builder-overlay { left: 240px !important; }
+}
 @media (max-width: 600px) {
   .modal-card { padding: 22px !important; }
 }

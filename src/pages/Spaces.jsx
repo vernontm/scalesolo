@@ -12,7 +12,9 @@ import '@xyflow/react/dist/style.css'
 
 import {
   Plus, Play, Save, Trash2, ArrowLeft, Sparkles, Zap, Boxes, AlertCircle,
+  GripHorizontal, Minimize2, Maximize2,
 } from 'lucide-react'
+import { useRef } from 'react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { useCredits } from '../context/CreditsContext.jsx'
@@ -181,9 +183,9 @@ function SpacesList({ spaces, onCreate, onOpen, onDelete, error }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Palette (left rail)
+// Floating, draggable, minimizable node palette
 
-function NodePalette({ onAdd }) {
+function FloatingPalette({ onAdd }) {
   const grouped = useMemo(() => {
     const g = {}
     for (const [key, def] of Object.entries(NODE_REGISTRY)) {
@@ -192,55 +194,112 @@ function NodePalette({ onAdd }) {
     }
     return g
   }, [])
-
   const categoryOrder = Object.entries(NODE_CATEGORIES).sort((a, b) => a[1].order - b[1].order)
 
+  // Default position: pinned to top-left of the canvas area, ~24px in.
+  const [pos, setPos] = useState({ x: 24, y: 80 })
+  const [collapsed, setCollapsed] = useState(false)
+  const dragRef = useRef(null)
+
+  const onPointerDown = (e) => {
+    e.preventDefault()
+    const start = { x: e.clientX, y: e.clientY }
+    const startPos = { ...pos }
+    const move = (ev) => {
+      // clamp inside viewport
+      const dx = ev.clientX - start.x
+      const dy = ev.clientY - start.y
+      const w = collapsed ? 200 : 240
+      const h = collapsed ? 44 : 460
+      const nextX = Math.max(8, Math.min(window.innerWidth - w - 8, startPos.x + dx))
+      const nextY = Math.max(8, Math.min(window.innerHeight - h - 8, startPos.y + dy))
+      setPos({ x: nextX, y: nextY })
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+
+  const cardStyle = {
+    position: 'fixed', left: pos.x, top: pos.y,
+    width: collapsed ? 200 : 240,
+    background: 'var(--surface)',
+    border: '1px solid var(--border)',
+    borderRadius: 12,
+    boxShadow: '0 16px 36px rgba(0,0,0,0.45)',
+    zIndex: 50,
+    userSelect: 'none',
+    overflow: 'hidden',
+    transition: 'width 0.18s var(--ease)',
+  }
+  const headerStyle = {
+    display: 'flex', alignItems: 'center', gap: 8,
+    padding: '10px 12px',
+    background: 'var(--surface-2)',
+    borderBottom: collapsed ? 'none' : '1px solid var(--border)',
+    cursor: 'grab',
+  }
+  const bodyStyle = {
+    padding: 10,
+    maxHeight: 'min(60vh, 440px)',
+    overflowY: 'auto',
+  }
+
   return (
-    <aside style={{
-      width: 220, flexShrink: 0,
-      background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14,
-      padding: 12, overflowY: 'auto',
-      maxHeight: 'calc(100vh - 110px)',
-    }}>
-      <div style={{ fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 10 }}>
-        Nodes
+    <div ref={dragRef} style={cardStyle}>
+      <div style={headerStyle} onPointerDown={onPointerDown}>
+        <GripHorizontal size={14} style={{ color: 'var(--muted)' }} />
+        <div style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 12, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text)' }}>Nodes</div>
+        <button
+          onClick={(e) => { e.stopPropagation(); setCollapsed((v) => !v) }}
+          style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 4 }}
+          title={collapsed ? 'Expand' : 'Minimize'}
+        >
+          {collapsed ? <Maximize2 size={13} /> : <Minimize2 size={13} />}
+        </button>
       </div>
-      {categoryOrder.map(([catKey, cat]) => (
-        <div key={catKey} style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 6 }}>{cat.label}</div>
-          {(grouped[catKey] || []).map(({ key, def }) => {
-            const Icon = def.icon
-            return (
-              <button
-                key={key}
-                onClick={() => onAdd(key)}
-                draggable
-                onDragStart={(e) => { e.dataTransfer.setData('application/scalesolo-node', key); e.dataTransfer.effectAllowed = 'move' }}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  width: '100%',
-                  padding: '8px 10px',
-                  marginBottom: 4,
-                  background: 'var(--surface-2)', border: '1px solid var(--border)',
-                  borderRadius: 8, cursor: 'grab',
-                  color: 'var(--text)', textAlign: 'left',
-                  fontFamily: 'var(--font-display)', fontSize: 12, fontWeight: 600,
-                  transition: 'border-color 0.12s ease',
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.borderColor = `${def.color}66` }}
-                onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)' }}
-                title={def.description}
-              >
-                <div style={{ width: 22, height: 22, borderRadius: 5, background: def.color, color: '#fff', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
-                  <Icon size={12} />
-                </div>
-                {def.label}
-              </button>
-            )
-          })}
+      {!collapsed && (
+        <div style={bodyStyle}>
+          {categoryOrder.map(([catKey, cat]) => (
+            <div key={catKey} style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 6 }}>{cat.label}</div>
+              {(grouped[catKey] || []).map(({ key, def }) => {
+                const Icon = def.icon
+                return (
+                  <button
+                    key={key}
+                    onClick={() => onAdd(key)}
+                    draggable
+                    onDragStart={(e) => { e.dataTransfer.setData('application/scalesolo-node', key); e.dataTransfer.effectAllowed = 'move' }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      width: '100%',
+                      padding: '7px 10px', marginBottom: 4,
+                      background: 'var(--surface-2)', border: '1px solid var(--border)',
+                      borderRadius: 8, cursor: 'grab',
+                      color: 'var(--text)', textAlign: 'left',
+                      fontFamily: 'var(--font-display)', fontSize: 12, fontWeight: 600,
+                      transition: 'border-color 0.12s ease',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = `${def.color}66` }}
+                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)' }}
+                    title={def.description}
+                  >
+                    <div style={{ width: 22, height: 22, borderRadius: 5, background: def.color, color: '#fff', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+                      <Icon size={12} />
+                    </div>
+                    {def.label}
+                  </button>
+                )
+              })}
+            </div>
+          ))}
         </div>
-      ))}
-    </aside>
+      )}
+    </div>
   )
 }
 
@@ -368,63 +427,97 @@ function SpaceBuilder({ space, onSave, onClose }) {
     [nodes, avatars]
   )
 
+  // Lock body scroll while the builder is mounted (it uses position:fixed).
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prev }
+  }, [])
+
+  // The builder is rendered as a full-viewport overlay so it escapes the
+  // <main> content padding and max-width. The desktop sidebar still shows
+  // through underneath; on mobile the overlay covers the whole screen.
+  const overlayStyle = {
+    position: 'fixed',
+    top: 0, right: 0, bottom: 0,
+    left: 0,                         // mobile-first; desktop overrides via media class
+    background: 'var(--bg)',
+    zIndex: 40,
+    display: 'flex', flexDirection: 'column',
+  }
+  const toolbarStyle = {
+    display: 'flex', alignItems: 'center', gap: 8,
+    padding: '10px 14px',
+    background: 'color-mix(in srgb, var(--bg) 85%, transparent)',
+    borderBottom: '1px solid var(--border)',
+    backdropFilter: 'blur(10px)',
+    WebkitBackdropFilter: 'blur(10px)',
+  }
+
   return (
-    <div className="fade-up" style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-      <NodePalette onAdd={(type) => addNode(type)} />
+    <div className="space-builder-overlay" style={overlayStyle}>
+      <div style={toolbarStyle}>
+        <button className="btn-ghost" onClick={onClose}><ArrowLeft size={14} /> Spaces</button>
+        <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Space name" style={{ flex: 1, fontWeight: 600 }} />
+        <button className="btn-secondary" onClick={save} disabled={busy}>
+          {busy ? <span className="spinner" /> : <Save size={13} />} Save
+        </button>
+        <button className="btn-primary" onClick={run} disabled={running || nodes.length === 0}>
+          {running ? <span className="spinner" /> : <Play size={13} />} Run workflow
+        </button>
+      </div>
 
-      <section className="card-flat" style={{ flex: 1, padding: 0, overflow: 'hidden', height: 'calc(100vh - 110px)', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 12, borderBottom: '1px solid var(--border)' }}>
-          <button className="btn-ghost" onClick={onClose}><ArrowLeft size={14} /> Spaces</button>
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Space name" style={{ flex: 1, fontWeight: 600 }} />
-          <button className="btn-secondary" onClick={save} disabled={busy}>
-            {busy ? <span className="spinner" /> : <Save size={13} />} Save
-          </button>
-          <button className="btn-primary" onClick={run} disabled={running || nodes.length === 0}>
-            {running ? <span className="spinner" /> : <Play size={13} />} Run workflow
-          </button>
+      {error && (
+        <div style={{ padding: '10px 14px', background: 'var(--red-soft)', color: 'var(--red)', fontSize: 12.5, borderBottom: '1px solid rgba(239,68,68,0.25)' }}>
+          <AlertCircle size={13} style={{ verticalAlign: '-2px' }} /> {error}
         </div>
+      )}
 
-        {error && (
-          <div style={{ padding: '10px 14px', background: 'var(--red-soft)', color: 'var(--red)', fontSize: 12.5, borderBottom: '1px solid rgba(239,68,68,0.25)' }}>
-            <AlertCircle size={13} style={{ verticalAlign: '-2px' }} /> {error}
+      <div
+        style={{ flex: 1, position: 'relative', minHeight: 0 }}
+        onDrop={onDrop}
+        onDragOver={onDragOver}
+      >
+        <ReactFlow
+          nodes={renderNodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          nodeTypes={NODE_TYPES}
+          fitView
+          /* Two-finger trackpad scroll → pan the viewport.
+             Drag (mouse) still pans because panOnDrag defaults to true. */
+          panOnScroll
+          panOnScrollSpeed={0.8}
+          zoomOnScroll={false}
+          zoomOnPinch
+          /* Trackpad wheel + ctrl/cmd zooms (standard zoom gesture). */
+          defaultEdgeOptions={{ type: 'smoothstep', animated: true, style: { stroke: 'var(--red)', strokeWidth: 1.5 } }}
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background color="var(--border)" gap={20} size={1} />
+          <Controls position="bottom-left" showInteractive={false} />
+        </ReactFlow>
+
+        <FloatingPalette onAdd={(type) => addNode(type)} />
+
+        {nodes.length === 0 && (
+          <div style={{
+            position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+            textAlign: 'center', color: 'var(--muted)', pointerEvents: 'none', maxWidth: 420,
+          }}>
+            <Sparkles size={32} style={{ marginBottom: 12 }} />
+            <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--text)', fontSize: 16, marginBottom: 6 }}>
+              Build a content workflow
+            </div>
+            <div style={{ fontSize: 13, lineHeight: 1.55 }}>
+              Drag a node from the floating palette, drop it on the canvas, then drag handle to handle to wire it up. Two-finger trackpad scrolls the canvas. Cmd/Ctrl + scroll zooms.
+            </div>
           </div>
         )}
-
-        <div
-          style={{ flex: 1, position: 'relative' }}
-          onDrop={onDrop}
-          onDragOver={onDragOver}
-        >
-          <ReactFlow
-            nodes={renderNodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            nodeTypes={NODE_TYPES}
-            fitView
-            defaultEdgeOptions={{ type: 'smoothstep', animated: true, style: { stroke: 'var(--red)', strokeWidth: 1.5 } }}
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background color="var(--border)" gap={20} size={1} />
-            <Controls position="bottom-left" />
-          </ReactFlow>
-          {nodes.length === 0 && (
-            <div style={{
-              position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-              textAlign: 'center', color: 'var(--muted)', pointerEvents: 'none', maxWidth: 380,
-            }}>
-              <Sparkles size={32} style={{ marginBottom: 12 }} />
-              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--text)', fontSize: 16, marginBottom: 6 }}>
-                Build a content workflow
-              </div>
-              <div style={{ fontSize: 13, lineHeight: 1.5 }}>
-                Drag a node from the left, drop it on the canvas, then drag handle to handle to wire it up. Hit <strong>Run workflow</strong> to execute the chain.
-              </div>
-            </div>
-          )}
-        </div>
-      </section>
+      </div>
     </div>
   )
 }
