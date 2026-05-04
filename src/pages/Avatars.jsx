@@ -6,20 +6,28 @@ import {
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { useCredits } from '../context/CreditsContext.jsx'
+import { supabase } from '../lib/supabase.js'
+
+// Upload a File directly to Supabase Storage (avatar-media bucket) and return
+// the public URL. Bypasses Vercel's ~4.5MB request body limit entirely.
+async function uploadToStorage(file, profileId) {
+  const ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
+  const path = `${profileId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+  const { error } = await supabase.storage.from('avatar-media').upload(path, file, {
+    contentType: file.type || 'image/jpeg',
+    upsert: false,
+  })
+  if (error) throw new Error(`Storage upload failed: ${error.message}`)
+  const { data } = supabase.storage.from('avatar-media').getPublicUrl(path)
+  return data.publicUrl
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 const fmtUsd = (cents) => `$${(Number(cents) / 100).toFixed(2)}`
 const fmtSeconds = (s) => `${Math.round(s)}s`
 
-function readFileAsDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader()
-    r.onload = () => resolve(r.result)
-    r.onerror = reject
-    r.readAsDataURL(file)
-  })
-}
+// (data-URL helper removed — we now upload to Storage directly)
 
 function estimateDurationSecs(text) {
   const words = (text || '').trim().split(/\s+/).filter(Boolean).length
@@ -120,7 +128,9 @@ function CreateAvatarModal({ profileId, models, onClose, onCreated }) {
     if (!name.trim() || !photoFile) return
     setBusy(true); setError(null)
     try {
-      const dataUrl = await readFileAsDataUrl(photoFile)
+      // 1. Upload the binary directly to Supabase Storage (no Vercel size cap).
+      const photoUrl = await uploadToStorage(photoFile, profileId)
+      // 2. Hand the URL to our API; HeyGen mints a talking_photo from it.
       const r = await fetch('/api/avatars/upload-photo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
@@ -128,11 +138,11 @@ function CreateAvatarModal({ profileId, models, onClose, onCreated }) {
           profile_id: profileId,
           name: name.trim(),
           model_version: model,
-          photo_data_url: dataUrl,
+          photo_url: photoUrl,
         }),
       })
-      const body = await r.json()
-      if (!r.ok) throw new Error(body.error || 'Upload failed')
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(body.error || `Upload failed (${r.status})`)
       onCreated(body.avatar, body.training_error)
     } catch (e) { setError(e.message) }
     finally { setBusy(false) }
@@ -403,14 +413,14 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
     if (!file) return
     setBusy(true); setError(null)
     try {
-      const dataUrl = await readFileAsDataUrl(file)
+      const photoUrl = await uploadToStorage(file, avatar.profile_id)
       const r = await fetch('/api/avatars/upload-look', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ avatar_id: avatar.id, photo_data_url: dataUrl }),
+        body: JSON.stringify({ avatar_id: avatar.id, photo_url: photoUrl }),
       })
-      const body = await r.json()
-      if (!r.ok) throw new Error(body.error || 'Upload failed')
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(body.error || `Upload failed (${r.status})`)
       onChange()
     } catch (e) { setError(e.message) }
     finally { setBusy(false) }
