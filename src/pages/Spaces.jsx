@@ -14,14 +14,14 @@ import '@xyflow/react/dist/style.css'
 import {
   Plus, Play, Save, Trash2, ArrowLeft, Sparkles, Zap, Boxes, AlertCircle,
   GripHorizontal, Minimize2, Maximize2, Wand2, MessageSquare, Send,
-  ZoomIn, ZoomOut, Maximize, Scissors,
+  ZoomIn, ZoomOut, Maximize, Scissors, Download, X,
 } from 'lucide-react'
 import { useRef } from 'react'
 // (useEffect already imported above for other effects in this file)
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { useCredits } from '../context/CreditsContext.jsx'
-import { NODE_REGISTRY, NODE_CATEGORIES, runSpace } from '../lib/space-nodes.jsx'
+import { NODE_REGISTRY, NODE_CATEGORIES, runSpace, downloadUrl } from '../lib/space-nodes.jsx'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom node renderer (one component for every registered type)
@@ -145,7 +145,6 @@ function SpaceNode({ id, data, selected }) {
     color: 'var(--text)',
   }
   const statusPill = {
-    marginLeft: 'auto',
     fontSize: 10, fontFamily: 'var(--font-display)', fontWeight: 700,
     letterSpacing: '0.06em', textTransform: 'uppercase',
     padding: '3px 7px', borderRadius: 999,
@@ -225,10 +224,23 @@ function SpaceNode({ id, data, selected }) {
           <Icon size={13} />
         </div>
         <NodeTitle id={id} fallback={def.label} value={data.name || def.label} />
+        <button
+          type="button"
+          title="Run this node (and any unrun upstream)"
+          onClick={(e) => { e.stopPropagation(); window.__spaceRunFromNode?.(id) }}
+          style={{
+            marginLeft: 'auto',
+            background: 'transparent', border: 'none',
+            color: status === 'running' ? 'var(--amber)' : 'var(--muted)',
+            cursor: status === 'running' ? 'wait' : 'pointer',
+            padding: 4, borderRadius: 4, display: 'grid', placeItems: 'center',
+          }}
+          disabled={status === 'running'}
+        ><Play size={12} /></button>
         <span style={statusPill}>{status}</span>
       </div>
       <div style={{ padding: 12 }}>
-        <Body data={data} onPatch={onPatch} />
+        <Body data={{ ...data, __id: id }} onPatch={onPatch} />
       </div>
     </div>
   )
@@ -474,6 +486,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
   // AI workflow build
   const [aiPrompt, setAiPrompt] = useState('')
   const [aiBuilding, setAiBuilding] = useState(false)
+  const [previewItem, setPreviewItem] = useState(null)  // { url, type } for fullscreen preview
   const [aiSuggestion, setAiSuggestion] = useState(null)
 
   // Load avatars for the profile so the AvatarPicker node can list them.
@@ -487,14 +500,13 @@ function SpaceBuilder({ space, onSave, onClose }) {
       .catch(() => {})
   }, [session, selectedProfileId])
 
-  // Wire the global patch helper used by node bodies (cheap escape hatch
-  // that beats threading state through every reactflow component).
+  // Wire the global helpers used by node bodies (cheap escape hatch that
+  // beats threading state through every ReactFlow component).
   useEffect(() => {
     if (typeof window === 'undefined') return
     window.__spacePatchNode = (id, patch) => {
       setNodes((arr) => arr.map((n) => {
         if (n.id !== id) return n
-        // Special: __name renames the node (stored on data.name, not in props).
         if (Object.prototype.hasOwnProperty.call(patch, '__name')) {
           const { __name, ...rest } = patch
           return { ...n, data: { ...n.data, name: __name, props: { ...(n.data?.props || {}), ...rest } } }
@@ -502,11 +514,33 @@ function SpaceBuilder({ space, onSave, onClose }) {
         return { ...n, data: { ...n.data, props: { ...(n.data?.props || {}), ...patch } } }
       }))
     }
-    // Edge disconnect helper for the scissors-on-hover button.
+    // Replace data.output (used by hover-action delete buttons on MediaItem).
+    window.__spacePatchOutput = (id, output) => {
+      setNodes((arr) => arr.map((n) => n.id === id ? { ...n, data: { ...n.data, output } } : n))
+    }
     window.__spaceDisconnectEdge = (edgeId) => {
       setEdges((arr) => arr.filter((e) => e.id !== edgeId))
     }
-    return () => { window.__spacePatchNode = null }
+    window.__spaceOpenPreview = (item) => setPreviewItem(item)
+    window.__spaceAddNodeFromItem = ({ url, type, from }) => {
+      if (!url) return
+      // Image → image_upload pre-loaded with this URL. Video / other → text_input.
+      const isImage = type === 'image'
+      const id = `n_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
+      const baseX = 80 + Math.floor(Math.random() * 400)
+      const baseY = 80 + Math.floor(Math.random() * 200)
+      const node = isImage
+        ? { id, type: 'space', position: { x: baseX, y: baseY }, data: { type: 'image_upload', name: from || 'Image', props: { urls: [url] }, status: 'idle', output: null, error: null } }
+        : { id, type: 'space', position: { x: baseX, y: baseY }, data: { type: 'text_input', name: from || 'Media', props: { text: url }, status: 'idle', output: null, error: null } }
+      setNodes((arr) => [...arr, node])
+    }
+    return () => {
+      window.__spacePatchNode = null
+      window.__spacePatchOutput = null
+      window.__spaceDisconnectEdge = null
+      window.__spaceOpenPreview = null
+      window.__spaceAddNodeFromItem = null
+    }
   }, [])
 
   const onNodesChange = useCallback((changes) => setNodes((nds) => applyNodeChanges(changes, nds)), [])
@@ -619,6 +653,57 @@ function SpaceBuilder({ space, onSave, onClose }) {
       setRunning(false)
     }
   }
+
+  // Run only the ancestor subgraph of one node. BFS upstream, run that subset.
+  const runFromNode = useCallback(async (targetId) => {
+    if (running) return
+    const want = new Set([targetId])
+    const queue = [targetId]
+    while (queue.length) {
+      const id = queue.shift()
+      for (const e of edges) {
+        if (e.target === id && !want.has(e.source)) {
+          want.add(e.source); queue.push(e.source)
+        }
+      }
+    }
+    const subsetNodes = nodes.filter((n) => want.has(n.id))
+    const subsetEdges = edges.filter((e) => want.has(e.source) && want.has(e.target))
+    if (!subsetNodes.length) return
+
+    setRunning(true); setError(null)
+    // Reset just the subset
+    setNodes((arr) => arr.map((n) => want.has(n.id) ? { ...n, data: { ...n.data, status: 'idle', output: null, error: null } } : n))
+    const ctx = { token: session.access_token, profileId: selectedProfileId, avatars }
+    const snapshot = JSON.parse(JSON.stringify({ nodes: subsetNodes, edges: subsetEdges }))
+    try {
+      const result = await runSpace({ ctx, nodes: snapshot.nodes, edges: snapshot.edges, onNodeChange: patchNode })
+      if (!result.ok) {
+        const msg = Object.entries(result.errors).map(([id, e]) => `${id}: ${e}`).join(' · ')
+        setError(msg || 'Node run failed')
+      }
+      refreshCredits()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setRunning(false)
+    }
+  }, [running, nodes, edges, session, selectedProfileId, avatars, patchNode, refreshCredits])
+
+  // Expose runFromNode through the global so SpaceNode header buttons can call it.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.__spaceRunFromNode = runFromNode
+    return () => { window.__spaceRunFromNode = null }
+  }, [runFromNode])
+
+  // Esc closes the preview modal.
+  useEffect(() => {
+    if (!previewItem) return
+    const onKey = (e) => { if (e.key === 'Escape') setPreviewItem(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [previewItem])
 
   // Inject avatars into AvatarPicker nodes on render so they can show options.
   const renderNodes = useMemo(
@@ -769,6 +854,45 @@ function SpaceBuilder({ space, onSave, onClose }) {
         </ReactFlow>
 
         <FloatingPalette onAdd={(type) => addNode(type)} />
+
+        {previewItem && (
+          <div
+            onClick={() => setPreviewItem(null)}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 100,
+              background: 'rgba(0,0,0,0.9)',
+              display: 'grid', placeItems: 'center',
+              padding: 40, cursor: 'zoom-out',
+            }}
+          >
+            <button
+              onClick={(e) => { e.stopPropagation(); setPreviewItem(null) }}
+              style={{
+                position: 'absolute', top: 18, left: 18,
+                background: 'rgba(255,255,255,0.08)', border: 'none', color: '#fff',
+                width: 36, height: 36, borderRadius: 999, cursor: 'pointer',
+                display: 'grid', placeItems: 'center',
+              }}
+              title="Close (Esc)"
+              aria-label="Close preview"
+            ><X size={16} /></button>
+            <button
+              onClick={(e) => { e.stopPropagation(); downloadUrl(previewItem.url) }}
+              style={{
+                position: 'absolute', top: 18, right: 18,
+                background: 'rgba(255,255,255,0.08)', border: 'none', color: '#fff',
+                padding: '8px 14px', borderRadius: 999, cursor: 'pointer',
+                fontSize: 12, fontFamily: 'var(--font-display)', fontWeight: 700,
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+              }}
+            ><Download size={12} /> Download</button>
+            {previewItem.type === 'video' ? (
+              <video src={previewItem.url} controls autoPlay style={{ maxWidth: '92vw', maxHeight: '88vh', borderRadius: 8, background: '#000' }} onClick={(e) => e.stopPropagation()} />
+            ) : (
+              <img src={previewItem.url} alt="" style={{ maxWidth: '92vw', maxHeight: '88vh', borderRadius: 8, objectFit: 'contain' }} onClick={(e) => e.stopPropagation()} />
+            )}
+          </div>
+        )}
 
         {nodes.length === 0 && !aiBuilding && (
           <div style={{

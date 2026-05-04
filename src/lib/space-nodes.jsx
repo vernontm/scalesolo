@@ -12,9 +12,78 @@
 import { useRef, useState } from 'react'
 import {
   Type, Wand2, Captions, UserCircle2, Save, Image as ImageIcon,
-  ListChecks, FileVideo, Upload, Loader2,
+  ListChecks, FileVideo, Upload, Loader2, Maximize2, ArrowUpRight,
+  Download, Trash2,
 } from 'lucide-react'
 import { supabase } from './supabase.js'
+
+// ── shared download helper ──────────────────────────────────────────────────
+export async function downloadUrl(url, filename) {
+  try {
+    const r = await fetch(url)
+    if (!r.ok) throw new Error('fetch failed')
+    const blob = await r.blob()
+    const obj = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = obj
+    a.download = filename || url.split('/').pop()?.split('?')[0] || 'download'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(obj), 1500)
+  } catch {
+    window.open(url, '_blank')
+  }
+}
+
+// ── MediaItem: hoverable image/video tile with action overlay ───────────────
+// Actions: preview (fullscreen), add to canvas as own node, download, remove.
+export function MediaItem({ url, type = 'image', from = '', onDelete, aspectRatio, rounded = 6, fit = 'cover' }) {
+  const [hover, setHover] = useState(false)
+  if (!url) return null
+  const Btn = ({ Icon, title, onClick }) => (
+    <button
+      type="button"
+      title={title}
+      onClick={(e) => { e.stopPropagation(); onClick?.() }}
+      style={{
+        background: 'transparent', border: 'none', color: '#fff',
+        cursor: 'pointer', padding: 4, borderRadius: 4,
+        display: 'grid', placeItems: 'center',
+      }}
+      onMouseDown={(e) => e.stopPropagation()}
+    ><Icon size={13} /></button>
+  )
+  return (
+    <div
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{ position: 'relative', width: '100%', aspectRatio, borderRadius: rounded, overflow: 'hidden', background: 'var(--surface-2)' }}
+    >
+      {type === 'video' ? (
+        <video src={url} controls style={{ width: '100%', height: '100%', objectFit: fit, background: '#000' }} />
+      ) : (
+        <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: fit, display: 'block' }} />
+      )}
+      {hover && (
+        <div
+          style={{
+            position: 'absolute', left: '50%', bottom: 8, transform: 'translateX(-50%)',
+            display: 'flex', gap: 2, padding: '3px 5px',
+            background: 'rgba(0,0,0,0.78)', borderRadius: 999,
+            backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
+            zIndex: 5,
+          }}
+        >
+          <Btn Icon={Maximize2} title="Preview" onClick={() => window.__spaceOpenPreview?.({ url, type })} />
+          <Btn Icon={ArrowUpRight} title="Add to board as new node" onClick={() => window.__spaceAddNodeFromItem?.({ url, type, from })} />
+          <Btn Icon={Download} title="Download" onClick={() => downloadUrl(url)} />
+          {onDelete && <Btn Icon={Trash2} title="Remove" onClick={onDelete} />}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ── shared style helpers ────────────────────────────────────────────────────
 const fieldRow = { marginBottom: 8 }
@@ -181,15 +250,24 @@ function ImageGenBody({ data, onPatch }) {
   const out = data.output
   const imgs = Array.isArray(out?.images) ? out.images : (out?.image_url ? [{ url: out.image_url }] : [])
   const status = data.status || 'idle'
+  const aspect =
+    data.props?.aspect === '9:16' ? '9/16'
+    : data.props?.aspect === '16:9' ? '16/9'
+    : data.props?.aspect === '4:3' ? '4/3'
+    : data.props?.aspect === '3:4' ? '3/4' : '1/1'
+
+  const removeAt = (i) => {
+    const next = imgs.filter((_, j) => j !== i)
+    if (typeof window !== 'undefined' && window.__spacePatchOutput) {
+      window.__spacePatchOutput(data.__id, { ...out, images: next })
+    }
+  }
 
   return (
     <>
       <div style={{
         position: 'relative',
-        aspectRatio: data.props?.aspect === '9:16' ? '9/16'
-          : data.props?.aspect === '16:9' ? '16/9'
-          : data.props?.aspect === '4:3' ? '4/3'
-          : data.props?.aspect === '3:4' ? '3/4' : '1/1',
+        aspectRatio: aspect,
         background: 'var(--surface-2)',
         border: '1px solid var(--border)',
         borderRadius: 8,
@@ -201,7 +279,13 @@ function ImageGenBody({ data, onPatch }) {
         {status === 'running' ? (
           <Loader2 size={22} className="spin" style={{ color: 'var(--amber)' }} />
         ) : imgs[0]?.url ? (
-          <img src={imgs[0].url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          <MediaItem
+            url={imgs[0].url}
+            type="image"
+            from={data.name || 'image'}
+            onDelete={() => removeAt(0)}
+            rounded={0}
+          />
         ) : (
           <ImageIcon size={26} style={{ color: 'var(--muted)' }} />
         )}
@@ -210,6 +294,7 @@ function ImageGenBody({ data, onPatch }) {
             position: 'absolute', top: 6, left: 6,
             background: 'rgba(0,0,0,0.55)', color: '#fff',
             fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 999,
+            pointerEvents: 'none', zIndex: 4,
           }}>{imgs.length}</div>
         )}
       </div>
@@ -248,11 +333,22 @@ function ImageGenBody({ data, onPatch }) {
       {imgs.length > 1 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4, marginTop: 8 }}>
           {imgs.slice(0, 8).map((im, i) => (
-            <a key={i} href={im.url} target="_blank" rel="noreferrer" style={{ aspectRatio: '1', overflow: 'hidden', borderRadius: 4 }}>
-              <img src={im.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            </a>
+            <MediaItem key={i} url={im.url} type="image" from={data.name || 'image'} aspectRatio="1/1" rounded={4} onDelete={() => removeAt(i)} />
           ))}
         </div>
+      )}
+
+      {imgs.length > 0 && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); imgs.forEach((im, i) => downloadUrl(im.url, `${(data.name || 'image').replace(/\W+/g, '-')}-${i + 1}.png`)) }}
+          style={{
+            marginTop: 8, width: '100%', padding: '6px 8px', fontSize: 11,
+            background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 6,
+            color: 'var(--text)', cursor: 'pointer',
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+          }}
+        ><Download size={11} /> Download {imgs.length > 1 ? `all ${imgs.length}` : ''}</button>
       )}
 
       <NodePreview status={status} output={imgs.length ? null : out} error={data.error} />
@@ -373,10 +469,19 @@ function AvatarRenderBody({ data }) {
       {data.status !== 'done' && data.status !== 'failed' && data.status !== 'running' &&
         <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>Connect a script + avatar input.</div>}
       {data.status === 'done' && out?.video_url && (
-        <div style={{ marginTop: 6 }}>
-          <video src={out.video_url} controls style={{ width: '100%', borderRadius: 6, background: '#000', maxHeight: 200 }} />
-          <a href={out.video_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: 'var(--red)', display: 'block', marginTop: 4 }}>Open ↗</a>
-        </div>
+        <>
+          <MediaItem url={out.video_url} type="video" from={data.name || 'video'} aspectRatio="9/16" />
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); downloadUrl(out.video_url, `${(data.name || 'video').replace(/\W+/g, '-')}.mp4`) }}
+            style={{
+              marginTop: 8, width: '100%', padding: '6px 8px', fontSize: 11,
+              background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 6,
+              color: 'var(--text)', cursor: 'pointer',
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            }}
+          ><Download size={11} /> Download video</button>
+        </>
       )}
       <NodePreview status={data.status} output={out?.video_url ? null : out} error={data.error} />
     </>
@@ -390,21 +495,66 @@ function CollectionBody({ data }) {
     return <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>Connect any output here. Run to gather all upstream results into one list.</div>
   }
   if (data.status === 'running') return <NodePreview status="running" />
+
+  const removeItem = (idx) => {
+    const next = items.filter((_, j) => j !== idx)
+    if (typeof window !== 'undefined' && window.__spacePatchOutput) {
+      window.__spacePatchOutput(data.__id, { ...data.output, items: next })
+    }
+  }
+
+  const downloadable = items.filter((it) => it.url && (it.kind === 'image' || it.kind === 'video'))
+
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
-      {items.slice(0, 12).map((it, i) => (
-        <div key={i} style={{
-          background: 'var(--surface-2)', border: '1px solid var(--border)',
-          borderRadius: 6, padding: 6, fontSize: 10.5, lineHeight: 1.4,
-          color: 'var(--text-soft)', overflow: 'hidden',
-        }}>
-          {it.kind === 'image' && it.url ? <img src={it.url} alt="" style={{ width: '100%', borderRadius: 4, marginBottom: 4 }} /> : null}
-          {it.kind === 'video' && it.url ? <video src={it.url} controls style={{ width: '100%', borderRadius: 4, marginBottom: 4 }} /> : null}
-          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 9.5, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>{it.kind} · {it.from}</div>
-          {it.text && <div style={{ maxHeight: 40, overflow: 'hidden' }}>{String(it.text).slice(0, 90)}…</div>}
-        </div>
-      ))}
-    </div>
+    <>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
+        {items.slice(0, 24).map((it, i) => (
+          <div key={i} style={{
+            background: 'var(--surface-2)', border: '1px solid var(--border)',
+            borderRadius: 6, padding: 6, fontSize: 10.5, lineHeight: 1.4,
+            color: 'var(--text-soft)', overflow: 'hidden',
+          }}>
+            {(it.kind === 'image' || it.kind === 'video') && it.url ? (
+              <div style={{ marginBottom: 4 }}>
+                <MediaItem
+                  url={it.url}
+                  type={it.kind}
+                  from={it.from || 'collection'}
+                  aspectRatio="1/1"
+                  rounded={4}
+                  onDelete={() => removeItem(i)}
+                />
+              </div>
+            ) : null}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <div style={{ flex: 1, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 9.5, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{it.kind} · {it.from}</div>
+              {!it.url && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); removeItem(i) }}
+                  title="Remove"
+                  style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 2 }}
+                ><Trash2 size={10} /></button>
+              )}
+            </div>
+            {it.text && <div style={{ maxHeight: 40, overflow: 'hidden' }}>{String(it.text).slice(0, 90)}…</div>}
+          </div>
+        ))}
+      </div>
+
+      {downloadable.length > 0 && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); downloadable.forEach((it, i) => downloadUrl(it.url, `${(data.name || 'collection').replace(/\W+/g, '-')}-${i + 1}.${it.kind === 'video' ? 'mp4' : 'png'}`)) }}
+          style={{
+            marginTop: 8, width: '100%', padding: '6px 8px', fontSize: 11,
+            background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 6,
+            color: 'var(--text)', cursor: 'pointer',
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+          }}
+        ><Download size={11} /> Download all media ({downloadable.length})</button>
+      )}
+    </>
   )
 }
 
