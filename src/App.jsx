@@ -13,6 +13,7 @@ import Pipeline from './pages/Pipeline.jsx'
 import Forms from './pages/Forms.jsx'
 import Contacts from './pages/Contacts.jsx'
 import Profiles from './pages/Profiles.jsx'
+import Content from './pages/Content.jsx'
 import FormPublic from './pages/FormPublic.jsx'
 import GlobalAgent from './components/GlobalAgent.jsx'
 import { useAuth } from './context/AuthContext.jsx'
@@ -85,7 +86,7 @@ function AppShell() {
         <main style={contentStyle}>
           <Routes>
             <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/content"   element={<Placeholder title="Content engine" hint="Avatar videos, carousels, scripts, scheduled posts. Built in Milestone 6." />} />
+            <Route path="/content"   element={<Content />} />
             <Route path="/email"     element={<Placeholder title="Email engine" hint="Composer, sequences, deliverability. Native sending lands in Milestone 4." />} />
             <Route path="/contacts"  element={<Contacts />} />
             <Route path="/pipeline"  element={<Pipeline />} />

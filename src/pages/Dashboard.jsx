@@ -1,4 +1,6 @@
-import { Sparkles, Zap, TrendingUp, Mail, Users } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { Sparkles, Zap, TrendingUp, Mail, Users, ClipboardCheck, ArrowRight } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import CreditsPanel from '../components/CreditsPanel.jsx'
@@ -70,8 +72,21 @@ function Metric({ icon: Icon, label, value, hint }) {
 }
 
 export default function Dashboard() {
-  const { user } = useAuth()
-  const { selectedProfile, profiles } = useProfile()
+  const { user, session } = useAuth()
+  const { selectedProfile, selectedProfileId, profiles } = useProfile()
+  const navigate = useNavigate()
+  const [pendingApprovals, setPendingApprovals] = useState(0)
+
+  useEffect(() => {
+    if (!session || !selectedProfileId) { setPendingApprovals(0); return }
+    fetch(`/api/content?profile_id=${selectedProfileId}&filter=approvals`, {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    })
+      .then((r) => r.json())
+      .then((b) => setPendingApprovals((b.items || []).length))
+      .catch(() => {})
+  }, [session, selectedProfileId])
+
   const greeting = (() => {
     const h = new Date().getHours()
     if (h < 12) return 'Good morning'
@@ -99,6 +114,33 @@ export default function Dashboard() {
           Generate content
         </button>
       </section>
+
+      {pendingApprovals > 0 && (
+        <div
+          onClick={() => navigate('/content')}
+          style={{
+            marginTop: 18, padding: '14px 18px',
+            background: 'linear-gradient(135deg, rgba(245,158,11,0.16), rgba(245,158,11,0.05))',
+            border: '1px solid rgba(245,158,11,0.35)',
+            borderRadius: 14,
+            display: 'flex', alignItems: 'center', gap: 12,
+            cursor: 'pointer',
+          }}
+        >
+          <div style={{ width: 38, height: 38, borderRadius: 10, display: 'grid', placeItems: 'center', background: 'rgba(245,158,11,0.18)', color: '#f59e0b' }}>
+            <ClipboardCheck size={18} strokeWidth={2.2} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14, color: 'var(--text)' }}>
+              {pendingApprovals} item{pendingApprovals === 1 ? '' : 's'} pending your approval
+            </div>
+            <div style={{ fontSize: 12.5, color: 'var(--text-soft)', marginTop: 2 }}>
+              The AI CEO drafted content. Review and approve to publish.
+            </div>
+          </div>
+          <ArrowRight size={18} style={{ color: 'var(--text-soft)' }} />
+        </div>
+      )}
 
       <div style={sectionLabel}>
         <span>Credits</span>
