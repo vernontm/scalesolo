@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { Zap } from 'lucide-react'
 import Sidebar from './components/Sidebar.jsx'
 import Header from './components/Header.jsx'
@@ -86,16 +86,30 @@ function LoadingScreen() {
 
 function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false)
+  const { pathname } = useLocation()
+  // Spaces gets a collapsed sidebar so the canvas has more room.
+  const compact = pathname.startsWith('/spaces')
+
+  // Sync a body class so CSS rules can target compact mode for the
+  // builder overlay + main content margin.
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    document.body.classList.toggle('compact-sidebar', compact)
+    return () => { document.body.classList.remove('compact-sidebar') }
+  }, [compact])
+
+  const dynamicMain = { ...mainStyle, marginLeft: compact ? 60 : 240 }
+
   return (
     <div style={layoutStyle}>
-      <Sidebar />
+      <Sidebar compact={compact} />
       {mobileOpen && (
         <>
           <div className="mobile-sidebar-overlay" onClick={() => setMobileOpen(false)} />
           <Sidebar mobile onClose={() => setMobileOpen(false)} />
         </>
       )}
-      <div style={mainStyle} className="app-main">
+      <div style={dynamicMain} className="app-main">
         <Header onOpenSidebar={() => setMobileOpen(true)} />
         <main style={contentStyle}>
           <Routes>

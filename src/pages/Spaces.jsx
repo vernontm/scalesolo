@@ -15,6 +15,7 @@ import {
   GripHorizontal, Minimize2, Maximize2,
 } from 'lucide-react'
 import { useRef } from 'react'
+// (useEffect already imported above for other effects in this file)
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { useCredits } from '../context/CreditsContext.jsx'
@@ -196,24 +197,52 @@ function FloatingPalette({ onAdd }) {
   }, [])
   const categoryOrder = Object.entries(NODE_CATEGORIES).sort((a, b) => a[1].order - b[1].order)
 
-  // Default position: pinned to top-left of the canvas area, ~24px in.
-  const [pos, setPos] = useState({ x: 24, y: 80 })
+  // The palette is fixed-positioned in viewport coords. Clamp its X bound
+  // to the canvas area (right of the main sidebar) so it can't slide
+  // underneath. We read the current sidebar width by checking the body
+  // class App.jsx toggles per route.
+  const sidebarLeftBound = () => {
+    if (typeof document === 'undefined') return 0
+    if (window.innerWidth < 901) return 0          // mobile: drawer
+    return document.body.classList.contains('compact-sidebar') ? 60 : 240
+  }
+  const headerHeightBound = 60                      // toolbar height + small gap
+
+  // Default: just inside the canvas, below the toolbar.
+  const [pos, setPos] = useState(() => ({ x: sidebarLeftBound() + 16, y: headerHeightBound + 16 }))
   const [collapsed, setCollapsed] = useState(false)
   const dragRef = useRef(null)
 
+  const clampPos = ({ x, y }, c = collapsed) => {
+    const w = c ? 200 : 240
+    const h = c ? 44 : 460
+    const minX = sidebarLeftBound() + 8
+    const maxX = window.innerWidth  - w - 8
+    const minY = 8
+    const maxY = window.innerHeight - h - 8
+    return {
+      x: Math.max(minX, Math.min(maxX, x)),
+      y: Math.max(minY, Math.min(maxY, y)),
+    }
+  }
+
+  // Re-clamp on viewport resize (e.g. user drags the window narrower).
+  useEffect(() => {
+    const onResize = () => setPos((p) => clampPos(p))
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [collapsed])
+
   const onPointerDown = (e) => {
+    // Don't start a drag if the user clicked the minimize button.
+    if (e.target.closest('button')) return
     e.preventDefault()
     const start = { x: e.clientX, y: e.clientY }
     const startPos = { ...pos }
     const move = (ev) => {
-      // clamp inside viewport
       const dx = ev.clientX - start.x
       const dy = ev.clientY - start.y
-      const w = collapsed ? 200 : 240
-      const h = collapsed ? 44 : 460
-      const nextX = Math.max(8, Math.min(window.innerWidth - w - 8, startPos.x + dx))
-      const nextY = Math.max(8, Math.min(window.innerHeight - h - 8, startPos.y + dy))
-      setPos({ x: nextX, y: nextY })
+      setPos(clampPos({ x: startPos.x + dx, y: startPos.y + dy }))
     }
     const up = () => {
       window.removeEventListener('pointermove', move)
@@ -254,7 +283,13 @@ function FloatingPalette({ onAdd }) {
         <GripHorizontal size={14} style={{ color: 'var(--muted)' }} />
         <div style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 12, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text)' }}>Nodes</div>
         <button
-          onClick={(e) => { e.stopPropagation(); setCollapsed((v) => !v) }}
+          onClick={(e) => {
+            e.stopPropagation()
+            const nextCollapsed = !collapsed
+            setCollapsed(nextCollapsed)
+            // Re-clamp with the new size in case the new dimensions push it offscreen.
+            setPos((p) => clampPos(p, nextCollapsed))
+          }}
           style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 4 }}
           title={collapsed ? 'Expand' : 'Minimize'}
         >

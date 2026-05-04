@@ -183,37 +183,55 @@ function linkStyle(isActive) {
   }
 }
 
-export default function Sidebar({ mobile = false, onClose }) {
+export default function Sidebar({ mobile = false, compact = false, onClose }) {
   const { user, signOut } = useAuth()
   const initials = (user?.email || 'U').slice(0, 2).toUpperCase()
+  const isCompact = compact && !mobile
 
   const handleNavClick = () => {
     if (mobile && onClose) onClose()
   }
 
+  // Compact mode: 60px wide, icons only, group labels hidden, no labels next
+  // to nav items, no email row in footer.
+  const computedSidebarStyle = {
+    ...sidebarStyle,
+    width: isCompact ? 60 : 240,
+    padding: isCompact ? '22px 6px' : '22px 14px',
+    transition: 'width 0.2s var(--ease)',
+  }
+
   return (
     <aside
       className={mobile ? 'mobile-sidebar' : 'desktop-sidebar'}
-      style={sidebarStyle}
+      style={computedSidebarStyle}
     >
-      <div style={brandStyle}>
+      <div style={{ ...brandStyle, padding: isCompact ? '4px 0 18px' : '4px 10px 22px', justifyContent: isCompact ? 'center' : 'flex-start' }}>
         <div style={brandIconStyle}><Zap size={18} strokeWidth={2.5} /></div>
-        <div>
-          <div style={brandTextStyle}>ScaleSolo</div>
-          <div style={brandTagStyle}>Scale 10× faster</div>
-        </div>
+        {!isCompact && (
+          <div>
+            <div style={brandTextStyle}>ScaleSolo</div>
+            <div style={brandTagStyle}>Scale 10× faster</div>
+          </div>
+        )}
       </div>
 
       <nav style={navStyle}>
         {navGroups.map((group) => (
           <div key={group.label}>
-            <div style={navLabelStyle}>{group.label}</div>
+            {!isCompact && <div style={navLabelStyle}>{group.label}</div>}
+            {isCompact && <div style={{ height: 8 }} />}
             {group.items.map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}
                 onClick={handleNavClick}
-                style={({ isActive }) => linkStyle(isActive)}
+                title={isCompact ? item.label : undefined}
+                style={({ isActive }) => ({
+                  ...linkStyle(isActive),
+                  justifyContent: isCompact ? 'center' : 'flex-start',
+                  padding: isCompact ? '10px 0' : '10px 12px',
+                })}
                 onMouseEnter={(e) => {
                   if (!e.currentTarget.style.background.includes('gradient')) {
                     e.currentTarget.style.color = 'var(--text)'
@@ -221,7 +239,6 @@ export default function Sidebar({ mobile = false, onClose }) {
                   }
                 }}
                 onMouseLeave={(e) => {
-                  // re-let inline style win when not active
                   const active = e.currentTarget.getAttribute('aria-current') === 'page'
                   if (!active) {
                     e.currentTarget.style.color = 'var(--muted)'
@@ -229,8 +246,8 @@ export default function Sidebar({ mobile = false, onClose }) {
                   }
                 }}
               >
-                <item.icon size={17} strokeWidth={2} />
-                {item.label}
+                <item.icon size={isCompact ? 18 : 17} strokeWidth={2} />
+                {!isCompact && item.label}
               </NavLink>
             ))}
           </div>
@@ -238,15 +255,22 @@ export default function Sidebar({ mobile = false, onClose }) {
       </nav>
 
       <div style={footerStyle}>
-        <div style={userRow}>
-          <div style={avatarBubble}>{initials}</div>
-          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {user?.email || 'Signed in'}
+        {!isCompact && (
+          <div style={userRow}>
+            <div style={avatarBubble}>{initials}</div>
+            <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {user?.email || 'Signed in'}
+            </div>
           </div>
-        </div>
+        )}
         <button
-          style={signOutBtn}
+          style={{
+            ...signOutBtn,
+            justifyContent: isCompact ? 'center' : 'flex-start',
+            padding: isCompact ? '10px 0' : '10px 12px',
+          }}
           onClick={signOut}
+          title={isCompact ? 'Sign out' : undefined}
           onMouseEnter={(e) => {
             e.currentTarget.style.color = 'var(--text)'
             e.currentTarget.style.background = 'var(--surface-2)'
@@ -257,7 +281,7 @@ export default function Sidebar({ mobile = false, onClose }) {
           }}
         >
           <LogOut size={16} strokeWidth={2} />
-          Sign out
+          {!isCompact && 'Sign out'}
         </button>
       </div>
     </aside>
