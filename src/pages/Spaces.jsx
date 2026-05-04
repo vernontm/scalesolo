@@ -469,7 +469,7 @@ function FloatingPalette({ onAdd }) {
 
 function SpaceBuilder({ space, onSave, onClose }) {
   const { session } = useAuth()
-  const { selectedProfileId } = useProfile()
+  const { selectedProfileId, profiles } = useProfile()
   const { refresh: refreshCredits } = useCredits()
 
   const [name, setName] = useState(space.name || 'Untitled space')
@@ -632,7 +632,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
     // Reset all node statuses
     setNodes((arr) => arr.map((n) => ({ ...n, data: { ...n.data, status: 'idle', output: null, error: null } })))
 
-    const ctx = { token: session.access_token, profileId: selectedProfileId, avatars }
+    const ctx = { token: session.access_token, profileId: selectedProfileId, avatars, profiles }
     // Snapshot the current nodes/edges since they may move during the run
     const snapshot = JSON.parse(JSON.stringify({ nodes, edges }))
     try {
@@ -674,7 +674,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
     setRunning(true); setError(null)
     // Reset just the subset
     setNodes((arr) => arr.map((n) => want.has(n.id) ? { ...n, data: { ...n.data, status: 'idle', output: null, error: null } } : n))
-    const ctx = { token: session.access_token, profileId: selectedProfileId, avatars }
+    const ctx = { token: session.access_token, profileId: selectedProfileId, avatars, profiles }
     const snapshot = JSON.parse(JSON.stringify({ nodes: subsetNodes, edges: subsetEdges }))
     try {
       const result = await runSpace({ ctx, nodes: snapshot.nodes, edges: snapshot.edges, onNodeChange: patchNode })
@@ -705,12 +705,17 @@ function SpaceBuilder({ space, onSave, onClose }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [previewItem])
 
-  // Inject avatars into AvatarPicker nodes on render so they can show options.
+  // Inject ctx slices into nodes that need them at render time (avatars for
+  // AvatarPicker, profiles for BrandProfile).
   const renderNodes = useMemo(
-    () => nodes.map((n) => n.data?.type === 'avatar_picker'
-      ? { ...n, data: { ...n.data, _ctxAvatars: avatars } }
-      : n),
-    [nodes, avatars]
+    () => nodes.map((n) => {
+      const t = n.data?.type
+      if (t === 'avatar_picker') return { ...n, data: { ...n.data, _ctxAvatars: avatars } }
+      if (t === 'brand_profile') return { ...n, data: { ...n.data, _ctxProfiles: profiles } }
+      if (t === 'image_upload')  return { ...n, data: { ...n.data, _ctxProfileId: selectedProfileId } }
+      return n
+    }),
+    [nodes, avatars, profiles]
   )
 
   // Lock body scroll while the builder is mounted (it uses position:fixed).
@@ -921,7 +926,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
 
 export default function Spaces() {
   const { session } = useAuth()
-  const { selectedProfileId } = useProfile()
+  const { selectedProfileId, profiles } = useProfile()
   const [spaces, setSpaces] = useState([])
   const [editing, setEditing] = useState(null)
   const [loading, setLoading] = useState(true)

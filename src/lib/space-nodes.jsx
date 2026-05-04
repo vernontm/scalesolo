@@ -13,7 +13,7 @@ import { useRef, useState } from 'react'
 import {
   Type, Wand2, Captions, UserCircle2, Save, Image as ImageIcon,
   ListChecks, FileVideo, Upload, Loader2, Maximize2, ArrowUpRight,
-  Download, Trash2,
+  Download, Trash2, Building2,
 } from 'lucide-react'
 import { supabase } from './supabase.js'
 
@@ -357,20 +357,21 @@ function ImageGenBody({ data, onPatch }) {
 }
 
 // ─── 5. IMAGE UPLOAD (reference images) ─────────────────────────────────────
-function ImageUploadBody({ data, onPatch, ctx }) {
+function ImageUploadBody({ data, onPatch }) {
   const inpRef = useRef(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
   const urls = Array.isArray(data.props?.urls) ? data.props.urls : []
+  const profileId = data?._ctxProfileId
 
   async function onPick(e) {
     const files = Array.from(e.target.files || [])
-    if (!files.length || !ctx?.profileId) return
+    if (!files.length || !profileId) return
     setBusy(true); setErr(null)
     try {
       const next = [...urls]
       for (const f of files) {
-        const u = await uploadImageToBucket(f, ctx.profileId)
+        const u = await uploadImageToBucket(f, profileId)
         next.push(u)
       }
       onPatch({ urls: next })
@@ -423,9 +424,40 @@ function ImageUploadBody({ data, onPatch, ctx }) {
   )
 }
 
+// ─── BRAND PROFILE ──────────────────────────────────────────────────────────
+function BrandProfileBody({ data, onPatch }) {
+  const profiles = data?._ctxProfiles || []
+  const out = data.output?.brand
+  return (
+    <>
+      <NodeField label="Profile">
+        <select
+          style={tinyInput}
+          value={data.props?.profile_id || ''}
+          onChange={(e) => onPatch({ profile_id: e.target.value })}
+        >
+          <option value="">Pick a brand profile…</option>
+          {profiles.map((p) => (
+            <option key={p.id} value={p.id}>{p.business_name}</option>
+          ))}
+        </select>
+      </NodeField>
+      {out && (
+        <div style={{ ...previewBox, marginTop: 8 }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>{out.name || 'Brand'}</div>
+          {out.voice && <div><span style={{ color: 'var(--muted)' }}>Voice:</span> {out.voice.slice(0, 120)}</div>}
+          {out.audience && <div><span style={{ color: 'var(--muted)' }}>Audience:</span> {out.audience.slice(0, 120)}</div>}
+          {out.brandBible && <div style={{ color: 'var(--muted)', fontSize: 10, marginTop: 4 }}>Brand bible attached ({out.brandBible.length} chars)</div>}
+        </div>
+      )}
+      <NodePreview status={data.status} output={out ? null : data.output} error={data.error} />
+    </>
+  )
+}
+
 // ─── 6. AVATAR PICKER ───────────────────────────────────────────────────────
-function AvatarPickerBody({ data, onPatch, ctx }) {
-  const avatars = ctx?.avatars || []
+function AvatarPickerBody({ data, onPatch }) {
+  const avatars = data?._ctxAvatars || []
   const looks = avatars.find((a) => a.id === data.props?.avatar_id)?.looks || []
   return (
     <>
@@ -600,10 +632,41 @@ export const NODE_REGISTRY = {
     },
   },
 
+  brand_profile: {
+    label: 'Brand profile', description: 'Pulls in a brand profile (voice, audience, brand bible, hashtags) to use as context for downstream generators.',
+    icon: Building2, category: 'inputs', color: '#ec4899',
+    inputs: [], outputs: [{ id: 'brand', label: 'Brand' }],
+    initialProps: { profile_id: '' },
+    Body: BrandProfileBody,
+    run: async ({ data, ctx }) => {
+      const id = data.props?.profile_id
+      if (!id) throw new Error('Pick a brand profile')
+      // Fetch all profiles (server returns full rows including brand_bible)
+      const r = await fetch('/api/profiles', {
+        headers: { Authorization: `Bearer ${ctx.token}` },
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
+      const p = (body.profiles || []).find((x) => x.id === id)
+      if (!p) throw new Error('Profile not accessible')
+      return {
+        brand: {
+          profile_id: p.id,
+          name: p.business_name || '',
+          voice: p.preferred_tone || '',
+          audience: p.target_audience || '',
+          brandBible: p.brand_bible || '',
+          hashtags: p.core_hashtags || '',
+          industry: p.industry || '',
+        },
+      }
+    },
+  },
+
   script_gen: {
-    label: 'Script generator', description: 'Claude writes a script from a topic. Supports @-mentions.',
+    label: 'Script generator', description: 'Claude writes a script from a topic. Supports @-mentions and an optional brand profile input.',
     icon: Wand2, category: 'generators', color: '#ef4444',
-    inputs: [{ id: 'topic', label: 'Topic / hook' }],
+    inputs: [{ id: 'topic', label: 'Topic / hook' }, { id: 'brand', label: 'Brand' }],
     outputs: [{ id: 'script', label: 'Script' }, { id: 'title', label: 'Title' }],
     initialProps: { format: 'tiktok-script', topic: '' },
     Body: ScriptGenBody,
@@ -611,10 +674,12 @@ export const NODE_REGISTRY = {
       let topic = readInput(inputs, data.props, 'topic') || readInput(inputs, data.props, 'text')
       if (!topic) throw new Error('No topic / text provided')
       topic = expandMentions(topic, inputsByName)
+      const brand = inputs?.brand
+      const profileId = brand?.profile_id || ctx.profileId
       const r = await fetch('/api/content/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
-        body: JSON.stringify({ profile_id: ctx.profileId, format: data.props?.format || 'tiktok-script', topic, count: 1 }),
+        body: JSON.stringify({ profile_id: profileId, format: data.props?.format || 'tiktok-script', topic, count: 1 }),
       })
       const body = await r.json()
       if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
@@ -625,9 +690,9 @@ export const NODE_REGISTRY = {
   },
 
   caption_gen: {
-    label: 'Caption + hashtags', description: 'Generates a platform caption AND hashtag block from a script.',
+    label: 'Caption + hashtags', description: 'Generates a platform caption AND hashtag block from a script. Optional brand profile input.',
     icon: Captions, category: 'generators', color: '#f59e0b',
-    inputs: [{ id: 'script', label: 'Script' }],
+    inputs: [{ id: 'script', label: 'Script' }, { id: 'brand', label: 'Brand' }],
     outputs: [{ id: 'caption', label: 'Caption' }, { id: 'hashtags', label: 'Hashtags' }],
     initialProps: { platform: 'instagram', hashtag_count: 10 },
     Body: CaptionGenBody,
@@ -636,11 +701,13 @@ export const NODE_REGISTRY = {
       if (!script) throw new Error('No script provided')
       const platform = data.props?.platform || 'instagram'
       const count = data.props?.hashtag_count || 10
+      const brand = inputs?.brand
+      const profileId = brand?.profile_id || ctx.profileId
       const r = await fetch('/api/content/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
         body: JSON.stringify({
-          profile_id: ctx.profileId,
+          profile_id: profileId,
           format: 'ig-post',
           topic: `For platform ${platform}, write the post caption AND a separate block of exactly ${count} hashtags for this script. Return JSON-ish lines: first the caption, then a blank line, then the hashtags space-separated each starting with #. Script: """${String(script).slice(0, 1500)}"""`,
           count: 1,
@@ -668,9 +735,13 @@ export const NODE_REGISTRY = {
   },
 
   image_gen: {
-    label: 'Image generator', description: 'KIE image gen (Nano Banana, Flux). Aspect, count, quality. Supports @-mentions for reference images.',
+    label: 'Image generator', description: 'KIE image gen (Nano Banana, Flux). Aspect, count, quality. Supports @-mentions and an optional brand profile input.',
     icon: ImageIcon, category: 'generators', color: '#a855f7',
-    inputs: [{ id: 'references', label: 'References' }, { id: 'prompt', label: 'Prompt' }],
+    inputs: [
+      { id: 'references', label: 'References' },
+      { id: 'prompt', label: 'Prompt' },
+      { id: 'brand', label: 'Brand' },
+    ],
     outputs: [{ id: 'images', label: 'Images' }],
     initialProps: { prompt: '', model: 'nano-banana', aspect: '1:1', count: 1, quality: '2K' },
     Body: ImageGenBody,
@@ -679,7 +750,19 @@ export const NODE_REGISTRY = {
       if (!prompt) throw new Error('Prompt required')
       prompt = expandMentions(prompt, inputsByName)
 
-      // Gather reference URLs from connected references input or @-mentions
+      // If a brand profile is connected, prepend a short style hint so the
+      // image stays on-brand. We keep it short — image models lose focus
+      // on long prompts.
+      const brand = inputs?.brand
+      if (brand) {
+        const bits = []
+        if (brand.name) bits.push(`Brand: ${brand.name}`)
+        if (brand.industry) bits.push(`Industry: ${brand.industry}`)
+        if (brand.voice) bits.push(`Voice/style: ${String(brand.voice).slice(0, 200)}`)
+        if (brand.audience) bits.push(`Audience: ${String(brand.audience).slice(0, 160)}`)
+        if (bits.length) prompt = `${bits.join('. ')}.\n\n${prompt}`
+      }
+
       const refs = []
       const incomingRefs = inputs?.references
       if (incomingRefs) {
@@ -692,7 +775,7 @@ export const NODE_REGISTRY = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
         body: JSON.stringify({
-          profile_id: ctx.profileId,
+          profile_id: brand?.profile_id || ctx.profileId,
           prompt,
           model: data.props?.model || 'nano-banana',
           count: data.props?.count || 1,
