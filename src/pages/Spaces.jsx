@@ -619,13 +619,13 @@ function SpaceBuilder({ space, onSave, onClose }) {
           onConnect={onConnect}
           nodeTypes={NODE_TYPES}
           fitView
-          /* Two-finger trackpad scroll → pan the viewport.
-             Drag (mouse) still pans because panOnDrag defaults to true. */
+          /* Two-finger trackpad vertical scroll → zoom in/out.
+             Horizontal scroll still pans sideways. Drag pans the canvas. */
           panOnScroll
+          panOnScrollMode="horizontal"
           panOnScrollSpeed={0.8}
-          zoomOnScroll={false}
+          zoomOnScroll
           zoomOnPinch
-          /* Trackpad wheel + ctrl/cmd zooms (standard zoom gesture). */
           defaultEdgeOptions={{ type: 'smoothstep', animated: true, style: { stroke: 'var(--red)', strokeWidth: 1.5 } }}
           proOptions={{ hideAttribution: true }}
         >
