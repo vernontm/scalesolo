@@ -844,27 +844,40 @@ export const NODE_REGISTRY = {
   },
 
   collection: {
-    label: 'Collection', description: 'Catches outputs from any connected node and gathers them into a list (scripts, images, videos).',
+    label: 'Collection', description: 'Catches outputs from any connected node and gathers them into a growing list (scripts, images, videos). Accumulates across runs — every time an upstream node re-runs, new items are appended (deduped by URL/text).',
     icon: ListChecks, category: 'outputs', color: '#10b981',
     inputs: [{ id: 'items', label: 'Items' }, { id: 'more', label: '+ more' }],
     outputs: [{ id: 'items', label: 'Items' }],
     initialProps: {},
     Body: CollectionBody,
-    run: async ({ inputs }) => {
-      const items = []
+    run: async ({ data, inputs }) => {
+      const incoming = []
       const collect = (val, from = '') => {
         if (val == null) return
         if (Array.isArray(val)) { val.forEach((v) => collect(v, from)); return }
-        if (typeof val === 'string') { items.push({ kind: 'text', text: val, from }); return }
-        if (val.video_url) { items.push({ kind: 'video', url: val.video_url, from }); return }
-        if (val.url) { items.push({ kind: 'image', url: val.url, from }); return }
-        if (val.script) { items.push({ kind: 'script', text: val.script, from }); return }
-        if (val.text) { items.push({ kind: 'text', text: val.text, from }); return }
-        if (val.caption) { items.push({ kind: 'caption', text: val.caption, from }); return }
+        if (typeof val === 'string') { incoming.push({ kind: 'text', text: val, from }); return }
+        if (val.video_url) { incoming.push({ kind: 'video', url: val.video_url, from }); return }
+        if (val.url) { incoming.push({ kind: 'image', url: val.url, from }); return }
+        if (val.script) { incoming.push({ kind: 'script', text: val.script, from }); return }
+        if (val.text) { incoming.push({ kind: 'text', text: val.text, from }); return }
+        if (val.caption) { incoming.push({ kind: 'caption', text: val.caption, from }); return }
         if (val.images) { collect(val.images, from); return }
       }
       for (const [key, val] of Object.entries(inputs || {})) collect(val, key)
-      return { items }
+
+      // Merge with whatever was already in the collection (preserved across runs)
+      // so each upstream re-run appends to the list rather than replacing it.
+      const prev = Array.isArray(data?.output?.items) ? data.output.items : []
+      const out = []
+      const seen = new Set()
+      for (const list of [prev, incoming]) {
+        for (const it of list) {
+          const key = `${it.kind}:${(it.url || it.text || '').toString().slice(0, 200)}`
+          if (seen.has(key)) continue
+          seen.add(key); out.push(it)
+        }
+      }
+      return { items: out }
     },
   },
 

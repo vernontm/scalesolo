@@ -656,16 +656,30 @@ function SpaceBuilder({ space, onSave, onClose }) {
     }
   }
 
-  // Run only the ancestor subgraph of one node. BFS upstream, run that subset.
+  // Run a node + all its ancestors AND all its descendants. The ancestor walk
+  // ensures we have fresh upstream values; the descendant walk auto-pushes
+  // the new output forward so anything connected downstream (collection,
+  // caption gen, save library, etc.) updates without a separate click.
   const runFromNode = useCallback(async (targetId) => {
     if (running) return
     const want = new Set([targetId])
-    const queue = [targetId]
-    while (queue.length) {
-      const id = queue.shift()
+    // BFS up — collect ancestors
+    const upQueue = [targetId]
+    while (upQueue.length) {
+      const id = upQueue.shift()
       for (const e of edges) {
         if (e.target === id && !want.has(e.source)) {
-          want.add(e.source); queue.push(e.source)
+          want.add(e.source); upQueue.push(e.source)
+        }
+      }
+    }
+    // BFS down — collect descendants so output cascades forward
+    const downQueue = [targetId]
+    while (downQueue.length) {
+      const id = downQueue.shift()
+      for (const e of edges) {
+        if (e.source === id && !want.has(e.target)) {
+          want.add(e.target); downQueue.push(e.target)
         }
       }
     }
