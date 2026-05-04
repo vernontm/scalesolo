@@ -25,20 +25,37 @@ export default async function handler(req, res) {
     const { avatar_id, script, voice_id, look_id, model_version } = req.body || {}
     if (!avatar_id || !script) return res.status(400).json({ error: 'avatar_id + script required' })
 
-    const aRows = await supaFetch(`avatars?id=eq.${avatar_id}&select=*`)
-    const avatar = aRows?.[0]
-    if (!avatar) return res.status(404).json({ error: 'Avatar not found' })
-    await assertProfileAccess(auth.user.id, avatar.profile_id)
+    // Public-library avatars are passed through as `pub:<heygen_group_id>`.
+    // Skip the Supabase lookup and render directly via the V3 endpoint.
+    const isPublic = typeof avatar_id === 'string' && avatar_id.startsWith('pub:')
+    let avatar = null
+    if (!isPublic) {
+      const aRows = await supaFetch(`avatars?id=eq.${avatar_id}&select=*`)
+      avatar = aRows?.[0]
+      if (!avatar) return res.status(404).json({ error: 'Avatar not found' })
+      await assertProfileAccess(auth.user.id, avatar.profile_id)
 
-    // Refuse early if HeyGen training isn't complete. We surface a clean
-    // message instead of letting HeyGen 404 deep in the render submit.
-    if (avatar.training_status && !['ready', 'completed', 'success'].includes(avatar.training_status)) {
-      return res.status(409).json({
-        error: avatar.training_status === 'training'
-          ? 'This avatar is still being processed by HeyGen. Wait a few minutes and try again, or use a HeyGen library avatar.'
-          : `Avatar training did not finish (${avatar.training_status}). Re-create the avatar from the Avatars page.`,
-        training_status: avatar.training_status,
-      })
+      // Refuse early if HeyGen training isn't complete.
+      if (avatar.training_status && !['ready', 'completed', 'success'].includes(avatar.training_status)) {
+        return res.status(409).json({
+          error: avatar.training_status === 'training'
+            ? 'This avatar is still being processed by HeyGen. Wait a few minutes and try again, or use a HeyGen library avatar.'
+            : `Avatar training did not finish (${avatar.training_status}). Re-create the avatar from the Avatars page.`,
+          training_status: avatar.training_status,
+        })
+      }
+    } else {
+      // Need a profile to charge credits against — require it on the request.
+      if (!req.body?.profile_id) {
+        return res.status(400).json({ error: 'profile_id required when using a public avatar' })
+      }
+      await assertProfileAccess(auth.user.id, req.body.profile_id)
+      avatar = {
+        profile_id: req.body.profile_id,
+        talking_photo_id: avatar_id.slice(4), // raw HeyGen group/avatar id
+        model_version: 'v4',
+        elevenlabs_voice_id: '',
+      }
     }
 
     const modelKey = model_version || avatar.model_version || 'v4'
@@ -115,23 +132,24 @@ export default async function handler(req, res) {
       return res.status(502).json({ error: `HeyGen render submit failed: ${e.message}`, engine: modelDef.engine })
     }
 
-    // Persist render row
-    const renderRow = await supaFetch('avatar_renders', {
-      method: 'POST',
-      body: {
-        avatar_id,
-        profile_id: avatar.profile_id,
-        title: script.slice(0, 60),
-        script,
-        sentences: [],
-        status: 'generating_clips',
-        model_version: modelKey,
-        voice_id: resolvedVoice,
-        heygen_video_id: heygenVideoId,
-        video_units_charged: unitsToCharge,
-        duration_secs: durationSecs,
-      },
-    })
+    // Persist render row. For public-library avatars we don't have an
+    // internal avatar_id (it's "pub:..."), so we omit the FK and tag the
+    // metadata instead. The status poller still works since heygen_video_id
+    // is what it actually needs.
+    const renderBody = {
+      profile_id: avatar.profile_id,
+      title: script.slice(0, 60),
+      script,
+      sentences: [],
+      status: 'generating_clips',
+      model_version: modelKey,
+      voice_id: resolvedVoice,
+      heygen_video_id: heygenVideoId,
+      video_units_charged: unitsToCharge,
+      duration_secs: durationSecs,
+    }
+    if (!isPublic) renderBody.avatar_id = avatar_id
+    const renderRow = await supaFetch('avatar_renders', { method: 'POST', body: renderBody })
     const render = Array.isArray(renderRow) ? renderRow[0] : renderRow
 
     // Debit credits AFTER persistence so we have the ref_id

@@ -589,7 +589,7 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Avatar list view
-function AvatarList({ avatars, models, onCreate, onOpen }) {
+function AvatarList({ avatars, publicAvatars = [], loadingPublic, models, onCreate, onOpen }) {
   return (
     <div className="fade-up">
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
@@ -636,6 +636,45 @@ function AvatarList({ avatars, models, onCreate, onOpen }) {
           })}
         </div>
       )}
+
+      {/* HeyGen public stock library — always visible so users can pick a
+          ready-made avatar without uploading. */}
+      <div style={{ marginTop: 28, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>
+          HeyGen library
+        </h3>
+        <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+          {loadingPublic ? 'Loading…' : `${publicAvatars.length} stock avatars`}
+        </div>
+      </div>
+      {publicAvatars.length === 0 && !loadingPublic ? (
+        <div className="card-flat" style={{ padding: 24, textAlign: 'center', color: 'var(--muted)', fontSize: 12 }}>
+          No public avatars available right now.
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
+          {publicAvatars.map((g) => {
+            const id = g.id || g.group_id
+            const name = g.group_name || g.name || 'Stock avatar'
+            const thumb = g.preview_image_url || g.preview_image || g.thumbnail_url || g.image_url
+            return (
+              <div key={id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                {thumb ? (
+                  <img src={thumb} alt={name} style={{ width: '100%', height: 180, objectFit: 'cover' }} />
+                ) : (
+                  <div style={{ width: '100%', height: 180, background: 'var(--surface-2)', display: 'grid', placeItems: 'center', color: 'var(--muted)' }}>
+                    <UserCircle2 size={36} />
+                  </div>
+                )}
+                <div style={{ padding: 12 }}>
+                  <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
+                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>HeyGen stock · pick in Spaces</div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
@@ -646,8 +685,10 @@ export default function Avatars() {
   const { session } = useAuth()
   const { selectedProfileId } = useProfile()
   const [avatars, setAvatars] = useState([])
+  const [publicAvatars, setPublicAvatars] = useState([])
   const [models, setModels] = useState({})
   const [loading, setLoading] = useState(true)
+  const [loadingPublic, setLoadingPublic] = useState(false)
   const [creating, setCreating] = useState(false)
   const [openedId, setOpenedId] = useState(null)
 
@@ -665,7 +706,25 @@ export default function Avatars() {
     setLoading(false)
   }
 
-  useEffect(() => { refresh() }, [session, selectedProfileId])
+  // Auto-load HeyGen's public avatar library so users can pick from stock
+  // characters without uploading their own.
+  const refreshPublic = async () => {
+    if (!session || !selectedProfileId) return
+    setLoadingPublic(true)
+    try {
+      const r = await fetch(`/api/avatars/heygen-library?profile_id=${selectedProfileId}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      if (r.ok) {
+        const body = await r.json()
+        setPublicAvatars(Array.isArray(body.groups) ? body.groups : [])
+      }
+    } catch {} finally {
+      setLoadingPublic(false)
+    }
+  }
+
+  useEffect(() => { refresh(); refreshPublic() }, [session, selectedProfileId])
 
   const opened = openedId ? avatars.find((a) => a.id === openedId) : null
 
@@ -694,7 +753,14 @@ export default function Avatars() {
 
   return (
     <>
-      <AvatarList avatars={avatars} models={models} onCreate={() => setCreating(true)} onOpen={(a) => setOpenedId(a.id)} />
+      <AvatarList
+        avatars={avatars}
+        publicAvatars={publicAvatars}
+        loadingPublic={loadingPublic}
+        models={models}
+        onCreate={() => setCreating(true)}
+        onOpen={(a) => setOpenedId(a.id)}
+      />
       {creating && (
         <CreateAvatarModal
           profileId={selectedProfileId}

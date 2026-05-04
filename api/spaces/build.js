@@ -55,10 +55,10 @@ const NODE_CATALOG = {
   },
   image_gen: {
     label: 'Image generator',
-    description: 'KIE image generation. props: prompt (string, supports @-mentions), model (nano-banana/flux-pro/flux-kontext/gpt-image), aspect (1:1/16:9/9:16/4:3/3:4), count (1-8), quality (1K/2K/4K). The single "in" handle accepts brand context, prompts, AND reference images (image_upload or another image_gen out) — they\'re sorted by data shape.',
+    description: 'KIE image generation. props: prompt (string, supports @-mentions), model (nano-banana-2 | nano-banana-pro | gpt-2), aspect (1:1/16:9/9:16/4:3/3:4), count (1-8), quality (1K/2K/4K). The single "in" handle accepts brand context, prompts, AND reference images (image_upload or another image_gen out) — they\'re sorted by data shape.',
     inputs: ['in'],
     outputs: ['out'],
-    initialProps: { prompt: '', model: 'nano-banana', aspect: '1:1', count: 1, quality: '2K' },
+    initialProps: { prompt: '', model: 'nano-banana-2', aspect: '1:1', count: 1, quality: '2K' },
   },
   avatar_render: {
     label: 'Avatar render',

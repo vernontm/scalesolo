@@ -349,11 +349,10 @@ function ImageGenBody({ data, onPatch }) {
       />
 
       <div style={pillRow}>
-        <select style={pillSelect} value={data.props?.model || 'nano-banana'} onChange={(e) => onPatch({ model: e.target.value })}>
-          <option value="nano-banana">Nano Banana</option>
-          <option value="flux-pro">Flux Pro</option>
-          <option value="flux-kontext">Flux Kontext</option>
-          <option value="gpt-image">GPT Image</option>
+        <select style={pillSelect} value={data.props?.model || 'nano-banana-2'} onChange={(e) => onPatch({ model: e.target.value })}>
+          <option value="nano-banana-2">Nano Banana 2</option>
+          <option value="nano-banana-pro">Nano Banana Pro</option>
+          <option value="gpt-2">GPT 2.0</option>
         </select>
         <select style={pillSelect} value={data.props?.aspect || '1:1'} onChange={(e) => onPatch({ aspect: e.target.value })}>
           <option value="1:1">1:1</option>
@@ -527,9 +526,14 @@ function BrandProfileBody({ data, onPatch }) {
 // ─── 6. AVATAR PICKER ───────────────────────────────────────────────────────
 function AvatarPickerBody({ data, onPatch }) {
   const avatars = data?._ctxAvatars || []
-  const selected = avatars.find((a) => a.id === data.props?.avatar_id)
-  const looks = selected?.looks || []
-  const trainingStatus = selected?.training_status
+  const publicAvatars = data?._ctxPublicAvatars || []
+  const currentId = data.props?.avatar_id || ''
+  const isPublic = currentId.startsWith('pub:')
+  const selected = isPublic
+    ? publicAvatars.find((g) => `pub:${g.id || g.group_id}` === currentId)
+    : avatars.find((a) => a.id === currentId)
+  const looks = !isPublic ? (selected?.looks || []) : []
+  const trainingStatus = !isPublic ? selected?.training_status : null
   const trainingMsg = trainingStatus && !['ready', 'completed', 'success'].includes(trainingStatus)
     ? (trainingStatus === 'training'
         ? 'HeyGen is still processing this avatar. Renders will fail until training completes.'
@@ -538,13 +542,22 @@ function AvatarPickerBody({ data, onPatch }) {
   return (
     <>
       <NodeField label="Avatar">
-        <select style={tinyInput} value={data.props?.avatar_id || ''} onChange={(e) => onPatch({ avatar_id: e.target.value, look_id: '' })}>
+        <select style={tinyInput} value={currentId} onChange={(e) => onPatch({ avatar_id: e.target.value, look_id: '' })}>
           <option value="">Pick an avatar…</option>
-          {avatars.map((a) => {
-            const tag = a.training_status && !['ready', 'completed', 'success'].includes(a.training_status)
-              ? ` — ${a.training_status}` : ''
-            return <option key={a.id} value={a.id}>{a.name} ({(a.model_version || 'v4').toUpperCase()}){tag}</option>
-          })}
+          {avatars.length > 0 && <optgroup label="My avatars">
+            {avatars.map((a) => {
+              const tag = a.training_status && !['ready', 'completed', 'success'].includes(a.training_status)
+                ? ` — ${a.training_status}` : ''
+              return <option key={a.id} value={a.id}>{a.name} ({(a.model_version || 'v4').toUpperCase()}){tag}</option>
+            })}
+          </optgroup>}
+          {publicAvatars.length > 0 && <optgroup label="HeyGen library">
+            {publicAvatars.map((g) => {
+              const id = g.id || g.group_id
+              const name = g.group_name || g.name || 'Stock avatar'
+              return <option key={`pub-${id}`} value={`pub:${id}`}>{name}</option>
+            })}
+          </optgroup>}
         </select>
       </NodeField>
       {trainingMsg && (
@@ -866,7 +879,7 @@ export const NODE_REGISTRY = {
     icon: ImageIcon, category: 'generators', color: '#a855f7',
     inputs: [{ id: 'in',  label: 'In (prompt / brand / refs)' }],
     outputs: [{ id: 'out', label: 'Out' }],
-    initialProps: { prompt: '', model: 'nano-banana', aspect: '1:1', count: 1, quality: '2K' },
+    initialProps: { prompt: '', model: 'nano-banana-2', aspect: '1:1', count: 1, quality: '2K' },
     Body: ImageGenBody,
     run: async ({ data, inputs, inputsByName, ctx }) => {
       const incoming = inputs?.in
@@ -944,6 +957,7 @@ export const NODE_REGISTRY = {
         body: JSON.stringify({
           avatar_id: avatar.avatar_id, script, voice_id: avatar.voice_id,
           look_id: avatar.look_id || undefined, model_version: avatar.model_version || undefined,
+          profile_id: ctx.profileId,
         }),
       })
       const body = await r.json()

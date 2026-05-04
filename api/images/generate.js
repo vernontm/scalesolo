@@ -10,12 +10,15 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 
-// UI model id → KIE model slug. KIE accepts the full provider/model id.
+// UI model id → KIE model slug.
 const MODEL_MAP = {
-  'nano-banana':   'google/nano-banana',
-  'flux-pro':      'black-forest-labs/flux-1.1-pro',
-  'flux-kontext':  'black-forest-labs/flux-kontext-pro',
-  'gpt-image':     'openai/gpt-image-1',
+  'nano-banana-2':    'google/nano-banana-2',
+  'nano-banana-pro':  'google/nano-banana-pro',
+  'gpt-2':            'openai/gpt-image-2',
+  // Back-compat aliases for older saved nodes
+  'nano-banana':      'google/nano-banana-2',
+  'flux-pro':         'google/nano-banana-pro',
+  'gpt-image':        'openai/gpt-image-2',
 }
 
 // KIE accepts "auto" or specific aspect strings like "1:1". For the unified

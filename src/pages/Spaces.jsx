@@ -504,6 +504,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [avatars, setAvatars] = useState([])
+  const [publicAvatars, setPublicAvatars] = useState([])
   // AI workflow build
   const [aiPrompt, setAiPrompt] = useState('')
   const [aiBuilding, setAiBuilding] = useState(false)
@@ -516,7 +517,8 @@ function SpaceBuilder({ space, onSave, onClose }) {
   useEffect(() => { edgesRef.current = edges }, [edges])
   const [aiSuggestion, setAiSuggestion] = useState(null)
 
-  // Load avatars for the profile so the AvatarPicker node can list them.
+  // Load avatars (custom + HeyGen public library) so the AvatarPicker node
+  // can list them.
   useEffect(() => {
     if (!session || !selectedProfileId) return
     fetch(`/api/avatars?profile_id=${selectedProfileId}`, {
@@ -524,6 +526,12 @@ function SpaceBuilder({ space, onSave, onClose }) {
     })
       .then((r) => r.json())
       .then((b) => setAvatars(b.avatars || []))
+      .catch(() => {})
+    fetch(`/api/avatars/heygen-library?profile_id=${selectedProfileId}`, {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    })
+      .then((r) => r.json())
+      .then((b) => setPublicAvatars(Array.isArray(b.groups) ? b.groups : []))
       .catch(() => {})
   }, [session, selectedProfileId])
 
@@ -821,12 +829,12 @@ function SpaceBuilder({ space, onSave, onClose }) {
   const renderNodes = useMemo(
     () => nodes.map((n) => {
       const t = n.data?.type
-      if (t === 'avatar_picker') return { ...n, data: { ...n.data, _ctxAvatars: avatars } }
+      if (t === 'avatar_picker') return { ...n, data: { ...n.data, _ctxAvatars: avatars, _ctxPublicAvatars: publicAvatars } }
       if (t === 'brand_profile') return { ...n, data: { ...n.data, _ctxProfiles: profiles } }
       if (t === 'image_upload')  return { ...n, data: { ...n.data, _ctxProfileId: selectedProfileId } }
       return n
     }),
-    [nodes, avatars, profiles]
+    [nodes, avatars, profiles, publicAvatars, selectedProfileId]
   )
 
   // Lock body scroll while the builder is mounted (it uses position:fixed).
