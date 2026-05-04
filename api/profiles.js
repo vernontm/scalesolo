@@ -1,4 +1,5 @@
 import { setCors, requireUser, supaFetch, assertProfileAccess } from './_lib/supabase.js'
+import { indexBrandBible } from './_lib/embeddings.js'
 
 export default async function handler(req, res) {
   setCors(req, res)
@@ -50,11 +51,20 @@ export default async function handler(req, res) {
       if (!['owner', 'admin'].includes(role)) return res.status(403).json({ error: 'Forbidden' })
       const updates = { ...(req.body || {}) }
       delete updates.id
+      const brandBibleChanged = Object.prototype.hasOwnProperty.call(updates, 'brand_bible')
       const updated = await supaFetch(`profiles?id=eq.${id}`, {
         method: 'PATCH',
         body: updates,
       })
-      return res.status(200).json({ profile: Array.isArray(updated) ? updated[0] : updated })
+      const profile = Array.isArray(updated) ? updated[0] : updated
+      // Re-embed brand bible chunks if it changed. Don't fail the save on
+      // embedding errors — users can manually retrigger via /api/agent/index-brand-bible.
+      if (brandBibleChanged) {
+        indexBrandBible(id, profile?.brand_bible || '').catch((err) => {
+          console.warn('[profiles] brand bible reindex failed:', err.message)
+        })
+      }
+      return res.status(200).json({ profile })
     }
 
     if (req.method === 'DELETE') {
