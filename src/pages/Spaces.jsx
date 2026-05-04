@@ -21,7 +21,7 @@ import { useRef } from 'react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { useCredits } from '../context/CreditsContext.jsx'
-import { NODE_REGISTRY, NODE_CATEGORIES, runSpace, downloadUrl } from '../lib/space-nodes.jsx'
+import { NODE_REGISTRY, NODE_CATEGORIES, runSpace, downloadUrl, readImageItems } from '../lib/space-nodes.jsx'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom node renderer (one component for every registered type)
@@ -832,6 +832,27 @@ function SpaceBuilder({ space, onSave, onClose }) {
       if (t === 'avatar_picker') return { ...n, data: { ...n.data, _ctxAvatars: avatars, _ctxPublicAvatars: publicAvatars } }
       if (t === 'brand_profile') return { ...n, data: { ...n.data, _ctxProfiles: profiles } }
       if (t === 'image_upload')  return { ...n, data: { ...n.data, _ctxProfileId: selectedProfileId } }
+      if (t === 'image_gen') {
+        // Walk back through edges to collect every image_upload's named
+        // images so the body can show clickable @ chips for autocomplete.
+        const named = []
+        const visited = new Set([n.id])
+        const queue = [n.id]
+        while (queue.length) {
+          const id = queue.shift()
+          for (const e of edges) {
+            if (e.target === id && !visited.has(e.source)) {
+              visited.add(e.source)
+              const src = nodes.find((s) => s.id === e.source)
+              if (src?.data?.type === 'image_upload') {
+                for (const it of readImageItems(src.data?.props)) named.push(it)
+              }
+              queue.push(e.source)
+            }
+          }
+        }
+        return { ...n, data: { ...n.data, _ctxNamedImages: named } }
+      }
       return n
     }),
     [nodes, avatars, profiles, publicAvatars, selectedProfileId]

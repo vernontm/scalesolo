@@ -288,6 +288,127 @@ function CaptionGenBody({ data, onPatch }) {
 }
 
 // ─── 4. IMAGE GENERATOR (KIE) ───────────────────────────────────────────────
+
+// Prompt subcomponent: shows available @-tag chips above the textarea,
+// supports click-to-insert, and a typing autocomplete dropdown when the
+// user types "@". Listed images come from upstream image_upload nodes
+// (injected via renderNodes as data._ctxNamedImages).
+function ImageGenPrompt({ data, onPatch }) {
+  const ref = useRef(null)
+  const [suggest, setSuggest] = useState({ open: false, prefix: '', start: -1 })
+  const named = Array.isArray(data?._ctxNamedImages) ? data._ctxNamedImages : []
+  const prompt = data.props?.prompt || ''
+  const tagFor = (name) => `@${(name || '').replace(/\s+/g, '')}`
+
+  function insertTag(name) {
+    const tag = tagFor(name)
+    const ta = ref.current
+    if (!ta) { onPatch({ prompt: `${prompt} ${tag}`.trim() }); return }
+    const start = suggest.start >= 0 ? suggest.start : ta.selectionStart
+    const end = ta.selectionEnd
+    const before = prompt.slice(0, start)
+    const after = prompt.slice(end)
+    const next = `${before}${tag}${after.startsWith(' ') ? '' : ' '}${after}`
+    onPatch({ prompt: next })
+    setSuggest({ open: false, prefix: '', start: -1 })
+    requestAnimationFrame(() => {
+      const pos = (before + tag + (after.startsWith(' ') ? '' : ' ')).length
+      try { ta.focus(); ta.setSelectionRange(pos, pos) } catch {}
+    })
+  }
+
+  function onChange(e) {
+    const v = e.target.value
+    onPatch({ prompt: v })
+    // Look back from the cursor for an active "@..." token.
+    const caret = e.target.selectionStart || 0
+    const upto = v.slice(0, caret)
+    const m = upto.match(/(?:^|\s)@([A-Za-z0-9_-]*)$/)
+    if (m) {
+      const start = caret - m[1].length - 1
+      setSuggest({ open: true, prefix: m[1].toLowerCase(), start })
+    } else {
+      setSuggest({ open: false, prefix: '', start: -1 })
+    }
+  }
+
+  const filtered = named.filter((im) => {
+    if (!suggest.prefix) return true
+    return tagFor(im.name).slice(1).toLowerCase().startsWith(suggest.prefix)
+  })
+  const tokens = Array.from(new Set(prompt.match(/@(?:"[^"]+"|[A-Za-z0-9_-]+)/g) || []))
+
+  return (
+    <div style={{ position: 'relative' }}>
+      {named.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+          <span style={{ fontSize: 9.5, color: 'var(--muted)', fontFamily: 'var(--font-display)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', alignSelf: 'center' }}>tag:</span>
+          {named.map((im) => (
+            <button
+              key={im.url}
+              type="button"
+              onClick={(e) => { e.stopPropagation(); insertTag(im.name) }}
+              title={`Insert ${tagFor(im.name)}`}
+              style={{
+                fontSize: 10, padding: '2px 7px', borderRadius: 999,
+                background: 'rgba(168,85,247,0.12)', color: '#c4b5fd',
+                border: '1px solid rgba(168,85,247,0.4)',
+                fontFamily: 'var(--font-display)', fontWeight: 700, cursor: 'pointer',
+              }}
+            >{tagFor(im.name)}</button>
+          ))}
+        </div>
+      )}
+      <textarea
+        ref={ref}
+        style={{ ...tinyInput, minHeight: 60, fontFamily: 'inherit' }}
+        placeholder='Describe the image. Type @ to reference a specific upload.'
+        value={prompt}
+        onChange={onChange}
+        onBlur={() => setTimeout(() => setSuggest((s) => ({ ...s, open: false })), 150)}
+      />
+      {suggest.open && filtered.length > 0 && (
+        <div style={{
+          position: 'absolute', left: 0, right: 0, top: '100%',
+          marginTop: 2, zIndex: 10,
+          background: 'var(--surface)', border: '1px solid var(--border-strong)',
+          borderRadius: 8, boxShadow: 'var(--shadow-pop)',
+          maxHeight: 180, overflow: 'auto',
+        }}>
+          {filtered.map((im) => (
+            <button
+              key={im.url}
+              type="button"
+              onMouseDown={(e) => { e.preventDefault(); insertTag(im.name) }}
+              style={{
+                width: '100%', textAlign: 'left',
+                display: 'flex', alignItems: 'center', gap: 8, padding: 6,
+                background: 'transparent', border: 'none', borderBottom: '1px solid var(--border)',
+                color: 'var(--text)', cursor: 'pointer', fontSize: 11,
+              }}
+            >
+              <img src={im.url} alt="" style={{ width: 28, height: 28, objectFit: 'cover', borderRadius: 4 }} />
+              <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, color: '#c4b5fd' }}>{tagFor(im.name)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {tokens.length > 0 && (
+        <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {tokens.map((t) => (
+            <span key={t} style={{
+              fontSize: 10, padding: '2px 7px', borderRadius: 999,
+              background: 'rgba(168,85,247,0.18)', color: '#c4b5fd',
+              border: '1px solid rgba(168,85,247,0.5)',
+              fontFamily: 'var(--font-display)', fontWeight: 700,
+            }}>{t}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ImageGenBody({ data, onPatch }) {
   const out = data.output
   const imgs = Array.isArray(out?.images) ? out.images : (out?.image_url ? [{ url: out.image_url }] : [])
@@ -341,30 +462,7 @@ function ImageGenBody({ data, onPatch }) {
         )}
       </div>
 
-      <textarea
-        style={{ ...tinyInput, minHeight: 60, fontFamily: 'inherit' }}
-        placeholder='Describe the image. Use @imagename to reference a specific upload, e.g. "she is at @office holding @logo".'
-        value={data.props?.prompt || ''}
-        onChange={(e) => onPatch({ prompt: e.target.value })}
-      />
-      {(() => {
-        const tokens = Array.from(new Set(
-          (data.props?.prompt || '').match(/@(?:"[^"]+"|[A-Za-z0-9_-]+)/g) || []
-        ))
-        if (!tokens.length) return null
-        return (
-          <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-            {tokens.map((t) => (
-              <span key={t} style={{
-                fontSize: 10, padding: '2px 7px', borderRadius: 999,
-                background: 'rgba(168,85,247,0.18)', color: '#c4b5fd',
-                border: '1px solid rgba(168,85,247,0.5)',
-                fontFamily: 'var(--font-display)', fontWeight: 700,
-              }}>{t}</span>
-            ))}
-          </div>
-        )
-      })()}
+      <ImageGenPrompt data={data} onPatch={onPatch} />
 
       <div style={pillRow}>
         <select style={pillSelect} value={data.props?.model || 'nano-banana-2'} onChange={(e) => onPatch({ model: e.target.value })}>
@@ -419,7 +517,7 @@ function ImageGenBody({ data, onPatch }) {
 // Normalize image_upload props.urls — supports legacy strings and new
 // {url, name} objects. Always returns {url, name}[] with sensible default
 // names so the @-mention resolver can match against them.
-function readImageItems(props) {
+export function readImageItems(props) {
   const arr = Array.isArray(props?.urls) ? props.urls : []
   return arr.map((x, i) => {
     if (typeof x === 'string') return { url: x, name: `image ${i + 1}` }
@@ -994,6 +1092,15 @@ export const NODE_REGISTRY = {
       }
       // No matches by name → fall back to every reference image we received.
       if (!refs.length) refs = pickImageUrls(incoming)
+
+      // Strip @-mentions from the prompt before sending to KIE — image
+      // models don't parse them and the raw "@image1" text confuses
+      // Gemini-based providers. We've already pulled the matching URLs
+      // into `refs`, so replace each token with a neutral phrase.
+      prompt = prompt.replace(/@(?:"([^"]+)"|([A-Za-z0-9_-]+))/g, (_, q, b) => {
+        const name = (q || b || '').trim()
+        return name ? `the reference image "${name}"` : 'the reference image'
+      })
 
       const r = await fetch('/api/images/generate', {
         method: 'POST',
