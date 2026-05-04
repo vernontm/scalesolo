@@ -49,8 +49,25 @@ export default async function handler(req, res) {
       if (!id) return res.status(400).json({ error: 'id required' })
       const role = await assertProfileAccess(userId, id)
       if (!['owner', 'admin'].includes(role)) return res.status(403).json({ error: 'Forbidden' })
-      const updates = { ...(req.body || {}) }
-      delete updates.id
+      // Whitelist columns that are safe to PATCH on profiles. Anything else
+      // (incl. context-side helpers like _role / _allowed_pages, and joined
+      // access cols) is silently dropped.
+      const ALLOWED = new Set([
+        'business_name','owner_name','industry','business_type','website_url',
+        'brand_bible','brand_primary_color','brand_secondary_color','logo_url',
+        'preferred_tone','target_audience','core_hashtags','location','timezone',
+        'instagram_handle','tiktok_handle','facebook_handle','threads_handle',
+        'youtube_handle','linkedin_handle','x_handle',
+        'instagram_id','tiktok_id','facebook_id','threads_id','youtube_id','linkedin_id',
+        'uploadpost_user','uploadpost_platforms','autodm_reply_message',
+        'carousel_templates','threads_style','enabled_pages',
+        'agent_aggressiveness','is_active',
+      ])
+      const updates = {}
+      for (const [k, v] of Object.entries(req.body || {})) {
+        if (k === 'id') continue
+        if (ALLOWED.has(k)) updates[k] = v
+      }
       const brandBibleChanged = Object.prototype.hasOwnProperty.call(updates, 'brand_bible')
       const updated = await supaFetch(`profiles?id=eq.${id}`, {
         method: 'PATCH',

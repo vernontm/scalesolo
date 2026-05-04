@@ -74,10 +74,16 @@ function ProfileEditor({ profile, onClose, onSaved }) {
     }
     setBusy(true); setError(null)
     try {
+      // Strip context-side helpers + read-only columns before sending.
+      const STRIP = new Set([
+        '_role', '_allowed_pages', 'role', 'allowed_pages',
+        'created_at', 'updated_at',
+      ])
+      const clean = Object.fromEntries(Object.entries(form).filter(([k]) => !STRIP.has(k)))
       const r = await fetch('/api/profiles', {
         method: isNew ? 'POST' : 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify(isNew ? form : { id: profile.id, ...form }),
+        body: JSON.stringify(isNew ? clean : { id: profile.id, ...clean }),
       })
       const body = await r.json()
       if (!r.ok) throw new Error(body.error || 'Save failed')
