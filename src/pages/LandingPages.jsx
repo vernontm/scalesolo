@@ -429,6 +429,24 @@ function Builder({ page, onSave, onClose }) {
       }
       if (body.meta) setMeta(body.meta)
       setAiPrompt('')
+
+      // Auto-persist so the page exists immediately and the AI edit row
+      // (which posts page_id) is unblocked without forcing a manual Save.
+      if (!page.id && Array.isArray(body.sections) && body.sections.length) {
+        try {
+          const saveResp = await fetch('/api/landing-pages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+            body: JSON.stringify({
+              profile_id: selectedProfileId,
+              name, slug, sections: body.sections, meta: body.meta || {},
+              is_published: false,
+            }),
+          })
+          const saved = await saveResp.json().catch(() => ({}))
+          if (saveResp.ok && saved.page) onSave(saved.page)
+        } catch {}
+      }
     } catch (e) { setError(e.message) }
     finally { setGenerating(false) }
   }
@@ -444,7 +462,25 @@ function Builder({ page, onSave, onClose }) {
       })
       const body = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(body.error || 'Edit failed')
-      if (Array.isArray(body.sections)) setSections(body.sections)
+      if (Array.isArray(body.sections)) {
+        // Force every section component to re-render fresh (stops React from
+        // diffing against the old props and skipping updates).
+        const refreshed = body.sections.map((s) => ({
+          ...s,
+          props: { ...(s.props || {}) },
+          _v: ((s._v || 0) + 1),
+        }))
+        setSections(refreshed)
+        if (activeId && !refreshed.find((s) => s.id === activeId)) setActiveId(refreshed[0]?.id || null)
+        // Auto-persist so the user doesn't have to hit Save between edits.
+        if (page.id) {
+          fetch('/api/landing-pages', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+            body: JSON.stringify({ id: page.id, sections: refreshed }),
+          }).catch(() => {})
+        }
+      }
       setEditPrompt('')
     } catch (e) { setError(e.message) }
     finally { setEditing(false) }
@@ -506,27 +542,27 @@ function Builder({ page, onSave, onClose }) {
           </button>
         </div>
 
-        {/* AI generate row */}
-        <div style={{ display: 'flex', gap: 8, padding: 12, borderBottom: '1px solid var(--border)', background: 'var(--surface-2)' }}>
-          <input
-            className="input"
-            placeholder="Describe a page to generate (e.g. 'A waitlist page for my AI course')"
-            value={aiPrompt}
-            onChange={(e) => setAiPrompt(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') generate() }}
-          />
-          <button className="btn-secondary" onClick={generate} disabled={generating || !aiPrompt.trim()}>
-            <Wand2 size={13} /> Generate
-          </button>
-        </div>
-
-        {/* AI edit row */}
-        {sections.length > 0 && (
+        {/* Generate vs Edit row — we only show ONE.
+            Empty page → Generate. Has sections → AI Edit (chat to refine). */}
+        {sections.length === 0 ? (
+          <div style={{ display: 'flex', gap: 8, padding: 12, borderBottom: '1px solid var(--border)', background: 'var(--surface-2)' }}>
+            <input
+              className="input"
+              placeholder="Describe a page to generate (e.g. 'A waitlist page for my AI course')"
+              value={aiPrompt}
+              onChange={(e) => setAiPrompt(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') generate() }}
+            />
+            <button className="btn-secondary" onClick={generate} disabled={generating || !aiPrompt.trim()}>
+              <Wand2 size={13} /> Generate
+            </button>
+          </div>
+        ) : (
           <div style={{ display: 'flex', gap: 8, padding: 12, borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
             <MessageSquare size={14} style={{ color: 'var(--red)', alignSelf: 'center', flexShrink: 0 }} />
             <input
               className="input"
-              placeholder="Tell the AI what to change (e.g. 'change theme color to orange', 'add a gradient behind stats')"
+              placeholder="Tell the AI what to change (e.g. 'change theme to orange', 'add a gradient behind stats')"
               value={editPrompt}
               onChange={(e) => setEditPrompt(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') aiEdit() }}
