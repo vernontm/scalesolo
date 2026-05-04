@@ -30,6 +30,17 @@ export default async function handler(req, res) {
     if (!avatar) return res.status(404).json({ error: 'Avatar not found' })
     await assertProfileAccess(auth.user.id, avatar.profile_id)
 
+    // Refuse early if HeyGen training isn't complete. We surface a clean
+    // message instead of letting HeyGen 404 deep in the render submit.
+    if (avatar.training_status && !['ready', 'completed', 'success'].includes(avatar.training_status)) {
+      return res.status(409).json({
+        error: avatar.training_status === 'training'
+          ? 'This avatar is still being processed by HeyGen. Wait a few minutes and try again, or use a HeyGen library avatar.'
+          : `Avatar training did not finish (${avatar.training_status}). Re-create the avatar from the Avatars page.`,
+        training_status: avatar.training_status,
+      })
+    }
+
     const modelKey = model_version || avatar.model_version || 'v4'
     const modelDef = MODELS[modelKey]
     if (!modelDef) return res.status(400).json({ error: `Unknown model_version: ${modelKey}` })
@@ -89,6 +100,18 @@ export default async function handler(req, res) {
       }
       if (!heygenVideoId) throw new Error('HeyGen returned no video_id')
     } catch (e) {
+      // If HeyGen 404s on the avatar id, our stored id was probably an
+      // intermediate generation_id (HeyGen's photo-avatar pipeline shifted
+      // and now returns generation_id from /photo/generate). Give the user
+      // an actionable message instead of the raw HTTP error.
+      const looksLikeNotFound = e.status === 404 || /avatar not found/i.test(e.message || '')
+      if (looksLikeNotFound) {
+        return res.status(409).json({
+          error: 'This avatar is not yet usable on HeyGen — its training has not produced a final avatar id. Pick a different avatar (from the HeyGen library) or re-upload after HeyGen finishes processing.',
+          engine: modelDef.engine,
+          heygen_id_used: avatarIdForApi,
+        })
+      }
       return res.status(502).json({ error: `HeyGen render submit failed: ${e.message}`, engine: modelDef.engine })
     }
 

@@ -527,17 +527,31 @@ function BrandProfileBody({ data, onPatch }) {
 // ─── 6. AVATAR PICKER ───────────────────────────────────────────────────────
 function AvatarPickerBody({ data, onPatch }) {
   const avatars = data?._ctxAvatars || []
-  const looks = avatars.find((a) => a.id === data.props?.avatar_id)?.looks || []
+  const selected = avatars.find((a) => a.id === data.props?.avatar_id)
+  const looks = selected?.looks || []
+  const trainingStatus = selected?.training_status
+  const trainingMsg = trainingStatus && !['ready', 'completed', 'success'].includes(trainingStatus)
+    ? (trainingStatus === 'training'
+        ? 'HeyGen is still processing this avatar. Renders will fail until training completes.'
+        : `Training status: ${trainingStatus}. Renders will fail; re-create the avatar.`)
+    : null
   return (
     <>
       <NodeField label="Avatar">
         <select style={tinyInput} value={data.props?.avatar_id || ''} onChange={(e) => onPatch({ avatar_id: e.target.value, look_id: '' })}>
           <option value="">Pick an avatar…</option>
-          {avatars.map((a) => (
-            <option key={a.id} value={a.id}>{a.name} ({(a.model_version || 'v4').toUpperCase()})</option>
-          ))}
+          {avatars.map((a) => {
+            const tag = a.training_status && !['ready', 'completed', 'success'].includes(a.training_status)
+              ? ` — ${a.training_status}` : ''
+            return <option key={a.id} value={a.id}>{a.name} ({(a.model_version || 'v4').toUpperCase()}){tag}</option>
+          })}
         </select>
       </NodeField>
+      {trainingMsg && (
+        <div style={{ marginTop: 4, padding: '6px 8px', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.5)', borderRadius: 6, fontSize: 11, color: 'var(--amber)' }}>
+          {trainingMsg}
+        </div>
+      )}
       {looks.length > 1 && (
         <NodeField label="Look">
           <select style={tinyInput} value={data.props?.look_id || ''} onChange={(e) => onPatch({ look_id: e.target.value })}>
