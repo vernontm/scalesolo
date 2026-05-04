@@ -2,25 +2,64 @@
 // Body: { profile_id, prompt, model?, count?, aspect?, quality?, reference_urls? }
 // Returns: { images: [{ url }] }
 //
-// Wraps KIE.ai image generation (Nano Banana, Flux, etc.). Uses their
-// async task pattern: createTask → poll recordInfo until success/fail.
+// Wraps KIE.ai image generation. KIE uses a unified jobs API:
+//   POST /api/v1/jobs/createTask  body: { model, input: { ... } }
+//   GET  /api/v1/jobs/recordInfo?taskId=…
+// Response shape: { code, msg, data: { taskId } } / { data: { state, resultJson, ... } }
+// resultJson is a JSON-encoded STRING that needs to be parsed.
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 
-const SIZE_MAP = {
-  '1:1':  '1024x1024',
-  '16:9': '1536x864',
-  '9:16': '864x1536',
-  '4:3':  '1280x960',
-  '3:4':  '960x1280',
+// UI model id → KIE model slug. KIE accepts the full provider/model id.
+const MODEL_MAP = {
+  'nano-banana':   'google/nano-banana',
+  'flux-pro':      'black-forest-labs/flux-1.1-pro',
+  'flux-kontext':  'black-forest-labs/flux-kontext-pro',
+  'gpt-image':     'openai/gpt-image-1',
 }
 
-// Map UI model id → KIE endpoint slug. Default to nano-banana.
-const MODEL_ENDPOINTS = {
-  'nano-banana':   'nano-banana',
-  'flux-pro':      'flux/v1.1-pro',
-  'flux-kontext':  'flux-kontext',
-  'gpt-image':     'gpt4o-image',
+// KIE accepts "auto" or specific aspect strings like "1:1". For the unified
+// jobs API the canonical input field name is "image_size".
+function buildInput(model, { prompt, aspect, count, quality, reference_urls }) {
+  const base = {
+    prompt,
+    image_size: aspect || '1:1',
+    output_format: 'png',
+    num_images: Math.max(1, Math.min(8, Number(count) || 1)),
+  }
+  if (Array.isArray(reference_urls) && reference_urls.length) {
+    // KIE uses image_url (array) for reference / image-to-image
+    base.image_url = reference_urls
+  }
+  // Quality tweak — only some models accept this; harmless extra key for others.
+  if (quality) base.quality = quality
+  return base
+}
+
+function pickError(body, fallbackStatus) {
+  // KIE may return any of: msg, message, error.message, error, code+msg
+  const msg = body?.msg || body?.message || body?.error?.message || body?.error || ''
+  const code = body?.code != null ? ` (code ${body.code})` : ''
+  return msg ? `${msg}${code}` : `KIE error ${fallbackStatus}${code}`
+}
+
+function parseResultUrls(data) {
+  // resultJson is a JSON-string of { resultUrls: [...] }
+  let out = []
+  const rj = data?.resultJson
+  if (typeof rj === 'string') {
+    try {
+      const parsed = JSON.parse(rj)
+      if (Array.isArray(parsed?.resultUrls)) out = parsed.resultUrls
+      else if (Array.isArray(parsed)) out = parsed
+    } catch {}
+  } else if (rj && Array.isArray(rj.resultUrls)) {
+    out = rj.resultUrls
+  }
+  if (!out.length) {
+    out = data?.resultUrls || data?.result?.urls || data?.images?.map?.((i) => i.url || i) || []
+  }
+  return (Array.isArray(out) ? out : []).filter(Boolean)
 }
 
 export default async function handler(req, res) {
@@ -38,7 +77,7 @@ export default async function handler(req, res) {
       model = 'nano-banana',
       count = 1,
       aspect = '1:1',
-      quality = '2K',
+      quality,
       reference_urls,
     } = req.body || {}
     if (!profile_id || !prompt) return res.status(400).json({ error: 'profile_id + prompt required' })
@@ -47,7 +86,6 @@ export default async function handler(req, res) {
     const apiKey = process.env.KIE_API_KEY
     if (!apiKey) return res.status(500).json({ error: 'KIE_API_KEY not configured. Add it in Vercel env.' })
 
-    // Pre-flight credit check (image gen ≈ 4000 ai_tokens equivalent per image)
     const cust = await supaFetch(`billing_customers?user_id=eq.${auth.user.id}&select=id`)
     const customerId = cust?.[0]?.id
     if (customerId) {
@@ -58,52 +96,49 @@ export default async function handler(req, res) {
       }
     }
 
-    const slug = MODEL_ENDPOINTS[model] || MODEL_ENDPOINTS['nano-banana']
-    const size = SIZE_MAP[aspect] || '1024x1024'
+    const kieModel = MODEL_MAP[model] || MODEL_MAP['nano-banana']
+    const input = buildInput(kieModel, { prompt, aspect, count, quality, reference_urls })
 
-    // Submit task
-    const submitResp = await fetch(`https://api.kie.ai/api/v1/${slug}/createTask`, {
+    // Submit task via the unified jobs endpoint
+    const submitResp = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        prompt,
-        size,
-        aspect_ratio: aspect,
-        num_images: Math.max(1, Math.min(8, Number(count) || 1)),
-        quality,
-        ...(Array.isArray(reference_urls) && reference_urls.length ? { image_urls: reference_urls } : {}),
-      }),
+      body: JSON.stringify({ model: kieModel, input }),
     })
-    const submit = await submitResp.json().catch(() => ({}))
-    if (!submitResp.ok) {
-      return res.status(502).json({ error: submit?.message || submit?.error || `KIE submit failed (${submitResp.status})`, raw: submit })
+    const submitText = await submitResp.text()
+    let submit = {}
+    try { submit = JSON.parse(submitText) } catch { submit = { raw: submitText } }
+    if (!submitResp.ok || (submit?.code && submit.code !== 200)) {
+      return res.status(502).json({
+        error: pickError(submit, submitResp.status),
+        kie_status: submitResp.status,
+        kie_body: submit,
+      })
     }
-    const taskId = submit?.data?.taskId || submit?.taskId || submit?.data?.task_id
-    if (!taskId) return res.status(502).json({ error: 'KIE returned no taskId', raw: submit })
+    const taskId = submit?.data?.taskId || submit?.data?.task_id || submit?.taskId
+    if (!taskId) {
+      return res.status(502).json({ error: 'KIE returned no taskId', kie_body: submit })
+    }
 
-    // Poll up to 120s
+    // Poll up to 120s for the job to finish
     const start = Date.now()
     let lastBody = null
     while (Date.now() - start < 120_000) {
       await new Promise((r) => setTimeout(r, 3000))
-      const sr = await fetch(`https://api.kie.ai/api/v1/${slug}/recordInfo?taskId=${encodeURIComponent(taskId)}`, {
+      const sr = await fetch(`https://api.kie.ai/api/v1/jobs/recordInfo?taskId=${encodeURIComponent(taskId)}`, {
         headers: { 'Authorization': `Bearer ${apiKey}` },
       })
-      const sb = await sr.json().catch(() => ({}))
+      const sText = await sr.text()
+      let sb = {}
+      try { sb = JSON.parse(sText) } catch { sb = { raw: sText } }
       lastBody = sb
       const data = sb?.data || sb
       const state = String(data?.state || data?.status || '').toLowerCase()
-      if (state === 'success' || state === 'completed' || state === 'done') {
-        const urls =
-          data?.resultJson?.resultUrls ||
-          data?.resultUrls ||
-          data?.result?.urls ||
-          data?.images?.map?.((i) => i.url || i) ||
-          []
-        const list = (Array.isArray(urls) ? urls : []).filter(Boolean).map((u) => (typeof u === 'string' ? { url: u } : u))
-        if (!list.length) return res.status(502).json({ error: 'KIE returned no image URLs', raw: data })
 
-        // Debit credits (best-effort)
+      if (state === 'success' || state === 'completed' || state === 'done') {
+        const urls = parseResultUrls(data).map((u) => (typeof u === 'string' ? { url: u } : u))
+        if (!urls.length) return res.status(502).json({ error: 'KIE returned no image URLs', kie_body: data })
+
         if (customerId) {
           try {
             await supaFetch('rpc/consume_credits', {
@@ -111,21 +146,25 @@ export default async function handler(req, res) {
               body: {
                 p_customer_id: customerId,
                 p_pool_type: 'ai_tokens',
-                p_amount: 4000 * list.length,
+                p_amount: 4000 * urls.length,
                 p_action: 'consume:image-gen',
                 p_profile_id: profile_id,
-                p_metadata: { model, aspect, count: list.length, prompt: String(prompt).slice(0, 200) },
+                p_metadata: { model: kieModel, aspect, count: urls.length, prompt: String(prompt).slice(0, 200) },
               },
             })
           } catch {}
         }
-        return res.status(200).json({ images: list, taskId })
+        return res.status(200).json({ images: urls, taskId })
       }
       if (state === 'fail' || state === 'failed' || state === 'error') {
-        return res.status(502).json({ error: data?.failMsg || data?.message || 'Generation failed', raw: data })
+        return res.status(502).json({
+          error: data?.failMsg || data?.errorMessage || data?.message || pickError(data, sr.status) || 'Generation failed',
+          kie_body: data,
+        })
       }
+      // else: state is still queueing/processing — keep polling.
     }
-    return res.status(504).json({ error: 'Timed out waiting for KIE', raw: lastBody })
+    return res.status(504).json({ error: 'Timed out waiting for KIE', kie_body: lastBody })
   } catch (err) {
     return res.status(err.status || 500).json({ error: err.message })
   }
