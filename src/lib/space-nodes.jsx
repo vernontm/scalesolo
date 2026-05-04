@@ -343,7 +343,7 @@ function ImageGenBody({ data, onPatch }) {
 
       <textarea
         style={{ ...tinyInput, minHeight: 60, fontFamily: 'inherit' }}
-        placeholder='Describe the image, or use @ref1 to include a reference image…'
+        placeholder='Describe the image. Use @imagename to reference a specific upload, e.g. "she is at @office holding @logo".'
         value={data.props?.prompt || ''}
         onChange={(e) => onPatch({ prompt: e.target.value })}
       />
@@ -398,11 +398,25 @@ function ImageGenBody({ data, onPatch }) {
 }
 
 // ─── 5. IMAGE UPLOAD (reference images) ─────────────────────────────────────
+// Normalize image_upload props.urls — supports legacy strings and new
+// {url, name} objects. Always returns {url, name}[] with sensible default
+// names so the @-mention resolver can match against them.
+function readImageItems(props) {
+  const arr = Array.isArray(props?.urls) ? props.urls : []
+  return arr.map((x, i) => {
+    if (typeof x === 'string') return { url: x, name: `image ${i + 1}` }
+    if (x && typeof x === 'object' && x.url) return { url: x.url, name: x.name || `image ${i + 1}` }
+    return null
+  }).filter(Boolean)
+}
+
 function ImageUploadBody({ data, onPatch }) {
   const inpRef = useRef(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
-  const urls = Array.isArray(data.props?.urls) ? data.props.urls : []
+  const [editingIdx, setEditingIdx] = useState(-1)
+  const [draftName, setDraftName] = useState('')
+  const items = readImageItems(data.props)
   const profileId = data?._ctxProfileId
 
   async function onPick(e) {
@@ -410,10 +424,10 @@ function ImageUploadBody({ data, onPatch }) {
     if (!files.length || !profileId) return
     setBusy(true); setErr(null)
     try {
-      const next = [...urls]
+      const next = [...items]
       for (const f of files) {
         const u = await uploadImageToBucket(f, profileId)
-        next.push(u)
+        next.push({ url: u, name: `image ${next.length + 1}` })
       }
       onPatch({ urls: next })
     } catch (e) {
@@ -423,26 +437,60 @@ function ImageUploadBody({ data, onPatch }) {
       if (inpRef.current) inpRef.current.value = ''
     }
   }
-  function remove(u) {
-    onPatch({ urls: urls.filter((x) => x !== u) })
+  function remove(idx) {
+    onPatch({ urls: items.filter((_, j) => j !== idx) })
+  }
+  function commitName(idx) {
+    const trimmed = (draftName || '').trim() || `image ${idx + 1}`
+    onPatch({ urls: items.map((it, j) => j === idx ? { ...it, name: trimmed } : it) })
+    setEditingIdx(-1); setDraftName('')
   }
 
   return (
     <>
-      {urls.length > 0 && (
+      {items.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 8 }}>
-          {urls.map((u) => (
-            <div key={u} style={{ position: 'relative', aspectRatio: '1', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' }}>
-              <img src={u} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-              <button
-                onClick={() => remove(u)}
-                style={{
-                  position: 'absolute', top: 2, right: 2,
-                  background: 'rgba(0,0,0,0.6)', color: '#fff',
-                  border: 'none', borderRadius: 999, width: 18, height: 18,
-                  cursor: 'pointer', fontSize: 10, display: 'grid', placeItems: 'center',
-                }}
-                aria-label="Remove">×</button>
+          {items.map((it, idx) => (
+            <div key={`${it.url}-${idx}`} style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <div style={{ position: 'relative', aspectRatio: '1', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' }}>
+                <img src={it.url} alt={it.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                <button
+                  onClick={(e) => { e.stopPropagation(); remove(idx) }}
+                  style={{
+                    position: 'absolute', top: 2, right: 2,
+                    background: 'rgba(0,0,0,0.6)', color: '#fff',
+                    border: 'none', borderRadius: 999, width: 18, height: 18,
+                    cursor: 'pointer', fontSize: 10, display: 'grid', placeItems: 'center',
+                  }}
+                  aria-label="Remove">×</button>
+              </div>
+              {editingIdx === idx ? (
+                <input
+                  autoFocus
+                  value={draftName}
+                  onChange={(e) => setDraftName(e.target.value)}
+                  onBlur={() => commitName(idx)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') commitName(idx); if (e.key === 'Escape') { setEditingIdx(-1); setDraftName('') } }}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    fontSize: 10, padding: '2px 4px',
+                    background: 'var(--surface)', color: 'var(--text)',
+                    border: '1px solid var(--red)', borderRadius: 4, outline: 'none',
+                    fontFamily: 'inherit',
+                  }}
+                />
+              ) : (
+                <div
+                  onDoubleClick={(e) => { e.stopPropagation(); setEditingIdx(idx); setDraftName(it.name) }}
+                  title={`@${it.name.replace(/\s+/g, '')} — double-click to rename`}
+                  style={{
+                    fontSize: 10, padding: '2px 4px', borderRadius: 4,
+                    color: 'var(--muted)', textAlign: 'center',
+                    cursor: 'text', userSelect: 'none',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}
+                >@{it.name.replace(/\s+/g, '')}</div>
+              )}
             </div>
           ))}
         </div>
@@ -457,7 +505,7 @@ function ImageUploadBody({ data, onPatch }) {
           background: 'var(--surface-2)', borderStyle: 'dashed',
         }}>
         {busy ? <Loader2 size={13} className="spin" /> : <Upload size={13} />}
-        {busy ? 'Uploading…' : urls.length ? 'Add more images' : 'Upload reference images'}
+        {busy ? 'Uploading…' : items.length ? 'Add more images' : 'Upload reference images'}
       </button>
       <input ref={inpRef} type="file" multiple accept="image/*" onChange={onPick} style={{ display: 'none' }} />
       {err && <div style={{ marginTop: 6, color: 'var(--red)', fontSize: 11 }}>{err}</div>}
@@ -759,14 +807,14 @@ export const NODE_REGISTRY = {
   },
 
   image_upload: {
-    label: 'Reference images', description: 'Upload images to use as references in image gen.',
+    label: 'Reference images', description: 'Upload images to use as references in image gen. Each image gets an editable name (default "image 1", "image 2"). Reference specific ones in a generator prompt with @-mentions, e.g. "she is at @office holding @logo".',
     icon: Upload, category: 'inputs', color: '#0ea5e9',
     inputs: [], outputs: [{ id: 'out', label: 'Out' }],
     initialProps: { urls: [] },
     Body: ImageUploadBody,
     run: async ({ data }) => {
-      const urls = Array.isArray(data.props?.urls) ? data.props.urls : []
-      return { images: urls.map((url) => ({ url })) }
+      const items = readImageItems(data.props)
+      return { images: items.map(({ url, name }) => ({ url, name })) }
     },
   },
 
@@ -900,9 +948,30 @@ export const NODE_REGISTRY = {
         if (bits.length) prompt = `${bits.join('. ')}.\n\n${prompt}`
       }
 
-      // Reference images are auto-detected from the same In handle:
-      // anything with a url or images array, that isn't the brand object.
-      const refs = pickImageUrls(incoming)
+      // Build a name → url map of every named upstream image. Then either
+      // honor the @-mentions in the prompt (only those images are sent as
+      // refs) or fall back to all upstream images if no @-mentions match.
+      const namedImages = []
+      for (const v of asArr(incoming)) {
+        if (v && Array.isArray(v.images)) {
+          for (const im of v.images) {
+            if (im?.url) namedImages.push({ url: im.url, name: (im.name || '').trim() })
+          }
+        }
+      }
+      const tokens = [...new Set(
+        Array.from((data.props?.prompt || '').matchAll(/@(?:"([^"]+)"|([A-Za-z0-9_-]+))/g))
+          .map((m) => (m[1] || m[2] || '').toLowerCase().replace(/\s+/g, ''))
+      )].filter(Boolean)
+      let refs = []
+      if (tokens.length) {
+        for (const tok of tokens) {
+          const hit = namedImages.find((im) => (im.name || '').toLowerCase().replace(/\s+/g, '') === tok)
+          if (hit) refs.push(hit.url)
+        }
+      }
+      // No matches by name → fall back to every reference image we received.
+      if (!refs.length) refs = pickImageUrls(incoming)
 
       const r = await fetch('/api/images/generate', {
         method: 'POST',
