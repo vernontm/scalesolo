@@ -348,7 +348,7 @@ export default function Pipeline() {
         })
       }
     } else {
-      // Append to end of stage
+      // Append to end of stage (defensive: byStage.get may return undefined for unknown stages)
       const list = (byStage.get(overStage) || []).filter((d) => d.id !== dealId)
       const position = list.length
       setDeals((prev) => prev.map((d) => d.id === dealId ? { ...d, stage: overStage, position } : d))

@@ -28,9 +28,18 @@ export function AgentProvider({ children }) {
       const r = await fetch(`/api/agent/conversations?profile_id=${selectedProfileId}`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
       })
-      const body = await r.json()
-      if (r.ok) setConversations(body.conversations || [])
-    } catch {}
+      const body = await r.json().catch(() => ({}))
+      if (r.ok) {
+        setConversations(body.conversations || [])
+      } else {
+        // surface the failure so the panel can show an error vs. spinning forever
+        console.warn('[agent] list conversations failed', body.error || r.status)
+        setError(body.error || `Failed to load conversations (${r.status})`)
+      }
+    } catch (e) {
+      console.warn('[agent] list conversations errored', e.message)
+      setError(e.message)
+    }
   }, [session, selectedProfileId])
 
   useEffect(() => { refreshList() }, [refreshList])

@@ -13,6 +13,11 @@ export function ProfileProvider({ children }) {
   })
   const [loading, setLoading] = useState(false)
 
+  // refresh() pulls the profile list. We deliberately don't depend on
+  // selectedProfileId here — the auto-pick of a default ID is a side-effect
+  // we want to run only when the list itself changes, not every time the
+  // user switches brands. (Earlier version put selectedProfileId in deps,
+  // which created an unnecessary refetch cycle on every switch.)
   const refresh = useCallback(async () => {
     if (!user) {
       setProfiles([])
@@ -20,20 +25,15 @@ export function ProfileProvider({ children }) {
     }
     setLoading(true)
     try {
-      // Joins through profile_access to scope to this user.
       const { data, error } = await supabase
         .from('profile_access')
-        .select('role, allowed_pages, profiles ( id, business_name, industry, brand_primary_color, logo_url, is_active )')
+        .select('role, allowed_pages, profiles ( id, business_name, industry, brand_primary_color, brand_secondary_color, logo_url, is_active )')
         .eq('user_id', user.id)
       if (error) throw error
       const list = (data || [])
         .map((row) => row.profiles ? { ...row.profiles, _role: row.role, _allowed_pages: row.allowed_pages } : null)
         .filter(Boolean)
       setProfiles(list)
-      // ensure selected id is valid
-      if (list.length && !list.find((p) => p.id === selectedProfileId)) {
-        setSelectedProfileIdState(list[0].id)
-      }
     } catch (e) {
       // eslint-disable-next-line no-console
       console.warn('[ScaleSolo] profile refresh failed', e)
@@ -41,9 +41,18 @@ export function ProfileProvider({ children }) {
     } finally {
       setLoading(false)
     }
-  }, [user, selectedProfileId])
+  }, [user])
 
   useEffect(() => { refresh() }, [refresh])
+
+  // After the list lands, ensure selectedProfileId points at a real row.
+  // Runs once per list change, doesn't refetch.
+  useEffect(() => {
+    if (profiles.length === 0) return
+    if (!selectedProfileId || !profiles.find((p) => p.id === selectedProfileId)) {
+      setSelectedProfileIdState(profiles[0].id)
+    }
+  }, [profiles, selectedProfileId])
 
   const setSelectedProfileId = useCallback((id) => {
     setSelectedProfileIdState(id)

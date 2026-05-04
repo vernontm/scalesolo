@@ -282,11 +282,25 @@ export default function Forms() {
   const [editing, setEditing] = useState(null) // form object or { __new: true }
   const [params] = useSearchParams()
 
-  const refresh = () => {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  const refresh = async () => {
     if (!session || !selectedProfileId) return
-    fetch(`/api/forms?profile_id=${selectedProfileId}`, {
-      headers: { Authorization: `Bearer ${session.access_token}` },
-    }).then((r) => r.json()).then((b) => setForms(b.forms || []))
+    setLoading(true); setError(null)
+    try {
+      const r = await fetch(`/api/forms?profile_id=${selectedProfileId}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
+      setForms(body.forms || [])
+    } catch (e) {
+      setError(e.message)
+      setForms([])
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => { refresh() }, [session, selectedProfileId])

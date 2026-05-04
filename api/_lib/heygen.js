@@ -1,9 +1,15 @@
-// HeyGen REST wrapper + model cost catalog.
-// Docs: https://docs.heygen.com/
+// HeyGen REST wrapper — split between two API generations:
+//   /v2/video/generate     → Avatar III (legacy talking-photo). Used for our V3 tier.
+//   /v3/videos             → Avatar IV / Avatar V. Used for our V4 + V5 tiers.
+//
+// HeyGen's /v3/videos has no explicit model_version field — the server
+// auto-routes to Avatar IV today and the upcoming Avatar V when it's enabled.
+// Our V5 tier passes `expressiveness: high` + a motion_prompt to push the
+// engine toward its highest-fidelity output.
 
 const BASE_V2 = 'https://api.heygen.com/v2'
+const BASE_V3 = 'https://api.heygen.com/v3'
 const BASE_V1 = 'https://api.heygen.com/v1'
-const UPLOAD_BASE = 'https://upload.heygen.com'
 
 function key() {
   const k = process.env.HEYGEN_API_KEY
@@ -17,32 +23,37 @@ const HEADERS = () => ({
 })
 
 // ── MODEL COST CATALOG ──────────────────────────────────────────────────────
-// `cents_per_sec` = real $ cost we pay HeyGen (rough, for cost display)
+// `engine` maps our label → which API path the render dispatches to.
+// `cents_per_sec`     = real $ cost we pay HeyGen (rough, for cost display)
 // `video_units_per_sec` = how much we charge against the user's video_units pool.
-// 1 video unit ≈ 30 seconds of V3 standard render.
 //
-// Tweak these whenever HeyGen pricing or our credit ratio changes — the UI
-// reads them at runtime through /api/avatars/models.
+// Update this in one place — UI reads it through /api/avatars at runtime.
 export const MODELS = {
   v3: {
     label:               'V3 — Standard',
-    description:         'HeyGen Talking Photo. Solid lip-sync, fastest renders.',
+    description:         'Avatar III (legacy talking photo). Fastest renders.',
+    engine:              'v2_legacy',
     cents_per_sec:       8,
-    video_units_per_sec: 0.10,    // 30s = 3 units
+    video_units_per_sec: 0.10,
     badge:               'Fast',
   },
   v4: {
     label:               'V4 — Pro',
-    description:         'Improved expressions and head motion. The everyday default.',
+    description:         'Avatar IV. Better lip-sync and expression. The everyday default.',
+    engine:              'v3_avatar_iv',
+    expressiveness:      'low',
     cents_per_sec:       12,
-    video_units_per_sec: 0.15,    // 30s = 4.5 units
+    video_units_per_sec: 0.15,
     badge:               'Recommended',
   },
   v5: {
     label:               'V5 — Cinematic',
-    description:         'Highest fidelity. Use it for hero ads and launch videos.',
+    description:         'Avatar V (auto-enabled on rollout). High motion + expressiveness.',
+    engine:              'v3_avatar_v',
+    expressiveness:      'high',
+    motion_default:      true,
     cents_per_sec:       18,
-    video_units_per_sec: 0.20,    // 30s = 6 units
+    video_units_per_sec: 0.20,
     badge:               'Premium',
   },
 }
@@ -71,22 +82,15 @@ async function call(method, url, body, opts = {}) {
   return data
 }
 
-// ── Endpoints ───────────────────────────────────────────────────────────────
-
-// List the user's HeyGen avatar groups
+// ── Avatar / Photo Avatar management ────────────────────────────────────────
 export const listAvatarGroups = (includePublic = false) =>
   call('GET', `${BASE_V2}/avatar_group.list?include_public=${includePublic ? 'true' : 'false'}`)
 
-// List looks (camera angles + outfits) inside a group
 export const listLooksForGroup = (groupId) =>
   call('GET', `${BASE_V2}/avatar_group/${groupId}/avatars`)
 
-// HeyGen Photo Avatar — takes an image URL (or AI-generated prompt) and
-// returns a talking_photo_id usable for instant avatar video generation.
-//
-// API: POST /v2/photo_avatar/photo/generate
-// We use the URL flow (image already in our Storage bucket) — simpler than
-// uploading binary directly.
+// HeyGen Photo Avatar — accepts an image URL we already uploaded to Supabase
+// Storage. Returns an avatar/talking_photo ID that's usable on BOTH v2 and v3.
 export const createPhotoAvatarFromUrl = ({ imageUrl, name }) =>
   call('POST', `${BASE_V2}/photo_avatar/photo/generate`, {
     name: name || 'ScaleSolo avatar',
@@ -96,37 +100,14 @@ export const createPhotoAvatarFromUrl = ({ imageUrl, name }) =>
     orientation: 'horizontal',
     pose: 'half_body',
     style: 'Realistic',
-    appearance: imageUrl,    // The URL of the user-uploaded photo
+    appearance: imageUrl,
   })
 
-// Alternative: upload a photo file directly to HeyGen
-// (kept for future use if the storage URL flow is unreliable)
-export async function uploadPhotoBinary(buffer, contentType = 'image/jpeg') {
-  const resp = await fetch(`${UPLOAD_BASE}/v1/asset`, {
-    method: 'POST',
-    headers: { 'Content-Type': contentType, 'X-Api-Key': key() },
-    body: buffer,
-  })
-  const text = await resp.text()
-  let data = null
-  try { data = text ? JSON.parse(text) : null } catch { data = text }
-  if (!resp.ok) {
-    const err = new Error(`heygen upload ${resp.status}: ${typeof data === 'string' ? data : JSON.stringify(data)}`)
-    err.status = resp.status
-    throw err
-  }
-  return data    // { code, data: { url, image_key, ... } }
-}
-
-// Generate a video from a talking_photo_id + voice + script.
-//   modelKey is informational on our side; HeyGen routes by avatar_id.
-//   For v5 we can ask HeyGen for the higher-quality template.
-export const generateVideo = ({ talkingPhotoId, avatarId, voiceId, script, dimension = { width: 1080, height: 1920 } }) =>
+// ── Render: V2 legacy (Avatar III, our V3 tier) ─────────────────────────────
+export const generateVideoV2 = ({ talkingPhotoId, voiceId, script, dimension = { width: 1080, height: 1920 } }) =>
   call('POST', `${BASE_V2}/video/generate`, {
     video_inputs: [{
-      character: talkingPhotoId
-        ? { type: 'talking_photo', talking_photo_id: talkingPhotoId, scale: 1.0 }
-        : { type: 'avatar', avatar_id: avatarId, avatar_style: 'normal' },
+      character: { type: 'talking_photo', talking_photo_id: talkingPhotoId, scale: 1.0 },
       voice: { type: 'text', input_text: script, voice_id: voiceId },
     }],
     dimension,
@@ -134,6 +115,42 @@ export const generateVideo = ({ talkingPhotoId, avatarId, voiceId, script, dimen
     callback_id: `scalesolo-${Date.now()}`,
   })
 
-// Poll a video render status
-export const getVideoStatus = (videoId) =>
+// ── Render: V3 (Avatar IV today, Avatar V on rollout — our V4 + V5 tiers) ──
+//   modelKey controls expressiveness + motion. Same endpoint either way.
+export const generateVideoV3 = ({ avatarId, voiceId, script, modelKey = 'v4', extras = {} }) => {
+  const m = MODELS[modelKey] || MODELS.v4
+  const body = {
+    type: 'avatar',
+    avatar_id: avatarId,
+    script,
+    voice_id: voiceId,
+    title: extras.title || `ScaleSolo ${modelKey.toUpperCase()} render`,
+    resolution: extras.resolution || '1080p',
+    aspect_ratio: extras.aspect_ratio || '9:16',
+    expressiveness: m.expressiveness || 'low',
+  }
+  if (m.motion_default && extras.motion_prompt !== '') {
+    body.motion_prompt = extras.motion_prompt || deriveMotionPromptFromScript(script)
+  }
+  if (extras.callback_url) body.callback_url = extras.callback_url
+  return call('POST', `${BASE_V3}/videos`, body)
+}
+
+// Naive: take the first sentence of the script as a coarse motion hint.
+function deriveMotionPromptFromScript(script) {
+  const first = (script || '').split(/[.!?]/)[0]?.trim().slice(0, 160) || ''
+  return first ? `Subject naturally delivering: "${first}"` : 'Confident on-camera delivery'
+}
+
+// ── Status polling ──────────────────────────────────────────────────────────
+export const getVideoStatusV2 = (videoId) =>
   call('GET', `${BASE_V1}/video_status.get?video_id=${encodeURIComponent(videoId)}`)
+
+export const getVideoStatusV3 = (videoId) =>
+  call('GET', `${BASE_V3}/videos/${encodeURIComponent(videoId)}`)
+
+// Convenience: dispatches to the right poll based on which engine produced the render.
+export const getVideoStatusForEngine = (videoId, engine) => {
+  if (engine === 'v3_avatar_iv' || engine === 'v3_avatar_v') return getVideoStatusV3(videoId)
+  return getVideoStatusV2(videoId)
+}

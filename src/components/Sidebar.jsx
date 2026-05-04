@@ -65,7 +65,7 @@ const sidebarStyle = {
   display: 'flex',
   flexDirection: 'column',
   padding: '22px 14px',
-  zIndex: 10,
+  zIndex: 95,
 }
 const brandStyle = {
   display: 'flex',
@@ -182,12 +182,19 @@ function linkStyle(isActive) {
   }
 }
 
-export default function Sidebar() {
+export default function Sidebar({ mobile = false, onClose }) {
   const { user, signOut } = useAuth()
   const initials = (user?.email || 'U').slice(0, 2).toUpperCase()
 
+  const handleNavClick = () => {
+    if (mobile && onClose) onClose()
+  }
+
   return (
-    <aside style={sidebarStyle}>
+    <aside
+      className={mobile ? 'mobile-sidebar' : 'desktop-sidebar'}
+      style={sidebarStyle}
+    >
       <div style={brandStyle}>
         <div style={brandIconStyle}><Zap size={18} strokeWidth={2.5} /></div>
         <div>
@@ -204,6 +211,7 @@ export default function Sidebar() {
               <NavLink
                 key={item.to}
                 to={item.to}
+                onClick={handleNavClick}
                 style={({ isActive }) => linkStyle(isActive)}
                 onMouseEnter={(e) => {
                   if (!e.currentTarget.style.background.includes('gradient')) {

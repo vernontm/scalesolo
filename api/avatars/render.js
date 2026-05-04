@@ -1,15 +1,13 @@
 // POST /api/avatars/render
 // Body: { avatar_id, script, voice_id?, look_id?, model_version? }
-//
-// Pre-flight credit check, submit HeyGen video.generate, persist render row,
-// debit video_units (estimated from script length × words-per-sec heuristic).
-//
-// Status polling is in /api/avatars/render-status.
+// Dispatches to the correct HeyGen API based on model_version:
+//   v3 → /v2/video/generate (Avatar III legacy)
+//   v4 → /v3/videos (Avatar IV)
+//   v5 → /v3/videos with expressiveness=high + motion_prompt (Avatar V)
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
-import { generateVideo, MODELS, videoUnitsForModel } from '../_lib/heygen.js'
+import { generateVideoV2, generateVideoV3, MODELS, videoUnitsForModel } from '../_lib/heygen.js'
 
-// Rough heuristic: 2.5 words per second of spoken English.
 function estimateDurationSecs(script) {
   const words = (script || '').trim().split(/\s+/).filter(Boolean).length
   return Math.max(3, Math.round(words / 2.5))
@@ -33,6 +31,9 @@ export default async function handler(req, res) {
     await assertProfileAccess(auth.user.id, avatar.profile_id)
 
     const modelKey = model_version || avatar.model_version || 'v4'
+    const modelDef = MODELS[modelKey]
+    if (!modelDef) return res.status(400).json({ error: `Unknown model_version: ${modelKey}` })
+
     const durationSecs = estimateDurationSecs(script)
     const unitsToCharge = videoUnitsForModel(modelKey, durationSecs)
 
@@ -51,37 +52,47 @@ export default async function handler(req, res) {
       }
     }
 
-    // Resolve which talking_photo to use:
-    // - if look_id is provided AND the look has a heygen_look_id → use it
-    // - else use the avatar's primary talking_photo_id
-    let talkingPhotoId = avatar.talking_photo_id
+    // Resolve the avatar identifier:
+    //   - Look-specific override (heygen_look_id) when a look is selected
+    //   - Otherwise the avatar's primary talking_photo_id (works for v2 and v3)
+    let avatarIdForApi = avatar.talking_photo_id
     if (look_id) {
       const lkRows = await supaFetch(`avatar_looks?id=eq.${look_id}&select=heygen_look_id`)
       const heygenLookId = lkRows?.[0]?.heygen_look_id
-      if (heygenLookId) talkingPhotoId = heygenLookId
+      if (heygenLookId) avatarIdForApi = heygenLookId
     }
-    if (!talkingPhotoId && !avatar.heygen_group_id) {
-      return res.status(400).json({ error: 'Avatar has no HeyGen talking_photo or avatar_id (training may have failed). Re-create the avatar.' })
+    if (!avatarIdForApi) {
+      return res.status(400).json({ error: 'Avatar has no HeyGen ID (training may have failed). Re-create the avatar.' })
     }
 
     const resolvedVoice = voice_id || avatar.elevenlabs_voice_id || ''
     if (!resolvedVoice) return res.status(400).json({ error: 'voice_id required (avatar has no default voice)' })
 
-    // Submit to HeyGen
+    // Dispatch by engine
     let heygenVideoId
     try {
-      const resp = await generateVideo({
-        talkingPhotoId,
-        voiceId: resolvedVoice,
-        script,
-      })
-      heygenVideoId = resp?.data?.video_id || resp?.video_id
-      if (!heygenVideoId) throw new Error(`HeyGen returned no video_id (${JSON.stringify(resp).slice(0, 200)})`)
+      if (modelDef.engine === 'v2_legacy') {
+        const resp = await generateVideoV2({
+          talkingPhotoId: avatarIdForApi,
+          voiceId: resolvedVoice,
+          script,
+        })
+        heygenVideoId = resp?.data?.video_id || resp?.video_id
+      } else {
+        const resp = await generateVideoV3({
+          avatarId: avatarIdForApi,
+          voiceId: resolvedVoice,
+          script,
+          modelKey,
+        })
+        heygenVideoId = resp?.data?.video_id || resp?.video_id || resp?.id
+      }
+      if (!heygenVideoId) throw new Error('HeyGen returned no video_id')
     } catch (e) {
-      return res.status(502).json({ error: `HeyGen render submit failed: ${e.message}` })
+      return res.status(502).json({ error: `HeyGen render submit failed: ${e.message}`, engine: modelDef.engine })
     }
 
-    // Persist the render row
+    // Persist render row
     const renderRow = await supaFetch('avatar_renders', {
       method: 'POST',
       body: {
@@ -113,7 +124,12 @@ export default async function handler(req, res) {
             p_ref_table: 'avatar_renders',
             p_ref_id: render.id,
             p_profile_id: avatar.profile_id,
-            p_metadata: { model_version: modelKey, duration_secs: durationSecs, heygen_video_id: heygenVideoId },
+            p_metadata: {
+              model_version: modelKey,
+              engine: modelDef.engine,
+              duration_secs: durationSecs,
+              heygen_video_id: heygenVideoId,
+            },
           },
         })
       } catch (e) { console.warn('credit consume failed', e.message) }
@@ -122,9 +138,10 @@ export default async function handler(req, res) {
     return res.status(200).json({
       render,
       heygen_video_id: heygenVideoId,
+      engine: modelDef.engine,
       duration_secs: durationSecs,
       units_charged: unitsToCharge,
-      cost_estimate_usd: ((MODELS[modelKey]?.cents_per_sec || 12) * durationSecs / 100).toFixed(2),
+      cost_estimate_usd: ((modelDef.cents_per_sec || 12) * durationSecs / 100).toFixed(2),
     })
   } catch (err) {
     return res.status(err.status || 500).json({ error: err.message })

@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
 import Papa from 'papaparse'
 import {
-  Users, Upload, Search, X, ChevronRight, FileText, AlertCircle, CheckCircle2,
+  Users, Upload, Search, X, ChevronRight, FileText, AlertCircle, CheckCircle2, RefreshCw,
 } from 'lucide-react'
-import { supabase } from '../lib/supabase.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 
@@ -184,16 +183,23 @@ export default function Contacts() {
   const [importing, setImporting] = useState(false)
   const [loading, setLoading] = useState(true)
 
-  const refresh = () => {
+  const [error, setError] = useState(null)
+  const refresh = async () => {
     if (!session || !selectedProfileId) return
-    setLoading(true)
-    fetch(`https://${import.meta.env.VITE_SUPABASE_URL.replace(/^https?:\/\//, '')}/rest/v1/email_contacts?profile_id=eq.${selectedProfileId}&order=created_at.desc&limit=200&select=id,email,name,phone,tags,status,source,created_at`, {
-      headers: { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, Authorization: `Bearer ${session.access_token}` },
-    })
-      .then((r) => r.json())
-      .then((rows) => setContacts(rows || []))
-      .catch(() => setContacts([]))
-      .finally(() => setLoading(false))
+    setLoading(true); setError(null)
+    try {
+      const r = await fetch(`/api/contacts?profile_id=${selectedProfileId}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
+      setContacts(body.contacts || [])
+    } catch (e) {
+      setError(e.message)
+      setContacts([])
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => { refresh() }, [session, selectedProfileId])
@@ -231,6 +237,13 @@ export default function Contacts() {
       <div className="card-flat" style={{ padding: 0, overflow: 'hidden' }}>
         {loading ? (
           <div style={{ padding: 40, textAlign: 'center' }}><span className="spinner" /></div>
+        ) : error ? (
+          <div style={{ padding: 40, textAlign: 'center' }}>
+            <AlertCircle size={26} style={{ color: 'var(--red)', marginBottom: 12 }} />
+            <div style={{ color: 'var(--text)', fontFamily: 'var(--font-display)', fontWeight: 700, marginBottom: 4 }}>Couldn't load contacts</div>
+            <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 14 }}>{error}</div>
+            <button className="btn-secondary" onClick={refresh}><RefreshCw size={13} /> Retry</button>
+          </div>
         ) : filtered.length === 0 ? (
           <div style={{ padding: 50, textAlign: 'center', color: 'var(--muted)' }}>
             <Users size={32} style={{ marginBottom: 12 }} />

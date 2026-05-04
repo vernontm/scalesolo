@@ -99,6 +99,10 @@ function CreateAvatarModal({ profileId, models, onClose, onCreated }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
+  // Revoke object URL when the modal unmounts.
+  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl) }, [])
+  // (We intentionally don't depend on previewUrl — the swap-revoke happens in onFile.)
+
   const onFile = async (file) => {
     if (!file) return
     if (file.size > 10 * 1024 * 1024) {
@@ -107,6 +111,8 @@ function CreateAvatarModal({ profileId, models, onClose, onCreated }) {
     }
     setError(null)
     setPhotoFile(file)
+    // Revoke any previous object URL before creating a new one (avoid memory leak).
+    if (previewUrl) URL.revokeObjectURL(previewUrl)
     setPreviewUrl(URL.createObjectURL(file))
   }
 

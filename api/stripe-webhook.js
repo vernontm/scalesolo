@@ -10,6 +10,9 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
 const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET
 const STRIPE_SECRET = process.env.STRIPE_SECRET_KEY
 
+// Tolerance for timestamp freshness (replay protection). 5 minutes matches Stripe's recommendation.
+const SIGNATURE_TOLERANCE_SECONDS = 300
+
 async function verifySignature(rawBody, signatureHeader, secret) {
   if (!signatureHeader || !secret) return false
   const parts = Object.fromEntries(
@@ -20,6 +23,16 @@ async function verifySignature(rawBody, signatureHeader, secret) {
   )
   const t = parts.t, v1 = parts.v1
   if (!t || !v1) return false
+
+  // Replay protection: reject signatures older than the tolerance window.
+  const ts = parseInt(t, 10)
+  if (!Number.isFinite(ts)) return false
+  const nowSec = Math.floor(Date.now() / 1000)
+  if (Math.abs(nowSec - ts) > SIGNATURE_TOLERANCE_SECONDS) {
+    console.warn(`[stripe-webhook] signature timestamp ${ts} outside tolerance (now=${nowSec})`)
+    return false
+  }
+
   const enc = new TextEncoder()
   const cryptoKey = await crypto.subtle.importKey(
     'raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']

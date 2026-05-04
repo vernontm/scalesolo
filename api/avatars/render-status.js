@@ -1,7 +1,9 @@
 // GET /api/avatars/render-status?id=<avatar_renders.id>
-// Polls HeyGen for the latest status and updates the row.
+// Polls HeyGen — uses /v3/videos/{id} for V4/V5 renders, legacy
+// /v1/video_status.get for V3.
+
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
-import { getVideoStatus } from '../_lib/heygen.js'
+import { getVideoStatusForEngine, MODELS } from '../_lib/heygen.js'
 
 export default async function handler(req, res) {
   setCors(req, res)
@@ -23,18 +25,19 @@ export default async function handler(req, res) {
       return res.status(200).json({ render })
     }
 
-    const status = await getVideoStatus(render.heygen_video_id).catch((e) => ({ error: e.message }))
-    const heygenStatus = status?.data?.status   // 'pending' | 'processing' | 'completed' | 'failed'
-    const videoUrl = status?.data?.video_url
-    const errorReason = status?.data?.error?.message
+    const engine = MODELS[render.model_version]?.engine || 'v2_legacy'
+    const status = await getVideoStatusForEngine(render.heygen_video_id, engine).catch((e) => ({ error: e.message }))
 
-    let nextStatus = render.status
+    // v2 status shape:  status.data.status: 'pending'|'processing'|'completed'|'failed', video_url
+    // v3 status shape:  status.data.status: 'pending'|'processing'|'completed'|'failed', video_url
+    const heygenStatus = status?.data?.status
+    const videoUrl = status?.data?.video_url
+    const errorReason = status?.data?.error?.message || status?.error
+
     let updates = {}
     if (heygenStatus === 'completed' && videoUrl) {
-      nextStatus = 'done'
       updates = { status: 'done', final_video_url: videoUrl }
     } else if (heygenStatus === 'failed') {
-      nextStatus = 'failed'
       updates = { status: 'failed', error: errorReason || 'HeyGen render failed' }
     } else if (heygenStatus === 'processing') {
       updates = { status: 'generating_clips' }
@@ -44,7 +47,12 @@ export default async function handler(req, res) {
       await supaFetch(`avatar_renders?id=eq.${id}`, { method: 'PATCH', body: updates, prefer: 'return=minimal' })
     }
 
-    return res.status(200).json({ render: { ...render, ...updates }, heygen_status: heygenStatus, video_url: videoUrl })
+    return res.status(200).json({
+      render: { ...render, ...updates },
+      engine,
+      heygen_status: heygenStatus,
+      video_url: videoUrl,
+    })
   } catch (err) {
     return res.status(err.status || 500).json({ error: err.message })
   }

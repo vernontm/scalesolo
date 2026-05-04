@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { Zap } from 'lucide-react'
 import Sidebar from './components/Sidebar.jsx'
@@ -15,11 +16,15 @@ import Contacts from './pages/Contacts.jsx'
 import Profiles from './pages/Profiles.jsx'
 import Content from './pages/Content.jsx'
 import Avatars from './pages/Avatars.jsx'
+import LandingPages from './pages/LandingPages.jsx'
+import LandingPublic from './pages/LandingPublic.jsx'
 import FormPublic from './pages/FormPublic.jsx'
 import GlobalAgent from './components/GlobalAgent.jsx'
 import { useAuth } from './context/AuthContext.jsx'
 
 const layoutStyle = { display: 'flex', minHeight: '100vh' }
+// Desktop reserves the sidebar gutter; mobile (<900px) is overridden in
+// global.css so the main content takes full width and the sidebar slides in.
 const mainStyle = {
   flex: 1,
   marginLeft: 240,
@@ -79,11 +84,18 @@ function LoadingScreen() {
 }
 
 function AppShell() {
+  const [mobileOpen, setMobileOpen] = useState(false)
   return (
     <div style={layoutStyle}>
       <Sidebar />
-      <div style={mainStyle}>
-        <Header />
+      {mobileOpen && (
+        <>
+          <div className="mobile-sidebar-overlay" onClick={() => setMobileOpen(false)} />
+          <Sidebar mobile onClose={() => setMobileOpen(false)} />
+        </>
+      )}
+      <div style={mainStyle} className="app-main">
+        <Header onOpenSidebar={() => setMobileOpen(true)} />
         <main style={contentStyle}>
           <Routes>
             <Route path="/dashboard" element={<Dashboard />} />
@@ -92,7 +104,7 @@ function AppShell() {
             <Route path="/contacts"  element={<Contacts />} />
             <Route path="/pipeline"  element={<Pipeline />} />
             <Route path="/forms"     element={<Forms />} />
-            <Route path="/landing"   element={<Placeholder title="Landing pages" hint="Section-based page builder. Built in Milestone 7." />} />
+            <Route path="/landing"   element={<LandingPages />} />
             <Route path="/avatars"   element={<Avatars />} />
             <Route path="/analytics" element={<Placeholder title="Analytics" hint="Cross-platform performance with AI-narrated insights. Polished in Milestone 6." />} />
             <Route path="/agent"     element={<Agent />} />
@@ -118,6 +130,7 @@ export default function App() {
       <Routes>
         <Route path="/pricing" element={<Pricing />} />
         <Route path="/f/:slug" element={<FormPublic />} />
+        <Route path="/p/:slug" element={<LandingPublic />} />
         <Route path="*" element={<Login />} />
       </Routes>
     )
