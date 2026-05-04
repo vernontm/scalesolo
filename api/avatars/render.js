@@ -91,7 +91,8 @@ export default async function handler(req, res) {
     }
     // Public-library avatars come in as a group_id, not a renderable avatar
     // id. HeyGen's /v3/videos expects a specific avatar inside the group, so
-    // fetch the group's looks and pick the first one.
+    // fetch the group's looks, pick the first, and grab its default voice.
+    let publicDefaultVoice = ''
     if (isPublic) {
       try {
         const looksResp = await listLooksForGroup(avatarIdForApi)
@@ -99,6 +100,11 @@ export default async function handler(req, res) {
         const first = Array.isArray(looks) ? looks[0] : null
         const firstAvatarId = first?.avatar_id || first?.id || first?.avatar_v3_id
         if (firstAvatarId) avatarIdForApi = firstAvatarId
+        publicDefaultVoice =
+          first?.default_voice_id ||
+          first?.voice_id ||
+          first?.normal_preview?.voice_id ||
+          ''
       } catch (e) {
         return res.status(502).json({ error: `Could not list HeyGen looks for this avatar: ${e.message}` })
       }
@@ -107,8 +113,19 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Avatar has no HeyGen ID (training may have failed). Re-create the avatar.' })
     }
 
-    const resolvedVoice = voice_id || avatar.elevenlabs_voice_id || ''
-    if (!resolvedVoice) return res.status(400).json({ error: 'voice_id required (avatar has no default voice)' })
+    // Voice resolution priority:
+    //   1. explicit voice_id from the request body (legacy / power users)
+    //   2. avatar's stored ElevenLabs voice (custom avatars set theirs on
+    //      the Avatars page)
+    //   3. HeyGen's default voice for the public avatar
+    const resolvedVoice = voice_id || avatar.elevenlabs_voice_id || publicDefaultVoice || ''
+    if (!resolvedVoice) {
+      return res.status(400).json({
+        error: isPublic
+          ? 'No default voice on this HeyGen avatar. Try a different one or set a voice manually.'
+          : 'No default voice set. Open the Avatars page and assign a voice to this avatar.',
+      })
+    }
 
     // Dispatch by engine
     let heygenVideoId

@@ -156,7 +156,7 @@ function pickBrand(v) {
 function pickAvatarConfig(v) {
   for (const x of asArr(v)) {
     if (x && typeof x === 'object' && x.avatar && x.avatar.avatar_id) return x.avatar
-    if (x && typeof x === 'object' && x.avatar_id && x.voice_id) return x
+    if (x && typeof x === 'object' && x.avatar_id) return x
   }
   return null
 }
@@ -631,6 +631,13 @@ function AvatarPickerBody({ data, onPatch }) {
           {trainingMsg}
         </div>
       )}
+      <div style={{ marginTop: 6, fontSize: 10.5, color: 'var(--muted)', lineHeight: 1.4 }}>
+        {isPublic
+          ? 'Uses HeyGen\'s default voice for this avatar.'
+          : (selected?.elevenlabs_voice_id
+              ? 'Uses the voice set on this avatar in the Avatars page.'
+              : 'No voice set yet. Open the Avatars page to assign a default voice.')}
+      </div>
       {looks.length > 1 && (
         <NodeField label="Look">
           <select style={tinyInput} value={data.props?.look_id || ''} onChange={(e) => onPatch({ look_id: e.target.value })}>
@@ -639,9 +646,6 @@ function AvatarPickerBody({ data, onPatch }) {
           </select>
         </NodeField>
       )}
-      <NodeField label="Voice ID (ElevenLabs)">
-        <input style={tinyInput} placeholder="21m00Tcm4TlvDq8ikWAM" value={data.props?.voice_id || ''} onChange={(e) => onPatch({ voice_id: e.target.value })} />
-      </NodeField>
       <NodeField label="Model">
         <select style={tinyInput} value={data.props?.model_version || ''} onChange={(e) => onPatch({ model_version: e.target.value })}>
           <option value="">Avatar default</option>
@@ -1011,16 +1015,23 @@ export const NODE_REGISTRY = {
   },
 
   avatar_picker: {
-    label: 'Avatar', description: 'Pick avatar, look, voice for the render step.',
+    label: 'Avatar', description: 'Pick the avatar to use. Voice comes from the avatar itself: HeyGen library avatars use their default voice; custom avatars use the voice set on the Avatars page.',
     icon: UserCircle2, category: 'inputs', color: '#60a5fa',
     inputs: [], outputs: [{ id: 'out', label: 'Out' }],
-    initialProps: { avatar_id: '', look_id: '', voice_id: '', model_version: '' },
+    initialProps: { avatar_id: '', look_id: '', model_version: '' },
     Body: AvatarPickerBody,
     run: async ({ data }) => {
-      const { avatar_id, look_id, voice_id, model_version } = data.props || {}
+      const { avatar_id, look_id, model_version } = data.props || {}
       if (!avatar_id) throw new Error('Pick an avatar')
-      if (!voice_id) throw new Error('Voice ID required')
-      return { avatar: { avatar_id, look_id: look_id || null, voice_id, model_version: model_version || null } }
+      return {
+        avatar: {
+          avatar_id,
+          look_id: look_id || null,
+          // voice_id is intentionally omitted: the render endpoint resolves
+          // it from the avatar row (custom) or the HeyGen group (public).
+          model_version: model_version || null,
+        },
+      }
     },
   },
 
@@ -1037,12 +1048,15 @@ export const NODE_REGISTRY = {
       if (!script) throw new Error('No script provided')
       const avatar = pickAvatarConfig(incoming)
       if (!avatar?.avatar_id) throw new Error('Connect an Avatar picker')
-      if (!avatar?.voice_id)  throw new Error('Voice ID missing on avatar config')
+      // voice_id is no longer required from the picker — the render
+      // endpoint resolves it from the avatar row (custom) or HeyGen group
+      // (public) defaults.
       const r = await fetch('/api/avatars/render', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
         body: JSON.stringify({
-          avatar_id: avatar.avatar_id, script, voice_id: avatar.voice_id,
+          avatar_id: avatar.avatar_id, script,
+          voice_id: avatar.voice_id || undefined,
           look_id: avatar.look_id || undefined, model_version: avatar.model_version || undefined,
           profile_id: ctx.profileId,
         }),
