@@ -169,13 +169,15 @@ function SpaceNode({ id, data, selected }) {
 
   return (
     <div style={card}>
-      {/* Inputs */}
+      {/* Inputs — small "in" pill, hover the dot for a tooltip with the full label. */}
       {def.inputs.map((inp, i) => (
         <Handle
           key={`in-${inp.id}`}
           type="target"
           position={Position.Left}
           id={inp.id}
+          title={inp.label}
+          className="space-handle"
           style={{
             top: `${(i + 1) * inHandleSpacing}%`,
             background: def.color || 'var(--red)',
@@ -183,14 +185,13 @@ function SpaceNode({ id, data, selected }) {
             border: '2px solid var(--surface)',
           }}
         >
-          <span style={{
-            position: 'absolute', left: 14, top: -7,
-            fontSize: 9.5, color: 'var(--muted)',
-            fontFamily: 'var(--font-display)', fontWeight: 600,
-            whiteSpace: 'nowrap', pointerEvents: 'none',
-            background: 'var(--surface-2)', padding: '1px 5px', borderRadius: 4,
-            border: '1px solid var(--border)',
-          }}>{inp.label}</span>
+          <span className="space-handle-tag" style={{
+            position: 'absolute', left: 14, top: -6,
+            fontSize: 8.5, color: 'var(--muted)',
+            fontFamily: 'var(--font-display)', fontWeight: 700,
+            letterSpacing: '0.08em', textTransform: 'uppercase',
+            pointerEvents: 'none',
+          }}>in</span>
         </Handle>
       ))}
 
@@ -201,6 +202,8 @@ function SpaceNode({ id, data, selected }) {
           type="source"
           position={Position.Right}
           id={out.id}
+          title={out.label}
+          className="space-handle"
           style={{
             top: `${(i + 1) * outHandleSpacing}%`,
             background: def.color || 'var(--red)',
@@ -208,14 +211,13 @@ function SpaceNode({ id, data, selected }) {
             border: '2px solid var(--surface)',
           }}
         >
-          <span style={{
-            position: 'absolute', right: 14, top: -7,
-            fontSize: 9.5, color: 'var(--muted)',
-            fontFamily: 'var(--font-display)', fontWeight: 600,
-            whiteSpace: 'nowrap', pointerEvents: 'none',
-            background: 'var(--surface-2)', padding: '1px 5px', borderRadius: 4,
-            border: '1px solid var(--border)',
-          }}>{out.label}</span>
+          <span className="space-handle-tag" style={{
+            position: 'absolute', right: 14, top: -6,
+            fontSize: 8.5, color: 'var(--muted)',
+            fontFamily: 'var(--font-display)', fontWeight: 700,
+            letterSpacing: '0.08em', textTransform: 'uppercase',
+            pointerEvents: 'none',
+          }}>out</span>
         </Handle>
       ))}
 
