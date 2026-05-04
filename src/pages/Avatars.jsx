@@ -704,7 +704,10 @@ export default function Avatars() {
             setCreating(false)
             refresh()
             if (avatar?.id) setOpenedId(avatar.id)
-            if (trainingError) {
+            // Only alert on hard failures. "training" status is normal —
+            // HeyGen is generating asynchronously and the avatar will
+            // become ready in a few minutes.
+            if (trainingError && avatar?.training_status === 'failed') {
               alert(`Avatar saved, but HeyGen training had an issue:\n\n${trainingError}\n\nYou can still upload looks and try again later.`)
             }
           }}

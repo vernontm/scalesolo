@@ -31,10 +31,23 @@ export default async function handler(req, res) {
     let trainingStatus = 'ready'
     try {
       const heygenResp = await createPhotoAvatarFromUrl({ imageUrl: photo_url, name })
-      talkingPhotoId = heygenResp?.data?.id || heygenResp?.data?.talking_photo_id || heygenResp?.id || null
+      // HeyGen's photo avatar API has shifted shape over time. Accept any of:
+      //   data.id              (legacy direct talking_photo)
+      //   data.talking_photo_id
+      //   data.generation_id   (current async pipeline — avatar trains on
+      //                         their side; we treat it as the persistent
+      //                         identifier and mark the row as training)
+      //   id                   (top-level fallback)
+      const data = heygenResp?.data || {}
+      talkingPhotoId = data.id || data.talking_photo_id || data.generation_id || heygenResp?.id || null
       if (!talkingPhotoId) {
         trainingStatus = 'failed'
         trainingError = `HeyGen response missing id (got: ${JSON.stringify(heygenResp).slice(0, 200)})`
+      } else if (data.generation_id && !data.id && !data.talking_photo_id) {
+        // We got a generation_id only — the avatar is still being trained on
+        // HeyGen's side. Mark accordingly so the UI shows "training" instead
+        // of pretending it's ready (or that it failed).
+        trainingStatus = 'training'
       }
     } catch (e) {
       trainingStatus = 'failed'
