@@ -40,7 +40,6 @@ const navGroups = [
     items: [
       { to: '/contacts',  label: 'Contacts',  icon: Users },
       { to: '/pipeline',  label: 'Pipeline',  icon: KanbanSquare },
-      { to: '/forms',     label: 'Forms',     icon: ClipboardList },
       { to: '/analytics', label: 'Analytics', icon: BarChart3 },
     ],
   },

@@ -103,7 +103,9 @@ function AppShell() {
             <Route path="/email"     element={<Placeholder title="Email engine" hint="Composer, sequences, deliverability. Native sending lands in Milestone 4." />} />
             <Route path="/contacts"  element={<Contacts />} />
             <Route path="/pipeline"  element={<Pipeline />} />
-            <Route path="/forms"     element={<Forms />} />
+            {/* /forms in-app management removed — landing pages cover lead capture.
+                The public /f/:slug submission route below still works for any existing
+                form URLs in the wild. */}
             <Route path="/landing"   element={<LandingPages />} />
             <Route path="/avatars"   element={<Avatars />} />
             <Route path="/analytics" element={<Placeholder title="Analytics" hint="Cross-platform performance with AI-narrated insights. Polished in Milestone 6." />} />
