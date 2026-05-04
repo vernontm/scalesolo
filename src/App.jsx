@@ -18,6 +18,7 @@ import Content from './pages/Content.jsx'
 import Avatars from './pages/Avatars.jsx'
 import LandingPages from './pages/LandingPages.jsx'
 import LandingPublic from './pages/LandingPublic.jsx'
+import Spaces from './pages/Spaces.jsx'
 import FormPublic from './pages/FormPublic.jsx'
 import GlobalAgent from './components/GlobalAgent.jsx'
 import { useAuth } from './context/AuthContext.jsx'
@@ -99,6 +100,7 @@ function AppShell() {
         <main style={contentStyle}>
           <Routes>
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/spaces"    element={<Spaces />} />
             <Route path="/content"   element={<Content />} />
             <Route path="/email"     element={<Placeholder title="Email engine" hint="Composer, sequences, deliverability. Native sending lands in Milestone 4." />} />
             <Route path="/contacts"  element={<Contacts />} />

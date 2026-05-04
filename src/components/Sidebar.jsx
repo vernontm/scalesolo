@@ -11,6 +11,7 @@ import {
   BarChart3,
   Bot,
   Building2,
+  Boxes,
   CreditCard,
   Settings,
   Zap,
@@ -29,7 +30,8 @@ const navGroups = [
   {
     label: 'Create',
     items: [
-      { to: '/content', label: 'Content',  icon: Sparkles },
+      { to: '/spaces',  label: 'Spaces',   icon: Boxes },
+      { to: '/content', label: 'Library',  icon: Sparkles },
       { to: '/email',   label: 'Email',    icon: Mail },
       { to: '/avatars', label: 'Avatars',  icon: UserCircle2 },
       { to: '/landing', label: 'Landing',  icon: LayoutTemplate },

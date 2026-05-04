@@ -8,7 +8,8 @@ import { useAgent } from '../context/AgentContext.jsx'
 const titles = {
   '/dashboard': { t: 'Dashboard',        s: "Welcome back — here's your overview." },
   '/agent':     { t: 'AI CEO',           s: 'Your always-on strategist.' },
-  '/content':   { t: 'Content',          s: 'Generate, schedule, recycle.' },
+  '/spaces':    { t: 'Spaces',           s: 'Visual content workflows.' },
+  '/content':   { t: 'Library',          s: 'Generated content, ready to ship.' },
   '/email':     { t: 'Email',            s: 'Compose, automate, deliver.' },
   '/avatars':   { t: 'Avatars & voice',  s: 'AI you, on tap.' },
   '/landing':   { t: 'Landing pages',    s: 'Build branded pages in minutes.' },
