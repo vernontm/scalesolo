@@ -2,6 +2,7 @@ import { useLocation } from 'react-router-dom'
 import { Search, Bell, Plus } from 'lucide-react'
 import ThemeToggle from './ThemeToggle.jsx'
 import CreditsBadge from './CreditsBadge.jsx'
+import ProfileSwitcher from './ProfileSwitcher.jsx'
 
 const titles = {
   '/dashboard': { t: 'Dashboard',        s: "Welcome back — here's your overview." },
@@ -96,6 +97,8 @@ export default function Header() {
         <Search size={16} style={searchIconStyle} />
         <input style={searchInputStyle} placeholder="Search…" />
       </div>
+
+      <ProfileSwitcher />
 
       <CreditsBadge />
 

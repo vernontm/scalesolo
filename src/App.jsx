@@ -12,6 +12,7 @@ import Agent from './pages/Agent.jsx'
 import Pipeline from './pages/Pipeline.jsx'
 import Forms from './pages/Forms.jsx'
 import Contacts from './pages/Contacts.jsx'
+import Profiles from './pages/Profiles.jsx'
 import FormPublic from './pages/FormPublic.jsx'
 import GlobalAgent from './components/GlobalAgent.jsx'
 import { useAuth } from './context/AuthContext.jsx'
@@ -93,7 +94,7 @@ function AppShell() {
             <Route path="/avatars"   element={<Placeholder title="Avatars & voice" hint="HeyGen avatars, ElevenLabs voice clones, render composer. Polished in Milestone 6." />} />
             <Route path="/analytics" element={<Placeholder title="Analytics" hint="Cross-platform performance with AI-narrated insights. Polished in Milestone 6." />} />
             <Route path="/agent"     element={<Agent />} />
-            <Route path="/profiles"  element={<Placeholder title="Brand profiles" hint="Multi-brand management. Functional now, polished alongside billing in Milestone 1." />} />
+            <Route path="/profiles"  element={<Profiles />} />
             <Route path="/billing"   element={<Billing />} />
             <Route path="/settings"  element={<Settings />} />
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
