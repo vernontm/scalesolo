@@ -1,6 +1,17 @@
-// GET /api/avatars/heygen-library?profile_id=... → user's HeyGen avatar groups
+// GET /api/avatars/heygen-library?profile_id=... → HeyGen's public/stock
+// avatar groups, with our account's own custom avatars filtered out so one
+// user's uploads never leak into another user's picker.
+//
+// Strategy: ask HeyGen for groups twice — once with include_public=false
+// (returns ONLY groups created in our API-key account) and once with
+// include_public=true (returns our account + HeyGen's public library).
+// Subtract by group id to get just the public set.
 import { setCors, requireUser, assertProfileAccess } from '../_lib/supabase.js'
-import { listAvatarGroups, listLooksForGroup, MODELS } from '../_lib/heygen.js'
+import { listAvatarGroups } from '../_lib/heygen.js'
+
+function extractGroups(payload) {
+  return payload?.data?.avatar_group_list || payload?.data || payload || []
+}
 
 export default async function handler(req, res) {
   setCors(req, res)
@@ -15,8 +26,21 @@ export default async function handler(req, res) {
     if (!profileId) return res.status(400).json({ error: 'profile_id required' })
     await assertProfileAccess(auth.user.id, profileId)
 
-    const groups = await listAvatarGroups(false)
-    return res.status(200).json({ groups: groups?.data?.avatar_group_list || groups?.data || groups })
+    const [accountResp, allResp] = await Promise.all([
+      listAvatarGroups(false).catch(() => null),
+      listAvatarGroups(true).catch(() => null),
+    ])
+    const accountGroups = extractGroups(accountResp)
+    const allGroups = extractGroups(allResp)
+    const accountIds = new Set(
+      (Array.isArray(accountGroups) ? accountGroups : []).map((g) => g.id || g.group_id).filter(Boolean)
+    )
+    const publicOnly = (Array.isArray(allGroups) ? allGroups : []).filter((g) => {
+      const id = g.id || g.group_id
+      return id && !accountIds.has(id)
+    })
+
+    return res.status(200).json({ groups: publicOnly })
   } catch (err) {
     return res.status(err.status || 500).json({ error: err.message, data: err.data })
   }
