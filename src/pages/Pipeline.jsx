@@ -98,30 +98,40 @@ const fmtMoney = (v) => {
   return `$${n}`
 }
 
-// ── sortable card ──────────────────────────────────────────────────────────
-function DealCard({ deal, onClick }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: deal.id,
-    data: { type: 'deal', deal },
-  })
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  }
+// ── presentational card body (also used by DragOverlay) ───────────────────
+function DealCardBody({ deal }) {
   return (
-    <div
-      ref={setNodeRef}
-      style={{ ...style, ...card(isDragging) }}
-      {...attributes}
-      {...listeners}
-      onClick={(e) => { if (!isDragging && onClick) onClick(deal) }}
-    >
+    <>
       <div style={cardTitle}>{deal.title}</div>
       <div style={cardRow}>
         {deal.value > 0 && <span><DollarSign size={11} style={{ verticalAlign: '-1px' }} /> {fmtMoney(deal.value)}</span>}
         {deal.contact?.name && <span><Users size={11} style={{ verticalAlign: '-1px' }} /> {deal.contact.name}</span>}
         {deal.expected_close_at && <span><Calendar size={11} style={{ verticalAlign: '-1px' }} /> {new Date(deal.expected_close_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>}
       </div>
+    </>
+  )
+}
+
+// ── sortable card ──────────────────────────────────────────────────────────
+function DealCard({ deal, onClick }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: deal.id,
+    data: { type: 'deal', deal },
+  })
+  // While dragging, hide the source card — DragOverlay renders the moving copy
+  // at the exact cursor offset, so showing both creates the visual desync.
+  const style = isDragging
+    ? { opacity: 0, pointerEvents: 'none' }
+    : { transform: CSS.Transform.toString(transform), transition }
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ ...card(false), ...style }}
+      {...attributes}
+      {...listeners}
+      onClick={(e) => { if (!isDragging && onClick) onClick(deal) }}
+    >
+      <DealCardBody deal={deal} />
     </div>
   )
 }
@@ -408,13 +418,15 @@ export default function Pipeline() {
             />
           ))}
         </div>
-        <DragOverlay>
+        <DragOverlay dropAnimation={null}>
           {draggedDeal && (
-            <div style={{ ...card(false), boxShadow: '0 12px 32px rgba(0,0,0,0.4)', cursor: 'grabbing' }}>
-              <div style={cardTitle}>{draggedDeal.title}</div>
-              <div style={cardRow}>
-                {draggedDeal.value > 0 && <span><DollarSign size={11} /> {fmtMoney(draggedDeal.value)}</span>}
-              </div>
+            <div style={{
+              ...card(false),
+              cursor: 'grabbing',
+              boxShadow: '0 16px 40px rgba(0,0,0,0.45)',
+              transform: 'rotate(1.5deg)',
+            }}>
+              <DealCardBody deal={draggedDeal} />
             </div>
           )}
         </DragOverlay>
