@@ -29,10 +29,10 @@ const NODE_CATALOG = {
   },
   brand_profile: {
     label: 'Brand profile',
-    description: 'Pulls in a saved brand profile (voice, audience, brand bible, hashtags) and exposes it as context. Connect to script_gen / caption_gen / image_gen "brand" input to keep generations on-brand. Required prop: profile_id (leave blank for the user to pick in the UI).',
+    description: 'Pulls in a saved brand profile (voice, audience, brand bible, hashtags) and exposes it as context. Connect to script_gen / caption_gen / image_gen "brand" input to keep generations on-brand. Props: profile_id (leave blank for the user to pick in the UI), sync_all (boolean — when true, auto-connects this brand to every node with a "brand" input now and as new ones are added). Set sync_all true when the user wants the entire workflow on a single brand.',
     inputs: [],
     outputs: ['brand'],
-    initialProps: { profile_id: '' },
+    initialProps: { profile_id: '', sync_all: false },
   },
   script_gen: {
     label: 'Script generator',

@@ -518,6 +518,12 @@ function SpaceBuilder({ space, onSave, onClose }) {
   const [aiPrompt, setAiPrompt] = useState('')
   const [aiBuilding, setAiBuilding] = useState(false)
   const [previewItem, setPreviewItem] = useState(null)  // { url, type } for fullscreen preview
+
+  // Ref mirrors of nodes/edges so global helpers don't read stale closures.
+  const nodesRef = useRef(nodes)
+  const edgesRef = useRef(edges)
+  useEffect(() => { nodesRef.current = nodes }, [nodes])
+  useEffect(() => { edgesRef.current = edges }, [edges])
   const [aiSuggestion, setAiSuggestion] = useState(null)
 
   // Load avatars for the profile so the AvatarPicker node can list them.
@@ -553,6 +559,36 @@ function SpaceBuilder({ space, onSave, onClose }) {
       setEdges((arr) => arr.filter((e) => e.id !== edgeId))
     }
     window.__spaceOpenPreview = (item) => setPreviewItem(item)
+    // Brand-profile sync-to-all: connect (or disconnect) this brand node's
+    // "brand" output to every node that has a "brand" input.
+    window.__spaceSyncBrandAll = (brandId, enabled) => {
+      setEdges((prev) => {
+        // Remove any existing brand edges originating from this node first
+        const filtered = prev.filter((e) => !(e.source === brandId && e.sourceHandle === 'brand'))
+        if (!enabled) return filtered
+        // Find every node that exposes a "brand" input
+        const targets = nodesRef.current.filter((n) => {
+          if (n.id === brandId) return false
+          const def = n.data?.type
+          return ['script_gen', 'caption_gen', 'image_gen'].includes(def)
+        })
+        const newEdges = targets.map((t) => ({
+          id: `e_${brandId}_${t.id}_brand`,
+          source: brandId,
+          sourceHandle: 'brand',
+          target: t.id,
+          targetHandle: 'brand',
+          type: 'scissor',
+          animated: true,
+          markerEnd: { type: MarkerType.ArrowClosed },
+          style: { stroke: 'var(--red)', strokeWidth: 1.5 },
+        }))
+        // Drop any edges we already had on those exact pairs (avoid dupes)
+        const dropKeys = new Set(newEdges.map((e) => `${e.source}|${e.target}|${e.targetHandle}`))
+        const cleaned = filtered.filter((e) => !dropKeys.has(`${e.source}|${e.target}|${e.targetHandle}`))
+        return [...cleaned, ...newEdges]
+      })
+    }
     window.__spaceAddNodeFromItem = ({ url, type, from }) => {
       if (!url) return
       // Image → image_upload pre-loaded with this URL. Video / other → text_input.
@@ -571,12 +607,16 @@ function SpaceBuilder({ space, onSave, onClose }) {
       window.__spaceDisconnectEdge = null
       window.__spaceOpenPreview = null
       window.__spaceAddNodeFromItem = null
+      window.__spaceSyncBrandAll = null
     }
   }, [])
 
   const onNodesChange = useCallback((changes) => setNodes((nds) => applyNodeChanges(changes, nds)), [])
   const onEdgesChange = useCallback((changes) => setEdges((eds) => applyEdgeChanges(changes, eds)), [])
   const onConnect = useCallback((c) => setEdges((eds) => addEdge({ ...c, type: 'scissor', markerEnd: { type: MarkerType.ArrowClosed }, animated: true, style: { stroke: 'var(--red)', strokeWidth: 1.5 } }, eds)), [])
+
+  // Types that expose a "brand" input — used to auto-wire sync-to-all brand profiles.
+  const BRAND_INPUT_TYPES = ['script_gen', 'caption_gen', 'image_gen']
 
   const addNode = (type, position) => {
     const def = NODE_REGISTRY[type]
@@ -591,6 +631,30 @@ function SpaceBuilder({ space, onSave, onClose }) {
         data: { type, props: { ...(def.initialProps || {}) }, status: 'idle', output: null, error: null },
       },
     ])
+
+    // If this new node has a "brand" input AND a brand_profile with sync_all
+    // is on the canvas, auto-connect it.
+    if (BRAND_INPUT_TYPES.includes(type)) {
+      const syncSources = nodesRef.current.filter((n) => n.data?.type === 'brand_profile' && n.data?.props?.sync_all)
+      if (syncSources.length) {
+        setEdges((prev) => {
+          const additions = syncSources.map((b) => ({
+            id: `e_${b.id}_${id}_brand`,
+            source: b.id,
+            sourceHandle: 'brand',
+            target: id,
+            targetHandle: 'brand',
+            type: 'scissor',
+            animated: true,
+            markerEnd: { type: MarkerType.ArrowClosed },
+            style: { stroke: 'var(--red)', strokeWidth: 1.5 },
+          }))
+          // Avoid duplicating an edge that already exists
+          const haveKeys = new Set(prev.map((e) => `${e.source}|${e.target}|${e.targetHandle}`))
+          return [...prev, ...additions.filter((e) => !haveKeys.has(`${e.source}|${e.target}|${e.targetHandle}`))]
+        })
+      }
+    }
   }
 
   // Drag from palette → drop on canvas
@@ -645,8 +709,27 @@ function SpaceBuilder({ space, onSave, onClose }) {
       if (Array.isArray(body.edges)) {
         // Force the scissor edge type for AI-generated edges too
         body.edges.forEach((e) => { e.type = 'scissor' })
+        // Auto-wire any sync-to-all brand profile to new brand-aware nodes
+        const newNodes = Array.isArray(body.nodes) ? body.nodes : []
+        const syncSources = newNodes.filter((n) => n.data?.type === 'brand_profile' && n.data?.props?.sync_all)
+        for (const b of syncSources) {
+          for (const t of newNodes) {
+            if (t.id === b.id) continue
+            if (!['script_gen', 'caption_gen', 'image_gen'].includes(t.data?.type)) continue
+            const k = `${b.id}|${t.id}|brand`
+            if (body.edges.some((e) => `${e.source}|${e.target}|${e.targetHandle}` === k)) continue
+            body.edges.push({
+              id: `e_${b.id}_${t.id}_brand`,
+              source: b.id, sourceHandle: 'brand',
+              target: t.id, targetHandle: 'brand',
+              type: 'scissor', animated: true,
+              markerEnd: { type: MarkerType.ArrowClosed },
+              style: { stroke: 'var(--red)', strokeWidth: 1.5 },
+            })
+          }
+        }
+        setEdges(body.edges)
       }
-      if (Array.isArray(body.edges)) setEdges(body.edges)
       setAiSuggestion(body.suggestions || null)
       setAiPrompt('')
       refreshCredits()

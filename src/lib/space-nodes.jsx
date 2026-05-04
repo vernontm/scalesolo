@@ -428,6 +428,15 @@ function ImageUploadBody({ data, onPatch }) {
 function BrandProfileBody({ data, onPatch }) {
   const profiles = data?._ctxProfiles || []
   const out = data.output?.brand
+  const syncAll = !!data.props?.sync_all
+
+  const toggleSyncAll = (next) => {
+    onPatch({ sync_all: next })
+    if (typeof window !== 'undefined' && window.__spaceSyncBrandAll) {
+      window.__spaceSyncBrandAll(data.__id, next)
+    }
+  }
+
   return (
     <>
       <NodeField label="Profile">
@@ -442,6 +451,24 @@ function BrandProfileBody({ data, onPatch }) {
           ))}
         </select>
       </NodeField>
+      <label style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        marginTop: 4, padding: '8px 10px',
+        background: syncAll ? 'rgba(236,72,153,0.12)' : 'var(--surface-2)',
+        border: `1px solid ${syncAll ? '#ec4899' : 'var(--border)'}`,
+        borderRadius: 6, cursor: 'pointer', fontSize: 11.5,
+      }}>
+        <input
+          type="checkbox"
+          checked={syncAll}
+          onChange={(e) => toggleSyncAll(e.target.checked)}
+          style={{ accentColor: '#ec4899' }}
+        />
+        <span style={{ flex: 1 }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 11 }}>Sync to all</div>
+          <div style={{ color: 'var(--muted)', fontSize: 10.5, marginTop: 1 }}>Auto-connect this brand to every node with a Brand input, now and going forward.</div>
+        </span>
+      </label>
       {out && (
         <div style={{ ...previewBox, marginTop: 8 }}>
           <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>{out.name || 'Brand'}</div>
