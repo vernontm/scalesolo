@@ -192,41 +192,15 @@ function SpacesList({ spaces, onCreate, onOpen, onDelete, error }) {
 
 function ZoomControls() {
   const { zoomIn, zoomOut, fitView } = useReactFlow()
-  const btn = {
-    width: 34,
-    height: 34,
-    border: 'none',
-    background: 'var(--surface)',
-    color: 'var(--text)',
-    display: 'grid',
-    placeItems: 'center',
-    cursor: 'pointer',
-    transition: 'background 0.15s',
-  }
-  const wrap = {
-    position: 'absolute',
-    left: 16,
-    bottom: 16,
-    zIndex: 5,
-    display: 'flex',
-    flexDirection: 'column',
-    borderRadius: 10,
-    overflow: 'hidden',
-    border: '1px solid var(--border)',
-    boxShadow: '0 6px 18px rgba(0,0,0,0.12)',
-  }
-  const sep = { height: 1, background: 'var(--border)' }
   return (
-    <div style={wrap}>
-      <button type="button" style={btn} onClick={() => zoomIn({ duration: 200 })} title="Zoom in" aria-label="Zoom in">
+    <div className="space-zoom-controls">
+      <button type="button" onClick={() => zoomIn({ duration: 200 })} title="Zoom in" aria-label="Zoom in">
         <ZoomIn size={16} />
       </button>
-      <div style={sep} />
-      <button type="button" style={btn} onClick={() => zoomOut({ duration: 200 })} title="Zoom out" aria-label="Zoom out">
+      <button type="button" onClick={() => zoomOut({ duration: 200 })} title="Zoom out" aria-label="Zoom out">
         <ZoomOut size={16} />
       </button>
-      <div style={sep} />
-      <button type="button" style={btn} onClick={() => fitView({ duration: 300, padding: 0.2 })} title="Fit view" aria-label="Fit view">
+      <button type="button" onClick={() => fitView({ duration: 300, padding: 0.2 })} title="Fit view" aria-label="Fit view">
         <Maximize size={14} />
       </button>
     </div>
