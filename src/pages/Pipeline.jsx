@@ -394,8 +394,13 @@ export default function Pipeline() {
 
   const draggedDeal = activeDragId ? findDeal(activeDragId) : null
 
+  // Note: do NOT add `className="fade-up"` to this wrapper. The fade-up
+  // animation leaves a `transform: translateY(0)` on the element, which
+  // creates a containing block for descendants and breaks DragOverlay's
+  // `position: fixed`, causing the dragged card to render offset from the
+  // cursor.
   return (
-    <div className="fade-up">
+    <div>
       {error && (
         <div style={{ marginBottom: 12, padding: '10px 14px', background: 'var(--red-soft)', color: 'var(--red)', borderRadius: 10, fontSize: 13 }}>{error}</div>
       )}

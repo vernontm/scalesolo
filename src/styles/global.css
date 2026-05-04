@@ -125,7 +125,10 @@ a { color: inherit; text-decoration: none; }
 /* ── Animations ───────────────────────────────────────────────────────────── */
 @keyframes fadeUp {
   from { opacity: 0; transform: translateY(20px); }
-  to   { opacity: 1; transform: translateY(0); }
+  /* End at transform: none (not translateY(0)) so the final state doesn't
+     leave a CSS containing block that breaks position:fixed descendants
+     (e.g. dnd-kit's DragOverlay). */
+  to   { opacity: 1; transform: none; }
 }
 @keyframes fadeIn {
   from { opacity: 0; }
