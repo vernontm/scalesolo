@@ -8,6 +8,8 @@ import Placeholder from './pages/Placeholder.jsx'
 import Settings from './pages/Settings.jsx'
 import Pricing from './pages/Pricing.jsx'
 import Billing from './pages/Billing.jsx'
+import Agent from './pages/Agent.jsx'
+import GlobalAgent from './components/GlobalAgent.jsx'
 import { useAuth } from './context/AuthContext.jsx'
 
 const layoutStyle = { display: 'flex', minHeight: '100vh' }
@@ -86,7 +88,7 @@ function AppShell() {
             <Route path="/landing"   element={<Placeholder title="Landing pages" hint="Section-based page builder. Built in Milestone 7." />} />
             <Route path="/avatars"   element={<Placeholder title="Avatars & voice" hint="HeyGen avatars, ElevenLabs voice clones, render composer. Polished in Milestone 6." />} />
             <Route path="/analytics" element={<Placeholder title="Analytics" hint="Cross-platform performance with AI-narrated insights. Polished in Milestone 6." />} />
-            <Route path="/agent"     element={<Placeholder title="AI CEO" hint="Persistent memory and pinned facts land in Milestone 3." />} />
+            <Route path="/agent"     element={<Agent />} />
             <Route path="/profiles"  element={<Placeholder title="Brand profiles" hint="Multi-brand management. Functional now, polished alongside billing in Milestone 1." />} />
             <Route path="/billing"   element={<Billing />} />
             <Route path="/settings"  element={<Settings />} />
@@ -95,6 +97,7 @@ function AppShell() {
           </Routes>
         </main>
       </div>
+      <GlobalAgent />
     </div>
   )
 }
