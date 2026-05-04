@@ -6,7 +6,7 @@
 //   v5 → /v3/videos with expressiveness=high + motion_prompt (Avatar V)
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
-import { generateVideoV2, generateVideoV3, MODELS, videoUnitsForModel } from '../_lib/heygen.js'
+import { generateVideoV2, generateVideoV3, MODELS, videoUnitsForModel, listLooksForGroup } from '../_lib/heygen.js'
 
 function estimateDurationSecs(script) {
   const words = (script || '').trim().split(/\s+/).filter(Boolean).length
@@ -88,6 +88,20 @@ export default async function handler(req, res) {
       const lkRows = await supaFetch(`avatar_looks?id=eq.${look_id}&select=heygen_look_id`)
       const heygenLookId = lkRows?.[0]?.heygen_look_id
       if (heygenLookId) avatarIdForApi = heygenLookId
+    }
+    // Public-library avatars come in as a group_id, not a renderable avatar
+    // id. HeyGen's /v3/videos expects a specific avatar inside the group, so
+    // fetch the group's looks and pick the first one.
+    if (isPublic) {
+      try {
+        const looksResp = await listLooksForGroup(avatarIdForApi)
+        const looks = looksResp?.data?.avatar_list || looksResp?.data || []
+        const first = Array.isArray(looks) ? looks[0] : null
+        const firstAvatarId = first?.avatar_id || first?.id || first?.avatar_v3_id
+        if (firstAvatarId) avatarIdForApi = firstAvatarId
+      } catch (e) {
+        return res.status(502).json({ error: `Could not list HeyGen looks for this avatar: ${e.message}` })
+      }
     }
     if (!avatarIdForApi) {
       return res.status(400).json({ error: 'Avatar has no HeyGen ID (training may have failed). Re-create the avatar.' })
