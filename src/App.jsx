@@ -9,6 +9,10 @@ import Settings from './pages/Settings.jsx'
 import Pricing from './pages/Pricing.jsx'
 import Billing from './pages/Billing.jsx'
 import Agent from './pages/Agent.jsx'
+import Pipeline from './pages/Pipeline.jsx'
+import Forms from './pages/Forms.jsx'
+import Contacts from './pages/Contacts.jsx'
+import FormPublic from './pages/FormPublic.jsx'
 import GlobalAgent from './components/GlobalAgent.jsx'
 import { useAuth } from './context/AuthContext.jsx'
 
@@ -82,9 +86,9 @@ function AppShell() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/content"   element={<Placeholder title="Content engine" hint="Avatar videos, carousels, scripts, scheduled posts. Built in Milestone 6." />} />
             <Route path="/email"     element={<Placeholder title="Email engine" hint="Composer, sequences, deliverability. Native sending lands in Milestone 4." />} />
-            <Route path="/contacts"  element={<Placeholder title="Contacts" hint="Lists, segments, activity timeline. Expanded in Milestone 5." />} />
-            <Route path="/pipeline"  element={<Placeholder title="Sales pipeline" hint="Drag-and-drop kanban for deals. Built in Milestone 5." />} />
-            <Route path="/forms"     element={<Placeholder title="Forms & lead capture" hint="Drag-and-drop form builder. Built in Milestone 5." />} />
+            <Route path="/contacts"  element={<Contacts />} />
+            <Route path="/pipeline"  element={<Pipeline />} />
+            <Route path="/forms"     element={<Forms />} />
             <Route path="/landing"   element={<Placeholder title="Landing pages" hint="Section-based page builder. Built in Milestone 7." />} />
             <Route path="/avatars"   element={<Placeholder title="Avatars & voice" hint="HeyGen avatars, ElevenLabs voice clones, render composer. Polished in Milestone 6." />} />
             <Route path="/analytics" element={<Placeholder title="Analytics" hint="Cross-platform performance with AI-narrated insights. Polished in Milestone 6." />} />
@@ -110,6 +114,7 @@ export default function App() {
     return (
       <Routes>
         <Route path="/pricing" element={<Pricing />} />
+        <Route path="/f/:slug" element={<FormPublic />} />
         <Route path="*" element={<Login />} />
       </Routes>
     )
@@ -118,6 +123,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/pricing" element={<Pricing />} />
+      <Route path="/f/:slug" element={<FormPublic />} />
       <Route path="/*" element={<AppShell />} />
     </Routes>
   )
