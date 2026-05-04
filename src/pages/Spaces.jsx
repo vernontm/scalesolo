@@ -7,13 +7,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ReactFlow, Controls, Background, Handle, Position, addEdge,
   applyNodeChanges, applyEdgeChanges, MarkerType, useReactFlow,
+  BaseEdge, EdgeLabelRenderer, getSmoothStepPath,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
 import {
   Plus, Play, Save, Trash2, ArrowLeft, Sparkles, Zap, Boxes, AlertCircle,
   GripHorizontal, Minimize2, Maximize2, Wand2, MessageSquare, Send,
-  ZoomIn, ZoomOut, Maximize,
+  ZoomIn, ZoomOut, Maximize, Scissors,
 } from 'lucide-react'
 import { useRef } from 'react'
 // (useEffect already imported above for other effects in this file)
@@ -24,6 +25,99 @@ import { NODE_REGISTRY, NODE_CATEGORIES, runSpace } from '../lib/space-nodes.jsx
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom node renderer (one component for every registered type)
+
+// Custom edge with scissors disconnect button. The button shows on hover
+// of the edge area (we render an invisible thicker hit zone for stable hover).
+function ScissorEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, style }) {
+  const [hover, setHover] = useState(false)
+  const [edgePath, labelX, labelY] = getSmoothStepPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition })
+  return (
+    <>
+      <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={{ stroke: 'var(--red)', strokeWidth: 1.5, ...style }} />
+      {/* Wider invisible hit area for stable hover */}
+      <path
+        d={edgePath}
+        fill="none"
+        stroke="transparent"
+        strokeWidth={20}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        style={{ cursor: 'pointer' }}
+      />
+      {hover && (
+        <EdgeLabelRenderer>
+          <div
+            onMouseEnter={() => setHover(true)}
+            onMouseLeave={() => setHover(false)}
+            onClick={(e) => {
+              e.stopPropagation()
+              if (typeof window !== 'undefined' && window.__spaceDisconnectEdge) {
+                window.__spaceDisconnectEdge(id)
+              }
+            }}
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+              pointerEvents: 'all',
+              cursor: 'pointer',
+              background: 'var(--red)',
+              color: '#fff',
+              borderRadius: 999,
+              width: 24, height: 24,
+              display: 'grid', placeItems: 'center',
+              boxShadow: '0 4px 10px rgba(0,0,0,0.4)',
+              border: '2px solid var(--surface)',
+            }}
+            title="Disconnect"
+          >
+            <Scissors size={12} />
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
+  )
+}
+
+// Renamable node title — click to edit, blur or Enter to commit.
+function NodeTitle({ id, fallback, value }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(value)
+  const commit = () => {
+    setEditing(false)
+    const v = (draft || '').trim() || fallback
+    if (typeof window !== 'undefined' && window.__spacePatchNode) {
+      window.__spacePatchNode(id, { __name: v })
+    }
+  }
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { setDraft(value); setEditing(false) } }}
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 12.5,
+          background: 'var(--surface)', color: 'var(--text)',
+          border: '1px solid var(--red)', borderRadius: 4, padding: '2px 6px',
+          outline: 'none', minWidth: 100, flex: 1,
+        }}
+      />
+    )
+  }
+  return (
+    <div
+      onDoubleClick={(e) => { e.stopPropagation(); setDraft(value); setEditing(true) }}
+      title="Double-click to rename"
+      style={{
+        fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 12.5,
+        cursor: 'text', userSelect: 'none', padding: '2px 4px',
+      }}
+    >{value}</div>
+  )
+}
 
 function SpaceNode({ id, data, selected }) {
   const def = NODE_REGISTRY[data.type]
@@ -130,9 +224,7 @@ function SpaceNode({ id, data, selected }) {
         <div style={{ width: 24, height: 24, borderRadius: 6, background: def.color || 'var(--red)', color: '#fff', display: 'grid', placeItems: 'center' }}>
           <Icon size={13} />
         </div>
-        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 12.5 }}>
-          {def.label}
-        </div>
+        <NodeTitle id={id} fallback={def.label} value={data.name || def.label} />
         <span style={statusPill}>{status}</span>
       </div>
       <div style={{ padding: 12 }}>
@@ -143,6 +235,7 @@ function SpaceNode({ id, data, selected }) {
 }
 
 const NODE_TYPES = { space: SpaceNode }
+const EDGE_TYPES = { scissor: ScissorEdge }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // List view
@@ -369,7 +462,11 @@ function SpaceBuilder({ space, onSave, onClose }) {
 
   const [name, setName] = useState(space.name || 'Untitled space')
   const [nodes, setNodes] = useState(Array.isArray(space.nodes) ? space.nodes : [])
-  const [edges, setEdges] = useState(Array.isArray(space.edges) ? space.edges : [])
+  const [edges, setEdges] = useState(
+    Array.isArray(space.edges)
+      ? space.edges.map((e) => ({ ...e, type: 'scissor' }))
+      : []
+  )
   const [running, setRunning] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -395,14 +492,26 @@ function SpaceBuilder({ space, onSave, onClose }) {
   useEffect(() => {
     if (typeof window === 'undefined') return
     window.__spacePatchNode = (id, patch) => {
-      setNodes((arr) => arr.map((n) => n.id === id ? { ...n, data: { ...n.data, props: { ...(n.data?.props || {}), ...patch } } } : n))
+      setNodes((arr) => arr.map((n) => {
+        if (n.id !== id) return n
+        // Special: __name renames the node (stored on data.name, not in props).
+        if (Object.prototype.hasOwnProperty.call(patch, '__name')) {
+          const { __name, ...rest } = patch
+          return { ...n, data: { ...n.data, name: __name, props: { ...(n.data?.props || {}), ...rest } } }
+        }
+        return { ...n, data: { ...n.data, props: { ...(n.data?.props || {}), ...patch } } }
+      }))
+    }
+    // Edge disconnect helper for the scissors-on-hover button.
+    window.__spaceDisconnectEdge = (edgeId) => {
+      setEdges((arr) => arr.filter((e) => e.id !== edgeId))
     }
     return () => { window.__spacePatchNode = null }
   }, [])
 
   const onNodesChange = useCallback((changes) => setNodes((nds) => applyNodeChanges(changes, nds)), [])
   const onEdgesChange = useCallback((changes) => setEdges((eds) => applyEdgeChanges(changes, eds)), [])
-  const onConnect = useCallback((c) => setEdges((eds) => addEdge({ ...c, type: 'smoothstep', markerEnd: { type: MarkerType.ArrowClosed }, animated: true, style: { stroke: 'var(--red)', strokeWidth: 1.5 } }, eds)), [])
+  const onConnect = useCallback((c) => setEdges((eds) => addEdge({ ...c, type: 'scissor', markerEnd: { type: MarkerType.ArrowClosed }, animated: true, style: { stroke: 'var(--red)', strokeWidth: 1.5 } }, eds)), [])
 
   const addNode = (type, position) => {
     const def = NODE_REGISTRY[type]
@@ -468,6 +577,10 @@ function SpaceBuilder({ space, onSave, onClose }) {
       const body = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
       if (Array.isArray(body.nodes)) setNodes(body.nodes)
+      if (Array.isArray(body.edges)) {
+        // Force the scissor edge type for AI-generated edges too
+        body.edges.forEach((e) => { e.type = 'scissor' })
+      }
       if (Array.isArray(body.edges)) setEdges(body.edges)
       setAiSuggestion(body.suggestions || null)
       setAiPrompt('')
@@ -639,6 +752,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           nodeTypes={NODE_TYPES}
+          edgeTypes={EDGE_TYPES}
           fitView
           /* Two-finger trackpad vertical scroll → zoom in/out.
              Horizontal scroll still pans sideways. Drag pans the canvas. */
@@ -647,7 +761,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
           panOnScrollSpeed={0.8}
           zoomOnScroll
           zoomOnPinch
-          defaultEdgeOptions={{ type: 'smoothstep', animated: true, style: { stroke: 'var(--red)', strokeWidth: 1.5 } }}
+          defaultEdgeOptions={{ type: 'scissor', animated: true, style: { stroke: 'var(--red)', strokeWidth: 1.5 } }}
           proOptions={{ hideAttribution: true }}
         >
           <Background color="var(--border)" gap={20} size={1} />
