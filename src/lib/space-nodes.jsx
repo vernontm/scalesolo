@@ -172,6 +172,31 @@ function pickScript(v) {
   }
   return ''
 }
+// Find an @-mention in text that matches one of the user's brand profiles
+// by lowercase-no-space business_name. Returns the matching profile or null.
+function resolveBrandMention(text, profiles) {
+  if (!text || !Array.isArray(profiles) || !profiles.length) return null
+  const tokens = Array.from(new Set(String(text).match(/@(?:"([^"]+)"|([A-Za-z0-9_-]+))/g) || []))
+  for (const tok of tokens) {
+    const norm = tok.replace(/^@"?|"?$/g, '').toLowerCase().replace(/\s+/g, '')
+    const hit = profiles.find((p) => (p.business_name || '').toLowerCase().replace(/\s+/g, '') === norm)
+    if (hit) return hit
+  }
+  return null
+}
+
+// Strip @brand-only tokens from a prompt so the underlying model doesn't see
+// stray "@vernontech" text. (Other @-tokens — image refs etc. — are left
+// alone for the caller to handle.)
+function stripBrandMentions(text, profiles) {
+  if (!text) return text
+  const names = new Set((profiles || []).map((p) => (p.business_name || '').toLowerCase().replace(/\s+/g, '')).filter(Boolean))
+  return String(text).replace(/@(?:"([^"]+)"|([A-Za-z0-9_-]+))/g, (full, q, b) => {
+    const norm = (q || b || '').toLowerCase().replace(/\s+/g, '')
+    return names.has(norm) ? '' : full
+  }).replace(/\s+/g, ' ').trim()
+}
+
 function pickImageUrls(v) {
   const out = []
   for (const x of asArr(v)) {
@@ -262,11 +287,12 @@ function TextInputBody({ data, onPatch }) {
 function ScriptGenBody({ data, onPatch }) {
   return (
     <>
-      <textarea
-        style={{ ...tinyInput, minHeight: 70, fontFamily: 'inherit' }}
-        placeholder="Topic, hook, or @text1 to reference an upstream node…"
+      <MentionPrompt
         value={data.props?.topic || ''}
-        onChange={(e) => onPatch({ topic: e.target.value })}
+        onChange={(v) => onPatch({ topic: v })}
+        placeholder="Topic or hook. Type @ to tag a brand profile."
+        minHeight={70}
+        brands={data?._ctxProfiles || []}
       />
       <div style={pillRow}>
         <select style={pillSelect} value={data.props?.format || 'tiktok-script'} onChange={(e) => onPatch({ format: e.target.value })}>
@@ -313,23 +339,31 @@ function CaptionGenBody({ data, onPatch }) {
 // supports click-to-insert, and a typing autocomplete dropdown when the
 // user types "@". Listed images come from upstream image_upload nodes
 // (injected via renderNodes as data._ctxNamedImages).
-function ImageGenPrompt({ data, onPatch }) {
+// Generic prompt textarea that supports @-mention chips + autocomplete for
+// brand profiles AND named upload images. Used by image_gen, script_gen,
+// caption_gen.
+//   props.value         current prompt text
+//   props.onChange(v)   write new prompt text
+//   props.placeholder   textarea placeholder
+//   props.minHeight     css number (default 60)
+//   props.brands        [{ id, name }] from data._ctxProfiles
+//   props.namedImages   [{ url, name }] from data._ctxNamedImages
+function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = [], namedImages = [] }) {
   const ref = useRef(null)
   const [suggest, setSuggest] = useState({ open: false, prefix: '', start: -1 })
-  const named = Array.isArray(data?._ctxNamedImages) ? data._ctxNamedImages : []
-  const prompt = data.props?.prompt || ''
   const tagFor = (name) => `@${(name || '').replace(/\s+/g, '')}`
+  const prompt = value || ''
 
   function insertTag(name) {
     const tag = tagFor(name)
     const ta = ref.current
-    if (!ta) { onPatch({ prompt: `${prompt} ${tag}`.trim() }); return }
+    if (!ta) { onChange(`${prompt} ${tag}`.trim()); return }
     const start = suggest.start >= 0 ? suggest.start : ta.selectionStart
     const end = ta.selectionEnd
     const before = prompt.slice(0, start)
     const after = prompt.slice(end)
     const next = `${before}${tag}${after.startsWith(' ') ? '' : ' '}${after}`
-    onPatch({ prompt: next })
+    onChange(next)
     setSuggest({ open: false, prefix: '', start: -1 })
     requestAnimationFrame(() => {
       const pos = (before + tag + (after.startsWith(' ') ? '' : ' ')).length
@@ -337,10 +371,9 @@ function ImageGenPrompt({ data, onPatch }) {
     })
   }
 
-  function onChange(e) {
+  function onTextareaChange(e) {
     const v = e.target.value
-    onPatch({ prompt: v })
-    // Look back from the cursor for an active "@..." token.
+    onChange(v)
     const caret = e.target.selectionStart || 0
     const upto = v.slice(0, caret)
     const m = upto.match(/(?:^|\s)@([A-Za-z0-9_-]*)$/)
@@ -352,39 +385,50 @@ function ImageGenPrompt({ data, onPatch }) {
     }
   }
 
-  const filtered = named.filter((im) => {
+  // Build suggestion list: brands first (more impactful context), then images.
+  const all = [
+    ...brands.map((b) => ({ kind: 'brand', name: b.name, key: `b-${b.id}` })),
+    ...namedImages.map((im) => ({ kind: 'image', name: im.name, url: im.url, key: `i-${im.url}` })),
+  ]
+  const filtered = all.filter((it) => {
     if (!suggest.prefix) return true
-    return tagFor(im.name).slice(1).toLowerCase().startsWith(suggest.prefix)
+    return (it.name || '').toLowerCase().replace(/\s+/g, '').startsWith(suggest.prefix)
   })
   const tokens = Array.from(new Set(prompt.match(/@(?:"[^"]+"|[A-Za-z0-9_-]+)/g) || []))
 
+  const chipStyle = (kind, on) => ({
+    fontSize: 10, padding: '2px 7px', borderRadius: 999,
+    background: kind === 'brand'
+      ? 'rgba(236,72,153,0.14)'  // pink-ish for brands
+      : 'rgba(168,85,247,0.12)', // purple for images
+    color: kind === 'brand' ? '#f472b6' : '#c4b5fd',
+    border: `1px solid ${kind === 'brand' ? 'rgba(236,72,153,0.4)' : 'rgba(168,85,247,0.4)'}`,
+    fontFamily: 'var(--font-display)', fontWeight: 700, cursor: 'pointer',
+  })
+
   return (
     <div style={{ position: 'relative' }}>
-      {named.length > 0 && (
+      {(brands.length > 0 || namedImages.length > 0) && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
           <span style={{ fontSize: 9.5, color: 'var(--muted)', fontFamily: 'var(--font-display)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', alignSelf: 'center' }}>tag:</span>
-          {named.map((im) => (
-            <button
-              key={im.url}
-              type="button"
-              onClick={(e) => { e.stopPropagation(); insertTag(im.name) }}
-              title={`Insert ${tagFor(im.name)}`}
-              style={{
-                fontSize: 10, padding: '2px 7px', borderRadius: 999,
-                background: 'rgba(168,85,247,0.12)', color: '#c4b5fd',
-                border: '1px solid rgba(168,85,247,0.4)',
-                fontFamily: 'var(--font-display)', fontWeight: 700, cursor: 'pointer',
-              }}
-            >{tagFor(im.name)}</button>
+          {brands.map((b) => (
+            <button key={`b-${b.id}`} type="button" onClick={(e) => { e.stopPropagation(); insertTag(b.name) }} title={`Insert ${tagFor(b.name)} — references this brand profile`} style={chipStyle('brand')}>
+              {tagFor(b.name)}
+            </button>
+          ))}
+          {namedImages.map((im) => (
+            <button key={`i-${im.url}`} type="button" onClick={(e) => { e.stopPropagation(); insertTag(im.name) }} title={`Insert ${tagFor(im.name)}`} style={chipStyle('image')}>
+              {tagFor(im.name)}
+            </button>
           ))}
         </div>
       )}
       <textarea
         ref={ref}
-        style={{ ...tinyInput, minHeight: 60, fontFamily: 'inherit' }}
-        placeholder='Describe the image. Type @ to reference a specific upload.'
+        style={{ ...tinyInput, minHeight, fontFamily: 'inherit' }}
+        placeholder={placeholder}
         value={prompt}
-        onChange={onChange}
+        onChange={onTextareaChange}
         onBlur={() => setTimeout(() => setSuggest((s) => ({ ...s, open: false })), 150)}
       />
       {suggest.open && filtered.length > 0 && (
@@ -393,13 +437,13 @@ function ImageGenPrompt({ data, onPatch }) {
           marginTop: 2, zIndex: 10,
           background: 'var(--surface)', border: '1px solid var(--border-strong)',
           borderRadius: 8, boxShadow: 'var(--shadow-pop)',
-          maxHeight: 180, overflow: 'auto',
+          maxHeight: 220, overflow: 'auto',
         }}>
-          {filtered.map((im) => (
+          {filtered.map((it) => (
             <button
-              key={im.url}
+              key={it.key}
               type="button"
-              onMouseDown={(e) => { e.preventDefault(); insertTag(im.name) }}
+              onMouseDown={(e) => { e.preventDefault(); insertTag(it.name) }}
               style={{
                 width: '100%', textAlign: 'left',
                 display: 'flex', alignItems: 'center', gap: 8, padding: 6,
@@ -407,22 +451,29 @@ function ImageGenPrompt({ data, onPatch }) {
                 color: 'var(--text)', cursor: 'pointer', fontSize: 11,
               }}
             >
-              <img src={im.url} alt="" style={{ width: 28, height: 28, objectFit: 'cover', borderRadius: 4 }} />
-              <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, color: '#c4b5fd' }}>{tagFor(im.name)}</span>
+              {it.kind === 'image' && it.url ? (
+                <img src={it.url} alt="" style={{ width: 28, height: 28, objectFit: 'cover', borderRadius: 4 }} />
+              ) : (
+                <div style={{ width: 28, height: 28, borderRadius: 4, background: 'rgba(236,72,153,0.18)', color: '#f472b6', display: 'grid', placeItems: 'center', fontSize: 9, fontWeight: 700, fontFamily: 'var(--font-display)' }}>
+                  {(it.name || '?').slice(0, 2).toUpperCase()}
+                </div>
+              )}
+              <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, color: it.kind === 'brand' ? '#f472b6' : '#c4b5fd', flex: 1 }}>{tagFor(it.name)}</span>
+              <span style={{ fontSize: 9.5, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{it.kind}</span>
             </button>
           ))}
         </div>
       )}
       {tokens.length > 0 && (
         <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-          {tokens.map((t) => (
-            <span key={t} style={{
-              fontSize: 10, padding: '2px 7px', borderRadius: 999,
-              background: 'rgba(168,85,247,0.18)', color: '#c4b5fd',
-              border: '1px solid rgba(168,85,247,0.5)',
-              fontFamily: 'var(--font-display)', fontWeight: 700,
-            }}>{t}</span>
-          ))}
+          {tokens.map((t) => {
+            // Color the chip based on whether it matches a brand or image.
+            const norm = t.replace(/^@"?|"?$/g, '').toLowerCase().replace(/\s+/g, '')
+            const isBrand = brands.some((b) => (b.name || '').toLowerCase().replace(/\s+/g, '') === norm)
+            return (
+              <span key={t} style={chipStyle(isBrand ? 'brand' : 'image', true)}>{t}</span>
+            )
+          })}
         </div>
       )}
     </div>
@@ -482,7 +533,14 @@ function ImageGenBody({ data, onPatch }) {
         )}
       </div>
 
-      <ImageGenPrompt data={data} onPatch={onPatch} />
+      <MentionPrompt
+        value={data.props?.prompt || ''}
+        onChange={(v) => onPatch({ prompt: v })}
+        placeholder='Describe the image. Type @ to tag a brand profile or reference image.'
+        minHeight={60}
+        brands={data?._ctxProfiles || []}
+        namedImages={data?._ctxNamedImages || []}
+      />
 
       <div style={pillRow}>
         <select style={pillSelect} value={data.props?.model || 'nano-banana-2'} onChange={(e) => onPatch({ model: e.target.value })}>
@@ -1231,7 +1289,11 @@ export const NODE_REGISTRY = {
       let topic = (data.props?.topic || '').trim() || pickScript(incoming)
       if (!topic) throw new Error('No topic / text provided')
       topic = expandMentions(topic, inputsByName)
-      const profileId = brand?.profile_id || ctx.profileId
+      // @brand-mention takes priority — wires the script gen to that brand
+      // profile's bible/voice without needing a brand_profile node.
+      const mentioned = resolveBrandMention(topic, ctx.profiles)
+      const profileId = mentioned?.id || brand?.profile_id || ctx.profileId
+      topic = stripBrandMentions(topic, ctx.profiles)
       const r = await fetch('/api/content/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
@@ -1306,14 +1368,33 @@ export const NODE_REGISTRY = {
       if (!prompt) throw new Error('Prompt required')
       prompt = expandMentions(prompt, inputsByName)
 
-      // Brand context (if any) prepended as a short style hint.
-      const brand = pickBrand(incoming)
+      // Brand context: prefer the connected brand_profile node's output, or
+      // fall back to any @brand mention in the prompt resolved against the
+      // user's profiles list.
+      let brand = pickBrand(incoming)
+      const mentioned = !brand && resolveBrandMention(prompt, ctx.profiles)
+      if (mentioned) {
+        // Hydrate a brand context object from the matched profile.
+        brand = {
+          profile_id: mentioned.id,
+          name:        mentioned.business_name || '',
+          voice:       mentioned.preferred_tone || '',
+          audience:    mentioned.target_audience || '',
+          industry:    mentioned.industry || '',
+          logo_url:    mentioned.logo_url || '',
+          primary_color:   mentioned.brand_primary_color || '',
+          secondary_color: mentioned.brand_secondary_color || '',
+        }
+      }
+      // Strip @brand tokens from the prompt before sending to KIE.
+      prompt = stripBrandMentions(prompt, ctx.profiles)
       if (brand) {
         const bits = []
         if (brand.name) bits.push(`Brand: ${brand.name}`)
         if (brand.industry) bits.push(`Industry: ${brand.industry}`)
         if (brand.voice) bits.push(`Voice/style: ${String(brand.voice).slice(0, 200)}`)
         if (brand.audience) bits.push(`Audience: ${String(brand.audience).slice(0, 160)}`)
+        if (brand.primary_color) bits.push(`Primary color ${brand.primary_color}`)
         if (bits.length) prompt = `${bits.join('. ')}.\n\n${prompt}`
       }
 

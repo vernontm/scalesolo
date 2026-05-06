@@ -1102,9 +1102,13 @@ function SpaceBuilder({ space, onSave, onClose }) {
         }
         return { ...n, data: { ...n.data, _ctxCostPerRun: cost } }
       }
-      if (t === 'image_gen') {
-        // Walk back through edges to collect every image_upload's named
-        // images so the body can show clickable @ chips for autocomplete.
+      // Generators that take prompts get _ctxProfiles for @brand autocomplete.
+      // image_gen also gets named upload images via BFS-back through edges.
+      if (t === 'script_gen' || t === 'caption_gen' || t === 'image_gen') {
+        const slim = (profiles || []).map((p) => ({ id: p.id, name: p.business_name }))
+        if (t !== 'image_gen') {
+          return { ...n, data: { ...n.data, _ctxProfiles: slim } }
+        }
         const named = []
         const visited = new Set([n.id])
         const queue = [n.id]
@@ -1121,11 +1125,11 @@ function SpaceBuilder({ space, onSave, onClose }) {
             }
           }
         }
-        return { ...n, data: { ...n.data, _ctxNamedImages: named } }
+        return { ...n, data: { ...n.data, _ctxNamedImages: named, _ctxProfiles: slim } }
       }
       return n
     }),
-    [nodes, avatars, profiles, publicAvatars, selectedProfileId]
+    [nodes, edges, avatars, profiles, publicAvatars, selectedProfileId]
   )
 
   // Lock body scroll while the builder is mounted (it uses position:fixed).
