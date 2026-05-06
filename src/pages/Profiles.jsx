@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Plus, Building2, Edit3, Trash2, X, Save, Sparkles, Check, Crown,
 } from 'lucide-react'
@@ -92,7 +93,9 @@ function ProfileEditor({ profile, onClose, onSaved }) {
     finally { setBusy(false) }
   }
 
-  return (
+  // Portal the modal to document.body so it can't be clipped or constrained
+  // by any ancestor (overflow, transform, contain, backdrop-filter, etc.).
+  return createPortal((
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-card modal-card-xl" onClick={(e) => e.stopPropagation()} style={{ minHeight: '60vh' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
@@ -188,7 +191,7 @@ function ProfileEditor({ profile, onClose, onSaved }) {
         </div>
       </div>
     </div>
-  )
+  ), document.body)
 }
 
 function Field({ label, required, children }) {
