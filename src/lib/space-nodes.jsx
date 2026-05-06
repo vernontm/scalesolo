@@ -923,10 +923,16 @@ function AvatarRenderBody({ data }) {
 // ─── 8. COLLECTION (catches scripts/images/videos into a list) ──────────────
 function CollectionBody({ data }) {
   const items = Array.isArray(data.output?.items) ? data.output.items : []
-  if (!items.length && data.status !== 'running') {
-    return <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>Connect any output here. Run to gather all upstream results into one list.</div>
+  const isRunning = data.status === 'running'
+  // Empty + idle → friendly placeholder. Empty + running → small "gathering…"
+  // pill so the canvas isn't blank. With items → always show the grid, even
+  // mid-run, with a tiny refreshing indicator on top.
+  if (!items.length && !isRunning) {
+    return <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>Connect any output here. New items appear automatically when an upstream node finishes.</div>
   }
-  if (data.status === 'running') return <NodePreview status="running" />
+  if (!items.length && isRunning) {
+    return <div style={{ fontSize: 11.5, color: 'var(--amber)' }}><Loader2 size={11} className="spin" style={{ verticalAlign: '-1px', marginRight: 6 }} /> Gathering…</div>
+  }
 
   const removeItem = (idx) => {
     const next = items.filter((_, j) => j !== idx)
@@ -939,6 +945,16 @@ function CollectionBody({ data }) {
 
   return (
     <>
+      {isRunning && (
+        <div style={{
+          marginBottom: 6, fontSize: 10.5, color: 'var(--amber)',
+          fontFamily: 'var(--font-display)', fontWeight: 700,
+          letterSpacing: '0.06em', textTransform: 'uppercase',
+        }}>
+          <Loader2 size={10} className="spin" style={{ verticalAlign: '-1px', marginRight: 5 }} />
+          Refreshing — current items still shown
+        </div>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
         {items.slice(0, 24).map((it, i) => (
           <div key={i} style={{

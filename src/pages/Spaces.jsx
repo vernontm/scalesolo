@@ -232,20 +232,24 @@ function SpaceNode({ id, data, selected }) {
           <Icon size={13} />
         </div>
         <NodeTitle id={id} fallback={def.label} value={data.name || def.label} />
-        <button
-          type="button"
-          title="Run this node (and any unrun upstream)"
-          onClick={(e) => { e.stopPropagation(); window.__spaceRunFromNode?.(id) }}
-          style={{
-            marginLeft: 'auto',
-            background: 'transparent', border: 'none',
-            color: status === 'running' ? 'var(--amber)' : 'var(--muted)',
-            cursor: status === 'running' ? 'wait' : 'pointer',
-            padding: 4, borderRadius: 4, display: 'grid', placeItems: 'center',
-          }}
-          disabled={status === 'running'}
-        ><Play size={12} /></button>
-        <span style={statusPill}>{status}</span>
+        {/* Collection is purely a passive aggregator — no Run button. It
+            picks up new items automatically when upstream nodes finish. */}
+        {data.type !== 'collection' && (
+          <button
+            type="button"
+            title="Run this node (and any unrun upstream)"
+            onClick={(e) => { e.stopPropagation(); window.__spaceRunFromNode?.(id) }}
+            style={{
+              marginLeft: 'auto',
+              background: 'transparent', border: 'none',
+              color: status === 'running' ? 'var(--amber)' : 'var(--muted)',
+              cursor: status === 'running' ? 'wait' : 'pointer',
+              padding: 4, borderRadius: 4, display: 'grid', placeItems: 'center',
+            }}
+            disabled={status === 'running'}
+          ><Play size={12} /></button>
+        )}
+        <span style={{ ...statusPill, marginLeft: data.type === 'collection' ? 'auto' : 0 }}>{status}</span>
       </div>
       <div style={{ padding: 12 }}>
         <Body data={{ ...data, __id: id }} onPatch={onPatch} />
