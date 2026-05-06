@@ -1216,7 +1216,7 @@ function AvatarPickerBody({ data, onPatch }) {
                   key={im.id}
                   type="button"
                   className="nodrag"
-                  onClick={(e) => { e.stopPropagation(); if (mode === 'single') onPatch({ image_id: im.id }) }}
+                  onClick={(e) => { e.stopPropagation(); if (mode === 'single') onPatch({ image_id: im.id, image_url: im.image_url }) }}
                   title={mode === 'single' ? 'Use this image' : 'Included in randomization'}
                   style={{
                     aspectRatio: '1', padding: 0, borderRadius: 4, cursor: mode === 'single' ? 'pointer' : 'default',
@@ -1379,6 +1379,32 @@ function CollectionBody({ data }) {
       )}
     </>
   )
+}
+
+// ─── COMBINE VIDEOS — concat a clip set into one stitched video ─────────────
+function CombineVideosBody({ data }) {
+  const out = data.output
+  const status = data.status || 'idle'
+  if (status === 'running') return <NodePreview status="running" />
+  if (out?.video?.video_url) {
+    return (
+      <>
+        <MediaItem url={out.video.video_url} type="video" from={data.name || 'combined'} aspectRatio="9/16" />
+        <button
+          type="button"
+          className="nodrag"
+          onClick={(e) => { e.stopPropagation(); downloadUrl(out.video.video_url, 'combined.mp4') }}
+          style={{
+            marginTop: 8, width: '100%', padding: '6px 8px', fontSize: 11,
+            background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 6,
+            color: 'var(--text)', cursor: 'pointer',
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+          }}
+        ><Download size={11} /> Download stitched video</button>
+      </>
+    )
+  }
+  return <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>Wire an Avatar render (Randomize mode) or a Collection of videos in. Run to stitch them in order.</div>
 }
 
 // ─── COMBINE (bundle text + media into a unified post package) ─────────────
@@ -1832,17 +1858,17 @@ export const NODE_REGISTRY = {
     initialProps: { avatar_id: '', look_id: '', image_id: '', mode: 'single' },
     Body: AvatarPickerBody,
     run: async ({ data }) => {
-      const { avatar_id, look_id, image_id, mode } = data.props || {}
+      const { avatar_id, look_id, image_id, image_url, mode } = data.props || {}
       if (!avatar_id) throw new Error('Pick an avatar')
-      // The picker has access to the hydrated avatars list at render time
-      // (data._ctxAvatars) but NOT at run time — runSpace only sees props.
-      // So instead of resolving image URLs here we just emit the chosen
-      // ids; avatar_render fetches the full look + images from the API.
       return {
         avatar: {
           avatar_id,
           look_id: look_id || null,
           image_id: mode === 'single' ? (image_id || null) : null,
+          // Single mode also stashes the chosen image_url so avatar_render
+          // doesn't have to refetch. Randomize mode fetches all look images
+          // server-side at run time.
+          image_url: mode === 'single' ? (image_url || null) : null,
           mode: mode === 'randomize' ? 'randomize' : 'single',
         },
       }
@@ -1850,7 +1876,7 @@ export const NODE_REGISTRY = {
   },
 
   avatar_render: {
-    label: 'Avatar render', description: 'HeyGen renders the avatar speaking the script — or, if an audio file is wired in, lip-syncs to that audio instead. Wire the avatar config + (script OR audio) into the single In handle.',
+    label: 'Avatar render', description: 'HeyGen renders an avatar talking the script (or lip-syncing to an uploaded audio file). When the picker is in Randomize mode, the script is split across every image in the look and rendered as a series of clips.',
     icon: FileVideo, category: 'generators', color: '#ef4444',
     inputs: [{ id: 'in',  label: 'In (avatar + script or audio)' }],
     outputs: [{ id: 'out', label: 'Out' }],
@@ -1860,40 +1886,90 @@ export const NODE_REGISTRY = {
       const incoming = inputs?.in
       const avatar = pickAvatarConfig(incoming)
       if (!avatar?.avatar_id) throw new Error('Connect an Avatar picker')
-      // Audio takes priority — if a user wired a recorded MP3 they want
-      // their own voice, not Claude's text-to-speech.
       const audio = pickAudio(incoming)
       const script = audio ? '' : pickScript(incoming)
       if (!audio && !script) throw new Error('Wire in either a script (text/script_gen) or an audio file.')
 
-      const r = await fetch('/api/avatars/render', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
-        body: JSON.stringify({
-          avatar_id: avatar.avatar_id,
-          script: script || undefined,
-          audio_url: audio?.url || undefined,
-          voice_id: avatar.voice_id || undefined,
-          look_id: avatar.look_id || undefined, model_version: avatar.model_version || undefined,
-          profile_id: ctx.profileId,
-        }),
-      })
-      const body = await r.json()
-      if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
-      const renderId = body.render?.id
-      if (!renderId) throw new Error('Render row not returned')
-      const start = Date.now()
-      while (Date.now() - start < 4 * 60_000) {
-        if (ctx.shouldAbort?.()) throw new Error('Stopped')
-        await new Promise((r) => setTimeout(r, 8000))
-        const sr = await fetch(`/api/avatars/render-status?id=${renderId}`, { headers: { Authorization: `Bearer ${ctx.token}` } })
-        const sb = await sr.json()
-        if (sb.render?.status === 'done' && sb.render?.final_video_url) {
-          return { video: { video_url: sb.render.final_video_url, render_id: renderId } }
+      const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` }
+
+      // Helper: submit a single photo render and poll until success/failed.
+      async function renderOne({ photo_url, scriptChunk, audioUrl }) {
+        const sub = await fetch('/api/avatars/photo-render', {
+          method: 'POST', headers,
+          body: JSON.stringify({
+            profile_id: ctx.profileId,
+            photo_url,
+            script: scriptChunk || undefined,
+            audio_url: audioUrl || undefined,
+            voice_id: avatar.voice_id || undefined,
+          }),
+        })
+        const subBody = await sub.json()
+        if (!sub.ok) throw new Error(subBody.error || `Render submit failed (${sub.status})`)
+        const videoId = subBody.video_id
+        if (!videoId) throw new Error('No video id returned')
+        const start = Date.now()
+        while (Date.now() - start < 480_000) {
+          if (ctx.shouldAbort?.()) throw new Error('Stopped')
+          await new Promise((r) => setTimeout(r, 6000))
+          const sR = await fetch(`/api/avatars/photo-render-status?video_id=${encodeURIComponent(videoId)}`, { headers })
+          const s = await sR.json()
+          if (!sR.ok) throw new Error(s.error || `Status check failed (${sR.status})`)
+          if (s.state === 'success') return { video_url: s.video_url, video_id: videoId }
+          if (s.state === 'failed') throw new Error(s.error || 'Render failed')
         }
-        if (sb.render?.status === 'failed') throw new Error(sb.render?.error || 'Render failed')
+        throw new Error('Render timed out')
       }
-      throw new Error('Timed out waiting for HeyGen render')
+
+      // ── Randomize: split the script across the look's images ──────────
+      if (avatar.mode === 'randomize') {
+        if (!avatar.look_id) throw new Error('Randomize mode needs a look. Pick one in the avatar node.')
+        const imgR = await fetch(`/api/avatars/look-images?look_id=${avatar.look_id}`, { headers })
+        const imgB = await imgR.json()
+        if (!imgR.ok) throw new Error(imgB.error || 'Could not fetch look images')
+        const images = (imgB.images || []).slice().sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
+        if (!images.length) throw new Error('Look has no images')
+
+        // Audio randomize doesn't make sense (one audio track) — fall back
+        // to single mode on the first image.
+        if (audio || images.length === 1) {
+          const photo = images[0].image_url
+          const r = await renderOne({ photo_url: photo, scriptChunk: script, audioUrl: audio?.url })
+          return { video: { video_url: r.video_url } }
+        }
+
+        // Split the script into N chunks via Claude.
+        const sp = await fetch('/api/scripts/split', {
+          method: 'POST', headers,
+          body: JSON.stringify({ script, count: images.length }),
+        })
+        const spBody = await sp.json()
+        if (!sp.ok) throw new Error(spBody.error || 'Script split failed')
+        const chunks = Array.isArray(spBody.chunks) ? spBody.chunks : [script]
+
+        // Submit + poll all clips in parallel.
+        const clips = await Promise.all(images.map(async (im, i) => {
+          const r = await renderOne({ photo_url: im.image_url, scriptChunk: chunks[i] || script })
+          return {
+            video_url: r.video_url,
+            order: i,
+            image_url: im.image_url,
+            sentence: chunks[i] || '',
+          }
+        }))
+
+        return {
+          videos: clips,
+          media_type: 'video',
+          is_clip_set: true,
+        }
+      }
+
+      // ── Single: one image, one render ─────────────────────────────────
+      const photo = avatar.image_url
+      if (!photo) throw new Error('Pick a specific image in the avatar node (Single mode), or switch to Randomize.')
+      const r = await renderOne({ photo_url: photo, scriptChunk: script, audioUrl: audio?.url })
+      return { video: { video_url: r.video_url } }
     },
   },
 
@@ -1925,6 +2001,12 @@ export const NODE_REGISTRY = {
           return
         }
         if (val.video_url) { incoming.push({ kind: 'video', url: val.video_url, from }); return }
+        if (Array.isArray(val.videos)) {
+          for (const v of val.videos) {
+            if (v?.video_url) incoming.push({ kind: 'video', url: v.video_url, from, order: v.order, sentence: v.sentence })
+          }
+          return
+        }
         if (val.url) { incoming.push({ kind: 'image', url: val.url, from }); return }
         if (val.script) { incoming.push({ kind: 'script', text: val.script, from }); return }
         if (val.text) { incoming.push({ kind: 'text', text: val.text, from }); return }
@@ -1946,6 +2028,42 @@ export const NODE_REGISTRY = {
         }
       }
       return { items: out }
+    },
+  },
+
+  combine_videos: {
+    label: 'Combine videos', description: 'Stitches a set of video clips end-to-end into one video. Wire in an Avatar render (Randomize mode), a Collection of videos, or any node whose output is an array of videos. Order is preserved by clip.order, then by arrival order.',
+    icon: FileVideo, category: 'generators', color: '#0ea5e9',
+    inputs: [{ id: 'in', label: 'In (videos)' }],
+    outputs: [{ id: 'out', label: 'Out (video)' }],
+    initialProps: {},
+    Body: CombineVideosBody,
+    run: async ({ inputs, ctx }) => {
+      const arr = asArr(inputs?.in)
+      const clips = []
+      for (const v of arr) {
+        if (!v) continue
+        if (Array.isArray(v.videos)) for (const c of v.videos) { if (c?.video_url) clips.push(c) }
+        else if (Array.isArray(v.items)) for (const it of v.items) { if (it?.kind === 'video' && it.url) clips.push({ video_url: it.url, order: it.order }) }
+        else if (v.video_url) clips.push({ video_url: v.video_url, order: v.order })
+      }
+      // Stable sort: explicit .order first, otherwise arrival order.
+      clips.sort((a, b) => (a.order ?? 1e9) - (b.order ?? 1e9))
+      if (clips.length < 2) throw new Error('Need at least 2 video clips to combine.')
+
+      // Hits the Supabase Edge Function which does the actual ffmpeg-wasm
+      // concat. Returns a permanent URL in the landing-media bucket.
+      const r = await fetch('/api/videos/combine', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
+        body: JSON.stringify({
+          profile_id: ctx.profileId,
+          video_urls: clips.map((c) => c.video_url),
+        }),
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body.error || `Combine failed (${r.status})`)
+      return { video: { video_url: body.video_url, source_clips: clips.length }, media_type: 'video' }
     },
   },
 

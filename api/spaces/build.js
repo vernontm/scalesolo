@@ -41,10 +41,10 @@ const NODE_CATALOG = {
   },
   avatar_picker: {
     label: 'Avatar',
-    description: 'Selects a HeyGen avatar + optional look + voice. Wire its "out" into avatar_render "in".',
+    description: 'Picks a custom avatar + a look (folder of images). Mode "single" (default) uses one specific image; mode "randomize" uses every image in the look — when paired with avatar_render the script gets split across the images and rendered as multiple clips. props: avatar_id, look_id, image_id (single), mode ("single" | "randomize"). voice resolves server-side from the avatar.',
     inputs: [],
     outputs: ['out'],
-    initialProps: { avatar_id: '', look_id: '', voice_id: '', model_version: '' },
+    initialProps: { avatar_id: '', look_id: '', image_id: '', mode: 'single' },
   },
   script_gen: {
     label: 'Script generator',
@@ -69,7 +69,14 @@ const NODE_CATALOG = {
   },
   avatar_render: {
     label: 'Avatar render',
-    description: 'HeyGen renders the avatar speaking the script. Wire BOTH the script_gen and the avatar_picker "out" into this node\'s "in" handle (multiple connections to a single handle are allowed and sorted by shape).',
+    description: 'HeyGen V3 photo→video. Wire avatar_picker + (script_gen OR audio_upload) into "in". When the avatar_picker is in randomize mode, the script gets split across every image in the look and rendered as a series of clips (output.videos array). When single, one clip is produced (output.video). To stitch a randomize set into one video, feed avatar_render → combine_videos.',
+    inputs: ['in'],
+    outputs: ['out'],
+    initialProps: {},
+  },
+  combine_videos: {
+    label: 'Combine videos',
+    description: 'Stitches a set of video clips end-to-end into one MP4 via ffmpeg. Wire in an avatar_render that ran in randomize mode (returns a videos array), or a collection of videos. props: none. Output: { video: { video_url } }.',
     inputs: ['in'],
     outputs: ['out'],
     initialProps: {},
