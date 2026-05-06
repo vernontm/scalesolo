@@ -212,15 +212,35 @@ function expandMentions(text, inputsByName) {
 }
 
 // ── Direct upload helper for image_upload + image_gen reference uploads ─────
-async function uploadImageToBucket(file, profileId, bucket = 'landing-media') {
-  const ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
-  const path = `${profileId}/spaces/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
-  const { error } = await supabase.storage.from(bucket).upload(path, file, {
-    contentType: file.type || 'image/jpeg', upsert: false,
+// Upload a browser File to KIE's free file-upload service via our proxy
+// endpoint. KIE serves it from a CORS-friendly URL and image generators
+// (their own ones, naturally) accept it directly as image_input.
+// Heads up: KIE expires uploaded files after ~3 days. That's fine for
+// reference images in active workflows; if a user wants a permanent
+// asset they should upload it through their brand profile instead.
+async function uploadImageToBucket(file, profileId) {
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = () => reject(new Error('Could not read file'))
+    reader.readAsDataURL(file)
   })
-  if (error) throw new Error(`Upload failed: ${error.message}`)
-  const { data } = supabase.storage.from(bucket).getPublicUrl(path)
-  return data.publicUrl
+  const session = (await supabase.auth.getSession()).data.session
+  const r = await fetch('/api/images/upload-reference', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${session?.access_token || ''}`,
+    },
+    body: JSON.stringify({
+      profile_id: profileId,
+      base64: dataUrl,
+      fileName: file.name || `image-${Date.now()}.png`,
+    }),
+  })
+  const body = await r.json().catch(() => ({}))
+  if (!r.ok || !body?.url) throw new Error(body?.error || `Upload failed (${r.status})`)
+  return body.url
 }
 
 // ─── 1. TEXT INPUT ──────────────────────────────────────────────────────────
