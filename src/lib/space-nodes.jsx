@@ -1129,68 +1129,121 @@ function BrandProfileBody({ data, onPatch }) {
 // ─── 6. AVATAR PICKER ───────────────────────────────────────────────────────
 function AvatarPickerBody({ data, onPatch }) {
   const avatars = data?._ctxAvatars || []
-  const publicAvatars = data?._ctxPublicAvatars || []
   const currentId = data.props?.avatar_id || ''
-  const isPublic = currentId.startsWith('pub:')
-  const selected = isPublic
-    ? publicAvatars.find((g) => `pub:${g.id || g.group_id}` === currentId)
-    : avatars.find((a) => a.id === currentId)
-  const looks = !isPublic ? (selected?.looks || []) : []
-  const trainingStatus = !isPublic ? selected?.training_status : null
+  const selected = avatars.find((a) => a.id === currentId)
+  const looks = selected?.looks || []
+  const lookId = data.props?.look_id || ''
+  const look = looks.find((l) => l.id === lookId) || looks[0]
+  const lookImages = (look?.images || []).slice().sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
+  const mode = data.props?.mode || 'single'   // 'single' | 'randomize'
+  const imageId = data.props?.image_id || (lookImages[0]?.id || '')
+
+  const trainingStatus = selected?.training_status
   const trainingMsg = trainingStatus && !['ready', 'completed', 'success'].includes(trainingStatus)
     ? (trainingStatus === 'training'
         ? 'HeyGen is still processing this avatar. Renders will fail until training completes.'
         : `Training status: ${trainingStatus}. Renders will fail; re-create the avatar.`)
     : null
+
   return (
     <>
       <NodeField label="Avatar">
-        <select style={tinyInput} value={currentId} onChange={(e) => onPatch({ avatar_id: e.target.value, look_id: '' })}>
+        <select
+          className="nodrag"
+          style={tinyInput}
+          value={currentId}
+          onChange={(e) => onPatch({ avatar_id: e.target.value, look_id: '', image_id: '' })}
+        >
           <option value="">Pick an avatar…</option>
-          {avatars.length > 0 && <optgroup label="My avatars">
-            {avatars.map((a) => {
-              const tag = a.training_status && !['ready', 'completed', 'success'].includes(a.training_status)
-                ? ` — ${a.training_status}` : ''
-              return <option key={a.id} value={a.id}>{a.name} ({(a.model_version || 'v4').toUpperCase()}){tag}</option>
-            })}
-          </optgroup>}
-          {publicAvatars.length > 0 && <optgroup label="HeyGen library">
-            {publicAvatars.map((g) => {
-              const id = g.id || g.group_id
-              const name = g.group_name || g.name || 'Stock avatar'
-              return <option key={`pub-${id}`} value={`pub:${id}`}>{name}</option>
-            })}
-          </optgroup>}
+          {avatars.map((a) => (
+            <option key={a.id} value={a.id}>{a.name}</option>
+          ))}
         </select>
       </NodeField>
+
       {trainingMsg && (
         <div style={{ marginTop: 4, padding: '6px 8px', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.5)', borderRadius: 6, fontSize: 11, color: 'var(--amber)' }}>
           {trainingMsg}
         </div>
       )}
-      <div style={{ marginTop: 6, fontSize: 10.5, color: 'var(--muted)', lineHeight: 1.4 }}>
-        {isPublic
-          ? 'Uses HeyGen\'s default voice for this avatar.'
-          : (selected?.elevenlabs_voice_id
-              ? 'Uses the voice set on this avatar in the Avatars page.'
-              : 'No voice set yet. Open the Avatars page to assign a default voice.')}
-      </div>
-      {looks.length > 1 && (
+
+      {looks.length > 0 && (
         <NodeField label="Look">
-          <select style={tinyInput} value={data.props?.look_id || ''} onChange={(e) => onPatch({ look_id: e.target.value })}>
-            <option value="">Default</option>
-            {looks.map((l) => <option key={l.id} value={l.id}>Look {l.angle_order ?? ''}</option>)}
+          <select
+            className="nodrag"
+            style={tinyInput}
+            value={look?.id || ''}
+            onChange={(e) => onPatch({ look_id: e.target.value, image_id: '' })}
+          >
+            {looks.map((l, i) => <option key={l.id} value={l.id}>{l.name || `Look ${i + 1}`} ({l.images?.length || 0})</option>)}
           </select>
         </NodeField>
       )}
-      <NodeField label="Model">
-        <select style={tinyInput} value={data.props?.model_version || ''} onChange={(e) => onPatch({ model_version: e.target.value })}>
-          <option value="">Avatar default</option>
-          <option value="v3">V3 — Standard</option>
-          <option value="v4">V4 — Pro</option>
-          <option value="v5">V5 — Cinematic</option>
-        </select>
-      </NodeField>
+
+      {lookImages.length > 0 && (
+        <>
+          <NodeField label="Mode">
+            <div style={{ display: 'flex', gap: 4 }}>
+              {[
+                ['single', 'Single image'],
+                ['randomize', `Randomize across ${lookImages.length}`],
+              ].map(([k, label]) => {
+                const on = mode === k
+                return (
+                  <button
+                    key={k}
+                    type="button"
+                    className="nodrag"
+                    onClick={(e) => { e.stopPropagation(); onPatch({ mode: k }) }}
+                    style={{
+                      flex: 1, padding: '6px 8px', borderRadius: 6, fontSize: 11,
+                      border: `1px solid ${on ? 'var(--red)' : 'var(--border)'}`,
+                      background: on ? 'rgba(239,68,68,0.16)' : 'var(--surface-2)',
+                      color: on ? 'var(--red)' : 'var(--text-soft)',
+                      cursor: 'pointer', fontFamily: 'var(--font-display)', fontWeight: 700,
+                    }}
+                  >{label}</button>
+                )
+              })}
+            </div>
+          </NodeField>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4, marginTop: 4 }}>
+            {lookImages.map((im) => {
+              const isPicked = mode === 'single' ? imageId === im.id : true
+              return (
+                <button
+                  key={im.id}
+                  type="button"
+                  className="nodrag"
+                  onClick={(e) => { e.stopPropagation(); if (mode === 'single') onPatch({ image_id: im.id }) }}
+                  title={mode === 'single' ? 'Use this image' : 'Included in randomization'}
+                  style={{
+                    aspectRatio: '1', padding: 0, borderRadius: 4, cursor: mode === 'single' ? 'pointer' : 'default',
+                    border: `2px solid ${isPicked && mode === 'single' ? 'var(--red)' : 'transparent'}`,
+                    background: 'transparent', overflow: 'hidden',
+                    opacity: mode === 'randomize' || isPicked ? 1 : 0.55,
+                  }}
+                >
+                  <img src={im.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                </button>
+              )
+            })}
+          </div>
+        </>
+      )}
+
+      {selected && lookImages.length === 0 && (
+        <div style={{ marginTop: 6, fontSize: 11, color: 'var(--muted)', lineHeight: 1.4 }}>
+          This avatar has no images yet. Add some on the Avatars page.
+        </div>
+      )}
+
+      <div style={{ marginTop: 6, fontSize: 10.5, color: 'var(--muted)', lineHeight: 1.4 }}>
+        {selected?.elevenlabs_voice_id
+          ? 'Uses the voice set on this avatar in the Avatars page.'
+          : 'No voice set yet. Open the Avatars page to assign a default voice.'}
+      </div>
       <NodePreview status={data.status} output={data.output} error={data.error} />
     </>
   )
@@ -1773,21 +1826,24 @@ export const NODE_REGISTRY = {
   },
 
   avatar_picker: {
-    label: 'Avatar', description: 'Pick the avatar to use. Voice comes from the avatar itself: HeyGen library avatars use their default voice; custom avatars use the voice set on the Avatars page.',
+    label: 'Avatar', description: 'Pick an avatar + a look. Mode = Single uses one specific image; Mode = Randomize uses every image in the look (Avatar render splits the script across them and stitches the clips).',
     icon: UserCircle2, category: 'inputs', color: '#60a5fa',
     inputs: [], outputs: [{ id: 'out', label: 'Out' }],
-    initialProps: { avatar_id: '', look_id: '', model_version: '' },
+    initialProps: { avatar_id: '', look_id: '', image_id: '', mode: 'single' },
     Body: AvatarPickerBody,
     run: async ({ data }) => {
-      const { avatar_id, look_id, model_version } = data.props || {}
+      const { avatar_id, look_id, image_id, mode } = data.props || {}
       if (!avatar_id) throw new Error('Pick an avatar')
+      // The picker has access to the hydrated avatars list at render time
+      // (data._ctxAvatars) but NOT at run time — runSpace only sees props.
+      // So instead of resolving image URLs here we just emit the chosen
+      // ids; avatar_render fetches the full look + images from the API.
       return {
         avatar: {
           avatar_id,
           look_id: look_id || null,
-          // voice_id is intentionally omitted: the render endpoint resolves
-          // it from the avatar row (custom) or the HeyGen group (public).
-          model_version: model_version || null,
+          image_id: mode === 'single' ? (image_id || null) : null,
+          mode: mode === 'randomize' ? 'randomize' : 'single',
         },
       }
     },

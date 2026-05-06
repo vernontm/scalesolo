@@ -20,7 +20,7 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       const id = req.query.id
       if (id) {
-        const rows = await supaFetch(`avatars?id=eq.${id}&select=*,looks:avatar_looks(*)`)
+        const rows = await supaFetch(`avatars?id=eq.${id}&select=*,looks:avatar_looks(*,images:avatar_look_images(*))`)
         const a = rows?.[0]
         if (!a) return res.status(404).json({ error: 'Not found' })
         await assertProfileAccess(auth.user.id, a.profile_id)
@@ -30,7 +30,7 @@ export default async function handler(req, res) {
       if (!profileId) return res.status(400).json({ error: 'profile_id required' })
       await assertProfileAccess(auth.user.id, profileId)
       const rows = await supaFetch(
-        `avatars?profile_id=eq.${profileId}&order=created_at.desc&select=*`
+        `avatars?profile_id=eq.${profileId}&order=created_at.desc&select=*,looks:avatar_looks(id,name,kind,images:avatar_look_images(id,image_url,name,order_index))`
       )
       return res.status(200).json({ avatars: rows || [], models: MODELS })
     }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Plus, Upload, X, UserCircle2, Sparkles, Video, AlertCircle, CheckCircle2,
-  RefreshCw, Trash2, Wand2, Image as ImageIcon, ArrowLeft, Play,
+  RefreshCw, Trash2, Wand2, Image as ImageIcon, ArrowLeft, Play, ChevronRight,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
@@ -363,6 +363,114 @@ function RenderComposer({ avatar, models, onClose, onSubmitted }) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Avatar detail view (looks gallery + render history)
+// ─── Look folder ───────────────────────────────────────────────────────────
+// Inline, expandable. Cover thumb + name + image count. Click header to
+// collapse / expand. Inside: image grid + drop zone for more images +
+// inline rename.
+function LookFolder({ look, index, onAddImages, onDeleteImage, onRename, busy }) {
+  const [open, setOpen] = useState(true)
+  const [editingName, setEditingName] = useState(false)
+  const [draftName, setDraftName] = useState(look.name || '')
+  const inpRef = useRef(null)
+  const images = (look.images || []).slice().sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
+  const cover = images[0]?.image_url || look.image_url
+
+  const onPick = (e) => {
+    const files = Array.from(e.target.files || [])
+    if (files.length) onAddImages(files)
+    if (inpRef.current) inpRef.current.value = ''
+  }
+  const commitRename = () => {
+    setEditingName(false)
+    const trimmed = (draftName || '').trim()
+    if (trimmed && trimmed !== (look.name || '')) onRename(trimmed)
+  }
+
+  return (
+    <div style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+      <div
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 12,
+          padding: 10, cursor: 'pointer',
+        }}
+      >
+        {cover ? (
+          <img src={cover} alt="" style={{ width: 50, height: 50, objectFit: 'cover', borderRadius: 6, flexShrink: 0 }} />
+        ) : (
+          <div style={{ width: 50, height: 50, borderRadius: 6, background: 'var(--surface-3)', display: 'grid', placeItems: 'center', color: 'var(--muted)', flexShrink: 0 }}>
+            <ImageIcon size={18} />
+          </div>
+        )}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {editingName ? (
+            <input
+              autoFocus
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              onBlur={commitRename}
+              onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') { setEditingName(false); setDraftName(look.name || '') } }}
+              onClick={(e) => e.stopPropagation()}
+              className="input"
+              style={{ padding: '4px 8px', fontSize: 13 }}
+            />
+          ) : (
+            <div
+              onDoubleClick={(e) => { e.stopPropagation(); setEditingName(true); setDraftName(look.name || `Look ${index + 1}`) }}
+              style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13, color: 'var(--text)' }}
+              title="Double-click to rename"
+            >
+              {look.name || `Look ${index + 1}`}
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
+            {images.length} {images.length === 1 ? 'image' : 'images'}
+          </div>
+        </div>
+        <ChevronRight size={16} style={{ color: 'var(--muted)', transform: open ? 'rotate(90deg)' : 'rotate(0)', transition: 'transform 0.15s' }} />
+      </div>
+
+      {open && (
+        <div style={{ padding: 10, paddingTop: 0 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 8 }}>
+            {images.map((im) => (
+              <div key={im.id} style={{ position: 'relative' }}>
+                <img src={im.image_url} alt="" style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', borderRadius: 6, border: '1px solid var(--border)' }} />
+                <button
+                  onClick={(e) => { e.stopPropagation(); if (confirm('Delete this image?')) onDeleteImage(im.id) }}
+                  style={{
+                    position: 'absolute', top: 4, right: 4,
+                    background: 'rgba(0,0,0,0.7)', color: '#fff', border: 'none',
+                    borderRadius: 999, width: 20, height: 20, cursor: 'pointer',
+                    display: 'grid', placeItems: 'center',
+                  }}
+                  title="Remove"
+                ><X size={11} /></button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() => inpRef.current?.click()}
+              disabled={busy}
+              style={{
+                aspectRatio: '1', borderRadius: 6,
+                background: 'var(--surface)', border: '1px dashed var(--border)',
+                color: 'var(--muted)', cursor: 'pointer',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4,
+                fontSize: 11,
+              }}
+            >
+              {busy ? <span className="spinner" /> : <Plus size={14} />}
+              Add
+            </button>
+            <input ref={inpRef} type="file" multiple accept="image/jpeg,image/png,image/webp" hidden onChange={onPick} />
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function AvatarDetail({ avatar, models, onBack, onChange }) {
   const { session } = useAuth()
   const fileRef = useRef(null)
@@ -417,6 +525,40 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
     finally { setBusy(false) }
   }
 
+  // Add multiple images to an existing look folder.
+  const addImagesToLook = async (lookId, files) => {
+    setBusy(true); setError(null)
+    try {
+      for (const file of files) {
+        const url = await uploadToStorage(file, avatar.profile_id)
+        await fetch('/api/avatars/look-images', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ look_id: lookId, image_url: url, name: file.name }),
+        })
+      }
+      onChange()
+    } catch (e) { setError(e.message) }
+    finally { setBusy(false) }
+  }
+
+  const deleteLookImage = async (id) => {
+    await fetch(`/api/avatars/look-images?id=${id}`, {
+      method: 'DELETE', headers: { Authorization: `Bearer ${session.access_token}` },
+    })
+    onChange()
+  }
+
+  const renameLook = async (lookId, name) => {
+    // avatar_looks API doesn't have a generic PATCH yet — use Supabase REST via /api/avatars passthrough.
+    // For now, write to the same upload-look endpoint as a no-op; rename via direct supabase client below.
+    try {
+      const { supabase } = await import('../lib/supabase.js')
+      await supabase.from('avatar_looks').update({ name }).eq('id', lookId)
+      onChange()
+    } catch (e) { setError(e.message) }
+  }
+
   const updateAvatar = async (patch) => {
     setError(null)
     const r = await fetch(`/api/avatars?id=${avatar.id}`, {
@@ -464,25 +606,34 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 16, alignItems: 'start' }}>
         <div>
-          {/* Looks */}
+          {/* Looks — folder view. Each look is a named bucket of images;
+              the spaces avatar picker lets users pick Single (one image)
+              or Randomize (any image in the look) per render. */}
           <div className="card-flat" style={{ marginBottom: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
               <div style={{ fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.1em', textTransform: 'uppercase', flex: 1 }}>Looks</div>
               <button className="btn-ghost" onClick={() => fileRef.current?.click()} disabled={busy}>
-                {busy ? <span className="spinner" /> : <Upload size={13} />} Upload look
+                {busy ? <span className="spinner" /> : <Plus size={13} />} New look
               </button>
               <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(e) => uploadLook(e.target.files?.[0])} />
             </div>
+
             {looks.length === 0 ? (
               <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
-                No looks yet. Upload more photos for different angles, outfits, or expressions.
+                No looks yet. Upload your first photo to create a look. Add more photos to it later for different angles, outfits, or expressions.
               </div>
             ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 10 }}>
-                {looks.map((l) => (
-                  <div key={l.id} style={{ position: 'relative' }}>
-                    <img src={l.image_url} alt="look" style={{ width: '100%', height: 140, objectFit: 'cover', borderRadius: 10, border: '1px solid var(--border)' }} />
-                  </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {looks.map((l, idx) => (
+                  <LookFolder
+                    key={l.id}
+                    look={l}
+                    index={idx}
+                    onAddImages={(files) => addImagesToLook(l.id, files)}
+                    onDeleteImage={deleteLookImage}
+                    onRename={(name) => renameLook(l.id, name)}
+                    busy={busy}
+                  />
                 ))}
               </div>
             )}
