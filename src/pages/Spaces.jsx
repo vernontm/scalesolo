@@ -771,15 +771,26 @@ function SpaceBuilder({ space, onSave, onClose }) {
   const skipNextAutosave = useRef(true)
   const lastPayloadRef = useRef(null)
 
+  // Strip transient `_ctx*` keys that we inject only at render time. They
+  // can balloon the saved JSON and have no business in the persisted row.
+  const cleanNodesForSave = (arr) => (arr || []).map((n) => {
+    if (!n?.data) return n
+    const cleaned = { ...n.data }
+    for (const k of Object.keys(cleaned)) if (k.startsWith('_ctx')) delete cleaned[k]
+    delete cleaned.__id
+    return { ...n, data: cleaned }
+  })
+
   const save = async ({ silent = false } = {}) => {
     if (!silent) { setBusy(true); setError(null) }
     setAutoStatus('saving')
     try {
       const id = spaceIdRef.current
+      const cleanNodes = cleanNodesForSave(nodes)
       const r = await fetch('/api/spaces', {
         method: id ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ id, profile_id: selectedProfileId, name, nodes, edges }),
+        body: JSON.stringify({ id, profile_id: selectedProfileId, name, nodes: cleanNodes, edges }),
       })
       const body = await r.json()
       if (!r.ok) throw new Error(body.error || 'Save failed')
