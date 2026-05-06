@@ -708,7 +708,7 @@ function ImageGenBody({ data, onPatch }) {
       {imgs.length > 1 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4, marginTop: 8 }}>
           {imgs.slice(0, 8).map((im, i) => (
-            <MediaItem key={i} url={im.url} type="image" from={data.name || 'image'} aspectRatio="1/1" rounded={4} onDelete={() => removeAt(i)} />
+            <MediaItem key={im.url || `i-${i}`} url={im.url} type="image" from={data.name || 'image'} aspectRatio="1/1" rounded={4} onDelete={() => removeAt(i)} />
           ))}
         </div>
       )}
@@ -1254,7 +1254,7 @@ function CollectionBody({ data }) {
       )}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
         {items.slice(0, 24).map((it, i) => (
-          <div key={i} style={{
+          <div key={`${it.kind}:${it.url || it.text || it.content_id || i}`} style={{
             background: 'var(--surface-2)', border: '1px solid var(--border)',
             borderRadius: 6, padding: 6, fontSize: 10.5, lineHeight: 1.4,
             color: 'var(--text-soft)', overflow: 'hidden',
@@ -2103,11 +2103,10 @@ export async function runSpace({ ctx, nodes, edges, onNodeChange }) {
 
   for (const id of order) {
     if (ctx?.shouldAbort?.()) {
-      // Mark remaining nodes as failed/stopped so the UI reflects the halt.
-      for (const remId of order) {
-        if (!outputsById.has(remId) && remId !== id) onNodeChange?.(remId, { status: 'idle' })
-      }
-      return { ok: false, errors: { _aborted: 'Stopped by user' } }
+      // Don't clobber earlier failures — just halt the queue. Nodes that
+      // were already 'running' get marked failed via the racing abortPromise
+      // below; nodes still 'idle' stay idle.
+      return { ok: false, errors: { ...errors, _aborted: 'Stopped by user' } }
     }
     const node = nodes.find((n) => n.id === id)
     if (!node) continue
@@ -2141,12 +2140,31 @@ export async function runSpace({ ctx, nodes, edges, onNodeChange }) {
 
     onNodeChange?.(id, { status: 'running', error: null })
     try {
-      const result = await def.run({ data: node.data, inputs: inputObj, inputsByName, ctx })
+      // Race the node's run against a poll of ctx.shouldAbort(). Long-poll
+      // generators check the flag mid-loop too, but this catches in-flight
+      // single-shot fetches (script_gen, caption_gen, save_library) that
+      // don't have a natural cancellation hook.
+      const abortPromise = new Promise((_, rej) => {
+        const t = setInterval(() => {
+          if (ctx?.shouldAbort?.()) { clearInterval(t); rej(new Error('Stopped')) }
+        }, 500)
+        // Tag the interval so the resolved race can clear it.
+        abortPromise._t = t
+      })
+      const result = await Promise.race([
+        def.run({ data: node.data, inputs: inputObj, inputsByName, ctx }),
+        abortPromise,
+      ]).finally(() => { try { clearInterval(abortPromise._t) } catch {} })
       outputsById.set(id, result || {})
       onNodeChange?.(id, { status: 'done', output: result })
     } catch (err) {
       onNodeChange?.(id, { status: 'failed', error: err.message })
       errors[id] = err.message
+      // If the user aborted, stop processing further nodes — but DON'T
+      // clobber prior failures. Just bail.
+      if (ctx?.shouldAbort?.()) {
+        return { ok: false, errors: { ...errors, _aborted: 'Stopped by user' } }
+      }
     }
   }
 

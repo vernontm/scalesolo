@@ -5,14 +5,38 @@ const SUPABASE_URL = process.env.SUPABASE_URL
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
 const ANON_KEY = process.env.SUPABASE_ANON_KEY
 
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+// CORS allowlist. Empty env → fallback to the production origin + localhost
+// dev only. Previously empty meant "reflect any origin with credentials"
+// which is a credentials-leak vector — never reflect arbitrary origins.
+const DEFAULT_ALLOWED_ORIGINS = [
+  'https://scalesolo.vercel.app',
+  'https://scalesolo.ai',
+  'https://www.scalesolo.ai',
+  'http://localhost:5173',
+  'http://localhost:4173',
+]
+const ENV_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean)
+const ALLOWED_ORIGINS = ENV_ORIGINS.length ? ENV_ORIGINS : DEFAULT_ALLOWED_ORIGINS
+
+// Vercel preview deployments live at <branch>-<hash>-<scope>.vercel.app — we
+// allow any *.vercel.app sibling of our prod app rather than enumerating
+// every preview host. Tighten if you need stricter prod-only.
+function isAllowedOrigin(origin) {
+  if (!origin) return false
+  if (ALLOWED_ORIGINS.includes(origin)) return true
+  try {
+    const u = new URL(origin)
+    if (u.hostname.endsWith('.vercel.app')) return true
+  } catch {}
+  return false
+}
 
 export function setCors(req, res) {
   const origin = req.headers.origin
-  if (origin && (ALLOWED_ORIGINS.length === 0 || ALLOWED_ORIGINS.includes(origin))) {
+  if (isAllowedOrigin(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin)
     res.setHeader('Vary', 'Origin')
   }

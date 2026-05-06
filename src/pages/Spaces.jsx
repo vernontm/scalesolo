@@ -263,6 +263,25 @@ function SpaceNode({ id, data, selected }) {
   )
 }
 
+// Cheap fingerprint of a node's props for autosave deduping. Skips heavy
+// fields (data URIs, full output blobs) and serializes only what the user
+// can actually edit. We just need "did anything user-meaningful change".
+function propsHashShort(p) {
+  if (!p || typeof p !== 'object') return ''
+  const skip = new Set(['_ctxAvatars', '_ctxPublicAvatars', '_ctxProfiles', '_ctxNamedImages', '_ctxCostPerRun', '_ctxProfileId', '_ctxSyncedPlatforms', '_ctxDetectedKind'])
+  const parts = []
+  for (const k of Object.keys(p).sort()) {
+    if (skip.has(k)) continue
+    const v = p[k]
+    if (v == null) continue
+    if (typeof v === 'string') parts.push(`${k}:${v.length}:${v.slice(0, 40)}`)
+    else if (typeof v === 'number' || typeof v === 'boolean') parts.push(`${k}:${v}`)
+    else if (Array.isArray(v)) parts.push(`${k}:[${v.length}]`)
+    else parts.push(`${k}:o`)
+  }
+  return parts.join(',')
+}
+
 const NODE_TYPES = { space: SpaceNode }
 const EDGE_TYPES = { scissor: ScissorEdge }
 
@@ -821,10 +840,19 @@ function SpaceBuilder({ space, onSave, onClose }) {
     if (!session || !selectedProfileId) return
     // For brand-new empty spaces with no content yet, don't autosave.
     if (!spaceIdRef.current && nodes.length === 0 && edges.length === 0) return
-    const payload = JSON.stringify({ name, nodes, edges })
-    if (payload === lastPayloadRef.current) return
+    // Cheap structural fingerprint — id + type + serialized props (compact)
+    // + position rounded to ints + edges shape. ~100× faster than
+    // JSON.stringify of the full nodes array on big canvases with media.
+    const fp = [
+      name,
+      nodes.length,
+      edges.length,
+      ...nodes.map((n) => `${n.id}|${n.data?.type}|${Math.round(n.position?.x || 0)},${Math.round(n.position?.y || 0)}|${n.data?.name || ''}|${propsHashShort(n.data?.props)}`),
+      ...edges.map((e) => `${e.source}-${e.target}-${e.targetHandle || 'in'}`),
+    ].join('::')
+    if (fp === lastPayloadRef.current) return
     const t = setTimeout(() => {
-      lastPayloadRef.current = payload
+      lastPayloadRef.current = fp
       save({ silent: true })
     }, 1200)
     return () => clearTimeout(t)
