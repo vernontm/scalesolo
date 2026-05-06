@@ -30,7 +30,18 @@ async function getFFmpeg() {
   // — passing a URL corePath would break that. We installed @ffmpeg/core@0.10.0
   // as a dep so the default resolution just works.
   const ff = createFFmpeg({ log: false })
-  await ff.load()
+
+  // Emscripten's loader probes globalThis.fetch first and only falls back to
+  // fs.readFileSync if it's missing. Node 20's undici fetch is global AND
+  // rejects absolute filesystem paths ("Failed to parse URL"). Hide fetch
+  // for the duration of load() so the fs path is taken.
+  const savedFetch = globalThis.fetch
+  try {
+    delete globalThis.fetch
+    await ff.load()
+  } finally {
+    globalThis.fetch = savedFetch
+  }
   _ffmpegInstance = ff
   return ff
 }
