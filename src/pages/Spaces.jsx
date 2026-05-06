@@ -14,7 +14,8 @@ import '@xyflow/react/dist/style.css'
 import {
   Plus, Play, Save, Trash2, ArrowLeft, Sparkles, Zap, Boxes, AlertCircle,
   GripHorizontal, Minimize2, Maximize2, Wand2, MessageSquare, Send,
-  ZoomIn, ZoomOut, Maximize, Scissors, Download, X,
+  ZoomIn, ZoomOut, Maximize, Scissors, Download, X, History, Clock,
+  CheckCircle2, XCircle,
 } from 'lucide-react'
 import { useRef } from 'react'
 // (useEffect already imported above for other effects in this file)
@@ -276,7 +277,86 @@ function normalizeEdgeHandles(e) {
 // ─────────────────────────────────────────────────────────────────────────────
 // List view
 
-function SpacesList({ spaces, onCreate, onOpen, onDelete, error }) {
+// ── Run history modal — recent runs of one space ───────────────────────────
+function RunHistoryModal({ spaceId, token, onClose }) {
+  const [runs, setRuns] = useState(null)
+  const [error, setError] = useState(null)
+  useEffect(() => {
+    if (!spaceId) { setRuns([]); return }
+    fetch(`/api/spaces/runs?space_id=${spaceId}&limit=30`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((b) => setRuns(Array.isArray(b.runs) ? b.runs : []))
+      .catch((e) => setError(e.message))
+  }, [spaceId, token])
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 80,
+        background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)',
+        display: 'grid', placeItems: 'center', padding: 24,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: '100%', maxWidth: 720, maxHeight: '82vh',
+          background: 'var(--surface)', border: '1px solid var(--border)',
+          borderRadius: 14, boxShadow: 'var(--shadow-pop)',
+          display: 'flex', flexDirection: 'column',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
+          <History size={16} style={{ color: 'var(--red)' }} />
+          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700, flex: 1 }}>Run history</h3>
+          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}><X size={16} /></button>
+        </div>
+        <div style={{ padding: 14, overflowY: 'auto', flex: 1 }}>
+          {!spaceId && <div style={{ color: 'var(--muted)', fontSize: 12.5, textAlign: 'center', padding: 30 }}>Save the space first to see history.</div>}
+          {spaceId && runs == null && <div style={{ textAlign: 'center', padding: 30 }}><span className="spinner" /></div>}
+          {error && <div style={{ color: 'var(--red)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+          {runs && runs.length === 0 && (
+            <div style={{ color: 'var(--muted)', fontSize: 12.5, textAlign: 'center', padding: 30 }}>No runs yet — hit Run to start one.</div>
+          )}
+          {runs && runs.map((r) => {
+            const Icon = r.status === 'success' ? CheckCircle2 : r.status === 'failed' ? XCircle : Clock
+            const color = r.status === 'success' ? '#2ecc71' : r.status === 'failed' ? 'var(--red)' : r.status === 'partial' ? 'var(--amber)' : 'var(--muted)'
+            const errs = Array.isArray(r.errors) ? r.errors : []
+            return (
+              <div key={r.id} style={{
+                padding: '10px 12px', marginBottom: 8,
+                background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 8,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <Icon size={14} style={{ color }} />
+                  <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.06em', color }}>
+                    {r.status}
+                  </div>
+                  <div style={{ flex: 1, fontSize: 11, color: 'var(--muted)' }}>{new Date(r.started_at).toLocaleString()}</div>
+                  {r.duration_ms != null && (
+                    <div style={{ fontSize: 11, color: 'var(--muted)' }}>{(r.duration_ms / 1000).toFixed(1)}s</div>
+                  )}
+                </div>
+                <div style={{ fontSize: 11.5, color: 'var(--text-soft)' }}>
+                  {r.node_count} node{r.node_count === 1 ? '' : 's'} · trigger: {r.triggered_by || 'manual'}
+                </div>
+                {errs.length > 0 && (
+                  <div style={{ marginTop: 6, padding: '6px 8px', background: 'rgba(239,68,68,0.08)', borderRadius: 6, fontSize: 11, color: 'var(--red)', whiteSpace: 'pre-wrap' }}>
+                    {errs.map((e, i) => <div key={i}>{e.nodeId ? `${e.nodeId}: ` : ''}{e.msg}</div>)}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SpacesList({ spaces, onCreate, onOpen, onDelete, onHistory, error }) {
   return (
     <div className="fade-up">
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
@@ -302,9 +382,14 @@ function SpacesList({ spaces, onCreate, onOpen, onDelete, error }) {
               </div>
               <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15, marginBottom: 4 }}>{s.name}</div>
               <div style={{ fontSize: 12, color: 'var(--muted)' }}>Updated {new Date(s.updated_at).toLocaleDateString()}</div>
-              <button className="btn-ghost" style={{ marginTop: 12, padding: '6px 10px', fontSize: 12 }} onClick={(e) => { e.stopPropagation(); onDelete(s) }}>
-                <Trash2 size={12} /> Delete
-              </button>
+              <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
+                <button className="btn-ghost" style={{ padding: '6px 10px', fontSize: 12 }} onClick={(e) => { e.stopPropagation(); onHistory?.(s) }}>
+                  <History size={12} /> History
+                </button>
+                <button className="btn-ghost" style={{ padding: '6px 10px', fontSize: 12 }} onClick={(e) => { e.stopPropagation(); onDelete(s) }}>
+                  <Trash2 size={12} /> Delete
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -512,6 +597,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
   const [aiPrompt, setAiPrompt] = useState('')
   const [aiBuilding, setAiBuilding] = useState(false)
   const [previewItem, setPreviewItem] = useState(null)  // { url, type } for fullscreen preview
+  const [historyOpen, setHistoryOpen] = useState(false)
 
   // Ref mirrors of nodes/edges so global helpers don't read stale closures.
   const nodesRef = useRef(nodes)
@@ -767,15 +853,39 @@ function SpaceBuilder({ space, onSave, onClose }) {
     }
   }
 
+  // Record a run start/finish to space_runs. Best-effort.
+  const recordRunStart = async ({ triggered_by, node_count }) => {
+    if (!spaceIdRef.current) return null
+    try {
+      const r = await fetch('/api/spaces/runs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ space_id: spaceIdRef.current, triggered_by, status: 'running', node_count }),
+      })
+      const body = await r.json()
+      return body?.run?.id || null
+    } catch { return null }
+  }
+  const recordRunFinish = async (runId, payload) => {
+    if (!runId) return
+    try {
+      await fetch(`/api/spaces/runs?id=${runId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ ...payload, finished_at: new Date().toISOString() }),
+      })
+    } catch {}
+  }
+
   const run = async () => {
     if (running) return
     setRunning(true); setError(null)
-    // Reset all node statuses
     setNodes((arr) => arr.map((n) => ({ ...n, data: { ...n.data, status: 'idle', output: null, error: null } })))
 
     const ctx = { token: session.access_token, profileId: selectedProfileId, avatars, profiles }
-    // Snapshot the current nodes/edges since they may move during the run
     const snapshot = JSON.parse(JSON.stringify({ nodes, edges }))
+    const startedAt = Date.now()
+    const runId = await recordRunStart({ triggered_by: 'manual', node_count: snapshot.nodes.length })
     try {
       const result = await runSpace({
         ctx,
@@ -788,8 +898,15 @@ function SpaceBuilder({ space, onSave, onClose }) {
         setError(msg || 'One or more nodes failed')
       }
       refreshCredits()
+      const errCount = Object.keys(result.errors || {}).length
+      await recordRunFinish(runId, {
+        status: errCount === 0 ? 'success' : (errCount < snapshot.nodes.length ? 'partial' : 'failed'),
+        errors: Object.entries(result.errors || {}).map(([nodeId, msg]) => ({ nodeId, msg })),
+        duration_ms: Date.now() - startedAt,
+      })
     } catch (e) {
       setError(e.message)
+      await recordRunFinish(runId, { status: 'failed', errors: [{ msg: e.message }], duration_ms: Date.now() - startedAt })
     } finally {
       setRunning(false)
     }
@@ -831,6 +948,9 @@ function SpaceBuilder({ space, onSave, onClose }) {
     setNodes((arr) => arr.map((n) => want.has(n.id) ? { ...n, data: { ...n.data, status: 'idle', output: null, error: null } } : n))
     const ctx = { token: session.access_token, profileId: selectedProfileId, avatars, profiles }
     const snapshot = JSON.parse(JSON.stringify({ nodes: subsetNodes, edges: subsetEdges }))
+    const startedAt = Date.now()
+    const triggerType = nodes.find((n) => n.id === targetId)?.data?.type === 'auto_run' ? 'auto_run' : 'per_node'
+    const runId = await recordRunStart({ triggered_by: triggerType, node_count: snapshot.nodes.length })
     try {
       const result = await runSpace({ ctx, nodes: snapshot.nodes, edges: snapshot.edges, onNodeChange: patchNode })
       if (!result.ok) {
@@ -838,8 +958,15 @@ function SpaceBuilder({ space, onSave, onClose }) {
         setError(msg || 'Node run failed')
       }
       refreshCredits()
+      const errCount = Object.keys(result.errors || {}).length
+      await recordRunFinish(runId, {
+        status: errCount === 0 ? 'success' : (errCount < snapshot.nodes.length ? 'partial' : 'failed'),
+        errors: Object.entries(result.errors || {}).map(([nodeId, msg]) => ({ nodeId, msg })),
+        duration_ms: Date.now() - startedAt,
+      })
     } catch (e) {
       setError(e.message)
+      await recordRunFinish(runId, { status: 'failed', errors: [{ msg: e.message }], duration_ms: Date.now() - startedAt })
     } finally {
       setRunning(false)
     }
@@ -912,6 +1039,30 @@ function SpaceBuilder({ space, onSave, onClose }) {
       if (t === 'avatar_picker') return { ...n, data: { ...n.data, _ctxAvatars: avatars, _ctxPublicAvatars: publicAvatars } }
       if (t === 'brand_profile') return { ...n, data: { ...n.data, _ctxProfiles: profiles } }
       if (t === 'image_upload')  return { ...n, data: { ...n.data, _ctxProfileId: selectedProfileId } }
+      if (t === 'save_library') {
+        // Walk back to see what kind of media is wired in (image / video /
+        // text), and look up the active brand profile's synced_platforms.
+        let kind = 'text'
+        const seenS = new Set([n.id])
+        const queueS = [n.id]
+        while (queueS.length) {
+          const id = queueS.shift()
+          for (const e of edges) {
+            if (e.target === id && !seenS.has(e.source)) {
+              seenS.add(e.source); queueS.push(e.source)
+              const src = nodes.find((s) => s.id === e.source)
+              const out = src?.data?.output
+              if (out?.video_url) kind = 'video'
+              else if (Array.isArray(out?.images) && out.images.length && kind !== 'video') kind = 'image'
+              else if (src?.data?.type === 'avatar_render' && kind !== 'video') kind = 'video'
+              else if (src?.data?.type === 'image_gen' && kind !== 'video') kind = 'image'
+            }
+          }
+        }
+        const activeProfile = (profiles || []).find((p) => p.id === selectedProfileId)
+        const synced = Array.isArray(activeProfile?.synced_platforms) ? activeProfile.synced_platforms : []
+        return { ...n, data: { ...n.data, _ctxSyncedPlatforms: synced, _ctxDetectedKind: kind } }
+      }
       if (t === 'auto_run') {
         // BFS down to compute estimated cost-per-run from the chain
         let cost = 0
@@ -1044,6 +1195,9 @@ function SpaceBuilder({ space, onSave, onClose }) {
             : autoStatus === 'saved' ? 'Saved'
             : autoStatus === 'error' ? 'Save error' : 'Autosave on'}
         </span>
+        <button className="btn-ghost" onClick={() => setHistoryOpen(true)} title="Run history" style={{ padding: '6px 10px' }}>
+          <History size={13} /> History
+        </button>
         <button className="btn-secondary" onClick={() => save()} disabled={busy} title="Force a save now">
           {busy ? <span className="spinner" /> : <Save size={13} />} Save
         </button>
@@ -1118,6 +1272,14 @@ function SpaceBuilder({ space, onSave, onClose }) {
         </ReactFlow>
 
         <FloatingPalette onAdd={(type) => addNode(type)} />
+
+        {historyOpen && (
+          <RunHistoryModal
+            spaceId={spaceIdRef.current}
+            token={session.access_token}
+            onClose={() => setHistoryOpen(false)}
+          />
+        )}
 
         {previewItem && (
           <div
@@ -1226,6 +1388,9 @@ export default function Spaces() {
     } catch (e) { setError(e.message) }
   }
 
+  const [historyFor, setHistoryFor] = useState(null)
+  const onHistory = (s) => setHistoryFor(s)
+
   if (!selectedProfileId) {
     return <div className="card-flat fade-up" style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>
       Pick a brand profile to manage spaces.
@@ -1233,5 +1398,16 @@ export default function Spaces() {
   }
   if (loading && spaces.length === 0) return <div className="card-flat" style={{ padding: 40, textAlign: 'center' }}><span className="spinner" /></div>
   if (editing) return <SpaceBuilder space={editing} onSave={(s) => { refresh(); setEditing(s) }} onClose={() => { refresh(); setEditing(null) }} />
-  return <SpacesList spaces={spaces} onCreate={onCreate} onOpen={onOpen} onDelete={onDelete} error={error} />
+  return (
+    <>
+      <SpacesList spaces={spaces} onCreate={onCreate} onOpen={onOpen} onDelete={onDelete} onHistory={onHistory} error={error} />
+      {historyFor && (
+        <RunHistoryModal
+          spaceId={historyFor.id}
+          token={session.access_token}
+          onClose={() => setHistoryFor(null)}
+        />
+      )}
+    </>
+  )
 }

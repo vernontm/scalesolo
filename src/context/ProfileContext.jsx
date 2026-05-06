@@ -27,7 +27,7 @@ export function ProfileProvider({ children }) {
     try {
       const { data, error } = await supabase
         .from('profile_access')
-        .select('role, allowed_pages, profiles ( id, business_name, industry, brand_primary_color, brand_secondary_color, logo_url, is_active )')
+        .select('role, allowed_pages, profiles ( id, business_name, industry, brand_primary_color, brand_secondary_color, logo_url, is_active, synced_platforms, timezone )')
         .eq('user_id', user.id)
       if (error) throw error
       const list = (data || [])

@@ -1003,10 +1003,23 @@ const PLATFORMS = [
 
 function SaveBody({ data, onPatch }) {
   const platforms = Array.isArray(data.props?.platforms) ? data.props.platforms : []
+  const synced = Array.isArray(data?._ctxSyncedPlatforms) ? data._ctxSyncedPlatforms : []
+  const detectedKind = data?._ctxDetectedKind || 'text'  // image | video | text — derived upstream
   const togglePlatform = (id) => {
     const next = platforms.includes(id) ? platforms.filter((p) => p !== id) : [...platforms, id]
     onPatch({ platforms: next })
   }
+
+  // Validate compatibility between detected media kind and selected platforms.
+  const incompatible = platforms.filter((id) => {
+    const def = PLATFORMS.find((p) => p.id === id)
+    return def && !def.kinds.includes(detectedKind)
+  })
+
+  const visiblePlatforms = synced.length
+    ? PLATFORMS.filter((p) => synced.includes(p.id))
+    : PLATFORMS
+
   return (
     <>
       <NodeField label="Title (optional)">
@@ -1014,35 +1027,43 @@ function SaveBody({ data, onPatch }) {
       </NodeField>
       <NodeField label="Status">
         <select style={tinyInput} value={data.props?.status || 'draft'} onChange={(e) => onPatch({ status: e.target.value })}>
-          <option value="draft">Draft</option>
-          <option value="caption_ready">Ready to schedule</option>
-          <option value="scheduled">Scheduled</option>
+          <option value="draft">Draft (needs approval before scheduling)</option>
+          <option value="caption_ready">Ready to schedule (auto-fills next slot)</option>
         </select>
       </NodeField>
       <NodeField label="Schedule for">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-          {PLATFORMS.map((p) => {
+          {visiblePlatforms.map((p) => {
             const on = platforms.includes(p.id)
+            const compatible = p.kinds.includes(detectedKind)
             return (
               <button
                 key={p.id}
                 type="button"
                 onClick={(e) => { e.stopPropagation(); togglePlatform(p.id) }}
+                disabled={!compatible}
+                title={compatible ? '' : `${p.label} doesn't support ${detectedKind} content`}
                 style={{
                   fontSize: 10.5, padding: '4px 9px', borderRadius: 999,
                   border: `1px solid ${on ? '#2ecc71' : 'var(--border)'}`,
                   background: on ? 'rgba(46,204,113,0.16)' : 'var(--surface-2)',
                   color: on ? '#2ecc71' : 'var(--text-soft)',
-                  cursor: 'pointer',
+                  opacity: compatible ? 1 : 0.4,
+                  cursor: compatible ? 'pointer' : 'not-allowed',
                   fontFamily: 'var(--font-display)', fontWeight: 700,
                 }}
               >{p.label}</button>
             )
           })}
         </div>
-        {platforms.length > 0 && (
-          <div style={{ marginTop: 6, fontSize: 10, color: 'var(--muted)', lineHeight: 1.4 }}>
-            Saved with these platforms tagged. Schedule from the Library page.
+        {synced.length === 0 && (
+          <div style={{ marginTop: 6, fontSize: 10, color: 'var(--amber)', lineHeight: 1.4 }}>
+            No social accounts synced yet. Connect platforms in Settings to publish; for now the choice is just a tag.
+          </div>
+        )}
+        {incompatible.length > 0 && (
+          <div style={{ marginTop: 6, fontSize: 10, color: 'var(--red)', lineHeight: 1.4 }}>
+            {incompatible.map((id) => PLATFORMS.find((p) => p.id === id)?.label).join(', ')} won’t accept {detectedKind} content. Run will reject.
           </div>
         )}
       </NodeField>
@@ -1398,6 +1419,19 @@ export const NODE_REGISTRY = {
       const platforms = Array.isArray(data.props?.platforms) && data.props.platforms.length
         ? data.props.platforms
         : null
+      // Validate compatibility — refuse to save if any selected platform
+      // can't accept the produced media kind. Surfaces in the node's red
+      // error state, doesn't burn cycles trying to schedule garbage.
+      if (platforms?.length) {
+        const bad = platforms.filter((id) => {
+          const def = PLATFORMS.find((p) => p.id === id)
+          return def && !def.kinds.includes(mediaType)
+        })
+        if (bad.length) {
+          const names = bad.map((id) => PLATFORMS.find((p) => p.id === id)?.label || id).join(', ')
+          throw new Error(`${names} can't accept ${mediaType} content. Remove it or change what's wired in.`)
+        }
+      }
       const postType = mediaType === 'video' ? 'video' : (mediaType === 'image' ? 'post' : 'post')
       const r = await fetch('/api/content', {
         method: 'POST',
