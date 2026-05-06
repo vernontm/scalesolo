@@ -1138,6 +1138,23 @@ function AvatarPickerBody({ data, onPatch }) {
   const mode = data.props?.mode || 'single'   // 'single' | 'randomize'
   const imageId = data.props?.image_id || (lookImages[0]?.id || '')
 
+  // Auto-write defaults to props as soon as data is hydrated. Otherwise the
+  // picker shows "Look 1" and a thumbnail visually but the underlying props
+  // stay { look_id: null, image_id: null }, and run-time reads those nulls
+  // (instead of the visual default) — that's what was causing "Randomize
+  // mode needs a look" right after dragging in the picker.
+  useEffect(() => {
+    if (!selected) return
+    const patch = {}
+    if (!data.props?.look_id && looks[0]?.id) patch.look_id = looks[0].id
+    if (mode === 'single' && !data.props?.image_id && lookImages[0]?.id) {
+      patch.image_id = lookImages[0].id
+      patch.image_url = lookImages[0].image_url
+    }
+    if (Object.keys(patch).length) onPatch(patch)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.id, look?.id, mode])
+
   const trainingStatus = selected?.training_status
   const trainingMsg = trainingStatus && !['ready', 'completed', 'success'].includes(trainingStatus)
     ? (trainingStatus === 'training'
