@@ -610,7 +610,24 @@ function SpaceBuilder({ space, onSave, onClose }) {
   const { refresh: refreshCredits } = useCredits()
 
   const [name, setName] = useState(space.name || 'Untitled space')
-  const [nodes, setNodes] = useState(Array.isArray(space.nodes) ? space.nodes : [])
+  // Strip stale runtime fields when loading a saved space. A node saved
+  // mid-run keeps status='running' which makes the UI think a run is
+  // active forever (and Stop buttons appear without anything to stop).
+  // Also drop ReactFlow's own transient props (selected/dragging) so the
+  // canvas reopens in a clean state.
+  const [nodes, setNodes] = useState(() => {
+    const arr = Array.isArray(space.nodes) ? space.nodes : []
+    return arr.map((n) => ({
+      ...n,
+      selected: false,
+      dragging: false,
+      data: {
+        ...n.data,
+        status: n.data?.status === 'running' ? 'idle' : (n.data?.status || 'idle'),
+        error: null,
+      },
+    }))
+  })
   const [edges, setEdges] = useState(
     Array.isArray(space.edges)
       ? space.edges.map((e) => ({ ...normalizeEdgeHandles(e), type: 'scissor' }))
