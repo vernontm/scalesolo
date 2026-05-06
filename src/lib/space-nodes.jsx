@@ -1403,6 +1403,8 @@ function CombineVideosBody({ data }) {
   const out = data.output
   const status = data.status || 'idle'
   if (status === 'running') return <NodePreview status="running" />
+
+  // Successful stitch.
   if (out?.video?.video_url) {
     return (
       <>
@@ -1421,6 +1423,46 @@ function CombineVideosBody({ data }) {
       </>
     )
   }
+
+  // Fallback: server combine wasn't available. Show every clip as a
+  // download-able tile so the user can still salvage the run.
+  if (Array.isArray(out?.videos) && out.videos.length) {
+    return (
+      <>
+        <div style={{
+          marginBottom: 8, padding: '6px 8px', fontSize: 10.5, lineHeight: 1.45,
+          background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)',
+          borderRadius: 6, color: 'var(--amber)',
+        }}>
+          {out.combine_unavailable || 'Stitching unavailable. Clips preserved below — download each.'}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
+          {out.videos.map((c, i) => (
+            <MediaItem
+              key={c.video_url || i}
+              url={c.video_url}
+              type="video"
+              from={`clip ${i + 1}`}
+              aspectRatio="9/16"
+              rounded={4}
+            />
+          ))}
+        </div>
+        <button
+          type="button"
+          className="nodrag"
+          onClick={(e) => { e.stopPropagation(); out.videos.forEach((c, i) => downloadUrl(c.video_url, `clip-${i + 1}.mp4`)) }}
+          style={{
+            marginTop: 8, width: '100%', padding: '6px 8px', fontSize: 11,
+            background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 6,
+            color: 'var(--text)', cursor: 'pointer',
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+          }}
+        ><Download size={11} /> Download all {out.videos.length} clips</button>
+      </>
+    )
+  }
+
   return <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>Wire an Avatar render (Randomize mode) or a Collection of videos in. Run to stitch them in order.</div>
 }
 
@@ -2052,7 +2094,7 @@ export const NODE_REGISTRY = {
   },
 
   combine_videos: {
-    label: 'Combine videos', description: 'Stitches a set of video clips end-to-end into one video. Wire in an Avatar render (Randomize mode), a Collection of videos, or any node whose output is an array of videos. Order is preserved by clip.order, then by arrival order.',
+    label: 'Combine videos', description: 'Stitches a set of video clips end-to-end. If server-side ffmpeg is unavailable, the node falls back to a playlist: every clip is preserved individually so you can download or hand-edit them.',
     icon: FileVideo, category: 'generators', color: '#0ea5e9',
     inputs: [{ id: 'in', label: 'In (videos)' }],
     outputs: [{ id: 'out', label: 'Out (video)' }],
@@ -2067,23 +2109,40 @@ export const NODE_REGISTRY = {
         else if (Array.isArray(v.items)) for (const it of v.items) { if (it?.kind === 'video' && it.url) clips.push({ video_url: it.url, order: it.order }) }
         else if (v.video_url) clips.push({ video_url: v.video_url, order: v.order })
       }
-      // Stable sort: explicit .order first, otherwise arrival order.
       clips.sort((a, b) => (a.order ?? 1e9) - (b.order ?? 1e9))
       if (clips.length < 2) throw new Error('Need at least 2 video clips to combine.')
 
-      // Hits the Supabase Edge Function which does the actual ffmpeg-wasm
-      // concat. Returns a permanent URL in the landing-media bucket.
-      const r = await fetch('/api/videos/combine', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
-        body: JSON.stringify({
-          profile_id: ctx.profileId,
-          video_urls: clips.map((c) => c.video_url),
-        }),
-      })
-      const body = await r.json()
-      if (!r.ok) throw new Error(body.error || `Combine failed (${r.status})`)
-      return { video: { video_url: body.video_url, source_clips: clips.length }, media_type: 'video' }
+      // Try the server-side ffmpeg path. If it's not deployed or fails for
+      // any reason, fall back to playlist mode so the user keeps every clip
+      // and a clear message instead of losing the whole run.
+      try {
+        const r = await fetch('/api/videos/combine', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
+          body: JSON.stringify({
+            profile_id: ctx.profileId,
+            video_urls: clips.map((c) => c.video_url),
+          }),
+        })
+        const body = await r.json().catch(() => ({}))
+        if (r.ok && body?.video_url) {
+          return { video: { video_url: body.video_url, source_clips: clips.length }, media_type: 'video' }
+        }
+        // Fall through to playlist on any non-success.
+        return {
+          videos: clips,
+          media_type: 'video',
+          is_clip_set: true,
+          combine_unavailable: body?.error || `Server ffmpeg unavailable (${r.status}). Clips preserved as a playlist — download each and stitch in your editor, or wire a different combine target.`,
+        }
+      } catch (e) {
+        return {
+          videos: clips,
+          media_type: 'video',
+          is_clip_set: true,
+          combine_unavailable: e.message,
+        }
+      }
     },
   },
 
