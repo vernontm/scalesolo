@@ -178,8 +178,8 @@ function resolveBrandMention(text, profiles) {
   if (!text || !Array.isArray(profiles) || !profiles.length) return null
   const tokens = Array.from(new Set(String(text).match(/@(?:"([^"]+)"|([A-Za-z0-9_-]+))/g) || []))
   for (const tok of tokens) {
-    const norm = tok.replace(/^@"?|"?$/g, '').toLowerCase().replace(/\s+/g, '')
-    const hit = profiles.find((p) => (p.business_name || '').toLowerCase().replace(/\s+/g, '') === norm)
+    const norm = tok.replace(/^@"?|"?$/g, '').toLowerCase().replace(/[^a-z0-9_-]/g, '')
+    const hit = profiles.find((p) => (p.business_name || '').toLowerCase().replace(/[^a-z0-9_-]/g, '') === norm)
     if (hit) return hit
   }
   return null
@@ -190,9 +190,9 @@ function resolveBrandMention(text, profiles) {
 // alone for the caller to handle.)
 function stripBrandMentions(text, profiles) {
   if (!text) return text
-  const names = new Set((profiles || []).map((p) => (p.business_name || '').toLowerCase().replace(/\s+/g, '')).filter(Boolean))
+  const names = new Set((profiles || []).map((p) => (p.business_name || '').toLowerCase().replace(/[^a-z0-9_-]/g, '')).filter(Boolean))
   return String(text).replace(/@(?:"([^"]+)"|([A-Za-z0-9_-]+))/g, (full, q, b) => {
-    const norm = (q || b || '').toLowerCase().replace(/\s+/g, '')
+    const norm = (q || b || '').toLowerCase().replace(/[^a-z0-9_-]/g, '')
     return names.has(norm) ? '' : full
   }).replace(/\s+/g, ' ').trim()
 }
@@ -229,7 +229,7 @@ function expandMentions(text, inputsByName) {
   if (!text || typeof text !== 'string') return text || ''
   return text.replace(/@(?:"([^"]+)"|([A-Za-z0-9_-]+))/g, (full, quoted, bare) => {
     const raw = quoted || bare || ''
-    const key = raw.toLowerCase().replace(/\s+/g, '')
+    const key = raw.toLowerCase().replace(/[^a-z0-9_-]/g, '')
     const hit = inputsByName?.[key]
     if (!hit) return full
     return flatten(hit) || full
@@ -351,7 +351,10 @@ function CaptionGenBody({ data, onPatch }) {
 function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = [], namedImages = [] }) {
   const ref = useRef(null)
   const [suggest, setSuggest] = useState({ open: false, prefix: '', start: -1 })
-  const tagFor = (name) => `@${(name || '').replace(/\s+/g, '')}`
+  // Strip every non-token char (anything besides letters, digits, _, -) so
+  // brands like "VernonTech & Media" produce a clean "@VernonTechMedia"
+  // tag the parser can match end-to-end.
+  const tagFor = (name) => `@${(name || '').replace(/[^A-Za-z0-9_-]/g, '')}`
   const prompt = value || ''
 
   function insertTag(name) {
@@ -392,7 +395,7 @@ function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = 
   ]
   const filtered = all.filter((it) => {
     if (!suggest.prefix) return true
-    return (it.name || '').toLowerCase().replace(/\s+/g, '').startsWith(suggest.prefix)
+    return (it.name || '').toLowerCase().replace(/[^a-z0-9_-]/g, '').startsWith(suggest.prefix)
   })
   const tokens = Array.from(new Set(prompt.match(/@(?:"[^"]+"|[A-Za-z0-9_-]+)/g) || []))
 
@@ -482,8 +485,8 @@ function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = 
 // and spacing match exactly.
 function PromptHighlightField({ textareaRef, value, placeholder, minHeight, onChange, onBlur, brands, namedImages }) {
   const backdropRef = useRef(null)
-  const brandSet = new Set((brands || []).map((b) => (b.name || '').toLowerCase().replace(/\s+/g, '')))
-  const imageSet = new Set((namedImages || []).map((im) => (im.name || '').toLowerCase().replace(/\s+/g, '')))
+  const brandSet = new Set((brands || []).map((b) => (b.name || '').toLowerCase().replace(/[^a-z0-9_-]/g, '')))
+  const imageSet = new Set((namedImages || []).map((im) => (im.name || '').toLowerCase().replace(/[^a-z0-9_-]/g, '')))
 
   // Walk the prompt, splitting at @-tokens. Recognized tokens get a colored
   // span; unknown tokens stay default-colored.
@@ -495,7 +498,7 @@ function PromptHighlightField({ textareaRef, value, placeholder, minHeight, onCh
   while ((m = re.exec(value || '')) !== null) {
     if (m.index > cursor) segments.push({ k: key++, kind: 'text', text: value.slice(cursor, m.index) })
     const tok = m[0]
-    const norm = tok.replace(/^@"?|"?$/g, '').toLowerCase().replace(/\s+/g, '')
+    const norm = tok.replace(/^@"?|"?$/g, '').toLowerCase().replace(/[^a-z0-9_-]/g, '')
     const tokKind = brandSet.has(norm) ? 'brand' : (imageSet.has(norm) ? 'image' : 'unknown')
     segments.push({ k: key++, kind: tokKind, text: tok })
     cursor = m.index + tok.length
@@ -1507,12 +1510,12 @@ export const NODE_REGISTRY = {
       }
       const tokens = [...new Set(
         Array.from((data.props?.prompt || '').matchAll(/@(?:"([^"]+)"|([A-Za-z0-9_-]+))/g))
-          .map((m) => (m[1] || m[2] || '').toLowerCase().replace(/\s+/g, ''))
+          .map((m) => (m[1] || m[2] || '').toLowerCase().replace(/[^a-z0-9_-]/g, ''))
       )].filter(Boolean)
       let refs = []
       if (tokens.length) {
         for (const tok of tokens) {
-          const hit = namedImages.find((im) => (im.name || '').toLowerCase().replace(/\s+/g, '') === tok)
+          const hit = namedImages.find((im) => (im.name || '').toLowerCase().replace(/[^a-z0-9_-]/g, '') === tok)
           if (hit) refs.push(hit.url)
         }
       }
@@ -1910,7 +1913,7 @@ export async function runSpace({ ctx, nodes, edges, onNodeChange }) {
     const t = n.data?.type
     typeCounts[t] = (typeCounts[t] || 0) + 1
     const fallback = `${(NODE_REGISTRY[t]?.label || t).replace(/\W+/g, '')}${typeCounts[t]}`.toLowerCase()
-    const name = (n.data?.name || '').toString().toLowerCase().replace(/\s+/g, '') || fallback
+    const name = (n.data?.name || '').toString().toLowerCase().replace(/[^a-z0-9_-]/g, '') || fallback
     nameById.set(n.id, name)
   }
 
