@@ -10,6 +10,38 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 
+// Mirror a KIE-returned image to our Supabase storage so the browser can
+// render and download it without CORS issues (KIE's tempfile.aiquickdraw.com
+// CDN doesn't set Access-Control-Allow-Origin). Falls back to the raw KIE
+// URL if the mirror fails.
+async function mirrorToStorage(url, profileId) {
+  try {
+    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) return url
+    const r = await fetch(url)
+    if (!r.ok) return url
+    const buf = await r.arrayBuffer()
+    const ct = r.headers.get('content-type') || 'image/png'
+    const ext = ct.includes('jpeg') ? 'jpg' : ct.includes('webp') ? 'webp' : 'png'
+    const path = `${profileId}/spaces/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+    const upload = await fetch(
+      `${process.env.SUPABASE_URL}/storage/v1/object/landing-media/${encodeURI(path)}`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
+          'Content-Type': ct,
+          'x-upsert': 'true',
+        },
+        body: buf,
+      }
+    )
+    if (!upload.ok) return url
+    return `${process.env.SUPABASE_URL}/storage/v1/object/public/landing-media/${path}`
+  } catch {
+    return url
+  }
+}
+
 // Resolve the UI's friendly model id to the actual KIE model slug, honoring
 // reference images by routing GPT to its image-to-image variant when refs
 // are present. Each family has a different input shape (see buildInput).
@@ -187,8 +219,14 @@ export default async function handler(req, res) {
       const state = String(data?.state || data?.status || '').toLowerCase()
 
       if (state === 'success' || state === 'completed' || state === 'done') {
-        const urls = parseResultUrls(data).map((u) => (typeof u === 'string' ? { url: u } : u))
-        if (!urls.length) return res.status(502).json({ error: 'KIE returned no image URLs', kie_body: data })
+        const rawUrls = parseResultUrls(data).map((u) => (typeof u === 'string' ? { url: u } : u))
+        if (!rawUrls.length) return res.status(502).json({ error: 'KIE returned no image URLs', kie_body: data })
+
+        // Mirror every image to our own Storage bucket so the browser can
+        // <img> + fetch them without hitting KIE's CORS-less CDN.
+        const urls = await Promise.all(
+          rawUrls.map(async (u) => ({ ...u, url: await mirrorToStorage(u.url, profile_id) }))
+        )
 
         if (customerId) {
           try {
