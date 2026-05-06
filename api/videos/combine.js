@@ -2,13 +2,45 @@
 // Body: { profile_id, video_urls: [...] }
 // Returns: { video_url } — the stitched MP4 in landing-media.
 //
-// Thin proxy that forwards to the Supabase Edge Function `combine-videos`
-// (Deno + ffmpeg-wasm). The edge function downloads each URL, concats,
-// and uploads to landing-media via the service role. We sit in front of
-// it so we can authenticate the user, debit credits, and avoid exposing
-// the service-role key to the browser.
+// Runs ffmpeg-wasm 0.10.x directly inside this Vercel Node function.
+// We tried Supabase Edge Functions first but Deno Deploy has no
+// SharedArrayBuffer / Web Worker support and 0.10.x's `ffmpeg.load()`
+// can't fetch the WASM core blob there. Node has neither restriction,
+// so we just download each clip, concat, and upload via service role.
+//
+// Notes:
+// - Use the concat *demuxer* with `-c copy` whenever clips share codec/
+//   container (HeyGen output is consistent), so we skip re-encode and
+//   stay well under Vercel's timeout.
+// - WASM core is fetched at runtime from unpkg, so the Vercel deploy
+//   bundle stays small (the @ffmpeg/ffmpeg npm package itself is ~30KB).
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { createClient } from '@supabase/supabase-js'
+import { createFFmpeg } from '@ffmpeg/ffmpeg'
+
+// Allow up to 5 minutes for big stitches. Hobby plan caps at 60s; if you
+// hit that, upgrade to Pro or pre-flight reject huge clip counts.
+export const config = { maxDuration: 300 }
+
+let _ffmpegInstance = null
+async function getFFmpeg() {
+  if (_ffmpegInstance && _ffmpegInstance.isLoaded()) return _ffmpegInstance
+  // In Node, @ffmpeg/ffmpeg 0.10.x resolves the core via `require('@ffmpeg/core')`
+  // — passing a URL corePath would break that. We installed @ffmpeg/core@0.10.0
+  // as a dep so the default resolution just works.
+  const ff = createFFmpeg({ log: false })
+  await ff.load()
+  _ffmpegInstance = ff
+  return ff
+}
+
+async function fetchToBytes(url) {
+  const r = await fetch(url)
+  if (!r.ok) throw new Error(`Fetch ${url} failed: ${r.status}`)
+  const ab = await r.arrayBuffer()
+  return new Uint8Array(ab)
+}
 
 export default async function handler(req, res) {
   setCors(req, res)
@@ -25,8 +57,6 @@ export default async function handler(req, res) {
     }
     await assertProfileAccess(auth.user.id, profile_id)
 
-    // Pre-flight credit check (concat is server CPU time; charge a flat fee
-    // proportional to clip count so heavy stitches cost more).
     const cust = await supaFetch(`billing_customers?user_id=eq.${auth.user.id}&select=id`)
     const customerId = cust?.[0]?.id
     const fee = 1500 + 500 * video_urls.length
@@ -41,21 +71,74 @@ export default async function handler(req, res) {
     const SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
     if (!SUPABASE_URL || !SERVICE_KEY) return res.status(500).json({ error: 'Storage not configured' })
 
-    // Edge function is deployed at:
-    //   https://<project>.supabase.co/functions/v1/combine-videos
-    const r = await fetch(`${SUPABASE_URL}/functions/v1/combine-videos`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${SERVICE_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ profile_id, video_urls }),
-    })
-    const body = await r.json().catch(() => ({}))
-    if (!r.ok) {
-      return res.status(502).json({ error: body?.error || `Edge function failed (${r.status})`, raw: body })
+    const ffmpeg = await getFFmpeg()
+
+    // 1. Download each clip into ffmpeg's in-memory FS.
+    for (let i = 0; i < video_urls.length; i++) {
+      const bytes = await fetchToBytes(video_urls[i])
+      ffmpeg.FS('writeFile', `clip_${i}.mp4`, bytes)
     }
-    if (!body?.video_url) return res.status(502).json({ error: 'Edge function returned no URL', raw: body })
+
+    // 2. Try the fast path first: concat demuxer + stream copy. HeyGen's
+    //    output is consistent enough that this works for the typical case
+    //    and avoids the multi-minute re-encode.
+    const listText = video_urls.map((_, i) => `file 'clip_${i}.mp4'`).join('\n') + '\n'
+    ffmpeg.FS('writeFile', 'list.txt', new TextEncoder().encode(listText))
+
+    let outBytes = null
+    try {
+      await ffmpeg.run(
+        '-f', 'concat', '-safe', '0',
+        '-i', 'list.txt',
+        '-c', 'copy',
+        '-movflags', '+faststart',
+        'out.mp4',
+      )
+      outBytes = ffmpeg.FS('readFile', 'out.mp4')
+    } catch (e) {
+      // Fast path failed (codec / timestamp mismatch). Fall through to
+      // re-encode with filter_complex so mismatched clips still stitch.
+      try { ffmpeg.FS('unlink', 'out.mp4') } catch {}
+    }
+
+    if (!outBytes || !outBytes.byteLength) {
+      const inputs = []
+      let filter = ''
+      for (let i = 0; i < video_urls.length; i++) {
+        inputs.push('-i', `clip_${i}.mp4`)
+        filter += `[${i}:v:0][${i}:a:0?]`
+      }
+      filter += `concat=n=${video_urls.length}:v=1:a=1[v][a]`
+      await ffmpeg.run(
+        ...inputs,
+        '-filter_complex', filter,
+        '-map', '[v]', '-map', '[a]?',
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
+        '-c:a', 'aac', '-b:a', '128k',
+        '-movflags', '+faststart',
+        'out.mp4',
+      )
+      outBytes = ffmpeg.FS('readFile', 'out.mp4')
+    }
+
+    // Free the input files so a warm container doesn't accumulate them.
+    for (let i = 0; i < video_urls.length; i++) {
+      try { ffmpeg.FS('unlink', `clip_${i}.mp4`) } catch {}
+    }
+    try { ffmpeg.FS('unlink', 'list.txt') } catch {}
+    try { ffmpeg.FS('unlink', 'out.mp4') } catch {}
+
+    // 3. Upload via service role.
+    const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
+    const path = `${profile_id}/spaces/combined/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`
+    const buf = Buffer.from(outBytes.buffer, outBytes.byteOffset, outBytes.byteLength)
+    const { error: upErr } = await supabase.storage.from('landing-media').upload(path, buf, {
+      contentType: 'video/mp4', upsert: false,
+    })
+    if (upErr) return res.status(502).json({ error: `Upload failed: ${upErr.message}` })
+
+    const { data: pub } = supabase.storage.from('landing-media').getPublicUrl(path)
+    const video_url = pub.publicUrl
 
     if (customerId) {
       try {
@@ -67,14 +150,15 @@ export default async function handler(req, res) {
             p_amount: fee,
             p_action: 'consume:combine-videos',
             p_profile_id: profile_id,
-            p_metadata: { clips: video_urls.length },
+            p_metadata: { clips: video_urls.length, bytes: outBytes.byteLength },
           },
         })
       } catch {}
     }
 
-    return res.status(200).json({ video_url: body.video_url })
+    return res.status(200).json({ video_url, bytes: outBytes.byteLength, clips: video_urls.length })
   } catch (err) {
-    return res.status(err.status || 500).json({ error: err.message })
+    console.error('combine-videos error:', err?.stack || err)
+    return res.status(err.status || 500).json({ error: String(err?.message || err) })
   }
 }
