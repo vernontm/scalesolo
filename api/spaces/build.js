@@ -74,6 +74,13 @@ const NODE_CATALOG = {
     outputs: ['out'],
     initialProps: {},
   },
+  combine: {
+    label: 'Combine',
+    description: 'Bundles incoming text bits (script / caption / hashtags / title) and media (image(s) / video) into one unified post package the save_library node persists as a single library row. props: mode ("post" | "avatar_video"), title (optional). Wire script_gen + caption_gen + image_gen (or avatar_render) into combine\'s "in", then combine\'s "out" into save_library\'s "in".',
+    inputs: ['in'],
+    outputs: ['out'],
+    initialProps: { mode: 'post', title: '' },
+  },
   collection: {
     label: 'Collection',
     description: 'Catches outputs from any connected node and gathers them into a growing list. Accumulates across runs (deduped by URL/text). Use as a final aggregator for scripts, images, or videos.',

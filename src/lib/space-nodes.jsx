@@ -13,7 +13,7 @@ import { useRef, useState } from 'react'
 import {
   Type, Wand2, Captions, UserCircle2, Save, Image as ImageIcon,
   ListChecks, FileVideo, Upload, Loader2, Maximize2, ArrowUpRight,
-  Download, Trash2, Building2, Repeat, Play, Pause,
+  Download, Trash2, Building2, Repeat, Play, Pause, Combine as CombineIcon,
 } from 'lucide-react'
 import { supabase } from './supabase.js'
 
@@ -1025,6 +1025,52 @@ function CollectionBody({ data }) {
   )
 }
 
+// ─── COMBINE (bundle text + media into a unified post package) ─────────────
+// Two modes:
+//   'post' (default): aggregates incoming script + caption + hashtags +
+//     image(s) + video into one post object that save_library writes as a
+//     single library row tagged with whatever platforms the user picks.
+//   'avatar_video': uses an incoming photo + script (or uploaded audio)
+//     to produce an avatar talking-photo video via HeyGen. (Stub for now —
+//     requires a pre-trained photo avatar; pointer message in the body.)
+//
+// Either way, downstream nodes get one output that save_library can
+// decompose into title / script / caption / hashtags / media_urls.
+function CombineBody({ data, onPatch }) {
+  const mode = data.props?.mode || 'post'
+  const out = data.output
+  const summary = []
+  if (out?.full_script) summary.push(`Script: ${String(out.full_script).slice(0, 60).replace(/\s+/g, ' ')}…`)
+  if (out?.caption)     summary.push(`Caption: ${String(out.caption).slice(0, 60).replace(/\s+/g, ' ')}…`)
+  if (out?.hashtags)    summary.push(`Tags: ${out.hashtags}`)
+  if (out?.video_url)   summary.push('Video attached')
+  if (Array.isArray(out?.images) && out.images.length) summary.push(`${out.images.length} image${out.images.length === 1 ? '' : 's'}`)
+  return (
+    <>
+      <NodeField label="Mode">
+        <select style={tinyInput} value={mode} onChange={(e) => onPatch({ mode: e.target.value })}>
+          <option value="post">Post bundle (text + media)</option>
+          <option value="avatar_video">Avatar video (photo + script/audio)</option>
+        </select>
+      </NodeField>
+      <NodeField label="Title (optional)">
+        <input style={tinyInput} placeholder="Auto-derived from script" value={data.props?.title || ''} onChange={(e) => onPatch({ title: e.target.value })} />
+      </NodeField>
+      {mode === 'avatar_video' && (
+        <div style={{ marginTop: 4, padding: '8px 10px', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: 6, fontSize: 11, color: 'var(--amber)', lineHeight: 1.45 }}>
+          Avatar-video mode needs a pre-trained HeyGen photo avatar. For now, use the Avatar render node with a HeyGen library or custom avatar. We'll auto-create from raw photo + script in a near-future update.
+        </div>
+      )}
+      {summary.length > 0 && (
+        <div style={{ ...previewBox, marginTop: 8 }}>
+          {summary.map((s, i) => <div key={i}>{s}</div>)}
+        </div>
+      )}
+      <NodePreview status={data.status} output={summary.length ? null : out} error={data.error} />
+    </>
+  )
+}
+
 // ─── 9. SAVE TO LIBRARY ─────────────────────────────────────────────────────
 const PLATFORMS = [
   { id: 'instagram', label: 'Instagram', kinds: ['image', 'video'] },
@@ -1455,17 +1501,24 @@ export const NODE_REGISTRY = {
     },
   },
 
-  save_library: {
-    label: 'Save to library', description: 'Bundles the incoming script + caption + hashtags + media into one library entry, tagged with the platforms you chose. Accepts script, caption + hashtags, image(s), or video — whatever upstream nodes are wired.',
-    icon: Save, category: 'outputs', color: '#2ecc71',
-    inputs: [{ id: 'in', label: 'In (script / caption / image / video)' }],
-    outputs: [],
-    initialProps: { title: '', status: 'draft', platforms: [] },
-    Body: SaveBody,
-    run: async ({ data, inputs, ctx }) => {
+  combine: {
+    label: 'Combine', description: 'Bundles incoming text (script / caption / hashtags) and media (image / video) into a single post package the save_library node can persist as one library row. Avatar-video mode reserved for a near-future update.',
+    icon: CombineIcon, category: 'generators', color: '#0ea5e9',
+    inputs: [{ id: 'in', label: 'In (text + media)' }],
+    outputs: [{ id: 'out', label: 'Out (post)' }],
+    initialProps: { mode: 'post', title: '' },
+    Body: CombineBody,
+    run: async ({ data, inputs }) => {
       const arr = asArr(inputs?.in)
-      let script = '', caption = '', hashtags = '', videoUrl = null
-      const imageUrls = []
+      const mode = data.props?.mode || 'post'
+
+      // Sift incoming values by shape — text bits, media URLs, etc.
+      let script = ''
+      let caption = ''
+      let hashtags = ''
+      let videoUrl = null
+      const images = []
+      let avatarConfig = null
       for (const v of arr) {
         if (!v) continue
         if (typeof v === 'string') { if (!script) script = v; continue }
@@ -1475,10 +1528,69 @@ export const NODE_REGISTRY = {
         if (v.hashtags) hashtags = hashtags || v.hashtags
         if (v.video?.video_url) videoUrl = videoUrl || v.video.video_url
         if (v.video_url) videoUrl = videoUrl || v.video_url
+        if (Array.isArray(v.images)) for (const im of v.images) { if (im?.url) images.push({ url: im.url, name: im.name }) }
+        else if (v.url) images.push({ url: v.url })
+        if (v.avatar?.avatar_id) avatarConfig = v.avatar
+      }
+
+      if (mode === 'avatar_video') {
+        // Reserved — the photo→talking-photo training step on HeyGen is
+        // async and unreliable, so we don't fire it from a synchronous run.
+        // For now, point the user at the existing avatar_render node.
+        if (!avatarConfig) {
+          throw new Error('Avatar-video mode requires a connected Avatar (picker) node. Use the Avatar render node directly for now.')
+        }
+        // If the user has wired a real avatar config, fall through and
+        // produce the same package as post mode but with media_type=video.
+      }
+
+      const title = (data.props?.title || '').trim()
+        || (script.slice(0, 60))
+        || 'Untitled post'
+
+      const media_type = videoUrl ? 'video' : (images.length ? 'image' : 'text')
+      // Shape mirrors what save_library already understands so the wiring
+      // stays one-step: Combine.out → save_library.in.
+      return {
+        title,
+        full_script: script,
+        caption,
+        hashtags,
+        video_url: videoUrl || undefined,
+        images: images.length ? images : undefined,
+        media_type,
+        combined: true,
+      }
+    },
+  },
+
+  save_library: {
+    label: 'Save to library', description: 'Bundles the incoming script + caption + hashtags + media into one library entry, tagged with the platforms you chose. Accepts script, caption + hashtags, image(s), or video — whatever upstream nodes are wired.',
+    icon: Save, category: 'outputs', color: '#2ecc71',
+    inputs: [{ id: 'in', label: 'In (script / caption / image / video)' }],
+    outputs: [],
+    initialProps: { title: '', status: 'draft', platforms: [] },
+    Body: SaveBody,
+    run: async ({ data, inputs, ctx }) => {
+      const arr = asArr(inputs?.in)
+      let script = '', caption = '', hashtags = '', videoUrl = null, incomingTitle = ''
+      const imageUrls = []
+      for (const v of arr) {
+        if (!v) continue
+        if (typeof v === 'string') { if (!script) script = v; continue }
+        if (typeof v !== 'object') continue
+        // Combine node passes a pre-bundled package — use its title if our
+        // own props.title is empty.
+        if (v.combined && v.title) incomingTitle = incomingTitle || v.title
+        if (v.script || v.full_script) script = script || v.script || v.full_script
+        if (v.caption) caption = caption || v.caption
+        if (v.hashtags) hashtags = hashtags || v.hashtags
+        if (v.video?.video_url) videoUrl = videoUrl || v.video.video_url
+        if (v.video_url) videoUrl = videoUrl || v.video_url
         if (Array.isArray(v.images)) for (const im of v.images) { if (im?.url) imageUrls.push(im.url) }
         else if (v.url) imageUrls.push(v.url)
       }
-      const title = data.props?.title?.trim() || (script.slice(0, 60)) || 'Untitled'
+      const title = data.props?.title?.trim() || incomingTitle || (script.slice(0, 60)) || 'Untitled'
       const mediaUrls = videoUrl ? [videoUrl] : (imageUrls.length ? imageUrls : null)
       const mediaType = videoUrl ? 'video' : (imageUrls.length ? 'image' : 'text')
       const platforms = Array.isArray(data.props?.platforms) && data.props.platforms.length
