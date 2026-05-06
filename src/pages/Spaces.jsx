@@ -15,7 +15,7 @@ import {
   Plus, Play, Save, Trash2, ArrowLeft, Sparkles, Zap, Boxes, AlertCircle,
   GripHorizontal, Minimize2, Maximize2, Wand2, MessageSquare, Send,
   ZoomIn, ZoomOut, Maximize, Scissors, Download, X, History, Clock,
-  CheckCircle2, XCircle,
+  CheckCircle2, XCircle, Square,
 } from 'lucide-react'
 import { useRef } from 'react'
 // (useEffect already imported above for other effects in this file)
@@ -237,17 +237,22 @@ function SpaceNode({ id, data, selected }) {
         {data.type !== 'collection' && (
           <button
             type="button"
-            title="Run this node (and any unrun upstream)"
-            onClick={(e) => { e.stopPropagation(); window.__spaceRunFromNode?.(id) }}
+            className="nodrag"
+            title={status === 'running' ? 'Stop run' : 'Run this node (and any unrun upstream)'}
+            onClick={(e) => {
+              e.stopPropagation()
+              if (status === 'running') window.__spaceAbortRun?.()
+              else window.__spaceRunFromNode?.(id)
+            }}
             style={{
               marginLeft: 'auto',
-              background: 'transparent', border: 'none',
-              color: status === 'running' ? 'var(--amber)' : 'var(--muted)',
-              cursor: status === 'running' ? 'wait' : 'pointer',
+              background: status === 'running' ? 'rgba(239,68,68,0.16)' : 'transparent',
+              border: 'none',
+              color: status === 'running' ? 'var(--red)' : 'var(--muted)',
+              cursor: 'pointer',
               padding: 4, borderRadius: 4, display: 'grid', placeItems: 'center',
             }}
-            disabled={status === 'running'}
-          ><Play size={12} /></button>
+          >{status === 'running' ? <Square size={11} /> : <Play size={12} />}</button>
         )}
         <span style={{ ...statusPill, marginLeft: data.type === 'collection' ? 'auto' : 0 }}>{status}</span>
       </div>
@@ -598,6 +603,9 @@ function SpaceBuilder({ space, onSave, onClose }) {
   const runningRef = useRef(false)
   useEffect(() => { runningRef.current = running }, [running])
   const [skippedTicks, setSkippedTicks] = useState(0)
+  // Abort flag for in-flight runs. Read by long-poll generators between
+  // ticks. Reset on every new run.
+  const abortRunRef = useRef(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [avatars, setAvatars] = useState([])
@@ -899,10 +907,10 @@ function SpaceBuilder({ space, onSave, onClose }) {
 
   const run = async () => {
     if (running) return
-    setRunning(true); setError(null)
+    setRunning(true); setError(null); abortRunRef.current = false
     setNodes((arr) => arr.map((n) => ({ ...n, data: { ...n.data, status: 'idle', output: null, error: null } })))
 
-    const ctx = { token: session.access_token, profileId: selectedProfileId, avatars, profiles }
+    const ctx = { token: session.access_token, profileId: selectedProfileId, avatars, profiles, shouldAbort: () => abortRunRef.current }
     const snapshot = JSON.parse(JSON.stringify({ nodes, edges }))
     const startedAt = Date.now()
     const runId = await recordRunStart({ triggered_by: 'manual', node_count: snapshot.nodes.length })
@@ -963,10 +971,10 @@ function SpaceBuilder({ space, onSave, onClose }) {
     const subsetEdges = edges.filter((e) => want.has(e.source) && want.has(e.target))
     if (!subsetNodes.length) return
 
-    setRunning(true); setError(null)
+    setRunning(true); setError(null); abortRunRef.current = false
     // Reset just the subset
     setNodes((arr) => arr.map((n) => want.has(n.id) ? { ...n, data: { ...n.data, status: 'idle', output: null, error: null } } : n))
-    const ctx = { token: session.access_token, profileId: selectedProfileId, avatars, profiles }
+    const ctx = { token: session.access_token, profileId: selectedProfileId, avatars, profiles, shouldAbort: () => abortRunRef.current }
     const snapshot = JSON.parse(JSON.stringify({ nodes: subsetNodes, edges: subsetEdges }))
     const startedAt = Date.now()
     const triggerType = nodes.find((n) => n.id === targetId)?.data?.type === 'auto_run' ? 'auto_run' : 'per_node'
@@ -992,11 +1000,13 @@ function SpaceBuilder({ space, onSave, onClose }) {
     }
   }, [running, nodes, edges, session, selectedProfileId, avatars, patchNode, refreshCredits])
 
-  // Expose runFromNode through the global so SpaceNode header buttons can call it.
+  // Expose runFromNode + abort through globals so SpaceNode header buttons
+  // can call them without prop drilling.
   useEffect(() => {
     if (typeof window === 'undefined') return
     window.__spaceRunFromNode = runFromNode
-    return () => { window.__spaceRunFromNode = null }
+    window.__spaceAbortRun = () => { abortRunRef.current = true }
+    return () => { window.__spaceRunFromNode = null; window.__spaceAbortRun = null }
   }, [runFromNode])
 
   // ── Auto-run drivers ──────────────────────────────────────────────────────

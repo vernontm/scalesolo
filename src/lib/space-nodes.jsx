@@ -412,7 +412,7 @@ function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
           <span style={{ fontSize: 9.5, color: 'var(--muted)', fontFamily: 'var(--font-display)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', alignSelf: 'center' }}>tag:</span>
           {brands.map((b) => (
-            <button key={`b-${b.id}`} type="button" onClick={(e) => { e.stopPropagation(); insertTag(b.name) }} title={`Insert ${tagFor(b.name)} — references this brand profile`} style={chipStyle('brand')}>
+            <button key={`b-${b.id}`} type="button" className="nodrag" onClick={(e) => { e.stopPropagation(); insertTag(b.name) }} title={`Insert ${tagFor(b.name)} — references this brand profile`} style={chipStyle('brand')}>
               {tagFor(b.name)}
             </button>
           ))}
@@ -434,9 +434,9 @@ function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = 
         namedImages={namedImages}
       />
       {suggest.open && filtered.length > 0 && (
-        <div style={{
+        <div className="nodrag" style={{
           position: 'absolute', left: 0, right: 0, top: '100%',
-          marginTop: 2, zIndex: 10,
+          marginTop: 2, zIndex: 50,
           background: 'var(--surface)', border: '1px solid var(--border-strong)',
           borderRadius: 8, boxShadow: 'var(--shadow-pop)',
           maxHeight: 220, overflow: 'auto',
@@ -445,7 +445,12 @@ function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = 
             <button
               key={it.key}
               type="button"
-              onMouseDown={(e) => { e.preventDefault(); insertTag(it.name) }}
+              className="nodrag"
+              // mousedown.preventDefault keeps the textarea focused so the
+              // selection range stays valid when insertTag reads it. The
+              // actual insert fires on click for reliability.
+              onMouseDown={(e) => { e.preventDefault(); e.stopPropagation() }}
+              onClick={(e) => { e.stopPropagation(); insertTag(it.name) }}
               style={{
                 width: '100%', textAlign: 'left',
                 display: 'flex', alignItems: 'center', gap: 8, padding: 6,
@@ -550,6 +555,7 @@ function PromptHighlightField({ textareaRef, value, placeholder, minHeight, onCh
       </div>
       <textarea
         ref={textareaRef}
+        className="nodrag"
         style={{
           ...sharedTextStyle,
           position: 'relative',
@@ -1554,6 +1560,7 @@ export const NODE_REGISTRY = {
       const start = Date.now()
       let consecutiveErrors = 0
       while (Date.now() - start < 720_000) {
+        if (ctx.shouldAbort?.()) throw new Error('Stopped')
         await new Promise((r) => setTimeout(r, 4000))
         try {
           const sR = await fetch(`/api/images/status?taskId=${encodeURIComponent(taskId)}&profile_id=${encodeURIComponent(profileForCall)}`, {
@@ -1631,6 +1638,7 @@ export const NODE_REGISTRY = {
       if (!renderId) throw new Error('Render row not returned')
       const start = Date.now()
       while (Date.now() - start < 4 * 60_000) {
+        if (ctx.shouldAbort?.()) throw new Error('Stopped')
         await new Promise((r) => setTimeout(r, 8000))
         const sr = await fetch(`/api/avatars/render-status?id=${renderId}`, { headers: { Authorization: `Bearer ${ctx.token}` } })
         const sb = await sr.json()
@@ -1755,6 +1763,7 @@ export const NODE_REGISTRY = {
         // Poll up to 8 minutes — HeyGen renders typically take 1-4.
         const start = Date.now()
         while (Date.now() - start < 480_000) {
+          if (ctx.shouldAbort?.()) throw new Error('Stopped')
           await new Promise((r) => setTimeout(r, 6000))
           const sR = await fetch(`/api/avatars/photo-render-status?video_id=${encodeURIComponent(videoId)}`, {
             headers: { Authorization: `Bearer ${ctx.token}` },
@@ -1909,6 +1918,13 @@ export async function runSpace({ ctx, nodes, edges, onNodeChange }) {
   const errors = {}
 
   for (const id of order) {
+    if (ctx?.shouldAbort?.()) {
+      // Mark remaining nodes as failed/stopped so the UI reflects the halt.
+      for (const remId of order) {
+        if (!outputsById.has(remId) && remId !== id) onNodeChange?.(remId, { status: 'idle' })
+      }
+      return { ok: false, errors: { _aborted: 'Stopped by user' } }
+    }
     const node = nodes.find((n) => n.id === id)
     if (!node) continue
     const def = NODE_REGISTRY[node.data?.type || node.type]
