@@ -89,8 +89,8 @@ export const listAvatarGroups = (includePublic = false) =>
 export const listLooksForGroup = (groupId) =>
   call('GET', `${BASE_V2}/avatar_group/${groupId}/avatars`)
 
-// HeyGen Photo Avatar — accepts an image URL we already uploaded to Supabase
-// Storage. Returns an avatar/talking_photo ID that's usable on BOTH v2 and v3.
+// HeyGen Photo Avatar (legacy V2). Async — returns generation_id, not a
+// renderable avatar id. Kept for back-compat; new flows use V3 below.
 export const createPhotoAvatarFromUrl = ({ imageUrl, name }) =>
   call('POST', `${BASE_V2}/photo_avatar/photo/generate`, {
     name: name || 'ScaleSolo avatar',
@@ -102,6 +102,19 @@ export const createPhotoAvatarFromUrl = ({ imageUrl, name }) =>
     style: 'Realistic',
     appearance: imageUrl,
   })
+
+// HeyGen V3 Photo Avatar — synchronous, returns a renderable avatar_id
+// (data.avatar_item.id) ready to use with /v3/videos immediately.
+// Per https://developers.heygen.com/image-to-video#from-url
+export const createPhotoAvatarV3 = ({ imageUrl, name }) =>
+  call('POST', `${BASE_V3}/avatars`, {
+    type: 'photo',
+    name: name || `ScaleSolo photo ${Date.now()}`,
+    file: { type: 'url', url: imageUrl },
+  })
+
+export const getVideoStatusV3Direct = (videoId) =>
+  call('GET', `${BASE_V3}/videos/${videoId}`)
 
 // ── Render: V2 legacy (Avatar III, our V3 tier) ─────────────────────────────
 export const generateVideoV2 = ({ talkingPhotoId, voiceId, script, dimension = { width: 1080, height: 1920 } }) =>

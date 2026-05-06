@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Plus, Building2, Edit3, Trash2, X, Save, Sparkles, Check, Crown,
@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
+import { supabase } from '../lib/supabase.js'
 
 const grid = {
   display: 'grid',
@@ -189,6 +190,13 @@ function ProfileEditor({ profile, onClose, onSaved }) {
                 placeholder="#b91c1c"
               />
             </div>
+          </Field>
+          <Field label="Brand logo">
+            <LogoUpload
+              value={form.logo_url || ''}
+              profileId={profile?.id}
+              onChange={(url) => set('logo_url', url)}
+            />
           </Field>
         </div>
 
@@ -522,6 +530,70 @@ function InterviewModal({ onClose, onApply }) {
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+// ─── Logo upload ────────────────────────────────────────────────────────────
+// Direct browser → Supabase Storage upload (landing-media bucket, public).
+// Saves the resulting public URL into the form. Brand-aware spaces nodes
+// (brand_profile, image_gen) read this URL automatically.
+function LogoUpload({ value, profileId, onChange }) {
+  const inpRef = useRef(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+
+  async function onPick(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setBusy(true); setErr(null)
+    try {
+      const ext = (file.name.split('.').pop() || 'png').toLowerCase()
+      const path = `${profileId || 'shared'}/logo/${Date.now()}.${ext}`
+      const { error } = await supabase.storage.from('landing-media').upload(path, file, {
+        contentType: file.type || 'image/png', upsert: false,
+      })
+      if (error) throw new Error(error.message)
+      const { data } = supabase.storage.from('landing-media').getPublicUrl(path)
+      onChange(data.publicUrl)
+    } catch (e) {
+      setErr(e.message)
+    } finally {
+      setBusy(false)
+      if (inpRef.current) inpRef.current.value = ''
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+      <div style={{
+        width: 64, height: 64, borderRadius: 10,
+        background: 'var(--surface-2)', border: '1px solid var(--border)',
+        overflow: 'hidden', display: 'grid', placeItems: 'center',
+      }}>
+        {value ? <img src={value} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} /> : <span style={{ fontSize: 10, color: 'var(--muted)' }}>none</span>}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <button
+          type="button"
+          className="btn-ghost"
+          onClick={() => inpRef.current?.click()}
+          disabled={busy}
+          style={{ fontSize: 12 }}
+        >
+          {busy ? <span className="spinner" /> : <Upload size={12} />} {value ? 'Replace logo' : 'Upload logo'}
+        </button>
+        {value && (
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={() => onChange('')}
+            style={{ fontSize: 11.5, color: 'var(--muted)' }}
+          >Remove</button>
+        )}
+        {err && <div style={{ fontSize: 11, color: 'var(--red)' }}>{err}</div>}
+      </div>
+      <input ref={inpRef} type="file" accept="image/*" onChange={onPick} style={{ display: 'none' }} />
     </div>
   )
 }

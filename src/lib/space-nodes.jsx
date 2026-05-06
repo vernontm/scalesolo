@@ -1057,8 +1057,8 @@ function CombineBody({ data, onPatch }) {
         <input style={tinyInput} placeholder="Auto-derived from script" value={data.props?.title || ''} onChange={(e) => onPatch({ title: e.target.value })} />
       </NodeField>
       {mode === 'avatar_video' && (
-        <div style={{ marginTop: 4, padding: '8px 10px', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: 6, fontSize: 11, color: 'var(--amber)', lineHeight: 1.45 }}>
-          Avatar-video mode needs a pre-trained HeyGen photo avatar. For now, use the Avatar render node with a HeyGen library or custom avatar. We'll auto-create from raw photo + script in a near-future update.
+        <div style={{ marginTop: 4, padding: '8px 10px', background: 'rgba(14,165,233,0.12)', border: '1px solid rgba(14,165,233,0.4)', borderRadius: 6, fontSize: 11, color: '#0ea5e9', lineHeight: 1.45 }}>
+          Wire a photo (image_upload, image_gen, or brand logo) + script + optional Avatar voice. HeyGen creates a talking photo from the image and renders the script. Voice falls back to the brand's default if not provided.
         </div>
       )}
       {summary.length > 0 && (
@@ -1194,7 +1194,6 @@ export const NODE_REGISTRY = {
     run: async ({ data, ctx }) => {
       const id = data.props?.profile_id
       if (!id) throw new Error('Pick a brand profile')
-      // Fetch all profiles (server returns full rows including brand_bible)
       const r = await fetch('/api/profiles', {
         headers: { Authorization: `Bearer ${ctx.token}` },
       })
@@ -1211,6 +1210,9 @@ export const NODE_REGISTRY = {
           brandBible: p.brand_bible || '',
           hashtags: p.core_hashtags || '',
           industry: p.industry || '',
+          logo_url: p.logo_url || '',
+          primary_color: p.brand_primary_color || '',
+          secondary_color: p.brand_secondary_color || '',
         },
       }
     },
@@ -1339,6 +1341,14 @@ export const NODE_REGISTRY = {
       }
       // No matches by name → fall back to every reference image we received.
       if (!refs.length) refs = pickImageUrls(incoming)
+
+      // If the prompt mentions "logo" / "brand mark" and a connected brand
+      // profile has a logo_url, auto-attach it as a reference image so the
+      // model can place / style it correctly.
+      const mentionsLogo = /\b(logo|brand\s*mark)\b/i.test(prompt)
+      if (mentionsLogo && brand?.logo_url && !refs.includes(brand.logo_url)) {
+        refs.push(brand.logo_url)
+      }
 
       // Strip @-mentions from the prompt before sending to KIE — image
       // models don't parse them and the raw "@image1" text confuses
@@ -1508,21 +1518,23 @@ export const NODE_REGISTRY = {
     outputs: [{ id: 'out', label: 'Out (post)' }],
     initialProps: { mode: 'post', title: '' },
     Body: CombineBody,
-    run: async ({ data, inputs }) => {
+    run: async ({ data, inputs, ctx }) => {
       const arr = asArr(inputs?.in)
       const mode = data.props?.mode || 'post'
 
-      // Sift incoming values by shape — text bits, media URLs, etc.
+      // Sift incoming values by shape — text bits, media URLs, brand, etc.
       let script = ''
       let caption = ''
       let hashtags = ''
       let videoUrl = null
       const images = []
       let avatarConfig = null
+      let brandObj = null
       for (const v of arr) {
         if (!v) continue
         if (typeof v === 'string') { if (!script) script = v; continue }
         if (typeof v !== 'object') continue
+        if (v.brand) brandObj = brandObj || v.brand
         if (v.script || v.full_script) script = script || v.script || v.full_script
         if (v.caption) caption = caption || v.caption
         if (v.hashtags) hashtags = hashtags || v.hashtags
@@ -1533,15 +1545,52 @@ export const NODE_REGISTRY = {
         if (v.avatar?.avatar_id) avatarConfig = v.avatar
       }
 
+      // ── Avatar-video mode: photo + script → HeyGen V3 talking-photo ────
       if (mode === 'avatar_video') {
-        // Reserved — the photo→talking-photo training step on HeyGen is
-        // async and unreliable, so we don't fire it from a synchronous run.
-        // For now, point the user at the existing avatar_render node.
-        if (!avatarConfig) {
-          throw new Error('Avatar-video mode requires a connected Avatar (picker) node. Use the Avatar render node directly for now.')
+        if (!script) throw new Error('Avatar-video mode needs a script (wire script_gen, text_input, or a string into "in").')
+        const photoUrl = images[0]?.url
+        if (!photoUrl) throw new Error('Avatar-video mode needs a photo (image_upload, image_gen output, or brand logo). Wire one in.')
+        const profileId = brandObj?.profile_id || ctx.profileId
+        const voiceId = avatarConfig?.voice_id || brandObj?.voice_id || undefined
+        const submitR = await fetch('/api/avatars/photo-render', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
+          body: JSON.stringify({
+            profile_id: profileId,
+            photo_url: photoUrl,
+            script,
+            voice_id: voiceId,
+            model_version: avatarConfig?.model_version || 'v4',
+          }),
+        })
+        const submit = await submitR.json()
+        if (!submitR.ok) throw new Error(submit.error || `Photo render submit failed (${submitR.status})`)
+        const videoId = submit.video_id
+        if (!videoId) throw new Error('No video id returned')
+
+        // Poll up to 8 minutes — HeyGen renders typically take 1-4.
+        const start = Date.now()
+        while (Date.now() - start < 480_000) {
+          await new Promise((r) => setTimeout(r, 6000))
+          const sR = await fetch(`/api/avatars/photo-render-status?video_id=${encodeURIComponent(videoId)}`, {
+            headers: { Authorization: `Bearer ${ctx.token}` },
+          })
+          const s = await sR.json()
+          if (!sR.ok) throw new Error(s.error || `Status check failed (${sR.status})`)
+          if (s.state === 'success') {
+            return {
+              full_script: script,
+              caption,
+              hashtags,
+              video_url: s.video_url,
+              media_type: 'video',
+              title: (data.props?.title || '').trim() || script.slice(0, 60) || 'Avatar video',
+              combined: true,
+            }
+          }
+          if (s.state === 'failed') throw new Error(s.error || 'Render failed')
         }
-        // If the user has wired a real avatar config, fall through and
-        // produce the same package as post mode but with media_type=video.
+        throw new Error('Avatar video render timed out')
       }
 
       const title = (data.props?.title || '').trim()
