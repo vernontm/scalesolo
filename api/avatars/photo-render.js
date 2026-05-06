@@ -78,20 +78,43 @@ export default async function handler(req, res) {
       return res.status(502).json({ error: `Photo avatar create failed: ${e.message}` })
     }
 
-    // Step 2: submit video render (audio takes priority over script)
+    // HeyGen accepts the avatar create call instantly but image dimension
+    // extraction happens behind the scenes. Submitting /v3/videos too fast
+    // returns "Talking photo X has missing image dimensions". Give it a
+    // moment, then retry once with a longer pause if HeyGen still says
+    // the photo isn't ready.
+    await new Promise((r) => setTimeout(r, 3500))
+
     let videoId
-    try {
-      const vr = await generateVideoV3({
-        avatarId: heygenAvatarId,
-        voiceId: resolvedVoice,
-        script,
-        audioUrl: audio_url,
-        modelKey,
+    let lastErr = null
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const vr = await generateVideoV3({
+          avatarId: heygenAvatarId,
+          voiceId: resolvedVoice,
+          script,
+          audioUrl: audio_url,
+          modelKey,
+        })
+        videoId = vr?.data?.video_id || vr?.video_id || vr?.id
+        if (videoId) break
+        throw new Error('HeyGen returned no video id')
+      } catch (e) {
+        lastErr = e
+        const msg = String(e?.message || '')
+        // Only retry on the dimension-warmup race; bail on other errors.
+        if (!/missing image dimensions|not ready/i.test(msg)) break
+        await new Promise((r) => setTimeout(r, 6000))
+      }
+    }
+    if (!videoId) {
+      return res.status(502).json({
+        error: `Video submit failed: ${lastErr?.message || 'unknown'}`,
+        heygen_avatar_id: heygenAvatarId,
+        hint: /missing image dimensions/i.test(lastErr?.message || '')
+          ? 'HeyGen could not read this photo\'s dimensions. Re-save the look image as a standard JPG / PNG and try again.'
+          : undefined,
       })
-      videoId = vr?.data?.video_id || vr?.video_id || vr?.id
-      if (!videoId) throw new Error('HeyGen returned no video id')
-    } catch (e) {
-      return res.status(502).json({ error: `Video submit failed: ${e.message}`, heygen_avatar_id: heygenAvatarId })
     }
 
     // Persist a render row.
