@@ -13,7 +13,7 @@ import { useRef, useState } from 'react'
 import {
   Type, Wand2, Captions, UserCircle2, Save, Image as ImageIcon,
   ListChecks, FileVideo, Upload, Loader2, Maximize2, ArrowUpRight,
-  Download, Trash2, Building2,
+  Download, Trash2, Building2, Repeat, Play, Pause,
 } from 'lucide-react'
 import { supabase } from './supabase.js'
 
@@ -649,6 +649,126 @@ function ImageUploadBody({ data, onPatch }) {
   )
 }
 
+// ─── AUTO-RUN (recurring trigger) ───────────────────────────────────────────
+// Distinct from social "schedule" — Auto-run fires the workflow on a recurring
+// interval while the canvas is open in a tab. Each tick calls runFromNode
+// on this node, which cascades through every connected descendant.
+//
+// Cost-aware: shows an estimate per run derived from the chain (script gen,
+// image gen, avatar render). Hard cap on max_runs prevents runaway spend.
+
+export const AUTORUN_OPTIONS = [
+  { id: '1m',  label: 'Every 1 minute (testing)',  ms: 60_000,        warn: true },
+  { id: '5m',  label: 'Every 5 minutes',           ms: 300_000 },
+  { id: '15m', label: 'Every 15 minutes',          ms: 900_000 },
+  { id: '30m', label: 'Every 30 minutes',          ms: 1_800_000 },
+  { id: '1h',  label: 'Every hour',                ms: 3_600_000 },
+  { id: '6h',  label: 'Every 6 hours',             ms: 21_600_000 },
+  { id: '24h', label: 'Once a day',                ms: 86_400_000 },
+]
+
+// Rough per-run cost in ai_tokens for budget hint. Avatar render uses
+// video_units, tracked separately, but we count an avg cost in tokens for
+// the warning UI.
+export const NODE_COST_HINT = {
+  text_input:    0,
+  image_upload:  0,
+  brand_profile: 200,
+  auto_run:      0,
+  script_gen:    3000,
+  caption_gen:   2500,
+  image_gen:     4000,    // per image
+  avatar_picker: 0,
+  avatar_render: 8000,    // ~30s clip equivalent
+  collection:    0,
+  save_library:  0,
+}
+
+function AutoRunBody({ data, onPatch }) {
+  const cadence = data.props?.cadence || '15m'
+  const maxRuns = Number(data.props?.max_runs ?? 10)
+  const runsUsed = Number(data.props?.runs_used ?? 0)
+  const active = !!data.props?.active
+  const lastRun = data.props?.last_run_at
+  const remaining = Math.max(0, maxRuns - runsUsed)
+
+  const opt = AUTORUN_OPTIONS.find((o) => o.id === cadence) || AUTORUN_OPTIONS[2]
+  const estPerRun = Number(data?._ctxCostPerRun ?? 0)
+
+  const toggle = () => {
+    if (!active) {
+      // Starting fresh — reset run counter so user can re-run after hitting cap.
+      onPatch({ active: true, runs_used: 0, last_run_at: null })
+    } else {
+      onPatch({ active: false })
+    }
+  }
+  const reset = () => onPatch({ runs_used: 0, last_run_at: null, active: false })
+
+  return (
+    <>
+      <NodeField label="Cadence">
+        <select
+          style={tinyInput}
+          value={cadence}
+          onChange={(e) => onPatch({ cadence: e.target.value })}
+          disabled={active}
+        >
+          {AUTORUN_OPTIONS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+        </select>
+      </NodeField>
+      <NodeField label="Stop after N runs">
+        <input
+          type="number"
+          min={1}
+          max={1000}
+          style={tinyInput}
+          value={maxRuns}
+          onChange={(e) => onPatch({ max_runs: Math.max(1, Number(e.target.value) || 1) })}
+          disabled={active}
+        />
+      </NodeField>
+
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); toggle() }}
+        style={{
+          width: '100%', marginTop: 8, padding: '8px 10px',
+          fontSize: 12, fontFamily: 'var(--font-display)', fontWeight: 700,
+          letterSpacing: '0.04em',
+          border: 'none', borderRadius: 8, cursor: 'pointer',
+          background: active ? 'rgba(46,204,113,0.16)' : 'var(--red)',
+          color: active ? '#2ecc71' : '#fff',
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+        }}
+      >
+        {active ? <><Pause size={12} /> Active — running every {opt.label.replace('Every ', '').replace(' (testing)', '')}</> : <><Play size={12} /> Start auto-run</>}
+      </button>
+
+      <div style={{ marginTop: 8, fontSize: 10.5, lineHeight: 1.5, color: 'var(--muted)' }}>
+        <div>Runs used: <strong style={{ color: 'var(--text)' }}>{runsUsed} / {maxRuns}</strong> ({remaining} left)</div>
+        {estPerRun > 0 && (
+          <div>Est. cost / run: <strong style={{ color: 'var(--text)' }}>~{estPerRun.toLocaleString()}</strong> AI tokens. Total budget for this batch: ~{(estPerRun * remaining).toLocaleString()}.</div>
+        )}
+        {lastRun && <div>Last run: {new Date(lastRun).toLocaleTimeString()}</div>}
+        {opt.warn && active && (
+          <div style={{ color: 'var(--amber)', marginTop: 4 }}>Testing cadence — this burns credits fast. Stop when you're done verifying.</div>
+        )}
+        {!active && runsUsed > 0 && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); reset() }}
+            style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 10.5, padding: 0, marginTop: 4, textDecoration: 'underline' }}
+          >Reset counter</button>
+        )}
+      </div>
+      <div style={{ marginTop: 8, fontSize: 10, color: 'var(--muted)', lineHeight: 1.4 }}>
+        Cadence runs only while this canvas is open. Closing the tab pauses auto-run.
+      </div>
+    </>
+  )
+}
+
 // ─── BRAND PROFILE ──────────────────────────────────────────────────────────
 function BrandProfileBody({ data, onPatch }) {
   const profiles = data?._ctxProfiles || []
@@ -952,6 +1072,15 @@ export const NODE_REGISTRY = {
       const items = readImageItems(data.props)
       return { images: items.map(({ url, name }) => ({ url, name })) }
     },
+  },
+
+  auto_run: {
+    label: 'Auto-run', description: 'Recurring trigger that re-runs everything connected downstream on a fixed cadence. Cost-aware with a hard cap on total runs. Pauses when the canvas is closed.',
+    icon: Repeat, category: 'inputs', color: '#f97316',
+    inputs: [], outputs: [{ id: 'out', label: 'Out' }],
+    initialProps: { cadence: '15m', max_runs: 10, runs_used: 0, active: false, last_run_at: null },
+    Body: AutoRunBody,
+    run: async ({ data }) => ({ tick: new Date().toISOString(), run_index: Number(data.props?.runs_used || 0) + 1 }),
   },
 
   brand_profile: {

@@ -21,7 +21,10 @@ import { useRef } from 'react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { useCredits } from '../context/CreditsContext.jsx'
-import { NODE_REGISTRY, NODE_CATEGORIES, runSpace, downloadUrl, readImageItems } from '../lib/space-nodes.jsx'
+import {
+  NODE_REGISTRY, NODE_CATEGORIES, runSpace, downloadUrl, readImageItems,
+  AUTORUN_OPTIONS, NODE_COST_HINT,
+} from '../lib/space-nodes.jsx'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom node renderer (one component for every registered type)
@@ -849,6 +852,50 @@ function SpaceBuilder({ space, onSave, onClose }) {
     return () => { window.__spaceRunFromNode = null }
   }, [runFromNode])
 
+  // ── Auto-run drivers ──────────────────────────────────────────────────────
+  // For every active auto_run node, schedule a setInterval that fires
+  // runFromNode(node.id), increments the run counter, and disables itself
+  // once max_runs is reached. Closing the tab pauses naturally because the
+  // interval is bound to this React tree.
+  const runFromNodeRef = useRef(runFromNode)
+  useEffect(() => { runFromNodeRef.current = runFromNode }, [runFromNode])
+
+  useEffect(() => {
+    const activeTriggers = nodes.filter((n) => n.data?.type === 'auto_run' && n.data?.props?.active)
+    if (!activeTriggers.length) return
+    const timers = []
+    for (const trig of activeTriggers) {
+      const opt = AUTORUN_OPTIONS.find((o) => o.id === trig.data.props.cadence) || AUTORUN_OPTIONS[2]
+      const id = trig.id
+      const tick = async () => {
+        // Re-read live state at fire time (closure captures original ref).
+        const live = nodesRef.current.find((n) => n.id === id)
+        if (!live || !live.data?.props?.active) return
+        const used = Number(live.data.props.runs_used || 0)
+        const cap  = Number(live.data.props.max_runs || 10)
+        if (used >= cap) {
+          patchNode(id, { props: { ...live.data.props, active: false } })
+          return
+        }
+        // Increment + record before run so concurrent ticks can't double-fire.
+        patchNode(id, { props: { ...live.data.props, runs_used: used + 1, last_run_at: new Date().toISOString() } })
+        try {
+          await runFromNodeRef.current(id)
+        } catch (e) {
+          console.warn('auto-run tick failed:', e.message)
+        }
+      }
+      // Fire first tick immediately so the user sees something happen.
+      tick()
+      timers.push(setInterval(tick, opt.ms))
+    }
+    return () => timers.forEach((t) => clearInterval(t))
+    // We deliberately don't depend on `nodes` (would re-create the timer on
+    // every node update). Watch only the active-trigger fingerprint.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes.map((n) => n.data?.type === 'auto_run' ? `${n.id}|${n.data.props?.active ? 1 : 0}|${n.data.props?.cadence}|${n.data.props?.max_runs}` : '').join(',')])
+
+
   // Esc closes the preview modal.
   useEffect(() => {
     if (!previewItem) return
@@ -865,6 +912,27 @@ function SpaceBuilder({ space, onSave, onClose }) {
       if (t === 'avatar_picker') return { ...n, data: { ...n.data, _ctxAvatars: avatars, _ctxPublicAvatars: publicAvatars } }
       if (t === 'brand_profile') return { ...n, data: { ...n.data, _ctxProfiles: profiles } }
       if (t === 'image_upload')  return { ...n, data: { ...n.data, _ctxProfileId: selectedProfileId } }
+      if (t === 'auto_run') {
+        // BFS down to compute estimated cost-per-run from the chain
+        let cost = 0
+        const seen = new Set([n.id])
+        const queue = [n.id]
+        while (queue.length) {
+          const id = queue.shift()
+          for (const e of edges) {
+            if (e.source === id && !seen.has(e.target)) {
+              seen.add(e.target); queue.push(e.target)
+              const child = nodes.find((s) => s.id === e.target)
+              if (!child) continue
+              const ct = child.data?.type
+              const base = NODE_COST_HINT[ct] || 0
+              const mult = ct === 'image_gen' ? Math.max(1, Number(child.data?.props?.count || 1)) : 1
+              cost += base * mult
+            }
+          }
+        }
+        return { ...n, data: { ...n.data, _ctxCostPerRun: cost } }
+      }
       if (t === 'image_gen') {
         // Walk back through edges to collect every image_upload's named
         // images so the body can show clickable @ chips for autocomplete.

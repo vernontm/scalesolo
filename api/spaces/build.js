@@ -25,6 +25,13 @@ const NODE_CATALOG = {
     outputs: ['out'],
     initialProps: { urls: [] },
   },
+  auto_run: {
+    label: 'Auto-run',
+    description: 'Recurring trigger node. Re-runs everything connected downstream on a fixed cadence while the canvas is open. props: cadence ("1m" | "5m" | "15m" | "30m" | "1h" | "6h" | "24h"), max_runs (number, defaults to 10), active (boolean, defaults to false). Place this at the start of any chain you want to fire automatically. Distinct from social media scheduling — that\'s the save_library platforms field.',
+    inputs: [],
+    outputs: ['out'],
+    initialProps: { cadence: '15m', max_runs: 10, runs_used: 0, active: false, last_run_at: null },
+  },
   brand_profile: {
     label: 'Brand profile',
     description: 'Pulls in a saved brand profile (voice, audience, brand bible, hashtags). Wire its "out" into any generator\'s "in" to keep generations on-brand. Props: profile_id (leave blank for the user to pick), sync_all (boolean — when true, the client auto-wires this brand to every script_gen/caption_gen/image_gen now and as new ones are added; do NOT add manual brand edges yourself when sync_all is true).',
