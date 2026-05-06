@@ -137,7 +137,6 @@ function CreateAvatarModal({ profileId, models, onClose, onCreated }) {
         body: JSON.stringify({
           profile_id: profileId,
           name: name.trim(),
-          model_version: model,
           photo_url: photoUrl,
         }),
       })
@@ -194,14 +193,6 @@ function CreateAvatarModal({ profileId, models, onClose, onCreated }) {
               </div>
             </label>
           )}
-        </div>
-
-        <div style={{ marginBottom: 16 }}>
-          <label className="label">Model engine</label>
-          <ModelPicker models={models} value={model} onChange={setModel} durationSecs={30} />
-          <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 8 }}>
-            You can change the model anytime — costs are charged per render, not per avatar.
-          </div>
         </div>
 
         {error && <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '10px 14px', borderRadius: 10, fontSize: 13, marginBottom: 14 }}>
@@ -542,26 +533,9 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
         <aside className="card-flat" style={{ alignSelf: 'flex-start' }}>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 12 }}>Settings</div>
 
-          <div style={{ marginBottom: 14 }}>
-            <label className="label">Model engine</label>
-            <div style={{ display: 'flex', gap: 6 }}>
-              {Object.entries(models || {}).map(([k, mm]) => (
-                <button key={k}
-                  onClick={() => updateAvatar({ model_version: k })}
-                  style={{
-                    flex: 1, padding: '8px 10px', borderRadius: 8,
-                    background: avatar.model_version === k ? 'linear-gradient(135deg, var(--red), var(--red-dark))' : 'var(--surface-2)',
-                    color: avatar.model_version === k ? '#fff' : 'var(--text-soft)',
-                    border: avatar.model_version === k ? 'none' : '1px solid var(--border)',
-                    fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 11.5, cursor: 'pointer',
-                  }}>
-                  {k.toUpperCase()}
-                </button>
-              ))}
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
-              Default for new renders. ${(m.cents_per_sec / 100).toFixed(2)}/sec.
-            </div>
+          {/* Model engine picker removed — single avatar pipeline now uses
+              HeyGen V3 photo→video flow regardless of "model_version". */}
+          <div style={{ marginBottom: 14, display: 'none' }}>
           </div>
 
           <div style={{ marginBottom: 14 }}>
@@ -589,7 +563,7 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Avatar list view
-function AvatarList({ avatars, publicAvatars = [], loadingPublic, models, onCreate, onOpen }) {
+function AvatarList({ avatars, models, onCreate, onOpen }) {
   return (
     <div className="fade-up">
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
@@ -637,44 +611,6 @@ function AvatarList({ avatars, publicAvatars = [], loadingPublic, models, onCrea
         </div>
       )}
 
-      {/* HeyGen public stock library — always visible so users can pick a
-          ready-made avatar without uploading. */}
-      <div style={{ marginTop: 28, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
-        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>
-          HeyGen library
-        </h3>
-        <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-          {loadingPublic ? 'Loading…' : `${publicAvatars.length} stock avatars`}
-        </div>
-      </div>
-      {publicAvatars.length === 0 && !loadingPublic ? (
-        <div className="card-flat" style={{ padding: 24, textAlign: 'center', color: 'var(--muted)', fontSize: 12 }}>
-          No public avatars available right now.
-        </div>
-      ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
-          {publicAvatars.map((g) => {
-            const id = g.id || g.group_id
-            const name = g.group_name || g.name || 'Stock avatar'
-            const thumb = g.preview_image_url || g.preview_image || g.thumbnail_url || g.image_url
-            return (
-              <div key={id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
-                {thumb ? (
-                  <img src={thumb} alt={name} style={{ width: '100%', height: 180, objectFit: 'cover' }} />
-                ) : (
-                  <div style={{ width: '100%', height: 180, background: 'var(--surface-2)', display: 'grid', placeItems: 'center', color: 'var(--muted)' }}>
-                    <UserCircle2 size={36} />
-                  </div>
-                )}
-                <div style={{ padding: 12 }}>
-                  <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
-                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>HeyGen stock · pick in Spaces</div>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
     </div>
   )
 }
@@ -685,10 +621,8 @@ export default function Avatars() {
   const { session } = useAuth()
   const { selectedProfileId } = useProfile()
   const [avatars, setAvatars] = useState([])
-  const [publicAvatars, setPublicAvatars] = useState([])
   const [models, setModels] = useState({})
   const [loading, setLoading] = useState(true)
-  const [loadingPublic, setLoadingPublic] = useState(false)
   const [creating, setCreating] = useState(false)
   const [openedId, setOpenedId] = useState(null)
 
@@ -706,25 +640,7 @@ export default function Avatars() {
     setLoading(false)
   }
 
-  // Auto-load HeyGen's public avatar library so users can pick from stock
-  // characters without uploading their own.
-  const refreshPublic = async () => {
-    if (!session || !selectedProfileId) return
-    setLoadingPublic(true)
-    try {
-      const r = await fetch(`/api/avatars/heygen-library?profile_id=${selectedProfileId}`, {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      })
-      if (r.ok) {
-        const body = await r.json()
-        setPublicAvatars(Array.isArray(body.groups) ? body.groups : [])
-      }
-    } catch {} finally {
-      setLoadingPublic(false)
-    }
-  }
-
-  useEffect(() => { refresh(); refreshPublic() }, [session, selectedProfileId])
+  useEffect(() => { refresh() }, [session, selectedProfileId])
 
   const opened = openedId ? avatars.find((a) => a.id === openedId) : null
 
@@ -755,8 +671,6 @@ export default function Avatars() {
     <>
       <AvatarList
         avatars={avatars}
-        publicAvatars={publicAvatars}
-        loadingPublic={loadingPublic}
         models={models}
         onCreate={() => setCreating(true)}
         onOpen={(a) => setOpenedId(a.id)}

@@ -907,6 +907,7 @@ function AutoRunBody({ data, onPatch }) {
     <>
       <NodeField label="Cadence">
         <select
+          className="nodrag"
           style={tinyInput}
           value={cadence}
           onChange={(e) => onPatch({ cadence: e.target.value })}
@@ -918,11 +919,16 @@ function AutoRunBody({ data, onPatch }) {
       <NodeField label="Stop after N runs">
         <input
           type="number"
+          className="nodrag"
           min={1}
           max={1000}
+          step={1}
           style={tinyInput}
           value={maxRuns}
-          onChange={(e) => onPatch({ max_runs: Math.max(1, Number(e.target.value) || 1) })}
+          onChange={(e) => {
+            const n = parseInt(e.target.value, 10)
+            onPatch({ max_runs: Number.isFinite(n) ? Math.max(1, Math.min(1000, n)) : 1 })
+          }}
           disabled={active}
         />
       </NodeField>
@@ -2144,17 +2150,16 @@ export async function runSpace({ ctx, nodes, edges, onNodeChange }) {
       // generators check the flag mid-loop too, but this catches in-flight
       // single-shot fetches (script_gen, caption_gen, save_library) that
       // don't have a natural cancellation hook.
+      let abortTimer
       const abortPromise = new Promise((_, rej) => {
-        const t = setInterval(() => {
-          if (ctx?.shouldAbort?.()) { clearInterval(t); rej(new Error('Stopped')) }
+        abortTimer = setInterval(() => {
+          if (ctx?.shouldAbort?.()) { clearInterval(abortTimer); rej(new Error('Stopped')) }
         }, 500)
-        // Tag the interval so the resolved race can clear it.
-        abortPromise._t = t
       })
       const result = await Promise.race([
         def.run({ data: node.data, inputs: inputObj, inputsByName, ctx }),
         abortPromise,
-      ]).finally(() => { try { clearInterval(abortPromise._t) } catch {} })
+      ]).finally(() => { try { clearInterval(abortTimer) } catch {} })
       outputsById.set(id, result || {})
       onNodeChange?.(id, { status: 'done', output: result })
     } catch (err) {

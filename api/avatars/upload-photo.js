@@ -1,12 +1,11 @@
 // POST /api/avatars/upload-photo
-// Body: { profile_id, name, model_version, photo_url }
+// Body: { profile_id, name, photo_url }
 //
-// The browser uploads the image to Supabase Storage directly (no Vercel
-// 4.5 MB body cap), then sends us just the resulting public URL.
-// We call HeyGen Photo Avatar to mint a talking_photo_id and persist the row.
+// Synchronous photo-avatar creation via HeyGen V3 /v3/avatars endpoint.
+// Returns immediately with a usable avatar_id — no async training step.
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
-import { createPhotoAvatarFromUrl, MODELS } from '../_lib/heygen.js'
+import { createPhotoAvatarV3 } from '../_lib/heygen.js'
 
 export default async function handler(req, res) {
   setCors(req, res)
@@ -17,37 +16,21 @@ export default async function handler(req, res) {
   if (!auth) return
 
   try {
-    const { profile_id, name, model_version, photo_url } = req.body || {}
+    const { profile_id, name, photo_url } = req.body || {}
     if (!profile_id || !name || !photo_url) {
       return res.status(400).json({ error: 'profile_id + name + photo_url required' })
     }
-    if (!MODELS[model_version]) return res.status(400).json({ error: 'Unknown model_version' })
     await assertProfileAccess(auth.user.id, profile_id)
 
-    // Best-effort: ask HeyGen to mint a talking_photo from the URL.
-    // If it fails, persist the avatar anyway so the user can retry.
-    let talkingPhotoId = null
-    let trainingError = null
+    let avatarId = null
     let trainingStatus = 'ready'
+    let trainingError = null
     try {
-      const heygenResp = await createPhotoAvatarFromUrl({ imageUrl: photo_url, name })
-      // HeyGen's photo avatar API has shifted shape over time. Accept any of:
-      //   data.id              (legacy direct talking_photo)
-      //   data.talking_photo_id
-      //   data.generation_id   (current async pipeline — avatar trains on
-      //                         their side; we treat it as the persistent
-      //                         identifier and mark the row as training)
-      //   id                   (top-level fallback)
-      const data = heygenResp?.data || {}
-      talkingPhotoId = data.id || data.talking_photo_id || data.generation_id || heygenResp?.id || null
-      if (!talkingPhotoId) {
+      const resp = await createPhotoAvatarV3({ imageUrl: photo_url, name })
+      avatarId = resp?.data?.avatar_item?.id || resp?.data?.id || resp?.id || null
+      if (!avatarId) {
         trainingStatus = 'failed'
-        trainingError = `HeyGen response missing id (got: ${JSON.stringify(heygenResp).slice(0, 200)})`
-      } else if (data.generation_id && !data.id && !data.talking_photo_id) {
-        // We got a generation_id only — the avatar is still being trained on
-        // HeyGen's side. Mark accordingly so the UI shows "training" instead
-        // of pretending it's ready (or that it failed).
-        trainingStatus = 'training'
+        trainingError = `HeyGen V3 response missing avatar id (got: ${JSON.stringify(resp).slice(0, 200)})`
       }
     } catch (e) {
       trainingStatus = 'failed'
@@ -59,10 +42,10 @@ export default async function handler(req, res) {
       body: {
         profile_id,
         name,
-        model_version,
         photo_url,
         thumbnail_url: photo_url,
-        talking_photo_id: talkingPhotoId,
+        // The V3 avatar id IS the renderable id — no training step.
+        talking_photo_id: avatarId,
         training_status: trainingStatus,
         training_error: trainingError,
       },
