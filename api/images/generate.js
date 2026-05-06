@@ -10,48 +10,80 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 
-// UI model id → KIE model slug. KIE's catalog is the source of truth here;
-// guessed names like "nano-banana-2" / "nano-banana-pro" don't exist on
-// their side, so we map our friendly labels to real KIE models.
-const MODEL_MAP = {
-  // Friendly labels used by the UI dropdown
-  'nano-banana-2':    'google/nano-banana',          // basic text→image
-  'nano-banana-pro':  'google/nano-banana-edit',     // image→image / multi-ref
-  'gpt-2':            'openai/gpt-image-1',
-  // Back-compat aliases for older saved values
-  'nano-banana':      'google/nano-banana',
-  'flux-pro':         'google/nano-banana-edit',
-  'flux-kontext':     'google/nano-banana-edit',
-  'gpt-image':        'openai/gpt-image-1',
+// Resolve the UI's friendly model id to the actual KIE model slug, honoring
+// reference images by routing GPT to its image-to-image variant when refs
+// are present. Each family has a different input shape (see buildInput).
+function resolveKieModel(uiModel, hasRefs) {
+  switch (uiModel) {
+    // Nano Banana family — supports image_input on both 2 and Pro, so the
+    // same model id is used regardless of refs.
+    case 'nano-banana-2':
+    case 'nano-banana':                 // legacy alias
+      return 'nano-banana-2'
+    case 'nano-banana-pro':
+    case 'flux-pro':                    // legacy alias (treat as Pro)
+    case 'flux-kontext':                // legacy alias
+      return 'nano-banana-pro'
+
+    // GPT image — split endpoints for text-to-image and image-to-image.
+    case 'gpt-2':
+    case 'gpt-image':                   // legacy alias
+      return hasRefs ? 'gpt-image-2-image-to-image' : 'gpt-image-2-text-to-image'
+
+    default:
+      // Unknown id — best guess: assume KIE accepts it as-is.
+      return uiModel
+  }
 }
 
-// KIE accepts "auto" or specific aspect strings like "1:1".
-function buildInput(model, { prompt, aspect, count, quality, reference_urls }) {
+// KIE input shapes vary per model. Build the right one.
+function buildInput(kieModel, { prompt, aspect, count, quality, reference_urls }) {
+  const refs = Array.isArray(reference_urls) ? reference_urls.filter(Boolean) : []
+  const numImages = Math.max(1, Math.min(8, Number(count) || 1))
+  const aspect_ratio = aspect || 'auto'
+
+  if (kieModel === 'nano-banana-2' || kieModel === 'nano-banana-pro') {
+    return {
+      prompt,
+      image_input: refs,            // empty array is fine for text-to-image
+      aspect_ratio,
+      resolution: quality || '1K',
+      output_format: 'png',
+      num_images: numImages,
+    }
+  }
+  if (kieModel === 'gpt-image-2-image-to-image') {
+    return {
+      prompt,
+      input_urls: refs,
+      aspect_ratio,
+      num_images: numImages,
+    }
+  }
+  if (kieModel === 'gpt-image-2-text-to-image') {
+    return {
+      prompt,
+      aspect_ratio,
+      num_images: numImages,
+    }
+  }
+  // Generic fallback — set every common field so an unknown model has a
+  // chance of accepting at least one of them.
   const base = {
     prompt,
-    image_size: aspect || '1:1',
+    aspect_ratio,
+    image_size: aspect_ratio,
+    resolution: quality || '1K',
     output_format: 'png',
-    num_images: Math.max(1, Math.min(8, Number(count) || 1)),
+    num_images: numImages,
   }
-  if (Array.isArray(reference_urls) && reference_urls.length) {
-    // Different KIE models accept slightly different field names — set both
-    // forms so whichever the model expects gets through.
-    base.image_urls = reference_urls
-    base.image_url = reference_urls.length === 1 ? reference_urls[0] : reference_urls
+  if (refs.length) {
+    base.image_input = refs
+    base.input_urls = refs
+    base.image_urls = refs
+    base.image_url = refs.length === 1 ? refs[0] : refs
   }
-  if (quality) base.quality = quality
   return base
-}
-
-// If the user picked a text-only model but wired up reference images, auto
-// upgrade to the edit/multi-reference variant of the same family. Image
-// models that don't support refs silently drop them, which is exactly what
-// confused us before — the woman in the prompt looked nothing like the
-// uploaded references.
-function upgradeIfReferences(kieModel, hasRefs) {
-  if (!hasRefs) return kieModel
-  if (kieModel === 'google/nano-banana') return 'google/nano-banana-edit'
-  return kieModel
 }
 
 function pickError(body, fallbackStatus) {
@@ -114,9 +146,8 @@ export default async function handler(req, res) {
       }
     }
 
-    const baseKieModel = MODEL_MAP[model] || MODEL_MAP['nano-banana-2']
     const hasRefs = Array.isArray(reference_urls) && reference_urls.length > 0
-    const kieModel = upgradeIfReferences(baseKieModel, hasRefs)
+    const kieModel = resolveKieModel(model || 'nano-banana-2', hasRefs)
     const input = buildInput(kieModel, { prompt, aspect, count, quality, reference_urls })
 
     // Submit task via the unified jobs endpoint
