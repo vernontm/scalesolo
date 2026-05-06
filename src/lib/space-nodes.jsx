@@ -959,7 +959,23 @@ function CollectionBody({ data }) {
               </div>
             ) : null}
             <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <div style={{ flex: 1, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 9.5, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{it.kind} · {it.from}</div>
+              <div style={{ flex: 1, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 9.5, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                {it.kind === 'library' ? 'library' : it.kind} · {it.from}
+              </div>
+              {it.kind === 'library' && it.status && (
+                <span style={{
+                  fontSize: 9, padding: '1px 6px', borderRadius: 999,
+                  fontFamily: 'var(--font-display)', fontWeight: 700,
+                  background: it.status === 'published' ? 'rgba(46,204,113,0.18)'
+                    : it.status === 'scheduled' ? 'rgba(168,85,247,0.18)'
+                    : it.status === 'deleted' ? 'rgba(239,68,68,0.18)'
+                    : 'var(--surface-3)',
+                  color: it.status === 'published' ? '#2ecc71'
+                    : it.status === 'scheduled' ? '#a855f7'
+                    : it.status === 'deleted' ? 'var(--red)'
+                    : 'var(--muted)',
+                }}>{it.status}</span>
+              )}
               {!it.url && (
                 <button
                   type="button"
@@ -970,6 +986,9 @@ function CollectionBody({ data }) {
               )}
             </div>
             {it.text && <div style={{ maxHeight: 40, overflow: 'hidden' }}>{String(it.text).slice(0, 90)}…</div>}
+            {it.kind === 'library' && it.platforms?.length > 0 && (
+              <div style={{ marginTop: 2, fontSize: 9.5, color: 'var(--muted)' }}>{it.platforms.join(' · ')}</div>
+            )}
           </div>
         ))}
       </div>
@@ -1268,11 +1287,12 @@ export const NODE_REGISTRY = {
         return name ? `the reference image "${name}"` : 'the reference image'
       })
 
-      const r = await fetch('/api/images/generate', {
+      const profileForCall = brand?.profile_id || ctx.profileId
+      const submitR = await fetch('/api/images/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
         body: JSON.stringify({
-          profile_id: brand?.profile_id || ctx.profileId,
+          profile_id: profileForCall,
           prompt,
           model: data.props?.model || 'nano-banana',
           count: data.props?.count || 1,
@@ -1281,9 +1301,24 @@ export const NODE_REGISTRY = {
           reference_urls: refs.length ? refs : undefined,
         }),
       })
-      const body = await r.json()
-      if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
-      return { images: body.images || [] }
+      const submit = await submitR.json()
+      if (!submitR.ok) throw new Error(submit.error || `Failed (${submitR.status})`)
+      const taskId = submit.taskId
+      if (!taskId) throw new Error('No taskId returned')
+
+      // Client-side poll up to 5 minutes — keeps each Vercel call short.
+      const start = Date.now()
+      while (Date.now() - start < 300_000) {
+        await new Promise((r) => setTimeout(r, 3000))
+        const sR = await fetch(`/api/images/status?taskId=${encodeURIComponent(taskId)}&profile_id=${encodeURIComponent(profileForCall)}`, {
+          headers: { Authorization: `Bearer ${ctx.token}` },
+        })
+        const s = await sR.json()
+        if (!sR.ok) throw new Error(s.error || `Status check failed (${sR.status})`)
+        if (s.state === 'success') return { images: s.images || [] }
+        if (s.state === 'failed') throw new Error(s.error || 'Generation failed')
+      }
+      throw new Error('Image generation timed out')
     },
   },
 
@@ -1365,6 +1400,20 @@ export const NODE_REGISTRY = {
         if (val == null) return
         if (Array.isArray(val)) { val.forEach((v) => collect(v, from)); return }
         if (typeof val === 'string') { incoming.push({ kind: 'text', text: val, from }); return }
+        // Save-to-library outputs carry { content_id, platforms, media_type } —
+        // surface them as a single library item so the canvas reflects the
+        // saved row's status when we later sync publish/delete events.
+        if (val.content_id) {
+          incoming.push({
+            kind: 'library',
+            content_id: val.content_id,
+            from,
+            status: 'draft',
+            media_type: val.media_type || null,
+            platforms: val.platforms || null,
+          })
+          return
+        }
         if (val.video_url) { incoming.push({ kind: 'video', url: val.video_url, from }); return }
         if (val.url) { incoming.push({ kind: 'image', url: val.url, from }); return }
         if (val.script) { incoming.push({ kind: 'script', text: val.script, from }); return }
@@ -1381,7 +1430,7 @@ export const NODE_REGISTRY = {
       const seen = new Set()
       for (const list of [prev, incoming]) {
         for (const it of list) {
-          const key = `${it.kind}:${(it.url || it.text || '').toString().slice(0, 200)}`
+          const key = `${it.kind}:${(it.content_id || it.url || it.text || '').toString().slice(0, 200)}`
           if (seen.has(key)) continue
           seen.add(key); out.push(it)
         }

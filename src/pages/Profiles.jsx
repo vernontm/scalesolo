@@ -48,6 +48,9 @@ const FORM_DEFAULTS = {
   preferred_tone: '',
   target_audience: '',
   core_hashtags: '',
+  timezone: '',
+  synced_platforms: [],
+  posting_schedule: { days: [1, 2, 3, 4, 5], times: ['09:00', '14:00'] },
   instagram_handle: '',
   tiktok_handle: '',
   youtube_handle: '',
@@ -204,6 +207,20 @@ function ProfileEditor({ profile, onClose, onSaved }) {
               placeholder={`Voice: direct, candid, never preachy.\nAudience: solopreneurs scaling past $10k/mo.\nOffer: AI-native operating system.\nDo-not-say: "synergy", "leverage" as a verb.\nSignature phrases: "ship it", "10x the brand".`}
             />
           </Field>
+        </div>
+
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>
+            Posting schedule
+          </div>
+          <PostingScheduleEditor
+            timezone={form.timezone}
+            onTimezoneChange={(tz) => set('timezone', tz)}
+            synced={Array.isArray(form.synced_platforms) ? form.synced_platforms : []}
+            onSyncedChange={(arr) => set('synced_platforms', arr)}
+            schedule={form.posting_schedule || { days: [1,2,3,4,5], times: ['09:00','14:00'] }}
+            onScheduleChange={(s) => set('posting_schedule', s)}
+          />
         </div>
 
         <div style={{ marginTop: 14 }}>
@@ -505,6 +522,156 @@ function InterviewModal({ onClose, onApply }) {
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+// ─── Posting schedule editor ────────────────────────────────────────────────
+const TIMEZONES = [
+  'America/Los_Angeles', 'America/Denver', 'America/Chicago', 'America/New_York',
+  'America/Anchorage', 'Pacific/Honolulu', 'America/Phoenix', 'America/Toronto',
+  'America/Mexico_City', 'America/Sao_Paulo',
+  'Europe/London', 'Europe/Dublin', 'Europe/Paris', 'Europe/Berlin', 'Europe/Madrid', 'Europe/Rome',
+  'Africa/Lagos', 'Africa/Johannesburg', 'Asia/Dubai', 'Asia/Kolkata',
+  'Asia/Singapore', 'Asia/Hong_Kong', 'Asia/Tokyo', 'Asia/Shanghai',
+  'Australia/Sydney', 'Pacific/Auckland', 'UTC',
+]
+const DAYS = [
+  { id: 1, label: 'Mon' }, { id: 2, label: 'Tue' }, { id: 3, label: 'Wed' },
+  { id: 4, label: 'Thu' }, { id: 5, label: 'Fri' }, { id: 6, label: 'Sat' }, { id: 0, label: 'Sun' },
+]
+const PLATFORM_OPTIONS = ['instagram', 'tiktok', 'youtube', 'x', 'threads', 'linkedin', 'facebook']
+
+function PostingScheduleEditor({ timezone, onTimezoneChange, synced, onSyncedChange, schedule, onScheduleChange }) {
+  const days = Array.isArray(schedule?.days) ? schedule.days : []
+  const times = Array.isArray(schedule?.times) ? schedule.times : []
+
+  // Auto-detect TZ on mount if blank
+  useEffect(() => {
+    if (!timezone) {
+      try {
+        const detected = Intl.DateTimeFormat().resolvedOptions().timeZone
+        if (detected) onTimezoneChange(detected)
+      } catch {}
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const toggleDay = (id) => {
+    const next = days.includes(id) ? days.filter((d) => d !== id) : [...days, id].sort()
+    onScheduleChange({ ...schedule, days: next })
+  }
+  const togglePlatform = (id) => {
+    const next = synced.includes(id) ? synced.filter((p) => p !== id) : [...synced, id]
+    onSyncedChange(next)
+  }
+  const setTime = (i, val) => {
+    const next = [...times]; next[i] = val
+    onScheduleChange({ ...schedule, times: next })
+  }
+  const removeTime = (i) => {
+    onScheduleChange({ ...schedule, times: times.filter((_, j) => j !== i) })
+  }
+  const addTime = () => {
+    onScheduleChange({ ...schedule, times: [...times, '12:00'] })
+  }
+
+  // Quick presets
+  const applyPreset = (kind) => {
+    if (kind === 'weekdays') onScheduleChange({ days: [1,2,3,4,5], times: times.length ? times : ['09:00'] })
+    else if (kind === 'daily') onScheduleChange({ days: [0,1,2,3,4,5,6], times: times.length ? times : ['09:00'] })
+    else if (kind === 'weekly') onScheduleChange({ days: [3], times: times.length ? times : ['10:00'] })
+    else if (kind === '3x') onScheduleChange({ days: [1,3,5], times: times.length ? times : ['09:00'] })
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 14 }}>
+      <Field label="Time zone (used for all scheduling)">
+        <select className="select" value={timezone || ''} onChange={(e) => onTimezoneChange(e.target.value)}>
+          <option value="">Pick…</option>
+          {TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+        </select>
+      </Field>
+
+      <Field label="Synced platforms (only these will show in save_library)">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {PLATFORM_OPTIONS.map((p) => {
+            const on = synced.includes(p)
+            return (
+              <button
+                key={p}
+                type="button"
+                onClick={() => togglePlatform(p)}
+                style={{
+                  fontSize: 11.5, padding: '5px 11px', borderRadius: 999, cursor: 'pointer',
+                  border: `1px solid ${on ? '#2ecc71' : 'var(--border)'}`,
+                  background: on ? 'rgba(46,204,113,0.16)' : 'var(--surface-2)',
+                  color: on ? '#2ecc71' : 'var(--text-soft)',
+                  fontFamily: 'var(--font-display)', fontWeight: 700,
+                }}
+              >{p}</button>
+            )
+          })}
+        </div>
+      </Field>
+
+      <Field label="Quick frequency presets">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {[
+            ['weekdays', 'Weekdays only'],
+            ['weekly',   'Once a week'],
+            ['3x',       '3× per week'],
+            ['daily',    'Every day'],
+          ].map(([k, label]) => (
+            <button key={k} type="button" className="btn-ghost" style={{ fontSize: 11.5 }} onClick={() => applyPreset(k)}>{label}</button>
+          ))}
+        </div>
+      </Field>
+
+      <Field label="Days of week">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {DAYS.map((d) => {
+            const on = days.includes(d.id)
+            return (
+              <button
+                key={d.id}
+                type="button"
+                onClick={() => toggleDay(d.id)}
+                style={{
+                  width: 50, padding: '7px 0', borderRadius: 8, cursor: 'pointer',
+                  border: `1px solid ${on ? 'var(--red)' : 'var(--border)'}`,
+                  background: on ? 'rgba(239,68,68,0.16)' : 'var(--surface-2)',
+                  color: on ? 'var(--red)' : 'var(--text-soft)',
+                  fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 12,
+                }}
+              >{d.label}</button>
+            )
+          })}
+        </div>
+      </Field>
+
+      <Field label="Posting times (in selected time zone)">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {times.map((t, i) => (
+            <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input
+                type="time"
+                value={t}
+                onChange={(e) => setTime(i, e.target.value)}
+                className="input"
+                style={{ maxWidth: 150 }}
+              />
+              <button type="button" className="btn-ghost" onClick={() => removeTime(i)} style={{ color: 'var(--muted)' }}>
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+          <button type="button" className="btn-ghost" onClick={addTime} style={{ alignSelf: 'flex-start', fontSize: 11.5 }}>
+            <Plus size={12} /> Add time
+          </button>
+        </div>
+        {times.length === 0 && <div style={{ marginTop: 4, fontSize: 11, color: 'var(--amber)' }}>Add at least one time. Without slots nothing will auto-schedule.</div>}
+      </Field>
     </div>
   )
 }

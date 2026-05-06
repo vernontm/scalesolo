@@ -56,6 +56,7 @@ export default async function handler(req, res) {
         'business_name','owner_name','industry','business_type','website_url',
         'brand_bible','brand_bible_summary','brand_primary_color','brand_secondary_color',
         'brand_colors','brand_fonts','logo_url',
+        'timezone','synced_platforms','posting_schedule',
         'preferred_tone','target_audience','core_hashtags','location','timezone',
         'instagram_handle','tiktok_handle','facebook_handle','threads_handle',
         'youtube_handle','linkedin_handle','x_handle',

@@ -10,38 +10,6 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 
-// Mirror a KIE-returned image to our Supabase storage so the browser can
-// render and download it without CORS issues (KIE's tempfile.aiquickdraw.com
-// CDN doesn't set Access-Control-Allow-Origin). Falls back to the raw KIE
-// URL if the mirror fails.
-async function mirrorToStorage(url, profileId) {
-  try {
-    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) return url
-    const r = await fetch(url)
-    if (!r.ok) return url
-    const buf = await r.arrayBuffer()
-    const ct = r.headers.get('content-type') || 'image/png'
-    const ext = ct.includes('jpeg') ? 'jpg' : ct.includes('webp') ? 'webp' : 'png'
-    const path = `${profileId}/spaces/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
-    const upload = await fetch(
-      `${process.env.SUPABASE_URL}/storage/v1/object/landing-media/${encodeURI(path)}`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
-          'Content-Type': ct,
-          'x-upsert': 'true',
-        },
-        body: buf,
-      }
-    )
-    if (!upload.ok) return url
-    return `${process.env.SUPABASE_URL}/storage/v1/object/public/landing-media/${path}`
-  } catch {
-    return url
-  }
-}
-
 // Resolve the UI's friendly model id to the actual KIE model slug, honoring
 // reference images by routing GPT to its image-to-image variant when refs
 // are present. Each family has a different input shape (see buildInput).
@@ -203,57 +171,29 @@ export default async function handler(req, res) {
       return res.status(502).json({ error: 'KIE returned no taskId', kie_body: submit })
     }
 
-    // Poll up to 120s for the job to finish
-    const start = Date.now()
-    let lastBody = null
-    while (Date.now() - start < 120_000) {
-      await new Promise((r) => setTimeout(r, 3000))
-      const sr = await fetch(`https://api.kie.ai/api/v1/jobs/recordInfo?taskId=${encodeURIComponent(taskId)}`, {
-        headers: { 'Authorization': `Bearer ${apiKey}` },
-      })
-      const sText = await sr.text()
-      let sb = {}
-      try { sb = JSON.parse(sText) } catch { sb = { raw: sText } }
-      lastBody = sb
-      const data = sb?.data || sb
-      const state = String(data?.state || data?.status || '').toLowerCase()
-
-      if (state === 'success' || state === 'completed' || state === 'done') {
-        const rawUrls = parseResultUrls(data).map((u) => (typeof u === 'string' ? { url: u } : u))
-        if (!rawUrls.length) return res.status(502).json({ error: 'KIE returned no image URLs', kie_body: data })
-
-        // Mirror every image to our own Storage bucket so the browser can
-        // <img> + fetch them without hitting KIE's CORS-less CDN.
-        const urls = await Promise.all(
-          rawUrls.map(async (u) => ({ ...u, url: await mirrorToStorage(u.url, profile_id) }))
-        )
-
-        if (customerId) {
-          try {
-            await supaFetch('rpc/consume_credits', {
-              method: 'POST',
-              body: {
-                p_customer_id: customerId,
-                p_pool_type: 'ai_tokens',
-                p_amount: 4000 * urls.length,
-                p_action: 'consume:image-gen',
-                p_profile_id: profile_id,
-                p_metadata: { model: kieModel, aspect, count: urls.length, prompt: String(prompt).slice(0, 200) },
-              },
-            })
-          } catch {}
-        }
-        return res.status(200).json({ images: urls, taskId })
-      }
-      if (state === 'fail' || state === 'failed' || state === 'error') {
-        return res.status(502).json({
-          error: data?.failMsg || data?.errorMessage || data?.message || pickError(data, sr.status) || 'Generation failed',
-          kie_body: data,
+    // Debit credits up front (KIE submission was accepted). If the task
+    // later fails the cost is small relative to the round trip latency,
+    // and this avoids us holding the connection open for 60-180s.
+    if (customerId) {
+      try {
+        await supaFetch('rpc/consume_credits', {
+          method: 'POST',
+          body: {
+            p_customer_id: customerId,
+            p_pool_type: 'ai_tokens',
+            p_amount: 4000 * Math.max(1, Number(count) || 1),
+            p_action: 'consume:image-gen',
+            p_profile_id: profile_id,
+            p_metadata: { model: kieModel, aspect, count, prompt: String(prompt).slice(0, 200), taskId },
+          },
         })
-      }
-      // else: state is still queueing/processing — keep polling.
+      } catch {}
     }
-    return res.status(504).json({ error: 'Timed out waiting for KIE', kie_body: lastBody })
+
+    // Return the taskId immediately. The client polls /api/images/status
+    // until the job completes — keeps us under Vercel's serverless timeout.
+    return res.status(202).json({ taskId, model: kieModel })
+
   } catch (err) {
     return res.status(err.status || 500).json({ error: err.message })
   }

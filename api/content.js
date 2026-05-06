@@ -11,6 +11,7 @@
 //   POST ?action=schedule  ?id=...  { scheduled_datetime, platforms? }
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from './_lib/supabase.js'
+import { findNextOpenSlot, syncContentStatusInSpaces } from './_lib/scheduling.js'
 
 const ALLOWED = new Set([
   'title','hook','full_script','series_name','caption','hashtags','first_comment',
@@ -78,9 +79,22 @@ export default async function handler(req, res) {
             approved_by: auth.user.id,
             approved_at: new Date().toISOString(),
             rejected_reason: null,
-            // Move out of 'caption_ready' into 'scheduled' or 'draft' depending on whether scheduled_datetime exists
-            status: item.status === 'caption_ready' ? 'caption_ready' : item.status,
+            status: item.status,
           }
+          // If approved-from-draft and the user didn't supply a time, find
+          // the next open slot from the profile's posting_schedule and
+          // promote to scheduled in one step.
+          try {
+            const pr = await supaFetch(`profiles?id=eq.${item.profile_id}&select=timezone,posting_schedule`)
+            const taken = await supaFetch(
+              `content_scripts?profile_id=eq.${item.profile_id}&status=eq.scheduled&select=scheduled_datetime`
+            )
+            const slot = findNextOpenSlot(pr?.[0], (taken || []).map((t) => t.scheduled_datetime))
+            if (slot) {
+              updates.scheduled_datetime = slot
+              updates.status = 'scheduled'
+            }
+          } catch (e) { console.warn('auto-schedule on approve failed:', e.message) }
         } else if (action === 'reject') {
           updates = {
             approval_status: 'rejected',
@@ -101,6 +115,9 @@ export default async function handler(req, res) {
         }
 
         const updated = await supaFetch(`content_scripts?id=eq.${id}`, { method: 'PATCH', body: updates })
+        if (updates.status) {
+          syncContentStatusInSpaces(item.profile_id, id, updates.status).catch(() => {})
+        }
         return res.status(200).json({ item: Array.isArray(updated) ? updated[0] : updated })
       }
 
@@ -110,6 +127,27 @@ export default async function handler(req, res) {
       await assertProfileAccess(auth.user.id, body.profile_id)
       const row = pickAllowed(body)
       row.profile_id = body.profile_id
+
+      // If the row arrives marked "Ready to schedule" (status=caption_ready),
+      // pick the next open slot from the profile's posting_schedule and
+      // promote it to scheduled before insert.
+      if (row.status === 'caption_ready') {
+        try {
+          const profileRows = await supaFetch(`profiles?id=eq.${body.profile_id}&select=timezone,posting_schedule`)
+          const profile = profileRows?.[0]
+          const taken = await supaFetch(
+            `content_scripts?profile_id=eq.${body.profile_id}&status=eq.scheduled&select=scheduled_datetime`
+          )
+          const slot = findNextOpenSlot(profile, (taken || []).map((t) => t.scheduled_datetime))
+          if (slot) {
+            row.scheduled_datetime = slot
+            row.status = 'scheduled'
+          }
+        } catch (e) {
+          console.warn('auto-schedule failed:', e.message)
+        }
+      }
+
       const created = await supaFetch('content_scripts', { method: 'POST', body: row })
       return res.status(201).json({ item: Array.isArray(created) ? created[0] : created })
     }
@@ -123,6 +161,10 @@ export default async function handler(req, res) {
       await assertProfileAccess(auth.user.id, profileId)
       const updates = pickAllowed(req.body || {})
       const updated = await supaFetch(`content_scripts?id=eq.${id}`, { method: 'PATCH', body: updates })
+      // If status changed, propagate to any collection nodes referencing it.
+      if (updates.status) {
+        syncContentStatusInSpaces(profileId, id, updates.status).catch(() => {})
+      }
       return res.status(200).json({ item: Array.isArray(updated) ? updated[0] : updated })
     }
 
@@ -134,6 +176,8 @@ export default async function handler(req, res) {
       if (!profileId) return res.status(404).json({ error: 'Not found' })
       await assertProfileAccess(auth.user.id, profileId)
       await supaFetch(`content_scripts?id=eq.${id}`, { method: 'DELETE', prefer: 'return=minimal' })
+      // Mark collection items as deleted so they reflect in the canvas.
+      syncContentStatusInSpaces(profileId, id, 'deleted').catch(() => {})
       return res.status(204).end()
     }
 
