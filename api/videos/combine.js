@@ -18,6 +18,7 @@
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { createClient } from '@supabase/supabase-js'
 import { createFFmpeg } from '@ffmpeg/ffmpeg'
+import { readFile } from 'node:fs/promises'
 
 // Allow up to 5 minutes for big stitches. Hobby plan caps at 60s; if you
 // hit that, upgrade to Pro or pre-flight reject huge clip counts.
@@ -31,13 +32,20 @@ async function getFFmpeg() {
   // as a dep so the default resolution just works.
   const ff = createFFmpeg({ log: false })
 
-  // Emscripten's loader probes globalThis.fetch first and only falls back to
-  // fs.readFileSync if it's missing. Node 20's undici fetch is global AND
-  // rejects absolute filesystem paths ("Failed to parse URL"). Hide fetch
-  // for the duration of load() so the fs path is taken.
+  // Emscripten's WASM loader calls globalThis.fetch(<absolute path>) on Node,
+  // and Node 20's undici fetch rejects bare paths with "Failed to parse URL".
+  // Wrap fetch so absolute paths get served from disk; fall back to the real
+  // fetch for everything else. Restore after load.
   const savedFetch = globalThis.fetch
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : (input?.url || String(input))
+    if (url.startsWith('/') || /^[A-Za-z]:[\\/]/.test(url)) {
+      const buf = await readFile(url)
+      return new Response(buf, { status: 200, headers: { 'Content-Type': 'application/wasm' } })
+    }
+    return savedFetch(input, init)
+  }
   try {
-    delete globalThis.fetch
     await ff.load()
   } finally {
     globalThis.fetch = savedFetch
