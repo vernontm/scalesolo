@@ -13,5 +13,11 @@
   ],
   "crons": [
     { "path": "/api/cron/credit-monthly-reset", "schedule": "0 6 * * *" }
-  ]
+  ],
+  "functions": {
+    "api/videos/combine.js": {
+      "includeFiles": "node_modules/@ffmpeg/core/**",
+      "maxDuration": 300
+    }
+  }
 }
