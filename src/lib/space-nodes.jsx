@@ -185,17 +185,25 @@ function resolveBrandMention(text, profiles) {
   return null
 }
 
-// Strip @brand-only tokens from a prompt so the underlying model doesn't see
-// stray "@vernontech" text. (Other @-tokens — image refs etc. — are left
-// alone for the caller to handle.)
-function stripBrandMentions(text, profiles) {
+// Replace @brand-name tokens with the brand's actual business_name so
+// downstream models read natural prose ("infographic of Vernon Tech & Media
+// explaining…") instead of bare strips like "infographic of  explaining".
+// Tokens that don't resolve to a brand are left untouched for image-ref
+// resolution upstream.
+function expandBrandMentions(text, profiles) {
   if (!text) return text
-  const names = new Set((profiles || []).map((p) => (p.business_name || '').toLowerCase().replace(/[^a-z0-9_-]/g, '')).filter(Boolean))
+  const byNorm = new Map(
+    (profiles || [])
+      .filter((p) => p.business_name)
+      .map((p) => [(p.business_name || '').toLowerCase().replace(/[^a-z0-9_-]/g, ''), p.business_name])
+  )
   return String(text).replace(/@(?:"([^"]+)"|([A-Za-z0-9_-]+))/g, (full, q, b) => {
     const norm = (q || b || '').toLowerCase().replace(/[^a-z0-9_-]/g, '')
-    return names.has(norm) ? '' : full
-  }).replace(/\s+/g, ' ').trim()
+    return byNorm.has(norm) ? byNorm.get(norm) : full
+  })
 }
+// Backwards alias — old script_gen call still uses this name.
+const stripBrandMentions = expandBrandMentions
 
 function pickImageUrls(v) {
   const out = []
@@ -1509,16 +1517,23 @@ export const NODE_REGISTRY = {
           secondary_color: mentioned.brand_secondary_color || '',
         }
       }
-      // Strip @brand tokens from the prompt before sending to KIE.
-      prompt = stripBrandMentions(prompt, ctx.profiles)
+      // Replace @brand mentions with the actual business name (cleaner prose
+      // for the model than stripping the token entirely).
+      prompt = expandBrandMentions(prompt, ctx.profiles)
       if (brand) {
-        const bits = []
-        if (brand.name) bits.push(`Brand: ${brand.name}`)
-        if (brand.industry) bits.push(`Industry: ${brand.industry}`)
-        if (brand.voice) bits.push(`Voice/style: ${String(brand.voice).slice(0, 200)}`)
-        if (brand.audience) bits.push(`Audience: ${String(brand.audience).slice(0, 160)}`)
-        if (brand.primary_color) bits.push(`Primary color ${brand.primary_color}`)
-        if (bits.length) prompt = `${bits.join('. ')}.\n\n${prompt}`
+        const lines = []
+        if (brand.name) lines.push(`Brand: ${brand.name}.`)
+        if (brand.industry) lines.push(`Industry: ${brand.industry}.`)
+        // Force the color palette explicitly. Image models tend to ignore
+        // raw hex codes — repeat them with a "MUST USE" directive and a
+        // color-name annotation if available.
+        const colorBits = []
+        if (brand.primary_color) colorBits.push(`primary ${brand.primary_color}`)
+        if (brand.secondary_color) colorBits.push(`secondary ${brand.secondary_color}`)
+        if (colorBits.length) lines.push(`Brand color palette MUST be used: ${colorBits.join(', ')}. Apply these as the dominant colors throughout the design — backgrounds, accents, headers.`)
+        if (brand.voice) lines.push(`Voice/style: ${String(brand.voice).slice(0, 200)}.`)
+        if (brand.audience) lines.push(`Audience: ${String(brand.audience).slice(0, 160)}.`)
+        prompt = `BRAND IDENTITY DIRECTIVE\n${lines.join('\n')}\n\n---\n\n${prompt}`
       }
 
       // Build a name → url map of every named upstream image. Then either
@@ -1546,12 +1561,17 @@ export const NODE_REGISTRY = {
       // No matches by name → fall back to every reference image we received.
       if (!refs.length) refs = pickImageUrls(incoming)
 
-      // If the prompt mentions "logo" / "brand mark" and a connected brand
-      // profile has a logo_url, auto-attach it as a reference image so the
-      // model can place / style it correctly.
-      const mentionsLogo = /\b(logo|brand\s*mark)\b/i.test(prompt)
-      if (mentionsLogo && brand?.logo_url && !refs.includes(brand.logo_url)) {
+      // Whenever a brand is in play AND it has a logo, attach the logo as a
+      // reference image. Image models are far more likely to reproduce brand
+      // visuals when they actually SEE the asset, vs being told about it in
+      // text. Also nudge the prompt so the model knows there's a logo
+      // available, even if the user didn't say "logo".
+      if (brand?.logo_url && !refs.includes(brand.logo_url)) {
         refs.push(brand.logo_url)
+        const mentionsLogo = /\b(logo|brand\s*mark)\b/i.test(prompt)
+        if (!mentionsLogo) {
+          prompt += `\n\nThe brand's logo is provided as a reference image — place it tastefully in the composition (small corner placement is fine if no specific position is requested).`
+        }
       }
 
       // Strip @-mentions from the prompt before sending to KIE — image
