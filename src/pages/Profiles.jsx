@@ -538,6 +538,35 @@ function InterviewModal({ onClose, onApply }) {
 // Direct browser → Supabase Storage upload (landing-media bucket, public).
 // Saves the resulting public URL into the form. Brand-aware spaces nodes
 // (brand_profile, image_gen) read this URL automatically.
+// Rasterize SVGs (and anything that's not a standard raster image) into a
+// 1024×1024 PNG blob via canvas. KIE's image models reject SVG, so we
+// flatten on upload and only ever store a PNG. Returns { blob, ext, mime }.
+async function rasterizeIfSvg(file) {
+  const isSvg = file.type === 'image/svg+xml' || /\.svg$/i.test(file.name || '')
+  if (!isSvg) return { blob: file, ext: (file.name.split('.').pop() || 'png').toLowerCase(), mime: file.type || 'image/png' }
+
+  const dataUrl = await new Promise((res, rej) => {
+    const fr = new FileReader()
+    fr.onload = () => res(fr.result)
+    fr.onerror = () => rej(new Error('Could not read SVG'))
+    fr.readAsDataURL(file)
+  })
+  const img = await new Promise((res, rej) => {
+    const i = new Image()
+    i.onload = () => res(i)
+    i.onerror = () => rej(new Error('Could not parse SVG'))
+    i.src = dataUrl
+  })
+  const w = Math.max(256, img.naturalWidth || 1024)
+  const h = Math.max(256, img.naturalHeight || w)
+  const canvas = document.createElement('canvas')
+  canvas.width = w; canvas.height = h
+  const ctx = canvas.getContext('2d')
+  ctx.drawImage(img, 0, 0, w, h)
+  const blob = await new Promise((res, rej) => canvas.toBlob((b) => b ? res(b) : rej(new Error('Canvas to blob failed')), 'image/png'))
+  return { blob, ext: 'png', mime: 'image/png' }
+}
+
 function LogoUpload({ value, profileId, onChange }) {
   const inpRef = useRef(null)
   const [busy, setBusy] = useState(false)
@@ -548,10 +577,10 @@ function LogoUpload({ value, profileId, onChange }) {
     if (!file) return
     setBusy(true); setErr(null)
     try {
-      const ext = (file.name.split('.').pop() || 'png').toLowerCase()
+      const { blob, ext, mime } = await rasterizeIfSvg(file)
       const path = `${profileId || 'shared'}/logo/${Date.now()}.${ext}`
-      const { error } = await supabase.storage.from('landing-media').upload(path, file, {
-        contentType: file.type || 'image/png', upsert: false,
+      const { error } = await supabase.storage.from('landing-media').upload(path, blob, {
+        contentType: mime, upsert: false,
       })
       if (error) throw new Error(error.message)
       const { data } = supabase.storage.from('landing-media').getPublicUrl(path)

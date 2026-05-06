@@ -243,13 +243,37 @@ function expandMentions(text, inputsByName) {
 // Heads up: KIE expires uploaded files after ~3 days. That's fine for
 // reference images in active workflows; if a user wants a permanent
 // asset they should upload it through their brand profile instead.
-async function uploadImageToBucket(file, profileId) {
-  const dataUrl = await new Promise((resolve, reject) => {
+// Read a File as a data URL.
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(reader.result)
     reader.onerror = () => reject(new Error('Could not read file'))
     reader.readAsDataURL(file)
   })
+}
+
+// Rasterize an SVG to a PNG data URL. KIE's image models reject SVG.
+async function svgToPngDataUrl(file) {
+  const src = await fileToDataUrl(file)
+  const img = await new Promise((res, rej) => {
+    const i = new Image()
+    i.onload = () => res(i)
+    i.onerror = () => rej(new Error('Could not parse SVG'))
+    i.src = src
+  })
+  const w = Math.max(256, img.naturalWidth || 1024)
+  const h = Math.max(256, img.naturalHeight || w)
+  const c = document.createElement('canvas')
+  c.width = w; c.height = h
+  c.getContext('2d').drawImage(img, 0, 0, w, h)
+  return c.toDataURL('image/png')
+}
+
+async function uploadImageToBucket(file, profileId) {
+  const isSvg = file.type === 'image/svg+xml' || /\.svg$/i.test(file.name || '')
+  const dataUrl = isSvg ? await svgToPngDataUrl(file) : await fileToDataUrl(file)
+  const fileName = isSvg ? (file.name || 'image').replace(/\.svg$/i, '') + '.png' : (file.name || `image-${Date.now()}.png`)
   const session = (await supabase.auth.getSession()).data.session
   const r = await fetch('/api/images/upload-reference', {
     method: 'POST',
@@ -260,7 +284,7 @@ async function uploadImageToBucket(file, profileId) {
     body: JSON.stringify({
       profile_id: profileId,
       base64: dataUrl,
-      fileName: file.name || `image-${Date.now()}.png`,
+      fileName,
     }),
   })
   const body = await r.json().catch(() => ({}))
