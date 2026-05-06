@@ -46,8 +46,13 @@ export default async function handler(req, res) {
     const data = body?.data || body
     const state = String(data?.state || data?.status || '').toLowerCase()
 
-    if (state === 'success' || state === 'completed' || state === 'done') {
-      const raw = pickResultUrls(data).map((u) => (typeof u === 'string' ? { url: u } : u))
+    // Probe for result URLs first — some KIE jobs return result data
+    // without a definitive state field. If we have URLs, the job is done.
+    const probableUrls = pickResultUrls(data)
+    const isDone = state === 'success' || state === 'completed' || state === 'done' || state === 'finished'
+
+    if (isDone || probableUrls.length > 0) {
+      const raw = probableUrls.map((u) => (typeof u === 'string' ? { url: u } : u))
       if (!raw.length) return res.status(502).json({ state: 'failed', error: 'KIE returned no image URLs', kie_body: data })
       const mirrored = await Promise.all(
         raw.map(async (u) => ({ ...u, url: await mirrorToStorage(u.url, profile_id) }))

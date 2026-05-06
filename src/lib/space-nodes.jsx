@@ -537,9 +537,13 @@ function PromptHighlightField({ textareaRef, value, placeholder, minHeight, onCh
                   style={{
                     color: colorFor(s.kind),
                     background: bgFor(s.kind),
-                    borderRadius: 4,
-                    padding: '0 2px',
+                    border: `1px solid ${s.kind === 'brand' ? 'rgba(236,72,153,0.45)' : 'rgba(168,85,247,0.45)'}`,
+                    borderRadius: 999,
+                    padding: '0 7px',
                     fontWeight: 700,
+                    fontFamily: 'var(--font-display)',
+                    margin: '0 1px',
+                    whiteSpace: 'nowrap',
                   }}
                 >{s.text}</span>
           )}
@@ -1545,19 +1549,32 @@ export const NODE_REGISTRY = {
       const taskId = submit.taskId
       if (!taskId) throw new Error('No taskId returned')
 
-      // Client-side poll up to 5 minutes — keeps each Vercel call short.
+      // Client-side poll up to 12 minutes (Nano Banana Pro can take 6-9
+      // minutes on heavy queues). Each call is short enough for Vercel.
       const start = Date.now()
-      while (Date.now() - start < 300_000) {
-        await new Promise((r) => setTimeout(r, 3000))
-        const sR = await fetch(`/api/images/status?taskId=${encodeURIComponent(taskId)}&profile_id=${encodeURIComponent(profileForCall)}`, {
-          headers: { Authorization: `Bearer ${ctx.token}` },
-        })
-        const s = await sR.json()
-        if (!sR.ok) throw new Error(s.error || `Status check failed (${sR.status})`)
-        if (s.state === 'success') return { images: s.images || [] }
-        if (s.state === 'failed') throw new Error(s.error || 'Generation failed')
+      let consecutiveErrors = 0
+      while (Date.now() - start < 720_000) {
+        await new Promise((r) => setTimeout(r, 4000))
+        try {
+          const sR = await fetch(`/api/images/status?taskId=${encodeURIComponent(taskId)}&profile_id=${encodeURIComponent(profileForCall)}`, {
+            headers: { Authorization: `Bearer ${ctx.token}` },
+          })
+          const s = await sR.json()
+          if (!sR.ok) {
+            consecutiveErrors++
+            if (consecutiveErrors >= 3) throw new Error(s.error || `Status check failed (${sR.status})`)
+            continue
+          }
+          consecutiveErrors = 0
+          if (s.state === 'success') return { images: s.images || [] }
+          if (s.state === 'failed') throw new Error(s.error || 'Generation failed')
+          // Anything else (waiting / generating / queueing / pending) → loop.
+        } catch (e) {
+          consecutiveErrors++
+          if (consecutiveErrors >= 3) throw e
+        }
       }
-      throw new Error('Image generation timed out')
+      throw new Error('Image generation timed out after 12 minutes — KIE may still be processing; try again or check the dashboard.')
     },
   },
 
