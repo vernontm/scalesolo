@@ -589,6 +589,11 @@ function SpaceBuilder({ space, onSave, onClose }) {
       : []
   )
   const [running, setRunning] = useState(false)
+  // Live mirror so async ticks (auto-run intervals) can read current value
+  // without going through stale closure state.
+  const runningRef = useRef(false)
+  useEffect(() => { runningRef.current = running }, [running])
+  const [skippedTicks, setSkippedTicks] = useState(0)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [avatars, setAvatars] = useState([])
@@ -995,16 +1000,26 @@ function SpaceBuilder({ space, onSave, onClose }) {
       const opt = AUTORUN_OPTIONS.find((o) => o.id === trig.data.props.cadence) || AUTORUN_OPTIONS[2]
       const id = trig.id
       const tick = async () => {
-        // Re-read live state at fire time (closure captures original ref).
         const live = nodesRef.current.find((n) => n.id === id)
         if (!live || !live.data?.props?.active) return
+        // If a previous run is still in flight (the cadence is shorter
+        // than how long a single run takes), DROP this tick instead of
+        // counting it. Otherwise the counter advances while runFromNode
+        // gets rejected by its own `if (running) return` guard, which
+        // looks like the run "happened" without anything actually firing.
+        if (runningRef.current) {
+          setSkippedTicks((n) => n + 1)
+          console.warn('auto-run tick skipped — previous run still in progress')
+          return
+        }
         const used = Number(live.data.props.runs_used || 0)
         const cap  = Number(live.data.props.max_runs || 10)
         if (used >= cap) {
           patchNode(id, { props: { ...live.data.props, active: false } })
           return
         }
-        // Increment + record before run so concurrent ticks can't double-fire.
+        // Increment + record before run so concurrent ticks (which we now
+        // guard against above) can't double-fire even if scheduling drifts.
         patchNode(id, { props: { ...live.data.props, runs_used: used + 1, last_run_at: new Date().toISOString() } })
         try {
           await runFromNodeRef.current(id)
@@ -1012,7 +1027,6 @@ function SpaceBuilder({ space, onSave, onClose }) {
           console.warn('auto-run tick failed:', e.message)
         }
       }
-      // Fire first tick immediately so the user sees something happen.
       tick()
       timers.push(setInterval(tick, opt.ms))
     }
@@ -1195,6 +1209,20 @@ function SpaceBuilder({ space, onSave, onClose }) {
             : autoStatus === 'saved' ? 'Saved'
             : autoStatus === 'error' ? 'Save error' : 'Autosave on'}
         </span>
+        {skippedTicks > 0 && (
+          <span
+            title="Previous run was still in progress when an Auto-run tick fired. Slow down the cadence or wait for the run to finish."
+            style={{
+              fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700,
+              padding: '4px 9px', borderRadius: 999,
+              background: 'rgba(245,158,11,0.16)', color: 'var(--amber)',
+              cursor: 'help',
+            }}
+            onClick={() => setSkippedTicks(0)}
+          >
+            {skippedTicks} skipped
+          </span>
+        )}
         <button className="btn-ghost" onClick={() => setHistoryOpen(true)} title="Run history" style={{ padding: '6px 10px' }}>
           <History size={13} /> History
         </button>
