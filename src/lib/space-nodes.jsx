@@ -423,13 +423,15 @@ function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = 
           ))}
         </div>
       )}
-      <textarea
-        ref={ref}
-        style={{ ...tinyInput, minHeight, fontFamily: 'inherit' }}
-        placeholder={placeholder}
+      <PromptHighlightField
+        textareaRef={ref}
         value={prompt}
+        placeholder={placeholder}
+        minHeight={minHeight}
         onChange={onTextareaChange}
         onBlur={() => setTimeout(() => setSuggest((s) => ({ ...s, open: false })), 150)}
+        brands={brands}
+        namedImages={namedImages}
       />
       {suggest.open && filtered.length > 0 && (
         <div style={{
@@ -464,18 +466,102 @@ function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = 
           ))}
         </div>
       )}
-      {tokens.length > 0 && (
-        <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-          {tokens.map((t) => {
-            // Color the chip based on whether it matches a brand or image.
-            const norm = t.replace(/^@"?|"?$/g, '').toLowerCase().replace(/\s+/g, '')
-            const isBrand = brands.some((b) => (b.name || '').toLowerCase().replace(/\s+/g, '') === norm)
-            return (
-              <span key={t} style={chipStyle(isBrand ? 'brand' : 'image', true)}>{t}</span>
-            )
-          })}
-        </div>
-      )}
+    </div>
+  )
+}
+
+// PromptHighlightField — textarea with a backdrop layer that paints @-mention
+// tokens inline in the matching brand/image color while you type. The textarea
+// itself stays plain text (transparent fill, visible caret) and the backdrop
+// sits behind it pixel-aligned. Both share font/padding/border so wrapping
+// and spacing match exactly.
+function PromptHighlightField({ textareaRef, value, placeholder, minHeight, onChange, onBlur, brands, namedImages }) {
+  const backdropRef = useRef(null)
+  const brandSet = new Set((brands || []).map((b) => (b.name || '').toLowerCase().replace(/\s+/g, '')))
+  const imageSet = new Set((namedImages || []).map((im) => (im.name || '').toLowerCase().replace(/\s+/g, '')))
+
+  // Walk the prompt, splitting at @-tokens. Recognized tokens get a colored
+  // span; unknown tokens stay default-colored.
+  const segments = []
+  const re = /@(?:"[^"]+"|[A-Za-z0-9_-]+)/g
+  let cursor = 0
+  let m
+  let key = 0
+  while ((m = re.exec(value || '')) !== null) {
+    if (m.index > cursor) segments.push({ k: key++, kind: 'text', text: value.slice(cursor, m.index) })
+    const tok = m[0]
+    const norm = tok.replace(/^@"?|"?$/g, '').toLowerCase().replace(/\s+/g, '')
+    const tokKind = brandSet.has(norm) ? 'brand' : (imageSet.has(norm) ? 'image' : 'unknown')
+    segments.push({ k: key++, kind: tokKind, text: tok })
+    cursor = m.index + tok.length
+  }
+  if (cursor < (value || '').length) segments.push({ k: key++, kind: 'text', text: value.slice(cursor) })
+
+  const sharedTextStyle = {
+    minHeight,
+    width: '100%',
+    boxSizing: 'border-box',
+    padding: '7px 9px',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    fontFamily: 'inherit',
+    fontSize: 12,
+    lineHeight: 1.45,
+    whiteSpace: 'pre-wrap',
+    wordWrap: 'break-word',
+    overflow: 'auto',
+  }
+  const colorFor = (kind) => kind === 'brand' ? '#f472b6' : kind === 'image' ? '#c4b5fd' : 'inherit'
+  const bgFor = (kind) => kind === 'brand' ? 'rgba(236,72,153,0.18)' : kind === 'image' ? 'rgba(168,85,247,0.18)' : 'transparent'
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <div
+        ref={backdropRef}
+        aria-hidden
+        style={{
+          ...sharedTextStyle,
+          position: 'absolute', inset: 0,
+          background: 'var(--surface-2)',
+          color: 'var(--text)',
+          pointerEvents: 'none',
+          overflow: 'hidden',
+        }}
+      >
+        {segments.length === 0 && !value
+          ? <span style={{ color: 'var(--muted)' }}>{placeholder}</span>
+          : segments.map((s) => s.kind === 'text'
+              ? <span key={s.k}>{s.text}</span>
+              : <span
+                  key={s.k}
+                  style={{
+                    color: colorFor(s.kind),
+                    background: bgFor(s.kind),
+                    borderRadius: 4,
+                    padding: '0 2px',
+                    fontWeight: 700,
+                  }}
+                >{s.text}</span>
+          )}
+      </div>
+      <textarea
+        ref={textareaRef}
+        style={{
+          ...sharedTextStyle,
+          position: 'relative',
+          background: 'transparent',
+          color: 'transparent',
+          WebkitTextFillColor: 'transparent',
+          caretColor: 'var(--text)',
+          resize: 'none',
+          outline: 'none',
+        }}
+        placeholder={placeholder}
+        value={value}
+        onChange={onChange}
+        onBlur={onBlur}
+        onScroll={(e) => { if (backdropRef.current) backdropRef.current.scrollTop = e.target.scrollTop }}
+      />
     </div>
   )
 }
