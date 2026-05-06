@@ -694,15 +694,11 @@ function BrandProfileBody({ data, onPatch }) {
           <div style={{ color: 'var(--muted)', fontSize: 10.5, marginTop: 1 }}>Auto-connect this brand to every node with a Brand input, now and going forward.</div>
         </span>
       </label>
-      {out && (
-        <div style={{ ...previewBox, marginTop: 8 }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>{out.name || 'Brand'}</div>
-          {out.voice && <div><span style={{ color: 'var(--muted)' }}>Voice:</span> {out.voice.slice(0, 120)}</div>}
-          {out.audience && <div><span style={{ color: 'var(--muted)' }}>Audience:</span> {out.audience.slice(0, 120)}</div>}
-          {out.brandBible && <div style={{ color: 'var(--muted)', fontSize: 10, marginTop: 4 }}>Brand bible attached ({out.brandBible.length} chars)</div>}
-        </div>
+      {/* Errors only — no descriptive preview, the dropdown + sync toggle
+          are the whole UI. */}
+      {data.status === 'failed' && (
+        <NodePreview status="failed" error={data.error} />
       )}
-      <NodePreview status={data.status} output={out ? null : data.output} error={data.error} />
     </>
   )
 }
