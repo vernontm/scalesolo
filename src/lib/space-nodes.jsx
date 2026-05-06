@@ -9,7 +9,7 @@
 //   @scriptgen1, @"My image" — substituted with the upstream output before
 //   being sent to APIs. Resolution uses the source node's editable name.
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Type, Wand2, Captions, UserCircle2, Save, Image as ImageIcon,
   ListChecks, FileVideo, Upload, Loader2, Maximize2, ArrowUpRight,
