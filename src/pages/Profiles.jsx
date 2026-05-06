@@ -94,7 +94,7 @@ function ProfileEditor({ profile, onClose, onSaved }) {
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-card modal-card-lg" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-card modal-card-xl" onClick={(e) => e.stopPropagation()} style={{ minHeight: '60vh' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, flex: 1 }}>
             {isNew ? 'Create a brand profile' : 'Edit brand profile'}
@@ -149,7 +149,7 @@ function ProfileEditor({ profile, onClose, onSaved }) {
           }>
             <textarea
               className="textarea"
-              style={{ minHeight: 140 }}
+              style={{ minHeight: 260, width: '100%' }}
               value={form.brand_bible || ''}
               onChange={(e) => set('brand_bible', e.target.value)}
               placeholder={`Voice: direct, candid, never preachy.\nAudience: solopreneurs scaling past $10k/mo.\nOffer: AI-native operating system.\nDo-not-say: "synergy", "leverage" as a verb.\nSignature phrases: "ship it", "10x the brand".`}
