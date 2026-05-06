@@ -139,7 +139,20 @@ function ProfileEditor({ profile, onClose, onSaved }) {
             </div>
           </Field>
           <Field label="Brand secondary color">
-            <input className="input" value={form.brand_secondary_color || ''} onChange={(e) => set('brand_secondary_color', e.target.value)} placeholder="#b91c1c" />
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                type="color"
+                value={form.brand_secondary_color || '#b91c1c'}
+                onChange={(e) => set('brand_secondary_color', e.target.value)}
+                style={{ width: 44, height: 40, border: '1px solid var(--border)', borderRadius: 8, background: 'transparent', padding: 0, cursor: 'pointer' }}
+              />
+              <input
+                className="input"
+                value={form.brand_secondary_color || ''}
+                onChange={(e) => set('brand_secondary_color', e.target.value)}
+                placeholder="#b91c1c"
+              />
+            </div>
           </Field>
         </div>
 
