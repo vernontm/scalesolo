@@ -1918,6 +1918,9 @@ export const NODE_REGISTRY = {
             photo_url,
             script: scriptChunk || undefined,
             audio_url: audioUrl || undefined,
+            // Internal Supabase avatar id — server uses it to look up the
+            // stored ElevenLabs voice when voice_id isn't passed explicitly.
+            avatar_id: avatar.avatar_id,
             voice_id: avatar.voice_id || undefined,
           }),
         })
