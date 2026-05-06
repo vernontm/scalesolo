@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Plus, Building2, Edit3, Trash2, X, Save, Sparkles, Check, Crown,
+  Upload, ClipboardCopy, MessageSquare, Wand2, Loader2, ChevronRight,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
@@ -65,8 +66,26 @@ function ProfileEditor({ profile, onClose, onSaved }) {
   const [form, setForm] = useState({ ...FORM_DEFAULTS, ...(profile || {}) })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  const [helper, setHelper] = useState(null)  // 'paste' | 'prompt' | 'interview' | null
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
+
+  // Merge a parsed-fields object from any of the three helpers into the
+  // current form. Empty/null values from the helper don't overwrite.
+  const mergeFields = (fields) => {
+    if (!fields || typeof fields !== 'object') return
+    setForm((f) => {
+      const next = { ...f }
+      for (const [k, v] of Object.entries(fields)) {
+        if (v == null) continue
+        if (typeof v === 'string' && !v.trim()) continue
+        if (Array.isArray(v) && !v.length) continue
+        next[k] = v
+      }
+      return next
+    })
+    setHelper(null)
+  }
 
   const save = async () => {
     if (!form.business_name?.trim()) {
@@ -98,11 +117,25 @@ function ProfileEditor({ profile, onClose, onSaved }) {
   return createPortal((
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-card modal-card-xl" onClick={(e) => e.stopPropagation()} style={{ minHeight: '60vh' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, flex: 1 }}>
             {isNew ? 'Create a brand profile' : 'Edit brand profile'}
           </h3>
           <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}><X size={20} /></button>
+        </div>
+
+        {/* Bible-import shortcuts. All three feed back into the same form
+            via mergeFields() so users can review before saving. */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>
+          <button type="button" className="btn-ghost" onClick={() => setHelper('paste')} style={{ fontSize: 12 }}>
+            <Upload size={13} /> Import bible (paste)
+          </button>
+          <button type="button" className="btn-ghost" onClick={() => setHelper('prompt')} style={{ fontSize: 12 }}>
+            <ClipboardCopy size={13} /> Get extraction prompt
+          </button>
+          <button type="button" className="btn-ghost" onClick={() => setHelper('interview')} style={{ fontSize: 12 }}>
+            <MessageSquare size={13} /> Brand interview
+          </button>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
@@ -203,8 +236,277 @@ function ProfileEditor({ profile, onClose, onSaved }) {
           </button>
         </div>
       </div>
+
+      {helper === 'paste' && (
+        <BiblePasteModal
+          token={session.access_token}
+          profileId={profile?.id}
+          onClose={() => setHelper(null)}
+          onApply={mergeFields}
+        />
+      )}
+      {helper === 'prompt' && (
+        <PromptHelperModal
+          onClose={() => setHelper(null)}
+          onApply={mergeFields}
+        />
+      )}
+      {helper === 'interview' && (
+        <InterviewModal
+          onClose={() => setHelper(null)}
+          onApply={mergeFields}
+        />
+      )}
     </div>
   ), document.body)
+}
+
+// ─── Bible paste modal — paste raw text, Claude parses, preview & apply ────
+function BiblePasteModal({ token, profileId, onClose, onApply }) {
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [parsed, setParsed] = useState(null)
+  const [error, setError] = useState(null)
+  const parse = async () => {
+    setBusy(true); setError(null)
+    try {
+      const r = await fetch('/api/profiles/parse-bible', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ profile_id: profileId, raw_text: text }),
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body.error || 'Parse failed')
+      setParsed(body.fields)
+    } catch (e) { setError(e.message) }
+    finally { setBusy(false) }
+  }
+  const fieldRows = parsed ? Object.entries(parsed).filter(([, v]) => v != null && (typeof v === 'string' ? v.trim() : true)) : []
+  return (
+    <div className="modal-overlay" onClick={onClose} style={{ zIndex: 110 }}>
+      <div className="modal-card modal-card-lg" onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          <Upload size={18} style={{ color: 'var(--red)' }} />
+          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, flex: 1 }}>Import a brand bible</h3>
+          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}><X size={18} /></button>
+        </div>
+        {!parsed ? (
+          <>
+            <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 10, lineHeight: 1.5 }}>
+              Paste your brand bible, voice doc, or any prose that describes your brand. Claude will extract structured fields (voice, audience, colors, fonts, handles, etc.) you can review before applying.
+            </div>
+            <textarea
+              className="textarea"
+              style={{ minHeight: 240, width: '100%' }}
+              placeholder="Paste raw text here…"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+            />
+            {error && <div style={{ color: 'var(--red)', fontSize: 12, marginTop: 8 }}>{error}</div>}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
+              <button className="btn-secondary" onClick={onClose}>Cancel</button>
+              <button className="btn-primary" onClick={parse} disabled={busy || !text.trim()}>
+                {busy ? <Loader2 size={13} className="spin" /> : <Wand2 size={13} />} Parse with Claude
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 10 }}>
+              Review the extracted fields. Apply to fill the form, then save when you're happy.
+            </div>
+            <div style={{ maxHeight: 360, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8, padding: 10 }}>
+              {fieldRows.map(([k, v]) => (
+                <div key={k} style={{ marginBottom: 8 }}>
+                  <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 10.5, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{k}</div>
+                  <div style={{ fontSize: 12.5, color: 'var(--text-soft)', lineHeight: 1.4, whiteSpace: 'pre-wrap' }}>
+                    {typeof v === 'string' ? v : JSON.stringify(v, null, 2)}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', marginTop: 14 }}>
+              <button className="btn-secondary" onClick={() => setParsed(null)}>Back</button>
+              <button className="btn-primary" onClick={() => onApply(parsed)}>
+                <Check size={13} /> Apply {fieldRows.length} fields
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Prompt-helper modal — copyable prompt + paste-back JSON ───────────────
+const EXTRACTION_PROMPT = `You are extracting a brand identity. Output ONLY a JSON object with these keys (omit any you can't infer):
+
+{
+  "business_name": "string",
+  "industry": "string",
+  "preferred_tone": "comma-separated voice descriptors",
+  "target_audience": "string",
+  "brand_primary_color": "#rrggbb",
+  "brand_secondary_color": "#rrggbb",
+  "brand_colors": [{ "name": "string", "hex": "#rrggbb" }],
+  "brand_fonts":  [{ "name": "string", "usage": "display|body|mono" }],
+  "logo_url": "https://...",
+  "website_url": "https://...",
+  "core_hashtags": "#tag1 #tag2",
+  "instagram_handle": "no @",
+  "tiktok_handle": "no @",
+  "youtube_handle": "no @",
+  "linkedin_handle": "no @",
+  "threads_handle": "no @",
+  "x_handle": "no @",
+  "brand_bible": "<long-form: voice, audience, offer, do-not-say, signature phrases>",
+  "brand_bible_summary": "<≤120 words, plain prose>"
+}
+
+Rules:
+- Only use info I provide or that's strongly implied by it.
+- Hex colors must be #rrggbb. Skip any color you don't have a hex for.
+- Never use em dashes anywhere.
+
+My brand: <DESCRIBE YOUR BRAND IN A FEW SENTENCES OR PASTE EXISTING DOCS HERE>`
+
+function PromptHelperModal({ onClose, onApply }) {
+  const [pasted, setPasted] = useState('')
+  const [error, setError] = useState(null)
+  const [copied, setCopied] = useState(false)
+  const apply = () => {
+    setError(null)
+    try {
+      const m = pasted.match(/\{[\s\S]*\}/)?.[0]
+      if (!m) { setError('No JSON found in paste'); return }
+      const fields = JSON.parse(m)
+      onApply(fields)
+    } catch (e) { setError(`Invalid JSON: ${e.message}`) }
+  }
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(EXTRACTION_PROMPT); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch {}
+  }
+  return (
+    <div className="modal-overlay" onClick={onClose} style={{ zIndex: 110 }}>
+      <div className="modal-card modal-card-lg" onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          <ClipboardCopy size={18} style={{ color: 'var(--red)' }} />
+          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, flex: 1 }}>Get an extraction prompt</h3>
+          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}><X size={18} /></button>
+        </div>
+        <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 8, lineHeight: 1.5 }}>
+          Step 1. Copy this prompt and paste it into ChatGPT, Claude, or any AI you use. Replace the bracketed placeholder with your brand info or paste docs there.
+        </div>
+        <div style={{ position: 'relative', marginBottom: 14 }}>
+          <pre style={{
+            background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 8,
+            padding: 12, fontSize: 11.5, lineHeight: 1.5, color: 'var(--text-soft)',
+            whiteSpace: 'pre-wrap', maxHeight: 200, overflowY: 'auto', margin: 0,
+          }}>{EXTRACTION_PROMPT}</pre>
+          <button
+            type="button"
+            onClick={copy}
+            style={{
+              position: 'absolute', top: 6, right: 6, fontSize: 11,
+              padding: '4px 9px', borderRadius: 999, cursor: 'pointer',
+              background: copied ? 'rgba(46,204,113,0.18)' : 'var(--surface)',
+              border: `1px solid ${copied ? '#2ecc71' : 'var(--border)'}`,
+              color: copied ? '#2ecc71' : 'var(--text)',
+            }}
+          >{copied ? 'Copied' : 'Copy prompt'}</button>
+        </div>
+        <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 8, lineHeight: 1.5 }}>
+          Step 2. Paste the JSON the AI gives you back, then apply.
+        </div>
+        <textarea
+          className="textarea"
+          style={{ minHeight: 160, width: '100%', fontFamily: 'monospace', fontSize: 11.5 }}
+          placeholder='{"business_name": "...", "preferred_tone": "..."}'
+          value={pasted}
+          onChange={(e) => setPasted(e.target.value)}
+        />
+        {error && <div style={{ color: 'var(--red)', fontSize: 12, marginTop: 8 }}>{error}</div>}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
+          <button className="btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" onClick={apply} disabled={!pasted.trim()}>
+            <Check size={13} /> Apply
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Interview wizard — 8 questions, builds the form step by step ──────────
+const INTERVIEW_STEPS = [
+  { key: 'business_name',   label: "What's your business name?",   placeholder: 'ScaleSolo' },
+  { key: 'industry',        label: 'Industry / niche?',            placeholder: 'AI for solopreneurs' },
+  { key: 'target_audience', label: 'Who do you sell to? Describe them in one sentence.', placeholder: 'Solopreneurs scaling past $10k/mo using AI' },
+  { key: 'preferred_tone',  label: 'Brand voice — 3 to 5 adjectives.', placeholder: 'Direct, candid, action-oriented' },
+  { key: 'offer',           label: 'What do you offer? Free-form.', placeholder: 'AI-native operating system for solo founders', textarea: true },
+  { key: 'do_not_say',      label: 'Words or phrases you would NEVER use? (Optional)', placeholder: '"synergy", "leverage" as a verb', textarea: true },
+  { key: 'brand_primary_color', label: 'Primary brand color (hex)', placeholder: '#ef4444', color: true },
+  { key: 'core_hashtags',   label: 'Signature hashtags? (Optional)', placeholder: '#scalesolo #aitools' },
+]
+
+function InterviewModal({ onClose, onApply }) {
+  const [step, setStep] = useState(0)
+  const [answers, setAnswers] = useState({})
+  const cur = INTERVIEW_STEPS[step]
+  const last = step === INTERVIEW_STEPS.length - 1
+
+  const next = () => last ? finish() : setStep(step + 1)
+  const back = () => setStep(Math.max(0, step - 1))
+  const finish = () => {
+    const fields = { ...answers }
+    // Bake the offer + do_not_say into a starter brand_bible if user filled them.
+    const bible = []
+    if (answers.preferred_tone)  bible.push(`Voice: ${answers.preferred_tone}`)
+    if (answers.target_audience) bible.push(`Audience: ${answers.target_audience}`)
+    if (answers.offer)           bible.push(`Offer: ${answers.offer}`)
+    if (answers.do_not_say)      bible.push(`Do-not-say: ${answers.do_not_say}`)
+    if (bible.length) fields.brand_bible = bible.join('\n')
+    delete fields.offer
+    delete fields.do_not_say
+    onApply(fields)
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose} style={{ zIndex: 110 }}>
+      <div className="modal-card modal-card-md" onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          <MessageSquare size={18} style={{ color: 'var(--red)' }} />
+          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, flex: 1 }}>Brand interview</h3>
+          <span style={{ fontSize: 11, color: 'var(--muted)' }}>{step + 1} / {INTERVIEW_STEPS.length}</span>
+          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}><X size={18} /></button>
+        </div>
+        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14, color: 'var(--text)', marginBottom: 10 }}>
+          {cur.label}
+        </div>
+        {cur.color ? (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input
+              type="color"
+              value={answers[cur.key] || '#ef4444'}
+              onChange={(e) => setAnswers({ ...answers, [cur.key]: e.target.value })}
+              style={{ width: 50, height: 44, border: '1px solid var(--border)', borderRadius: 8, background: 'transparent', padding: 0, cursor: 'pointer' }}
+            />
+            <input className="input" value={answers[cur.key] || ''} onChange={(e) => setAnswers({ ...answers, [cur.key]: e.target.value })} placeholder={cur.placeholder} />
+          </div>
+        ) : cur.textarea ? (
+          <textarea className="textarea" style={{ minHeight: 120, width: '100%' }} value={answers[cur.key] || ''} onChange={(e) => setAnswers({ ...answers, [cur.key]: e.target.value })} placeholder={cur.placeholder} />
+        ) : (
+          <input className="input" value={answers[cur.key] || ''} onChange={(e) => setAnswers({ ...answers, [cur.key]: e.target.value })} placeholder={cur.placeholder} autoFocus onKeyDown={(e) => { if (e.key === 'Enter') next() }} />
+        )}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', marginTop: 16 }}>
+          <button className="btn-secondary" onClick={back} disabled={step === 0}>Back</button>
+          <button className="btn-primary" onClick={next}>
+            {last ? <><Check size={13} /> Finish</> : <>Next <ChevronRight size={13} /></>}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function Field({ label, required, children }) {
