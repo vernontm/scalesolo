@@ -1017,9 +1017,18 @@ function SpaceBuilder({ space, onSave, onClose }) {
     if (!subsetNodes.length) return
 
     setRunning(true); setError(null); abortRunRef.current = false
-    // Reset just the subset
-    setNodes((arr) => arr.map((n) => want.has(n.id) ? { ...n, data: { ...n.data, status: 'idle', output: null, error: null } } : n))
-    const ctx = { token: session.access_token, profileId: selectedProfileId, avatars, profiles, shouldAbort: () => abortRunRef.current }
+    // Smart reset: only clear nodes that aren't already 'done' with output.
+    // Done nodes' cached outputs feed downstream — runSpace will detect them
+    // and skip re-execution. This makes per-node Run useful for retries
+    // (re-run combine_videos without re-paying for avatar render, etc.).
+    // The TARGET is always reset so it actually re-runs.
+    setNodes((arr) => arr.map((n) => {
+      if (!want.has(n.id)) return n
+      const isCached = n.id !== targetId && n.data?.status === 'done' && n.data?.output
+      if (isCached) return n  // keep its done state + output
+      return { ...n, data: { ...n.data, status: 'idle', output: null, error: null } }
+    }))
+    const ctx = { token: session.access_token, profileId: selectedProfileId, avatars, profiles, shouldAbort: () => abortRunRef.current, runFromTargetId: targetId }
     const snapshot = JSON.parse(JSON.stringify({ nodes: subsetNodes, edges: subsetEdges }))
     const startedAt = Date.now()
     const triggerType = nodes.find((n) => n.id === targetId)?.data?.type === 'auto_run' ? 'auto_run' : 'per_node'

@@ -2338,6 +2338,16 @@ export async function runSpace({ ctx, nodes, edges, onNodeChange }) {
       if (sname) inputsByName[sname] = sourceOut
     }
 
+    // Cached short-circuit: node arrived already "done" with output (set by
+    // runFromNode's smart reset). Skip def.run() and seed outputsById from
+    // its existing output so downstream nodes thread through correctly.
+    // The target node itself is always re-run (runFromNode forces its
+    // status back to 'idle' before the snapshot).
+    if (node.data?.status === 'done' && node.data?.output) {
+      outputsById.set(id, node.data.output)
+      continue
+    }
+
     onNodeChange?.(id, { status: 'running', error: null })
     try {
       // Race the node's run against a poll of ctx.shouldAbort(). Long-poll
