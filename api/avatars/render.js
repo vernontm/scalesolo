@@ -22,8 +22,9 @@ export default async function handler(req, res) {
   if (!auth) return
 
   try {
-    const { avatar_id, script, voice_id, look_id, model_version } = req.body || {}
-    if (!avatar_id || !script) return res.status(400).json({ error: 'avatar_id + script required' })
+    const { avatar_id, script, audio_url, voice_id, look_id, model_version } = req.body || {}
+    if (!avatar_id) return res.status(400).json({ error: 'avatar_id required' })
+    if (!script && !audio_url) return res.status(400).json({ error: 'script or audio_url required' })
 
     // Public-library avatars are passed through as `pub:<heygen_group_id>`.
     // Skip the Supabase lookup and render directly via the V3 endpoint.
@@ -119,11 +120,12 @@ export default async function handler(req, res) {
     //      the Avatars page)
     //   3. HeyGen's default voice for the public avatar
     const resolvedVoice = voice_id || avatar.elevenlabs_voice_id || publicDefaultVoice || ''
-    if (!resolvedVoice) {
+    // Only required for text-driven renders. Audio-driven renders bypass TTS.
+    if (!resolvedVoice && !audio_url) {
       return res.status(400).json({
         error: isPublic
-          ? 'No default voice on this HeyGen avatar. Try a different one or set a voice manually.'
-          : 'No default voice set. Open the Avatars page and assign a voice to this avatar.',
+          ? 'No default voice on this HeyGen avatar. Try a different one, set a voice manually, or wire in an audio file.'
+          : 'No default voice set. Open the Avatars page and assign a voice, or wire an audio file into Avatar render.',
       })
     }
 
@@ -135,6 +137,7 @@ export default async function handler(req, res) {
           talkingPhotoId: avatarIdForApi,
           voiceId: resolvedVoice,
           script,
+          audioUrl: audio_url,
         })
         heygenVideoId = resp?.data?.video_id || resp?.video_id
       } else {
@@ -142,6 +145,7 @@ export default async function handler(req, res) {
           avatarId: avatarIdForApi,
           voiceId: resolvedVoice,
           script,
+          audioUrl: audio_url,
           modelKey,
         })
         heygenVideoId = resp?.data?.video_id || resp?.video_id || resp?.id

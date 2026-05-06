@@ -117,11 +117,13 @@ export const getVideoStatusV3Direct = (videoId) =>
   call('GET', `${BASE_V3}/videos/${videoId}`)
 
 // ── Render: V2 legacy (Avatar III, our V3 tier) ─────────────────────────────
-export const generateVideoV2 = ({ talkingPhotoId, voiceId, script, dimension = { width: 1080, height: 1920 } }) =>
+export const generateVideoV2 = ({ talkingPhotoId, voiceId, script, audioUrl, dimension = { width: 1080, height: 1920 } }) =>
   call('POST', `${BASE_V2}/video/generate`, {
     video_inputs: [{
       character: { type: 'talking_photo', talking_photo_id: talkingPhotoId, scale: 1.0 },
-      voice: { type: 'text', input_text: script, voice_id: voiceId },
+      voice: audioUrl
+        ? { type: 'audio', audio_url: audioUrl }
+        : { type: 'text', input_text: script, voice_id: voiceId },
     }],
     dimension,
     test: false,
@@ -130,19 +132,24 @@ export const generateVideoV2 = ({ talkingPhotoId, voiceId, script, dimension = {
 
 // ── Render: V3 (Avatar IV today, Avatar V on rollout — our V4 + V5 tiers) ──
 //   modelKey controls expressiveness + motion. Same endpoint either way.
-export const generateVideoV3 = ({ avatarId, voiceId, script, modelKey = 'v4', extras = {} }) => {
+export const generateVideoV3 = ({ avatarId, voiceId, script, audioUrl, modelKey = 'v4', extras = {} }) => {
   const m = MODELS[modelKey] || MODELS.v4
   const body = {
     type: 'avatar',
     avatar_id: avatarId,
-    script,
-    voice_id: voiceId,
     title: extras.title || `ScaleSolo ${modelKey.toUpperCase()} render`,
     resolution: extras.resolution || '1080p',
     aspect_ratio: extras.aspect_ratio || '9:16',
     expressiveness: m.expressiveness || 'low',
   }
-  if (m.motion_default && extras.motion_prompt !== '') {
+  if (audioUrl) {
+    // Lip-sync to a user-provided audio file; bypass HeyGen's TTS.
+    body.voice = { type: 'audio', audio_url: audioUrl }
+  } else {
+    body.script = script
+    body.voice_id = voiceId
+  }
+  if (m.motion_default && extras.motion_prompt !== '' && script) {
     body.motion_prompt = extras.motion_prompt || deriveMotionPromptFromScript(script)
   }
   if (extras.callback_url) body.callback_url = extras.callback_url

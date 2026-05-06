@@ -26,21 +26,10 @@ export default async function handler(req, res) {
     if (!profileId) return res.status(400).json({ error: 'profile_id required' })
     await assertProfileAccess(auth.user.id, profileId)
 
-    const [accountResp, allResp] = await Promise.all([
-      listAvatarGroups(false).catch(() => null),
-      listAvatarGroups(true).catch(() => null),
-    ])
-    const accountGroups = extractGroups(accountResp)
-    const allGroups = extractGroups(allResp)
-    const accountIds = new Set(
-      (Array.isArray(accountGroups) ? accountGroups : []).map((g) => g.id || g.group_id).filter(Boolean)
-    )
-    const publicOnly = (Array.isArray(allGroups) ? allGroups : []).filter((g) => {
-      const id = g.id || g.group_id
-      return id && !accountIds.has(id)
-    })
-
-    return res.status(200).json({ groups: publicOnly })
+    // HeyGen library disabled — users now create their own avatars from
+    // uploads via the Avatars page only. Endpoint kept (returns empty) so
+    // older deployed clients don't 404.
+    return res.status(200).json({ groups: [] })
   } catch (err) {
     return res.status(err.status || 500).json({ error: err.message, data: err.data })
   }

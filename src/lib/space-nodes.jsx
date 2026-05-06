@@ -14,6 +14,7 @@ import {
   Type, Wand2, Captions, UserCircle2, Save, Image as ImageIcon,
   ListChecks, FileVideo, Upload, Loader2, Maximize2, ArrowUpRight,
   Download, Trash2, Building2, Repeat, Play, Pause, Combine as CombineIcon,
+  Mic,
 } from 'lucide-react'
 import { supabase } from './supabase.js'
 
@@ -204,6 +205,14 @@ function expandBrandMentions(text, profiles) {
 }
 // Backwards alias — old script_gen call still uses this name.
 const stripBrandMentions = expandBrandMentions
+
+function pickAudio(v) {
+  for (const x of asArr(v)) {
+    if (x && typeof x === 'object' && x.audio?.url) return x.audio
+    if (x && typeof x === 'object' && x.url && /\.(mp3|wav|m4a|ogg)(?:\?|$)/i.test(x.url)) return x
+  }
+  return null
+}
 
 function pickImageUrls(v) {
   const out = []
@@ -958,6 +967,70 @@ function AutoRunBody({ data, onPatch }) {
   )
 }
 
+// ─── AUDIO UPLOAD ───────────────────────────────────────────────────────────
+async function uploadAudioToBucket(file, profileId) {
+  const ext = (file.name.split('.').pop() || 'mp3').toLowerCase()
+  const path = `${profileId || 'shared'}/audio/${Date.now()}.${ext}`
+  const { error } = await supabase.storage.from('landing-media').upload(path, file, {
+    contentType: file.type || 'audio/mpeg', upsert: false,
+  })
+  if (error) throw new Error(`Upload failed: ${error.message}`)
+  const { data } = supabase.storage.from('landing-media').getPublicUrl(path)
+  return data.publicUrl
+}
+
+function AudioUploadBody({ data, onPatch }) {
+  const inpRef = useRef(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+  const profileId = data?._ctxProfileId
+  const url = data.props?.url
+  const name = data.props?.name || ''
+
+  async function onPick(e) {
+    const file = e.target.files?.[0]
+    if (!file || !profileId) return
+    setBusy(true); setErr(null)
+    try {
+      const u = await uploadAudioToBucket(file, profileId)
+      onPatch({ url: u, name: file.name })
+    } catch (e) { setErr(e.message) }
+    finally { setBusy(false); if (inpRef.current) inpRef.current.value = '' }
+  }
+  function clear() { onPatch({ url: '', name: '' }) }
+
+  return (
+    <>
+      {url ? (
+        <>
+          <audio src={url} controls style={{ width: '100%', marginBottom: 8 }} />
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); clear() }}
+            style={{ ...tinyInput, cursor: 'pointer', background: 'transparent', color: 'var(--muted)', textAlign: 'center', fontSize: 11 }}
+          >Remove</button>
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={() => inpRef.current?.click()}
+          disabled={busy}
+          style={{
+            ...tinyInput, cursor: 'pointer', display: 'flex',
+            alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px',
+            background: 'var(--surface-2)', borderStyle: 'dashed',
+          }}>
+          {busy ? <Loader2 size={13} className="spin" /> : <Mic size={13} />}
+          {busy ? 'Uploading…' : 'Upload audio (MP3 / WAV / M4A)'}
+        </button>
+      )}
+      <input ref={inpRef} type="file" accept="audio/*" onChange={onPick} style={{ display: 'none' }} />
+      {err && <div style={{ marginTop: 6, color: 'var(--red)', fontSize: 11 }}>{err}</div>}
+    </>
+  )
+}
+
 // ─── BRAND PROFILE ──────────────────────────────────────────────────────────
 function BrandProfileBody({ data, onPatch }) {
   const profiles = data?._ctxProfiles || []
@@ -1000,11 +1073,46 @@ function BrandProfileBody({ data, onPatch }) {
         />
         <span style={{ flex: 1 }}>
           <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 11 }}>Sync to all</div>
-          <div style={{ color: 'var(--muted)', fontSize: 10.5, marginTop: 1 }}>Auto-connect this brand to every node with a Brand input, now and going forward.</div>
+          <div style={{ color: 'var(--muted)', fontSize: 10.5, marginTop: 1 }}>Auto-connect this brand to every node with a Brand input.</div>
         </span>
       </label>
-      {/* Errors only — no descriptive preview, the dropdown + sync toggle
-          are the whole UI. */}
+
+      {/* What pieces of the brand to actually inject downstream. Each space
+          can dial these independently — three brand_profile nodes for the
+          same brand can each pass a different slice. */}
+      <div style={{ marginTop: 10, fontSize: 10, color: 'var(--muted)', fontFamily: 'var(--font-display)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+        Pass to downstream nodes
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, marginTop: 4 }}>
+        {[
+          ['voice_audience', 'Voice + audience'],
+          ['theme',          'Colors + fonts'],
+          ['logo',           'Logo (image)'],
+          ['bible',          'Brand bible text'],
+          ['hashtags',       'Core hashtags'],
+        ].map(([key, label]) => {
+          const inject = data.props?.inject || { voice_audience: true, theme: true, logo: true, bible: true, hashtags: true }
+          const on = inject[key] !== false
+          return (
+            <label key={key} style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '5px 8px', borderRadius: 6,
+              background: on ? 'rgba(236,72,153,0.10)' : 'var(--surface-2)',
+              border: `1px solid ${on ? 'rgba(236,72,153,0.4)' : 'var(--border)'}`,
+              cursor: 'pointer', fontSize: 10.5,
+            }}>
+              <input
+                type="checkbox"
+                checked={on}
+                onChange={(e) => onPatch({ inject: { ...inject, [key]: e.target.checked } })}
+                style={{ accentColor: '#ec4899' }}
+              />
+              <span style={{ color: on ? 'var(--text)' : 'var(--text-soft)' }}>{label}</span>
+            </label>
+          )
+        })}
+      </div>
+
       {data.status === 'failed' && (
         <NodePreview status="failed" error={data.error} />
       )}
@@ -1353,6 +1461,19 @@ export const NODE_REGISTRY = {
     run: async ({ data }) => ({ text: data.props?.text || '' }),
   },
 
+  audio_upload: {
+    label: 'Audio', description: 'Upload an audio file (MP3 / WAV / M4A) to use as the voice track for an avatar render. Wire its "out" into Avatar render in place of (or alongside) a script.',
+    icon: Mic, category: 'inputs', color: '#22d3ee',
+    inputs: [], outputs: [{ id: 'out', label: 'Out' }],
+    initialProps: { url: '', name: '' },
+    Body: AudioUploadBody,
+    run: async ({ data }) => {
+      const url = data.props?.url
+      if (!url) throw new Error('Upload an audio file first')
+      return { audio: { url, name: data.props?.name || '' } }
+    },
+  },
+
   image_upload: {
     label: 'Reference images', description: 'Upload images to use as references in image gen. Each image gets an editable name (default "image 1", "image 2"). Reference specific ones in a generator prompt with @-mentions, e.g. "she is at @office holding @logo".',
     icon: Upload, category: 'inputs', color: '#0ea5e9',
@@ -1375,10 +1496,14 @@ export const NODE_REGISTRY = {
   },
 
   brand_profile: {
-    label: 'Brand profile', description: 'Pulls in a brand profile (voice, audience, brand bible, hashtags) to use as context for downstream generators.',
+    label: 'Brand profile', description: 'Pulls in a brand profile and exposes it to downstream generators. Per-node "inject" toggles let each space pass a different slice (voice/audience, theme, logo, bible, hashtags). When sync_all is on, this node auto-wires to every script_gen / caption_gen / image_gen on the canvas.',
     icon: Building2, category: 'inputs', color: '#ec4899',
     inputs: [], outputs: [{ id: 'out', label: 'Out' }],
-    initialProps: { profile_id: '' },
+    initialProps: {
+      profile_id: '',
+      sync_all: false,
+      inject: { voice_audience: true, theme: true, logo: true, bible: true, hashtags: true },
+    },
     Body: BrandProfileBody,
     run: async ({ data, ctx }) => {
       const id = data.props?.profile_id
@@ -1390,20 +1515,29 @@ export const NODE_REGISTRY = {
       if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
       const p = (body.profiles || []).find((x) => x.id === id)
       if (!p) throw new Error('Profile not accessible')
-      return {
-        brand: {
-          profile_id: p.id,
-          name: p.business_name || '',
-          voice: p.preferred_tone || '',
-          audience: p.target_audience || '',
-          brandBible: p.brand_bible || '',
-          hashtags: p.core_hashtags || '',
-          industry: p.industry || '',
-          logo_url: p.logo_url || '',
-          primary_color: p.brand_primary_color || '',
-          secondary_color: p.brand_secondary_color || '',
-        },
+      // Default inject = everything on. Pass only the slices the user
+      // toggled in the node body, plus profile_id + name (always sent so
+      // resolveBrandMention etc. has something to work with).
+      const inj = data.props?.inject || { voice_audience: true, theme: true, logo: true, bible: true, hashtags: true }
+      const brand = {
+        profile_id: p.id,
+        name:       p.business_name || '',
+        industry:   p.industry || '',
       }
+      if (inj.voice_audience !== false) {
+        brand.voice    = p.preferred_tone || ''
+        brand.audience = p.target_audience || ''
+      }
+      if (inj.theme !== false) {
+        brand.primary_color   = p.brand_primary_color || ''
+        brand.secondary_color = p.brand_secondary_color || ''
+        if (Array.isArray(p.brand_colors)) brand.brand_colors = p.brand_colors
+        if (Array.isArray(p.brand_fonts))  brand.brand_fonts  = p.brand_fonts
+      }
+      if (inj.logo !== false)     brand.logo_url   = p.logo_url || ''
+      if (inj.bible !== false)    brand.brandBible = p.brand_bible || ''
+      if (inj.hashtags !== false) brand.hashtags   = p.core_hashtags || ''
+      return { brand }
     },
   },
 
@@ -1654,26 +1788,29 @@ export const NODE_REGISTRY = {
   },
 
   avatar_render: {
-    label: 'Avatar render', description: 'HeyGen renders the avatar speaking the script. Wire BOTH the script and the avatar config into the single In handle.',
+    label: 'Avatar render', description: 'HeyGen renders the avatar speaking the script — or, if an audio file is wired in, lip-syncs to that audio instead. Wire the avatar config + (script OR audio) into the single In handle.',
     icon: FileVideo, category: 'generators', color: '#ef4444',
-    inputs: [{ id: 'in',  label: 'In (script + avatar)' }],
+    inputs: [{ id: 'in',  label: 'In (avatar + script or audio)' }],
     outputs: [{ id: 'out', label: 'Out' }],
     initialProps: {},
     Body: AvatarRenderBody,
     run: async ({ inputs, ctx }) => {
       const incoming = inputs?.in
-      const script = pickScript(incoming)
-      if (!script) throw new Error('No script provided')
       const avatar = pickAvatarConfig(incoming)
       if (!avatar?.avatar_id) throw new Error('Connect an Avatar picker')
-      // voice_id is no longer required from the picker — the render
-      // endpoint resolves it from the avatar row (custom) or HeyGen group
-      // (public) defaults.
+      // Audio takes priority — if a user wired a recorded MP3 they want
+      // their own voice, not Claude's text-to-speech.
+      const audio = pickAudio(incoming)
+      const script = audio ? '' : pickScript(incoming)
+      if (!audio && !script) throw new Error('Wire in either a script (text/script_gen) or an audio file.')
+
       const r = await fetch('/api/avatars/render', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
         body: JSON.stringify({
-          avatar_id: avatar.avatar_id, script,
+          avatar_id: avatar.avatar_id,
+          script: script || undefined,
+          audio_url: audio?.url || undefined,
           voice_id: avatar.voice_id || undefined,
           look_id: avatar.look_id || undefined, model_version: avatar.model_version || undefined,
           profile_id: ctx.profileId,
