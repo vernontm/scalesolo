@@ -11,6 +11,7 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { message } from '../_lib/anthropic.js'
+import { embedOne } from '../_lib/openai.js'
 
 const FORMAT_HINT = {
   'tiktok-script':    'A TikTok script with a hook (first 3 seconds) + body (15-60 seconds of value) + CTA.',
@@ -65,6 +66,34 @@ export default async function handler(req, res) {
     const aggressiveness = profile.agent_aggressiveness || 'balanced'
     const autoApprove = aggressiveness === 'aggressive'
 
+    // ── Uniqueness check: pull the most-similar past pieces for this brand
+    // and feed them back so Claude doesn't restate them. Best-effort — if
+    // the embedding/RPC fails we just generate without dedup context.
+    let avoidBlock = ''
+    let topicEmbedding = null
+    try {
+      const { embedding } = await embedOne(`Topic: ${topic}\nFormat: ${format}`)
+      topicEmbedding = embedding
+      const matches = await supaFetch('rpc/match_content_history', {
+        method: 'POST',
+        body: {
+          p_profile_id: profile_id,
+          p_query_embedding: embedding,
+          p_match_count: 6,
+          p_min_similarity: 0.55,
+          p_kinds: ['script', 'caption'],
+        },
+      })
+      const list = Array.isArray(matches) ? matches.slice(0, 6) : []
+      if (list.length) {
+        avoidBlock = `\n\n## Previously written for this brand — DO NOT repeat angles, hooks, or examples from these:\n` +
+          list.map((m, i) => `${i + 1}. (${m.kind}, ${Math.round(m.similarity * 100)}% similar) ${String(m.text).slice(0, 220).replace(/\s+/g, ' ')}…`).join('\n') +
+          `\n\nRules: pick a fresh angle, fresh examples, fresh hook. If your output overlaps materially with anything above, reframe it.`
+      }
+    } catch (e) {
+      console.warn('content_history dedup skipped:', e.message)
+    }
+
     const systemPrompt = `${SYSTEM}
 
 ## Brand: ${profile.business_name || 'this brand'}
@@ -75,7 +104,7 @@ ${profile.target_audience ? `Audience: ${profile.target_audience}` : ''}
 ${(profile.brand_bible || '(none)').slice(0, 2000)}
 
 ## Format
-${FORMAT_HINT[format]}`
+${FORMAT_HINT[format]}${avoidBlock}`
 
     const created = []
     let totalUsage = { input: 0, output: 0 }
@@ -116,7 +145,31 @@ ${FORMAT_HINT[format]}`
         generation_prompt: `${format}: ${topic}`,
       }
       const insertRows = await supaFetch('content_scripts', { method: 'POST', body: row })
-      created.push(Array.isArray(insertRows) ? insertRows[0] : insertRows)
+      const item = Array.isArray(insertRows) ? insertRows[0] : insertRows
+      created.push(item)
+
+      // Record into content_history so future generations can dedup against
+      // it. Best-effort — never fail the generation just because logging
+      // didn't work. Embed the produced script if we already have a topic
+      // embedding; reuse for cost when it's an exact match, otherwise
+      // re-embed the script body for accuracy.
+      try {
+        const scriptText = parsed.full_script || text
+        const { embedding } = await embedOne(scriptText.slice(0, 4000))
+        await supaFetch('content_history', {
+          method: 'POST',
+          prefer: 'return=minimal',
+          body: {
+            profile_id,
+            content_id: item?.id || null,
+            kind: 'script',
+            topic,
+            text: scriptText.slice(0, 8000),
+            embedding,
+            source: 'agent',
+          },
+        })
+      } catch (e) { console.warn('content_history insert failed:', e.message) }
 
       if (resp.usage) {
         totalUsage.input += resp.usage.input_tokens || 0

@@ -666,20 +666,53 @@ function SpaceBuilder({ space, onSave, onClose }) {
     setNodes((arr) => arr.map((n) => n.id === id ? { ...n, data: { ...n.data, ...patch } } : n))
   }, [])
 
-  const save = async () => {
-    setBusy(true); setError(null)
+  // Live id ref so autosave continues to PATCH the same row after the
+  // initial POST (the original `space` prop never changes).
+  const spaceIdRef = useRef(space.id || null)
+  const [autoStatus, setAutoStatus] = useState('idle')   // 'idle' | 'saving' | 'saved' | 'error'
+  const skipNextAutosave = useRef(true)
+  const lastPayloadRef = useRef(null)
+
+  const save = async ({ silent = false } = {}) => {
+    if (!silent) { setBusy(true); setError(null) }
+    setAutoStatus('saving')
     try {
+      const id = spaceIdRef.current
       const r = await fetch('/api/spaces', {
-        method: space.id ? 'PATCH' : 'POST',
+        method: id ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ id: space.id, profile_id: selectedProfileId, name, nodes, edges }),
+        body: JSON.stringify({ id, profile_id: selectedProfileId, name, nodes, edges }),
       })
       const body = await r.json()
       if (!r.ok) throw new Error(body.error || 'Save failed')
-      onSave(body.space)
-    } catch (e) { setError(e.message) }
-    finally { setBusy(false) }
+      if (body.space?.id) spaceIdRef.current = body.space.id
+      setAutoStatus('saved')
+      setTimeout(() => setAutoStatus((s) => s === 'saved' ? 'idle' : s), 1500)
+      if (!silent) onSave(body.space)
+    } catch (e) {
+      setAutoStatus('error')
+      if (!silent) setError(e.message)
+      else console.warn('autosave failed:', e.message)
+    } finally { if (!silent) setBusy(false) }
   }
+
+  // Autosave: debounce 1.2s after any change to name/nodes/edges, then PATCH.
+  // Skips the very first render and dedupes by payload-equality so settled
+  // state doesn't fire empty saves.
+  useEffect(() => {
+    if (skipNextAutosave.current) { skipNextAutosave.current = false; return }
+    if (!session || !selectedProfileId) return
+    // For brand-new empty spaces with no content yet, don't autosave.
+    if (!spaceIdRef.current && nodes.length === 0 && edges.length === 0) return
+    const payload = JSON.stringify({ name, nodes, edges })
+    if (payload === lastPayloadRef.current) return
+    const t = setTimeout(() => {
+      lastPayloadRef.current = payload
+      save({ silent: true })
+    }, 1200)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [name, nodes, edges, session, selectedProfileId])
 
   const aiBuild = async () => {
     if (!aiPrompt.trim()) return
@@ -927,7 +960,23 @@ function SpaceBuilder({ space, onSave, onClose }) {
           </button>
         </div>
 
-        <button className="btn-secondary" onClick={save} disabled={busy}>
+        <span style={{
+          fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700,
+          letterSpacing: '0.06em', textTransform: 'uppercase',
+          padding: '4px 10px', borderRadius: 999,
+          background: autoStatus === 'saving' ? 'rgba(245,158,11,0.16)'
+            : autoStatus === 'saved' ? 'rgba(46,204,113,0.16)'
+            : autoStatus === 'error' ? 'rgba(239,68,68,0.16)' : 'transparent',
+          color: autoStatus === 'saving' ? 'var(--amber)'
+            : autoStatus === 'saved' ? '#2ecc71'
+            : autoStatus === 'error' ? 'var(--red)' : 'var(--muted)',
+          minWidth: 78, textAlign: 'center',
+        }}>
+          {autoStatus === 'saving' ? 'Saving…'
+            : autoStatus === 'saved' ? 'Saved'
+            : autoStatus === 'error' ? 'Save error' : 'Autosave on'}
+        </span>
+        <button className="btn-secondary" onClick={() => save()} disabled={busy} title="Force a save now">
           {busy ? <span className="spinner" /> : <Save size={13} />} Save
         </button>
         <button className="btn-primary" onClick={run} disabled={running || nodes.length === 0}>
