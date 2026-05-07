@@ -80,14 +80,15 @@ export default async function handler(req, res) {
 
     // HeyGen accepts the avatar create call instantly but image dimension
     // extraction happens behind the scenes. Submitting /v3/videos too fast
-    // returns "Talking photo X has missing image dimensions". Give it a
-    // moment, then retry once with a longer pause if HeyGen still says
-    // the photo isn't ready.
-    await new Promise((r) => setTimeout(r, 3500))
+    // returns "Talking photo X has missing image dimensions". Wait, then
+    // retry up to 6 times on warmup-race errors (was 3) — in practice it
+    // can take up to ~30s for a fresh upload to be ready.
+    await new Promise((r) => setTimeout(r, 5000))
 
     let videoId
     let lastErr = null
-    for (let attempt = 0; attempt < 3; attempt++) {
+    const RETRY_DELAYS_MS = [8000, 8000, 10000, 10000, 12000]   // total ~50s warmup window
+    for (let attempt = 0; attempt < 6; attempt++) {
       try {
         const vr = await generateVideoV3({
           avatarId: heygenAvatarId,
@@ -104,7 +105,8 @@ export default async function handler(req, res) {
         const msg = String(e?.message || '')
         // Only retry on the dimension-warmup race; bail on other errors.
         if (!/missing image dimensions|not ready/i.test(msg)) break
-        await new Promise((r) => setTimeout(r, 6000))
+        const delay = RETRY_DELAYS_MS[attempt] ?? 12000
+        await new Promise((r) => setTimeout(r, delay))
       }
     }
     if (!videoId) {

@@ -2976,8 +2976,13 @@ ${String(script).slice(0, 2000)}
         throw new Error('Render timed out')
       }
 
-      // ── Randomize: split the script across the look's images ──────────
-      if (avatar.mode === 'randomize') {
+      // ── Randomize when explicitly set, OR auto-randomize when single
+      //    mode was picked but no specific image_id was chosen and the
+      //    look has multiple images (the most common "I forgot to flip
+      //    the toggle" case — better to just do the right thing).
+      const wantsRandomize = avatar.mode === 'randomize'
+      const couldAutoRandomize = avatar.mode === 'single' && !avatar.image_id && !audio && avatar.look_id
+      if (wantsRandomize || couldAutoRandomize) {
         if (!avatar.look_id) throw new Error('Randomize mode needs a look. Pick one in the avatar node.')
         const imgR = await fetch(`/api/avatars/look-images?look_id=${avatar.look_id}`, { headers })
         const imgB = await imgR.json()
@@ -2986,11 +2991,12 @@ ${String(script).slice(0, 2000)}
         if (!images.length) throw new Error('Look has no images')
 
         // Audio randomize doesn't make sense (one audio track) — fall back
-        // to single mode on the first image.
+        // to single mode on the first image. Same when only one image
+        // exists OR auto-randomize was triggered with just one.
         if (audio || images.length === 1) {
           const photo = images[0].image_url
           const r = await renderOne({ photo_url: photo, scriptChunk: script, audioUrl: audio?.url })
-          return { video: { video_url: r.video_url } }
+          return { video: { video_url: r.video_url, media_type: 'video' } }
         }
 
         // Split the script into N chunks via Claude.
@@ -3002,8 +3008,12 @@ ${String(script).slice(0, 2000)}
         if (!sp.ok) throw new Error(spBody.error || 'Script split failed')
         const chunks = Array.isArray(spBody.chunks) ? spBody.chunks : [script]
 
-        // Submit + poll all clips in parallel.
-        const clips = await Promise.all(images.map(async (im, i) => {
+        // Submit + poll all clips in parallel — but tolerate per-clip
+        // failures (Promise.allSettled). HeyGen's "missing image
+        // dimensions" error sometimes hits one image while the rest
+        // succeed; we want the user to keep the working clips instead
+        // of losing the whole batch to a cascade fail.
+        const settled = await Promise.allSettled(images.map(async (im, i) => {
           const r = await renderOne({ photo_url: im.image_url, scriptChunk: chunks[i] || script })
           return {
             video_url: r.video_url,
@@ -3012,11 +3022,23 @@ ${String(script).slice(0, 2000)}
             sentence: chunks[i] || '',
           }
         }))
-
+        const clips = []
+        const failures = []
+        for (let i = 0; i < settled.length; i++) {
+          const s = settled[i]
+          if (s.status === 'fulfilled') clips.push(s.value)
+          else failures.push({ image_index: i, error: s.reason?.message || String(s.reason) })
+        }
+        // All clips failed → still throw so the cascade poison kicks in.
+        // Otherwise we ship what we have plus a list of which images failed.
+        if (!clips.length) {
+          throw new Error(`All ${images.length} clips failed. First error: ${failures[0]?.error || 'unknown'}`)
+        }
         return {
           videos: clips,
           media_type: 'video',
           is_clip_set: true,
+          ...(failures.length ? { partial_failures: failures } : {}),
         }
       }
 
@@ -3024,7 +3046,7 @@ ${String(script).slice(0, 2000)}
       const photo = avatar.image_url
       if (!photo) throw new Error('Pick a specific image in the avatar node (Single mode), or switch to Randomize.')
       const r = await renderOne({ photo_url: photo, scriptChunk: script, audioUrl: audio?.url })
-      return { video: { video_url: r.video_url } }
+      return { video: { video_url: r.video_url, media_type: 'video' } }
     },
   },
 
