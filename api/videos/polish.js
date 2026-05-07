@@ -126,15 +126,19 @@ function hexToDrawtext(hex, fallback = 'white') {
   if (!m) return fallback
   return `0x${m[1].toUpperCase()}`
 }
-function overlayPos(pos, sizePct) {
-  const w = `(main_w*${Number(sizePct) / 100})`
+// `overlay` knows main_w/main_h, so corner padding can stay percent-of-main.
+// `scale` does NOT — its expression context only sees the input being
+// scaled. That's why earlier `scale=(main_w*0.25):-1` blew up. We do the
+// logo resize via `scale2ref` instead (see filter chain), so this helper
+// only returns the X/Y offset expressions now.
+function overlayPos(pos) {
   const pad = `(main_w*0.04)`
   switch (pos) {
-    case 'tl': return { w, x: pad, y: pad }
-    case 'tr': return { w, x: `(main_w-overlay_w-${pad})`, y: pad }
-    case 'bl': return { w, x: pad, y: `(main_h-overlay_h-${pad})` }
+    case 'tl': return { x: pad,                          y: pad }
+    case 'tr': return { x: `(main_w-overlay_w-${pad})`,  y: pad }
+    case 'bl': return { x: pad,                          y: `(main_h-overlay_h-${pad})` }
     case 'br':
-    default:   return { w, x: `(main_w-overlay_w-${pad})`, y: `(main_h-overlay_h-${pad})` }
+    default:   return { x: `(main_w-overlay_w-${pad})`,  y: `(main_h-overlay_h-${pad})` }
   }
 }
 function escDrawtext(s) {
@@ -273,9 +277,17 @@ export default async function handler(req, res) {
       }
 
       if (logoPath) {
-        const { w, x, y } = overlayPos(watermark_position, watermark_size_pct)
-        filters.push(`[${logoIdx}:v]scale=${w}:-1[lg]`)
-        filters.push(`${vLabel}[lg]overlay=${x}:${y}[vw]`)
+        // `scale` filter has no `main_w` in its expression context, so
+        // `scale=(main_w*0.25):-1` blew up with "self-referencing
+        // expression". Use `scale2ref` to size the logo relative to the
+        // main video width, preserving aspect via `ow/mdar`. scale2ref
+        // outputs [scaled_logo, passthrough_main_video].
+        const sizeFrac = Math.max(0.04, Math.min(0.4, Number(watermark_size_pct) / 100))
+        filters.push(
+          `[${logoIdx}:v]${vLabel}scale2ref=w=main_w*${sizeFrac.toFixed(3)}:h=ow/mdar[lg][refv]`
+        )
+        const { x, y } = overlayPos(watermark_position)
+        filters.push(`[refv][lg]overlay=${x}:${y}[vw]`)
         vLabel = '[vw]'
       }
 
