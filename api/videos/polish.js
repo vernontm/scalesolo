@@ -149,20 +149,24 @@ function escDrawtext(s) {
     .replace(/%/g, '\\%')
 }
 
-// drawtext renders single-line by default — passing a long title produces
-// a giant horizontal bar that overflows the safe area. The CSS preview
-// wraps naturally, so the user expects the same. Greedy-wrap the text
-// into ~maxChars-per-line chunks and emit `\\n` literals which ffmpeg's
-// drawtext text parser interprets as line breaks. maxChars is derived
-// from font size assuming a 1080px-wide source (HeyGen output) and ~0.55
-// average glyph-width-to-fontsize ratio for sans-serif bold faces.
-function wrapTitleForDrawtext(safeEscapedText, fontSize) {
-  if (!safeEscapedText) return safeEscapedText
-  const usableWidth = 1080 * 0.85
-  const glyphWidth  = Math.max(8, Number(fontSize) * 0.55)
-  const maxChars    = Math.max(8, Math.floor(usableWidth / glyphWidth))
-  const words = safeEscapedText.split(/\s+/).filter(Boolean)
-  if (!words.length) return safeEscapedText
+// drawtext renders single-line by default and ffmpeg's filter-graph
+// parser eats backslash-escaped newlines unpredictably (`text='a\nb'`
+// can come out as a literal "\n" instead of a line break). The reliable
+// fix is `textfile=`: write real newlines to a temp file and let drawtext
+// read it. Returns the wrapped string so we can persist it to disk.
+//
+// Wrap heuristic: assume 1080-wide HeyGen output, with ~0.62 glyph-width-
+// to-fontsize ratio for ExtraBold sans faces (Poppins / Montserrat /
+// Inter ExtraBold). Bumped from 0.55 since heavier weights actually
+// take more horizontal space than that.
+function wrapTitleLines(rawText, fontSize) {
+  const text = String(rawText || '').trim()
+  if (!text) return ''
+  const usableWidth = 1080 * 0.82
+  const glyphWidth  = Math.max(8, Number(fontSize) * 0.62)
+  const maxChars    = Math.max(6, Math.floor(usableWidth / glyphWidth))
+  const words = text.split(/\s+/).filter(Boolean)
+  if (!words.length) return text
   const lines = []
   let cur = ''
   for (const w of words) {
@@ -171,9 +175,7 @@ function wrapTitleForDrawtext(safeEscapedText, fontSize) {
     else cur = cur + ' ' + w
   }
   if (cur) lines.push(cur)
-  // Two backslashes in the JS source → one `\n` literal in the filter
-  // string, which drawtext converts to a real newline at render time.
-  return lines.join('\\n')
+  return lines.join('\n')   // real newline character → goes into textfile
 }
 
 // Spawn ffmpeg with the given args, capture stderr for error reporting.
@@ -287,12 +289,13 @@ export default async function handler(req, res) {
       if (title) {
         const text = ts.uppercase ? String(title).toUpperCase() : String(title)
         const tSize = Number(ts.size ?? 72)
-        // Order matters: escape first (so user backslashes get doubled),
-        // THEN inject `\n` line breaks. If we wrapped first, the escape
-        // pass would double our inserted backslash and drawtext would
-        // render literal "\n" instead of breaking the line.
-        const escaped = escDrawtext(text.slice(0, 120))
-        const safe = wrapTitleForDrawtext(escaped, tSize)
+        // Wrap the title to fit within the safe area, then persist real
+        // newlines to a file and tell drawtext to read from there. The
+        // `text=` parameter is fragile w.r.t. embedded \n through the
+        // filter-graph parser; `textfile=` is unambiguous.
+        const wrapped = wrapTitleLines(text.slice(0, 120), tSize)
+        const titleFilePath = join(workdir, 'title.txt')
+        await writeFile(titleFilePath, wrapped, 'utf8')
         const tBg = hexToDrawtext(ts.bg_color || '#e0467a', '0xE0467A')
         const tFc = hexToDrawtext(ts.color || '#ffffff', 'white')
         const tPad = Math.max(0, Number(ts.bg_padding ?? 28))
@@ -300,10 +303,16 @@ export default async function handler(req, res) {
         // Resolve the chosen font (downloads + caches the TTF on cold
         // start). Falls back to bundled Roboto if the fetch fails.
         const titleFontPath = await resolveFontPath(ts.font)
+        // ffmpeg path option values escape : and \ — escape both for
+        // textfile= and fontfile= so the filter parser doesn't choke.
+        const escapePath = (p) => String(p).replace(/\\/g, '\\\\').replace(/:/g, '\\:')
         filters.push(
-          `${vLabel}drawtext=fontfile=${titleFontPath}:text='${safe}':fontcolor=${tFc}:fontsize=${tSize}` +
-          `:box=1:boxcolor=${tBg}:boxborderw=${tPad}` +
-          `:x=(w-text_w)/2:y=h*${tYpct}-text_h/2[vt]`
+          `${vLabel}drawtext=fontfile=${escapePath(titleFontPath)}` +
+            `:textfile=${escapePath(titleFilePath)}` +
+            `:fontcolor=${tFc}:fontsize=${tSize}` +
+            `:box=1:boxcolor=${tBg}:boxborderw=${tPad}` +
+            `:line_spacing=${Math.round(tSize * 0.18)}` +
+            `:x=(w-text_w)/2:y=h*${tYpct}-text_h/2[vt]`
         )
         vLabel = '[vt]'
       }
