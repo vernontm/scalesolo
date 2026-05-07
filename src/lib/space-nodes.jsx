@@ -3507,6 +3507,10 @@ export async function runSpace({ ctx, nodes, edges, onNodeChange }) {
 
   const outputsById = new Map()
   const errors = {}
+  // Track which upstream node IDs poisoned each downstream node so we can
+  // surface a clear "Upstream failed" error instead of a confusing "wire
+  // a video in" message when the real cause is two hops upstream.
+  const failedAncestorOf = new Map()  // nodeId → Set<failed source nodeId>
 
   for (const id of order) {
     if (ctx?.shouldAbort?.()) {
@@ -3521,6 +3525,31 @@ export async function runSpace({ ctx, nodes, edges, onNodeChange }) {
     if (!def) {
       onNodeChange?.(id, { status: 'failed', error: `Unknown type: ${node.data?.type || node.type}` })
       errors[id] = 'unknown type'; continue
+    }
+
+    // If any upstream node failed (directly or transitively), short-circuit
+    // this node with a clear "blocked by upstream" message and propagate
+    // the failed-ancestor set forward. This keeps the user from chasing
+    // bogus "wire a video into in" errors when the real cause was three
+    // hops upstream (e.g. avatar_render ran out of credits).
+    const ancestors = failedAncestorOf.get(id)
+    if (ancestors && ancestors.size) {
+      const names = [...ancestors]
+        .map((srcId) => {
+          const src = nodes.find((n) => n.id === srcId)
+          return src?.data?.name || NODE_REGISTRY[src?.data?.type]?.label || srcId.slice(0, 8)
+        })
+        .slice(0, 3)
+      const msg = `Blocked by upstream failure: ${names.join(', ')}${ancestors.size > 3 ? ` +${ancestors.size - 3} more` : ''}`
+      onNodeChange?.(id, { status: 'failed', error: msg })
+      errors[id] = msg
+      // Propagate to this node's descendants too.
+      for (const e of edges.filter((e) => e.source === id)) {
+        const set = failedAncestorOf.get(e.target) || new Set()
+        for (const a of ancestors) set.add(a)
+        failedAncestorOf.set(e.target, set)
+      }
+      continue
     }
 
     const inboundEdges = incoming.get(id) || []
@@ -3574,10 +3603,20 @@ export async function runSpace({ ctx, nodes, edges, onNodeChange }) {
       outputsById.set(id, result || {})
       onNodeChange?.(id, { status: 'done', output: result })
     } catch (err) {
-      onNodeChange?.(id, { status: 'failed', error: err.message })
-      errors[id] = err.message
-      // If the user aborted, stop processing further nodes — but DON'T
-      // clobber prior failures. Just bail.
+      // Tag insufficient-credit errors so the UI can offer a top-up CTA.
+      const isCreditError = /insufficient/i.test(err?.message || '') || err?.code === 'insufficient_credits'
+      const finalMsg = isCreditError
+        ? `${err.message} — top up in Billing to continue.`
+        : err.message
+      onNodeChange?.(id, { status: 'failed', error: finalMsg })
+      errors[id] = finalMsg
+      // Poison every descendant so they don't run with empty inputs and
+      // throw misleading "Wire X into in" errors.
+      for (const e of edges.filter((e) => e.source === id)) {
+        const set = failedAncestorOf.get(e.target) || new Set()
+        set.add(id)
+        failedAncestorOf.set(e.target, set)
+      }
       if (ctx?.shouldAbort?.()) {
         return { ok: false, errors: { ...errors, _aborted: 'Stopped by user' } }
       }
