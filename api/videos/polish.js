@@ -28,13 +28,54 @@ import { createClient } from '@supabase/supabase-js'
 import { zapcapAddVideoByUrl, zapcapCreateTask, zapcapPollTask } from '../_lib/zapcap.js'
 import ffmpegPath from 'ffmpeg-static'
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile, rm, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const BUNDLED_FONT_PATH = join(__dirname, '..', '_fonts', 'Sans-Bold.ttf')
+
+// Map dropdown labels (UI) to remote TTF URLs we can fetch on demand.
+// Hosted on github.com/google/fonts (Google Fonts repository) — these
+// paths are stable. Fetched once per cold start and cached in /tmp.
+const FONT_URL_MAP = {
+  'Montserrat ExtraBold': 'https://raw.githubusercontent.com/google/fonts/main/ofl/montserrat/static/Montserrat-ExtraBold.ttf',
+  'Poppins ExtraBold':    'https://raw.githubusercontent.com/google/fonts/main/ofl/poppins/Poppins-ExtraBold.ttf',
+  'Inter ExtraBold':      'https://raw.githubusercontent.com/google/fonts/main/ofl/inter/static/Inter_28pt-ExtraBold.ttf',
+  'Bebas Neue':           'https://raw.githubusercontent.com/google/fonts/main/ofl/bebasneue/BebasNeue-Regular.ttf',
+  'Anton':                'https://raw.githubusercontent.com/google/fonts/main/ofl/anton/Anton-Regular.ttf',
+  'Oswald':               'https://raw.githubusercontent.com/google/fonts/main/ofl/oswald/static/Oswald-Bold.ttf',
+  'Roboto Black':         'https://raw.githubusercontent.com/google/fonts/main/apache/roboto/static/Roboto-Black.ttf',
+}
+
+const _fontPathCache = new Map()
+async function resolveFontPath(label) {
+  // Default / unknown / 'Sans' → bundled Roboto.
+  if (!label || label === 'Sans' || !FONT_URL_MAP[label]) return BUNDLED_FONT_PATH
+  if (_fontPathCache.has(label)) return _fontPathCache.get(label)
+  const safeName = label.replace(/[^a-zA-Z0-9]/g, '_') + '.ttf'
+  const target = join(tmpdir(), 'scalesolo-fonts', safeName)
+  try {
+    // Try the cache file first — survives across invocations on warm functions.
+    await readFile(target)
+    _fontPathCache.set(label, target)
+    return target
+  } catch {}
+  try {
+    const r = await fetch(FONT_URL_MAP[label])
+    if (!r.ok) throw new Error(`font fetch ${label} → ${r.status}`)
+    const buf = Buffer.from(await r.arrayBuffer())
+    const dir = join(tmpdir(), 'scalesolo-fonts')
+    await mkdir(dir, { recursive: true }).catch(() => {})
+    await writeFile(target, buf)
+    _fontPathCache.set(label, target)
+    return target
+  } catch (e) {
+    console.warn(`Polish: font "${label}" fetch failed (${e.message}); falling back to bundled.`)
+    return BUNDLED_FONT_PATH
+  }
+}
 
 export const config = { maxDuration: 300 }
 
@@ -216,8 +257,11 @@ export default async function handler(req, res) {
         const tFc = hexToDrawtext(ts.color || '#ffffff', 'white')
         const tPad = Math.max(0, Number(ts.bg_padding ?? 28))
         const tYpct = Math.max(0, Math.min(95, Number(ts.y_pos ?? 15))) / 100
+        // Resolve the chosen font (downloads + caches the TTF on cold
+        // start). Falls back to bundled Roboto if the fetch fails.
+        const titleFontPath = await resolveFontPath(ts.font)
         filters.push(
-          `${vLabel}drawtext=fontfile=${BUNDLED_FONT_PATH}:text='${safe}':fontcolor=${tFc}:fontsize=${tSize}` +
+          `${vLabel}drawtext=fontfile=${titleFontPath}:text='${safe}':fontcolor=${tFc}:fontsize=${tSize}` +
           `:box=1:boxcolor=${tBg}:boxborderw=${tPad}` +
           `:x=(w-text_w)/2:y=h*${tYpct}-text_h/2[vt]`
         )

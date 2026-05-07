@@ -1497,6 +1497,24 @@ const POLISH_FONT_OPTIONS = [
   'Bebas Neue', 'Anton', 'Oswald', 'Roboto Black', 'Sans',
 ]
 
+// Dropdown label → CSS { family, weight } pair. The labels include the
+// weight (e.g. "Montserrat ExtraBold") for human readability, but CSS
+// `font-family` wants just the family name + a numeric weight. Without
+// this mapping the browser silently falls back to its default sans
+// because no installed face matches "Montserrat ExtraBold".
+function polishFontCss(label) {
+  switch (label) {
+    case 'Montserrat ExtraBold': return { family: '"Montserrat", sans-serif',     weight: 800 }
+    case 'Poppins ExtraBold':    return { family: '"Poppins", sans-serif',        weight: 800 }
+    case 'Inter ExtraBold':      return { family: '"Inter", sans-serif',          weight: 800 }
+    case 'Bebas Neue':           return { family: '"Bebas Neue", sans-serif',     weight: 400 }
+    case 'Anton':                return { family: '"Anton", sans-serif',          weight: 400 }
+    case 'Oswald':               return { family: '"Oswald", sans-serif',         weight: 700 }
+    case 'Roboto Black':         return { family: '"Roboto", sans-serif',         weight: 900 }
+    default:                     return { family: 'system-ui, sans-serif',        weight: 800 }
+  }
+}
+
 function VideoPolishBody({ data, onPatch }) {
   const out = data.output
   const props = data.props || {}
@@ -1692,21 +1710,24 @@ function VideoPolishPreview({ videoUrl, props, logoUrl }) {
         }}>Run an upstream node once to see the preview frame.</div>
       )}
       {/* Title overlay */}
-      {titleEnabled && (
-        <div style={{
-          position: 'absolute', left: '50%', top: `${props.title_y_pos ?? 15}%`,
-          transform: 'translate(-50%, -50%)',
-          padding: `${(props.title_bg_padding ?? 28) * 0.25}px ${(props.title_bg_padding ?? 28) * 0.4}px`,
-          background: props.title_bg_color || '#e0467a',
-          color: props.title_color || '#ffffff',
-          fontFamily: props.title_font || 'Montserrat ExtraBold',
-          fontSize: `${(props.title_size ?? 72) * 0.18}px`,
-          fontWeight: 800, letterSpacing: '0.01em',
-          borderRadius: 4, textAlign: 'center', maxWidth: '85%',
-          textTransform: props.title_uppercase ? 'uppercase' : 'none',
-          lineHeight: 1.1, whiteSpace: 'normal',
-        }}>{props.title}</div>
-      )}
+      {titleEnabled && (() => {
+        const f = polishFontCss(props.title_font || 'Montserrat ExtraBold')
+        return (
+          <div style={{
+            position: 'absolute', left: '50%', top: `${props.title_y_pos ?? 15}%`,
+            transform: 'translate(-50%, -50%)',
+            padding: `${(props.title_bg_padding ?? 28) * 0.25}px ${(props.title_bg_padding ?? 28) * 0.4}px`,
+            background: props.title_bg_color || '#e0467a',
+            color: props.title_color || '#ffffff',
+            fontFamily: f.family,
+            fontSize: `${(props.title_size ?? 72) * 0.18}px`,
+            fontWeight: f.weight, letterSpacing: '0.01em',
+            borderRadius: 4, textAlign: 'center', maxWidth: '85%',
+            textTransform: props.title_uppercase ? 'uppercase' : 'none',
+            lineHeight: 1.1, whiteSpace: 'normal',
+          }}>{props.title}</div>
+        )
+      })()}
       {/* Caption indicator — actual caption look comes from ZapCap, so we
          just show a "captions on, style: <name>" badge instead of trying
          to mimic a style we don't control. */}
@@ -1966,14 +1987,8 @@ function PolishLogoUpload({ uploadedUrl, upstreamUrl, profileId, onChange }) {
 
 export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges }) {
   const props = data.props || {}
-  const previewVideo = useMemo(
-    () => data.output?.video_url || findUpstreamVideoUrl(nodeId, allNodes, allEdges),
-    [nodeId, allNodes, allEdges, data.output?.video_url]
-  )
-  const previewScript = useMemo(
-    () => findUpstreamScript(nodeId, allNodes, allEdges),
-    [nodeId, allNodes, allEdges]
-  )
+  // Only the watermark uploader needs an upstream lookup — the live preview
+  // moved to the node body so we don't compute upstream video / script here.
   const upstreamLogo = useMemo(
     () => findUpstreamLogoUrl(nodeId, allNodes, allEdges),
     [nodeId, allNodes, allEdges]
@@ -1983,17 +1998,8 @@ export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges })
 
   return (
     <>
-      {/* Live preview ─────────────────────────────────────────────────── */}
-      <div style={{
-        ...labelStyle, display: 'flex', alignItems: 'center', gap: 6,
-        marginBottom: 8,
-      }}>
-        <Play size={11} /> Live preview
-      </div>
-      <VideoPolishPreview videoUrl={previewVideo} script={previewScript} props={props} logoUrl={props.watermark_image_url || upstreamLogo} />
-      <div style={{ marginTop: 6, fontSize: 10.5, color: 'var(--muted)', textAlign: 'center' }}>
-        {previewVideo ? 'Frame from upstream render' : 'Wire & run an upstream video first'}
-      </div>
+      {/* Live preview lives in the node body now — no need to render it
+         in the drawer too. (User feedback: redundant.) */}
 
       {/* Title overlay ─────────────────────────────────────────────────── */}
       <PolishSection icon={Type} title="Title overlay">
