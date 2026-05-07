@@ -89,7 +89,7 @@ const NODE_CATALOG = {
     initialProps: { caption_template_id: '', caption_template_name: '', language: 'en' },
   },
   video_polish: {
-    label: 'Polish video',
+    label: 'Video overlays',
     description: 'Adds a title overlay, a logo / watermark, and an optional ducked background music track to a video using our native ffmpeg server. Captions live in their own dedicated node — chain captions → video_polish (or vice versa) for both. Wire video + optional logo image + optional audio. props: title (string), title_enabled (bool, default true), watermark_position ("tr"|"tl"|"br"|"bl"|"none"), watermark_size_pct (default 25), music_volume (0-1, default 0.15), plus per-style title fields (title_color, title_bg_color, title_size, title_y_pos, title_uppercase, title_bg_padding). Output: { video: { video_url } }.',
     inputs: ['in'],
     outputs: ['out'],

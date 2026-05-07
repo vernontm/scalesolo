@@ -149,6 +149,33 @@ function escDrawtext(s) {
     .replace(/%/g, '\\%')
 }
 
+// drawtext renders single-line by default — passing a long title produces
+// a giant horizontal bar that overflows the safe area. The CSS preview
+// wraps naturally, so the user expects the same. Greedy-wrap the text
+// into ~maxChars-per-line chunks and emit `\\n` literals which ffmpeg's
+// drawtext text parser interprets as line breaks. maxChars is derived
+// from font size assuming a 1080px-wide source (HeyGen output) and ~0.55
+// average glyph-width-to-fontsize ratio for sans-serif bold faces.
+function wrapTitleForDrawtext(safeEscapedText, fontSize) {
+  if (!safeEscapedText) return safeEscapedText
+  const usableWidth = 1080 * 0.85
+  const glyphWidth  = Math.max(8, Number(fontSize) * 0.55)
+  const maxChars    = Math.max(8, Math.floor(usableWidth / glyphWidth))
+  const words = safeEscapedText.split(/\s+/).filter(Boolean)
+  if (!words.length) return safeEscapedText
+  const lines = []
+  let cur = ''
+  for (const w of words) {
+    if (!cur) { cur = w; continue }
+    if ((cur + ' ' + w).length > maxChars) { lines.push(cur); cur = w }
+    else cur = cur + ' ' + w
+  }
+  if (cur) lines.push(cur)
+  // Two backslashes in the JS source → one `\n` literal in the filter
+  // string, which drawtext converts to a real newline at render time.
+  return lines.join('\\n')
+}
+
 // Spawn ffmpeg with the given args, capture stderr for error reporting.
 // Resolves on exit code 0, rejects with stderr tail on anything else.
 function runFFmpeg(args, timeoutMs = 270_000) {
@@ -259,8 +286,13 @@ export default async function handler(req, res) {
 
       if (title) {
         const text = ts.uppercase ? String(title).toUpperCase() : String(title)
-        const safe = escDrawtext(text.slice(0, 120))
         const tSize = Number(ts.size ?? 72)
+        // Order matters: escape first (so user backslashes get doubled),
+        // THEN inject `\n` line breaks. If we wrapped first, the escape
+        // pass would double our inserted backslash and drawtext would
+        // render literal "\n" instead of breaking the line.
+        const escaped = escDrawtext(text.slice(0, 120))
+        const safe = wrapTitleForDrawtext(escaped, tSize)
         const tBg = hexToDrawtext(ts.bg_color || '#e0467a', '0xE0467A')
         const tFc = hexToDrawtext(ts.color || '#ffffff', 'white')
         const tPad = Math.max(0, Number(ts.bg_padding ?? 28))

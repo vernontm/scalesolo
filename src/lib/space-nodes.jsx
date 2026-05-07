@@ -3062,7 +3062,7 @@ export const NODE_REGISTRY = {
 
   // ── POLISH VIDEO (title overlay + logo/watermark + bg music) ──────────
   video_polish: {
-    label: 'Polish video', description: 'Adds a title overlay, a logo / watermark, and ducks a background music track under the original voice. Runs on our native ffmpeg server. Captions live in their own node (ZapCap).',
+    label: 'Video overlays', description: 'Adds a title overlay, a logo / watermark, and ducks a background music track under the original voice. Runs on our native ffmpeg server. Captions live in their own node (ZapCap).',
     icon: Sparkles, category: 'generators', color: '#0ea5e9',
     inputs: [{ id: 'in', label: 'In (video + logo + music)' }],
     outputs: [{ id: 'out', label: 'Out (video)' }],
