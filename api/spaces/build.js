@@ -88,6 +88,13 @@ const NODE_CATALOG = {
     outputs: ['out'],
     initialProps: { caption_template_id: '', caption_template_name: '', language: 'en' },
   },
+  video_polish: {
+    label: 'Polish video',
+    description: 'Adds a title overlay, a logo / watermark, and an optional ducked background music track to a video using our native ffmpeg server. Captions live in their own dedicated node — chain captions → video_polish (or vice versa) for both. Wire video + optional logo image + optional audio. props: title (string), title_enabled (bool, default true), watermark_position ("tr"|"tl"|"br"|"bl"|"none"), watermark_size_pct (default 25), music_volume (0-1, default 0.15), plus per-style title fields (title_color, title_bg_color, title_size, title_y_pos, title_uppercase, title_bg_padding). Output: { video: { video_url } }.',
+    inputs: ['in'],
+    outputs: ['out'],
+    initialProps: { title: '', title_enabled: true, watermark_position: 'br', watermark_size_pct: 25, music_volume: 0.15, music_fade_secs: 1.5 },
+  },
   schedule_post: {
     label: 'Schedule post',
     description: 'Publishes or schedules a post to TikTok / Instagram / YouTube / X / LinkedIn / Threads / Facebook / Pinterest via the upload-post.com API. Wire video (or images) + caption + hashtags. props: upload_post_user (the username configured on upload-post.com), platforms (array — any of tiktok, instagram, youtube, x, threads, linkedin, facebook, pinterest), when ("now" | "scheduled"), scheduled_local (datetime-local string when scheduled), timezone. Use this as the terminal node when the user wants the workflow to actually publish, instead of just saving to the library.',

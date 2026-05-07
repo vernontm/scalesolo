@@ -9,7 +9,8 @@ const titles = {
   '/dashboard': { t: 'Dashboard',        s: "Welcome back — here's your overview." },
   '/agent':     { t: 'AI CEO',           s: 'Your always-on strategist.' },
   '/spaces':    { t: 'Spaces',           s: 'Visual content workflows.' },
-  '/content':   { t: 'Library',          s: 'Generated content, ready to ship.' },
+  '/schedule':  { t: 'Schedule',         s: 'Library, calendar, and social publishing.' },
+  '/content':   { t: 'Schedule',         s: 'Library, calendar, and social publishing.' },
   '/email':     { t: 'Email',            s: 'Compose, automate, deliver.' },
   '/avatars':   { t: 'Avatars & voice',  s: 'AI you, on tap.' },
   '/landing':   { t: 'Landing pages',    s: 'Build branded pages in minutes.' },
@@ -140,7 +141,7 @@ export default function Header({ onOpenSidebar }) {
 
       <button
         style={newBtn}
-        onClick={() => navigate('/content')}
+        onClick={() => navigate('/schedule')}
         title="Generate new content"
       >
         <Sparkles size={14} strokeWidth={2.5} />

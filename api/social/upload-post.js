@@ -16,6 +16,7 @@
 // because Upload-Post wants the bytes, not a URL.
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { deriveUploadPostUsername, uploadpostEnsureUserProfile } from '../_lib/uploadpost.js'
 
 export const config = { maxDuration: 60 }
 
@@ -61,8 +62,8 @@ export default async function handler(req, res) {
       scheduled_iso, timezone,
     } = req.body || {}
 
-    if (!profile_id || !upload_post_user || !Array.isArray(platforms) || !platforms.length) {
-      return res.status(400).json({ error: 'profile_id, upload_post_user, platforms required' })
+    if (!profile_id || !Array.isArray(platforms) || !platforms.length) {
+      return res.status(400).json({ error: 'profile_id, platforms required' })
     }
     const isVideo = !!video_url
     const photos = Array.isArray(photo_urls) ? photo_urls.filter(Boolean) : []
@@ -73,6 +74,16 @@ export default async function handler(req, res) {
 
     const apiKey = process.env.UPLOADPOST_API_KEY
     if (!apiKey) return res.status(500).json({ error: 'UPLOADPOST_API_KEY not configured' })
+
+    // Derive a stable per-profile sub-account username, auto-creating the
+    // Upload-Post profile if it doesn't exist yet. Caller can still pass an
+    // explicit upload_post_user to override (useful for shared accounts).
+    const effectiveUser = upload_post_user || deriveUploadPostUsername(profile_id)
+    if (!upload_post_user) {
+      try { await uploadpostEnsureUserProfile(effectiveUser) } catch (e) {
+        console.warn('upload-post ensure profile failed:', e.message)
+      }
+    }
 
     // Pre-flight credit check (cheap fee — Upload-Post itself is paid for
     // outside the app on their side, this is just a transaction marker).
@@ -88,7 +99,7 @@ export default async function handler(req, res) {
 
     // Build the multipart payload Upload-Post expects.
     const fd = new FormData()
-    fd.append('user', upload_post_user)
+    fd.append('user', effectiveUser)
     for (const p of platforms) fd.append('platform[]', p)
     if (description) fd.append('description', String(description).slice(0, 2200))
     if (platforms.includes('tiktok') && title) {

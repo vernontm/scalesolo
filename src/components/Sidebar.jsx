@@ -31,7 +31,7 @@ const navGroups = [
     label: 'Create',
     items: [
       { to: '/spaces',  label: 'Spaces',   icon: Boxes },
-      { to: '/content', label: 'Library',  icon: Sparkles },
+      { to: '/schedule', label: 'Schedule', icon: Sparkles },
       { to: '/email',   label: 'Email',    icon: Mail },
       { to: '/avatars', label: 'Avatars',  icon: UserCircle2 },
       { to: '/landing', label: 'Landing',  icon: LayoutTemplate },

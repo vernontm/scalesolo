@@ -117,7 +117,7 @@ export default function Dashboard() {
 
       {pendingApprovals > 0 && (
         <div
-          onClick={() => navigate('/content')}
+          onClick={() => navigate('/schedule')}
           style={{
             marginTop: 18, padding: '14px 18px',
             background: 'linear-gradient(135deg, rgba(245,158,11,0.16), rgba(245,158,11,0.05))',

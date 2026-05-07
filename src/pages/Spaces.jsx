@@ -1206,6 +1206,16 @@ function SpaceBuilder({ space, onSave, onClose }) {
           _ctxUpstreamVideoUrl: findUpstreamVideoUrl(n.id, nodes, edges),
         } }
       }
+      if (t === 'video_polish') {
+        // The polish editor uses upstream video + logo for the live
+        // overlay preview, plus profile id for the watermark uploader.
+        return { ...n, data: {
+          ...n.data,
+          _ctxProfileId: selectedProfileId,
+          _ctxUpstreamVideoUrl: findUpstreamVideoUrl(n.id, nodes, edges),
+          _ctxUpstreamLogoUrl: findUpstreamLogoUrl(n.id, nodes, edges),
+        } }
+      }
       if (t === 'save_library') {
         // Walk back to see what kind of media is wired in (image / video /
         // text), and look up the active brand profile's synced_platforms.

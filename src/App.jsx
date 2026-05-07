@@ -115,7 +115,8 @@ function AppShell() {
           <Routes>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/spaces"    element={<Spaces />} />
-            <Route path="/content"   element={<Content />} />
+            <Route path="/schedule"  element={<Content />} />
+            <Route path="/content"   element={<Navigate to="/schedule" replace />} />
             <Route path="/email"     element={<Placeholder title="Email engine" hint="Composer, sequences, deliverability. Native sending lands in Milestone 4." />} />
             <Route path="/contacts"  element={<Contacts />} />
             <Route path="/pipeline"  element={<Pipeline />} />

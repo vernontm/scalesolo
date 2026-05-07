@@ -880,6 +880,7 @@ export const NODE_COST_HINT = {
   avatar_render: 8000,    // ~30s clip equivalent
   collection:    0,
   combine_videos: 1500,
+  video_polish:  1500,
   captions:      2000,    // ZapCap caption render
   schedule_post: 100,
   save_library:  0,
@@ -2131,15 +2132,14 @@ function SchedulePostBody({ data, onPatch }) {
   const tz = props.timezone || (typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'UTC')
   return (
     <>
-      <NodeField label="Upload-Post account">
-        <input
-          style={tinyInput}
-          className="nodrag"
-          value={props.upload_post_user || ''}
-          onChange={(e) => onPatch({ upload_post_user: e.target.value })}
-          placeholder="username from upload-post.com"
-        />
-      </NodeField>
+      {/* Account is auto-derived from the active brand profile and connected
+          on the Schedule page — no per-node setup needed. The dim text
+          here is just a confirmation tag. */}
+      <div style={{ fontSize: 10.5, color: 'var(--muted)', marginBottom: 8, lineHeight: 1.4 }}>
+        Posts via the connected social accounts on this brand profile.
+        {' '}
+        <a href="/schedule" style={{ color: 'var(--red)', textDecoration: 'none' }}>Manage →</a>
+      </div>
       <NodeField label="Platforms">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
           {SCHEDULE_PLATFORMS.map((p) => {
@@ -2962,11 +2962,97 @@ export const NODE_REGISTRY = {
     },
   },
 
+  // ── POLISH VIDEO (title overlay + logo/watermark + bg music) ──────────
+  video_polish: {
+    label: 'Polish video', description: 'Adds a title overlay, a logo / watermark, and ducks a background music track under the original voice. Runs on our native ffmpeg server. Captions live in their own node (ZapCap).',
+    icon: Sparkles, category: 'generators', color: '#0ea5e9',
+    inputs: [{ id: 'in', label: 'In (video + logo + music)' }],
+    outputs: [{ id: 'out', label: 'Out (video)' }],
+    initialProps: {
+      // Title overlay
+      title: '',
+      title_enabled: true,
+      title_font: 'Montserrat ExtraBold',
+      title_color: '#ffffff',
+      title_bg_color: '#e0467a',
+      title_size: 72,
+      title_bg_padding: 28,
+      title_y_pos: 15,
+      title_uppercase: false,
+      // Logo / watermark
+      watermark_position: 'br',
+      watermark_size_pct: 25,
+      // Music
+      music_volume: 0.15,
+      music_fade_secs: 1.5,
+    },
+    Body: VideoPolishBody,
+    Editor: VideoPolishEditor,
+    run: async ({ data, inputs, ctx }) => {
+      const arr = asArr(inputs?.in)
+      let videoUrl = null, logoUrl = null, musicUrl = null
+      for (const v of arr) {
+        if (!v || typeof v !== 'object') continue
+        if (!videoUrl) {
+          if (v.video?.video_url) videoUrl = v.video.video_url
+          else if (v.video_url) videoUrl = v.video_url
+        }
+        if (!logoUrl) {
+          if (v.brand?.logo_url) logoUrl = v.brand.logo_url
+          else if (Array.isArray(v.images) && v.images[0]?.url) logoUrl = v.images[0].url
+          else if (v.url && /\.(png|jpe?g|webp)(\?|$)/i.test(v.url)) logoUrl = v.url
+        }
+        if (!musicUrl) {
+          if (v.audio?.audio_url) musicUrl = v.audio.audio_url
+          else if (v.audio_url) musicUrl = v.audio_url
+          else if (v.url && /\.(mp3|wav|m4a|aac)(\?|$)/i.test(v.url)) musicUrl = v.url
+        }
+      }
+      if (!videoUrl) throw new Error('Wire a video into "in" (avatar_render or combine_videos).')
+
+      const p = data.props || {}
+      const titleOn = (p.title_enabled !== false) && !!(p.title || '').trim()
+      const r = await fetch('/api/videos/polish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
+        body: JSON.stringify({
+          profile_id: ctx.profileId,
+          video_url: videoUrl,
+          logo_url: logoUrl || undefined,
+          watermark_image_url: p.watermark_image_url || undefined,
+          music_url: musicUrl || undefined,
+          // Title overlay
+          title: titleOn ? p.title.trim() : undefined,
+          title_style: titleOn ? {
+            font: p.title_font, color: p.title_color, bg_color: p.title_bg_color,
+            size: p.title_size, bg_padding: p.title_bg_padding, y_pos: p.title_y_pos,
+            uppercase: p.title_uppercase,
+          } : undefined,
+          // Captions handled by the dedicated `captions` node — never here.
+          captions_enabled: false,
+          // Logo / watermark
+          watermark_position: p.watermark_position || 'br',
+          watermark_size_pct: p.watermark_size_pct ?? 25,
+          // Music
+          music_volume: p.music_volume ?? 0.15,
+          music_fade_secs: p.music_fade_secs ?? 1.5,
+        }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok || !body?.video_url) throw new Error(body?.error || `Polish failed (${r.status})`)
+      return {
+        video: { video_url: body.video_url },
+        video_url: body.video_url,
+        media_type: 'video',
+        polished: true,
+      }
+    },
+  },
+
   // ── CAPTIONS (ZapCap) ────────────────────────────────────────────────
   // Slim node: takes a video, hands it to ZapCap with a chosen style,
-  // returns the captioned MP4. Title / logo / music polish features
-  // are temporarily removed but still live in /api/videos/polish.js +
-  // VideoPolishEditor below — re-register video_polish when ready.
+  // returns the captioned MP4. Polish (title, watermark, music) is its
+  // own node — chain captions → video_polish if you want both.
   captions: {
     label: 'Captions', description: 'Burns animated captions onto a video using ZapCap. Pick a style preset; ZapCap transcribes and renders.',
     icon: Captions, category: 'generators', color: '#0ea5e9',
@@ -3017,7 +3103,8 @@ export const NODE_REGISTRY = {
     inputs: [{ id: 'in', label: 'In (video / images + caption / hashtags)' }],
     outputs: [{ id: 'out', label: 'Out (request_id)' }],
     initialProps: {
-      upload_post_user: '',
+      // Upload-Post username is now auto-derived per brand profile by the
+      // server; no per-node input needed.
       platforms: [],
       when: 'now',
       scheduled_local: '',
@@ -3049,7 +3136,6 @@ export const NODE_REGISTRY = {
       }
 
       const platforms = Array.isArray(data.props?.platforms) ? data.props.platforms : []
-      if (!data.props?.upload_post_user) throw new Error('Set your Upload-Post username in node settings.')
       if (!platforms.length) throw new Error('Pick at least one platform.')
       if (!videoUrl && !photoUrls.length) throw new Error('Wire a video or images into "in".')
 
@@ -3079,7 +3165,7 @@ export const NODE_REGISTRY = {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
         body: JSON.stringify({
           profile_id: ctx.profileId,
-          upload_post_user: data.props.upload_post_user,
+          // upload_post_user omitted — server derives it from profile_id.
           platforms,
           video_url: videoUrl || undefined,
           photo_urls: !videoUrl && photoUrls.length ? photoUrls : undefined,

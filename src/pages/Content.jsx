@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Sparkles, Library, Calendar, FileEdit, ClipboardCheck, X, Wand2,
-  Check, Trash2, Edit3, Send, Eye, AlertCircle,
+  Check, Trash2, Edit3, Send, Eye, AlertCircle, Link2, Plus, ExternalLink,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
@@ -366,9 +366,143 @@ function CalendarView({ items, onOpen }) {
   )
 }
 
+// ── Social accounts panel — Upload-Post connect-account widget ────────────
+//
+// Each ScaleSolo brand profile maps deterministically to one Upload-Post
+// sub-account (whitelabel "user profile"). On mount we fetch its current
+// state; "Connect" pops a JWT-signed URL on app.upload-post.com where the
+// user authorizes TikTok / IG / etc. and the connections appear here once
+// they return and refresh.
+const SOCIAL_PLATFORMS = [
+  { id: 'tiktok',    label: 'TikTok',    color: '#000' },
+  { id: 'instagram', label: 'Instagram', color: '#E1306C' },
+  { id: 'youtube',   label: 'YouTube',   color: '#FF0000' },
+  { id: 'x',         label: 'X',         color: '#000' },
+  { id: 'threads',   label: 'Threads',   color: '#000' },
+  { id: 'linkedin',  label: 'LinkedIn',  color: '#0A66C2' },
+  { id: 'facebook',  label: 'Facebook',  color: '#1877F2' },
+  { id: 'pinterest', label: 'Pinterest', color: '#BD081C' },
+]
+
+function SocialAccountsPanel({ profileId, token }) {
+  const [profile, setProfile] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState(null)
+  const [connecting, setConnecting] = useState(false)
+
+  const refresh = () => {
+    if (!profileId || !token) return
+    setLoading(true); setErr(null)
+    fetch(`/api/social/profiles?profile_id=${profileId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json().then((b) => ({ ok: r.ok, body: b })))
+      .then(({ ok, body }) => {
+        if (!ok) throw new Error(body?.error || 'Failed to load social accounts')
+        setProfile(body)
+      })
+      .catch((e) => setErr(e.message))
+      .finally(() => setLoading(false))
+  }
+  useEffect(refresh, [profileId, token])
+
+  const onConnect = async () => {
+    setConnecting(true); setErr(null)
+    try {
+      const r = await fetch('/api/social/profiles?action=jwt', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile_id: profileId, redirect_url: window.location.href }),
+      })
+      const body = await r.json()
+      if (!r.ok || !body.access_url) throw new Error(body?.error || `Connect failed (${r.status})`)
+      // Open in a new tab so the user keeps their place in ScaleSolo. They
+      // come back to this tab and hit "Refresh" to see the new connection.
+      window.open(body.access_url, '_blank', 'noopener')
+    } catch (e) {
+      setErr(e.message)
+    } finally {
+      setConnecting(false)
+    }
+  }
+
+  const social = profile?.profile?.social_accounts || {}
+  const connectedIds = Object.entries(social)
+    .filter(([, info]) => info && (info === true || info.access_token || info.connected || info.username))
+    .map(([id]) => id)
+
+  return (
+    <div style={{
+      background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12,
+      padding: 16, marginBottom: 18,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <div style={{ width: 28, height: 28, borderRadius: 7, background: 'linear-gradient(135deg, #2ecc71, #1abc9c)', color: '#fff', display: 'grid', placeItems: 'center' }}>
+          <Link2 size={14} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14 }}>Social accounts</div>
+          <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+            Connect the platforms ScaleSolo can publish to for this brand.
+          </div>
+        </div>
+        <button className="btn-secondary" onClick={refresh} disabled={loading} style={{ padding: '6px 10px' }}>
+          {loading ? <span className="spinner" /> : 'Refresh'}
+        </button>
+        <button className="btn-primary" onClick={onConnect} disabled={connecting}>
+          {connecting ? <span className="spinner" /> : <Plus size={13} />}
+          {connectedIds.length ? 'Add / manage' : 'Connect accounts'}
+          <ExternalLink size={11} style={{ opacity: 0.7 }} />
+        </button>
+      </div>
+      {err && (
+        <div style={{ padding: '8px 10px', background: 'var(--red-soft)', color: 'var(--red)', fontSize: 12, borderRadius: 8, marginBottom: 10 }}>
+          <AlertCircle size={12} style={{ verticalAlign: '-2px', marginRight: 6 }} /> {err}
+        </div>
+      )}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {SOCIAL_PLATFORMS.map((p) => {
+          const connected = connectedIds.includes(p.id)
+          const info = social[p.id]
+          const handle = info?.username || info?.display_name || info?.handle
+          return (
+            <div
+              key={p.id}
+              title={connected && handle ? `Connected as ${handle}` : connected ? 'Connected' : 'Not connected'}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '5px 10px', borderRadius: 999,
+                background: connected ? 'rgba(46,204,113,0.14)' : 'var(--surface-2)',
+                border: `1px solid ${connected ? 'rgba(46,204,113,0.45)' : 'var(--border)'}`,
+                color: connected ? '#2ecc71' : 'var(--muted)',
+                fontSize: 11.5, fontFamily: 'var(--font-display)', fontWeight: 700,
+                letterSpacing: '0.02em',
+              }}
+            >
+              <span style={{
+                width: 6, height: 6, borderRadius: 999,
+                background: connected ? '#2ecc71' : 'var(--muted)',
+              }} />
+              {p.label}
+              {connected && handle && <span style={{ color: 'var(--muted)', fontWeight: 500 }}>· {handle}</span>}
+            </div>
+          )
+        })}
+      </div>
+      {profile?.username && (
+        <div style={{ marginTop: 10, fontSize: 10.5, color: 'var(--muted)' }}>
+          Profile: <code style={{ background: 'var(--surface-2)', padding: '1px 6px', borderRadius: 4 }}>{profile.username}</code>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────
 const TABS = [
   { value: 'library',    label: 'Library',    icon: Library,        filter: 'library',    empty: 'Generate your first piece of content to fill the library.' },
+  // (the "library" tab still exists — Schedule is the page name, Library
+  // is just one view inside it)
   { value: 'calendar',   label: 'Calendar',   icon: Calendar,       filter: 'scheduled',  empty: 'Nothing scheduled in the next two weeks.' },
   { value: 'drafts',     label: 'Drafts',     icon: FileEdit,       filter: 'drafts',     empty: 'No drafts. Generated content shows up here first.' },
   { value: 'approvals',  label: 'Approvals',  icon: ClipboardCheck, filter: 'approvals',  empty: 'No items waiting on you. Set AI CEO behavior to "Aggressive" to skip the queue entirely.' },
@@ -377,7 +511,9 @@ const TABS = [
 export default function Content() {
   const { session } = useAuth()
   const { selectedProfileId } = useProfile()
-  const [tab, setTab] = useState('library')
+  // Page is named "Schedule" so the calendar view is the most natural
+  // default tab; library / drafts / approvals still available below.
+  const [tab, setTab] = useState('calendar')
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
@@ -415,6 +551,7 @@ export default function Content() {
 
   return (
     <div className="fade-up">
+      <SocialAccountsPanel profileId={selectedProfileId} token={session?.access_token} />
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14, gap: 10 }}>
         <div style={tabBar}>
           {TABS.map((t) => {
