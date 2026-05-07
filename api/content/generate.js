@@ -41,10 +41,26 @@ export default async function handler(req, res) {
   if (!auth) return
 
   try {
-    const { profile_id, format, topic, count = 1, platforms } = req.body || {}
+    const { profile_id, format, topic, count = 1, platforms, target_length_secs } = req.body || {}
     if (!profile_id || !topic) return res.status(400).json({ error: 'profile_id + topic required' })
     if (!FORMAT_HINT[format]) return res.status(400).json({ error: `Unknown format: ${format}` })
     if (count < 1 || count > 10) return res.status(400).json({ error: 'count must be 1..10' })
+
+    // Spoken-script length sizing. Average TikTok / short-form delivery is
+    // ~150 wpm = 2.5 wps. We give Claude a target word count so the script
+    // actually fits the duration the user picked instead of free-running.
+    let lengthDirective = ''
+    if ((format === 'tiktok-script' || format === 'youtube-short') && Number(target_length_secs) > 0) {
+      const secs = Math.max(8, Math.min(180, Number(target_length_secs)))
+      const wpm = 150
+      const targetWords = Math.round((secs / 60) * wpm)
+      const tolerance = Math.max(8, Math.round(targetWords * 0.12))
+      lengthDirective = `\n\n## Target length\n` +
+        `Aim for roughly ${secs} seconds of spoken delivery. At ~${wpm} words/minute that's ` +
+        `**${targetWords} words ± ${tolerance}** in the full_script. ` +
+        `Do not pad with filler to hit the count and do not cut value to come in short — ` +
+        `pace the content (hook → 2-3 beats of substance → CTA) so it lands inside that window.`
+    }
 
     await assertProfileAccess(auth.user.id, profile_id)
 
@@ -110,7 +126,7 @@ ${(profile.brand_bible || '(none)').slice(0, 2000)}
 </brand_bible>
 
 ## Format
-${FORMAT_HINT[format]}${avoidBlock}`
+${FORMAT_HINT[format]}${lengthDirective}${avoidBlock}`
 
     const created = []
     let totalUsage = { input: 0, output: 0 }

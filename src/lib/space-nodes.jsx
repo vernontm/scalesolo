@@ -347,6 +347,11 @@ function TextInputBody({ data, onPatch }) {
 
 // ─── 2. SCRIPT GENERATOR ────────────────────────────────────────────────────
 function ScriptGenBody({ data, onPatch }) {
+  const format = data.props?.format || 'tiktok-script'
+  // Length picker only makes sense for spoken-script formats. Other
+  // formats (caption, thread, blog) are governed by per-format hints.
+  const showLengthPicker = format === 'tiktok-script' || format === 'youtube-short'
+  const lenSecs = Number(data.props?.target_length_secs ?? 45)
   return (
     <>
       <MentionPrompt
@@ -357,7 +362,7 @@ function ScriptGenBody({ data, onPatch }) {
         brands={data?._ctxProfiles || []}
       />
       <div style={pillRow}>
-        <select style={pillSelect} value={data.props?.format || 'tiktok-script'} onChange={(e) => onPatch({ format: e.target.value })}>
+        <select style={pillSelect} value={format} onChange={(e) => onPatch({ format: e.target.value })}>
           <option value="tiktok-script">TikTok</option>
           <option value="ig-post">Instagram</option>
           <option value="thread">Thread</option>
@@ -365,6 +370,21 @@ function ScriptGenBody({ data, onPatch }) {
           <option value="email-subject">Email subj</option>
           <option value="blog-post">Blog post</option>
         </select>
+        {showLengthPicker && (
+          <select
+            style={pillSelect}
+            value={lenSecs}
+            onChange={(e) => onPatch({ target_length_secs: Number(e.target.value) })}
+            title="Target script length in seconds (Claude pads/trims to roughly hit it)"
+          >
+            <option value={15}>~15 sec</option>
+            <option value={30}>~30 sec</option>
+            <option value={45}>~45 sec</option>
+            <option value={60}>~60 sec</option>
+            <option value={90}>~90 sec</option>
+            <option value={120}>~2 min</option>
+          </select>
+        )}
       </div>
       <NodePreview status={data.status} output={data.output} error={data.error} />
     </>
@@ -2655,7 +2675,7 @@ export const NODE_REGISTRY = {
     icon: Wand2, category: 'generators', color: '#ef4444',
     inputs: [{ id: 'in', label: 'In (topic / brand)' }],
     outputs: [{ id: 'out', label: 'Out' }],
-    initialProps: { format: 'tiktok-script', topic: '' },
+    initialProps: { format: 'tiktok-script', topic: '', target_length_secs: 45 },
     Body: ScriptGenBody,
     run: async ({ data, inputs, inputsByName, ctx }) => {
       const incoming = inputs?.in
@@ -2671,7 +2691,13 @@ export const NODE_REGISTRY = {
       const r = await fetch('/api/content/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
-        body: JSON.stringify({ profile_id: profileId, format: data.props?.format || 'tiktok-script', topic, count: 1 }),
+        body: JSON.stringify({
+          profile_id: profileId,
+          format: data.props?.format || 'tiktok-script',
+          topic,
+          count: 1,
+          target_length_secs: data.props?.target_length_secs || undefined,
+        }),
       })
       const body = await r.json()
       if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
