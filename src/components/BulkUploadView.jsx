@@ -1,0 +1,562 @@
+// Bulk media upload + manage table — replaces the old Library tab on the
+// Schedule page. Mirrors VTM's ContentScheduler page (drag/drop area on
+// top, status-tabbed table below) but skinnier:
+//
+//   - Drag & drop a folder of MP4 / JPG / PNG files
+//   - Each file gets uploaded to landing-media (direct supabase client),
+//     a content_scripts row is created with media_urls + media_type
+//   - Table shows every script in the profile with inline-editable
+//     title / script / caption / hashtags / first_comment / scheduled
+//   - Status tabs filter rows: Queued (draft|caption_ready|scheduled),
+//     Error (failed), Delivered (posted)
+//   - Toolbar actions:
+//       Generate Captions    → POST /api/content/bulk-actions?action=generate-captions
+//       Auto Schedule        → POST /api/content/bulk-actions?action=auto-schedule
+//       Publish Selected     → POST /api/content/bulk-actions?action=publish-selected
+//       Export CSV           → client-side csv build
+//
+// Editable cells call PATCH /api/content?id=… on blur.
+
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Upload, Loader2, Sparkles, CalendarClock, Send, Download, Trash2,
+  Check, X, AlertCircle, Image as ImageIcon, Video as VideoIcon, ChevronDown,
+} from 'lucide-react'
+import { supabase } from '../lib/supabase.js'
+import { toast, confirmDialog } from './Toast.jsx'
+
+// ── styles ──────────────────────────────────────────────────────────────────
+const cellInput = {
+  width: '100%', background: 'transparent', border: '1px solid transparent',
+  color: 'var(--text)', fontSize: 12, padding: '6px 8px', borderRadius: 6,
+  outline: 'none', resize: 'none',
+  fontFamily: 'inherit', maxHeight: 120, overflowY: 'auto',
+  lineHeight: 1.4,
+}
+const cellInputFocus = {
+  border: '1px solid rgba(239,68,68,0.5)',
+  background: 'var(--surface-2)',
+}
+const headerCell = {
+  fontFamily: 'var(--font-display)', fontSize: 10.5, fontWeight: 700,
+  letterSpacing: '0.06em', textTransform: 'uppercase',
+  color: 'var(--muted)', padding: '10px 8px', textAlign: 'left',
+  borderBottom: '1px solid var(--border)', background: 'var(--surface)',
+  position: 'sticky', top: 0, zIndex: 1,
+}
+
+const STATUS_TABS = [
+  { id: 'queued',    label: 'Queued Posts',  filter: (s) => ['draft', 'caption_ready', 'scheduled'].includes(s.status) },
+  { id: 'error',     label: 'Error',         filter: (s) => s.status === 'failed' },
+  { id: 'delivered', label: 'Delivered',     filter: (s) => s.status === 'posted' },
+]
+
+// Direct upload helper. Mirrors what audio_upload + Avatars.jsx do.
+async function uploadFileToBucket(file, profileId, kind) {
+  const ext = (file.name.split('.').pop() || 'bin').toLowerCase()
+  const folder = kind === 'video' ? 'videos' : 'images'
+  const path = `${profileId || 'shared'}/bulk/${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+  const { error } = await supabase.storage.from('landing-media').upload(path, file, {
+    contentType: file.type || 'application/octet-stream', upsert: false,
+  })
+  if (error) throw new Error(error.message)
+  const { data } = supabase.storage.from('landing-media').getPublicUrl(path)
+  return data.publicUrl
+}
+
+function detectKind(file) {
+  if (file.type?.startsWith('video/')) return 'video'
+  if (file.type?.startsWith('image/')) return 'image'
+  return /\.(mp4|mov|webm|m4v)$/i.test(file.name) ? 'video' : 'image'
+}
+
+// ── inline-editable cell ────────────────────────────────────────────────────
+function EditableCell({ value, multiline = true, placeholder = '', onSave }) {
+  const [draft, setDraft] = useState(value ?? '')
+  const [focused, setFocused] = useState(false)
+  useEffect(() => { setDraft(value ?? '') }, [value])
+  const commit = () => {
+    if ((draft ?? '') === (value ?? '')) return
+    onSave(draft)
+  }
+  const Tag = multiline ? 'textarea' : 'input'
+  return (
+    <Tag
+      value={draft}
+      placeholder={placeholder}
+      onChange={(e) => setDraft(e.target.value)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => { setFocused(false); commit() }}
+      onKeyDown={(e) => {
+        if (!multiline && e.key === 'Enter') { e.target.blur() }
+        if (e.key === 'Escape') { setDraft(value ?? ''); e.target.blur() }
+      }}
+      rows={multiline ? 3 : undefined}
+      style={{ ...cellInput, ...(focused ? cellInputFocus : {}) }}
+    />
+  )
+}
+
+// ── status pill ─────────────────────────────────────────────────────────────
+const PILL = {
+  draft:         { bg: 'rgba(255,255,255,0.06)', fg: 'var(--muted)', label: 'Draft' },
+  caption_ready: { bg: 'rgba(245,158,11,0.16)',  fg: '#f59e0b',     label: 'Caption ready' },
+  scheduled:     { bg: 'rgba(96,165,250,0.16)',  fg: '#60a5fa',     label: 'Scheduled' },
+  posted:        { bg: 'rgba(46,204,113,0.16)',  fg: '#2ecc71',     label: 'Published' },
+  failed:        { bg: 'rgba(239,68,68,0.16)',   fg: 'var(--red)',  label: 'Failed' },
+}
+function StatusPill({ status }) {
+  const p = PILL[status] || PILL.draft
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 4,
+      padding: '3px 8px', borderRadius: 999,
+      background: p.bg, color: p.fg,
+      fontSize: 10.5, fontFamily: 'var(--font-display)', fontWeight: 700,
+      letterSpacing: '0.04em',
+    }}>{p.label}</span>
+  )
+}
+
+// ── main component ──────────────────────────────────────────────────────────
+export default function BulkUploadView({ profileId, token, onChange }) {
+  const [scripts, setScripts] = useState(null) // null = loading, [] = empty
+  const [error, setError] = useState(null)
+  const [tab, setTab] = useState('queued')
+  const [selected, setSelected] = useState(new Set())
+  const [search, setSearch] = useState('')
+  const [busyAction, setBusyAction] = useState(null) // 'captions' | 'schedule' | 'publish'
+  const [uploads, setUploads] = useState([]) // {id, name, kind, progress, error?}
+  const dropRef = useRef(null)
+  const fileRef = useRef(null)
+
+  // ── load ──────────────────────────────────────────────────────────────────
+  const refresh = async () => {
+    if (!profileId || !token) return
+    try {
+      const r = await fetch(`/api/content?profile_id=${profileId}&filter=library`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body?.error || `Load failed (${r.status})`)
+      setScripts(Array.isArray(body.items) ? body.items : [])
+      setError(null)
+    } catch (e) { setError(e.message); setScripts([]) }
+  }
+  useEffect(() => { refresh() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [profileId, token])
+
+  // ── upload ────────────────────────────────────────────────────────────────
+  const onFiles = async (files) => {
+    if (!files || !files.length) return
+    if (!profileId) { toast({ kind: 'warn', message: 'Pick a brand profile first.' }); return }
+    const queue = Array.from(files).map((f) => ({
+      id: `up_${Math.random().toString(36).slice(2)}`,
+      name: f.name, kind: detectKind(f), file: f, progress: 0,
+    }))
+    setUploads((u) => [...u, ...queue])
+
+    for (const job of queue) {
+      try {
+        setUploads((u) => u.map((x) => x.id === job.id ? { ...x, progress: 30 } : x))
+        const url = await uploadFileToBucket(job.file, profileId, job.kind)
+        setUploads((u) => u.map((x) => x.id === job.id ? { ...x, progress: 70 } : x))
+        // Create the content_scripts row.
+        const r = await fetch('/api/content', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            profile_id: profileId,
+            title: job.name.replace(/\.[^.]+$/, '').slice(0, 80),
+            media_urls: [url], media_type: job.kind,
+            post_type: job.kind === 'video' ? 'video' : 'post',
+            status: 'draft', generated_by: 'bulk',
+          }),
+        })
+        const body = await r.json()
+        if (!r.ok) throw new Error(body?.error || `Create row failed (${r.status})`)
+        setUploads((u) => u.map((x) => x.id === job.id ? { ...x, progress: 100 } : x))
+        // Drop completed entries after a brief beat.
+        setTimeout(() => setUploads((u) => u.filter((x) => x.id !== job.id)), 800)
+      } catch (e) {
+        setUploads((u) => u.map((x) => x.id === job.id ? { ...x, error: e.message } : x))
+      }
+    }
+    refresh()
+    onChange?.()
+  }
+
+  // ── drag/drop wiring ──────────────────────────────────────────────────────
+  useEffect(() => {
+    const el = dropRef.current
+    if (!el) return
+    let depth = 0
+    const onDragEnter = (e) => { e.preventDefault(); depth++; el.dataset.drag = '1' }
+    const onDragLeave = () => { if (--depth <= 0) { delete el.dataset.drag; depth = 0 } }
+    const onDragOver = (e) => { e.preventDefault() }
+    const onDrop = (e) => { e.preventDefault(); depth = 0; delete el.dataset.drag; onFiles(e.dataTransfer?.files) }
+    el.addEventListener('dragenter', onDragEnter)
+    el.addEventListener('dragleave', onDragLeave)
+    el.addEventListener('dragover', onDragOver)
+    el.addEventListener('drop', onDrop)
+    return () => {
+      el.removeEventListener('dragenter', onDragEnter)
+      el.removeEventListener('dragleave', onDragLeave)
+      el.removeEventListener('dragover', onDragOver)
+      el.removeEventListener('drop', onDrop)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId])
+
+  // ── filtering / selection ────────────────────────────────────────────────
+  const tabFn = STATUS_TABS.find((t) => t.id === tab)?.filter || (() => true)
+  const visible = useMemo(() => {
+    const all = (scripts || []).filter(tabFn)
+    const s = search.trim().toLowerCase()
+    if (!s) return all
+    return all.filter((r) => (r.title || '').toLowerCase().includes(s)
+      || (r.caption || '').toLowerCase().includes(s)
+      || (r.full_script || '').toLowerCase().includes(s)
+      || (r.hashtags || '').toLowerCase().includes(s))
+  }, [scripts, tab, search]) // eslint-disable-line react-hooks/exhaustive-deps
+  const counts = useMemo(() => {
+    const out = {}
+    for (const t of STATUS_TABS) out[t.id] = (scripts || []).filter(t.filter).length
+    return out
+  }, [scripts])
+  const allSelected = visible.length > 0 && visible.every((r) => selected.has(r.id))
+  const toggleAll = () => {
+    if (allSelected) setSelected(new Set())
+    else setSelected(new Set(visible.map((r) => r.id)))
+  }
+  const toggleOne = (id) => {
+    setSelected((s) => {
+      const next = new Set(s); if (next.has(id)) next.delete(id); else next.add(id); return next
+    })
+  }
+
+  // ── inline patch ──────────────────────────────────────────────────────────
+  const patchScript = async (id, patch) => {
+    setScripts((arr) => arr.map((r) => r.id === id ? { ...r, ...patch } : r))
+    try {
+      const r = await fetch(`/api/content?id=${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(patch),
+      })
+      if (!r.ok) {
+        const b = await r.json().catch(() => ({}))
+        throw new Error(b?.error || `Save failed (${r.status})`)
+      }
+    } catch (e) {
+      toast({ kind: 'error', message: `Save failed: ${e.message}` })
+      refresh()
+    }
+  }
+  const deleteScript = async (id) => {
+    const ok = await confirmDialog({ title: 'Delete this row?', confirmText: 'Delete', destructive: true })
+    if (!ok) return
+    try {
+      await fetch(`/api/content?id=${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
+      setScripts((arr) => arr.filter((r) => r.id !== id))
+      setSelected((s) => { const n = new Set(s); n.delete(id); return n })
+    } catch (e) { toast({ kind: 'error', message: e.message }) }
+  }
+
+  // ── bulk actions ──────────────────────────────────────────────────────────
+  const callBulk = async (action, label) => {
+    const ids = [...selected]
+    setBusyAction(action)
+    try {
+      const r = await fetch(`/api/content/bulk-actions?action=${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ profile_id: profileId, script_ids: ids }),
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body?.error || `${label} failed (${r.status})`)
+      const summary = body.updated != null ? `${label}: ${body.updated}/${body.total ?? ids.length} updated`
+        : body.scheduled != null ? `${label}: ${body.scheduled} scheduled${body.skipped ? `, ${body.skipped} skipped` : ''}`
+        : body.submitted != null ? `${label}: ${body.submitted} submitted${body.failed ? `, ${body.failed} failed` : ''}`
+        : `${label} done`
+      toast({ kind: 'success', message: summary })
+      refresh()
+    } catch (e) {
+      toast({ kind: 'error', message: e.message })
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const exportCsv = () => {
+    const cols = ['title', 'full_script', 'caption', 'hashtags', 'first_comment', 'status', 'scheduled_datetime', 'media_urls']
+    const escape = (v) => `"${String(v ?? '').replace(/"/g, '""').replace(/\r?\n/g, ' ')}"`
+    const rows = (scripts || []).map((r) => cols.map((c) => {
+      const v = r[c]
+      if (Array.isArray(v)) return escape(v.join('|'))
+      return escape(v)
+    }).join(','))
+    const csv = [cols.join(','), ...rows].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `scalesolo-content-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000)
+  }
+
+  // ── render ────────────────────────────────────────────────────────────────
+  return (
+    <div>
+      {/* Drag/drop area */}
+      <div
+        ref={dropRef}
+        style={{
+          background: 'var(--surface)',
+          border: '2px dashed var(--border)',
+          borderRadius: 14, padding: 20, marginBottom: 18,
+          display: 'flex', alignItems: 'center', gap: 16,
+          transition: 'border-color 0.15s, background 0.15s',
+        }}
+        onClick={() => fileRef.current?.click()}
+      >
+        <div style={{
+          width: 48, height: 48, borderRadius: 10,
+          background: 'linear-gradient(135deg, #f59e0b, #f97316)',
+          color: '#fff', display: 'grid', placeItems: 'center', flexShrink: 0,
+        }}><VideoIcon size={22} /></div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15, marginBottom: 2 }}>
+            Bulk Media Upload
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.45 }}>
+            Drag &amp; drop videos or images here. Each upload becomes a draft row below — title, caption, hashtags &amp; first comment auto-generate from your brand bible when you click <strong>Generate Captions</strong>.
+          </div>
+        </div>
+        <button
+          className="btn-secondary"
+          onClick={(e) => { e.stopPropagation(); fileRef.current?.click() }}
+          style={{ padding: '8px 12px' }}
+          aria-label="Choose files to upload"
+        ><Upload size={14} /> Choose files</button>
+        <input
+          ref={fileRef} type="file" multiple
+          accept="video/*,image/*"
+          aria-label="Bulk upload media files"
+          style={{ display: 'none' }}
+          onChange={(e) => { onFiles(e.target.files); e.target.value = '' }}
+        />
+      </div>
+
+      {/* Active uploads */}
+      {uploads.length > 0 && (
+        <div style={{ marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {uploads.map((u) => (
+            <div key={u.id} style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '6px 10px', borderRadius: 8,
+              background: u.error ? 'rgba(239,68,68,0.10)' : 'var(--surface-2)',
+              border: `1px solid ${u.error ? 'rgba(239,68,68,0.4)' : 'var(--border)'}`,
+              fontSize: 12,
+            }}>
+              {u.error ? <AlertCircle size={14} style={{ color: 'var(--red)' }} />
+                : u.progress >= 100 ? <Check size={14} style={{ color: '#2ecc71' }} />
+                : <Loader2 size={14} className="spin" />}
+              <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.name}</div>
+              {u.error
+                ? <span style={{ color: 'var(--red)' }}>{u.error}</span>
+                : <div style={{ width: 80, height: 6, background: 'var(--surface)', borderRadius: 999, overflow: 'hidden' }}>
+                    <div style={{ width: `${u.progress}%`, height: '100%', background: '#f59e0b', transition: 'width 0.2s' }} />
+                  </div>
+              }
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Status tabs + search */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 4, padding: 4, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10 }}>
+          {STATUS_TABS.map((t) => {
+            const active = tab === t.id
+            return (
+              <button
+                key={t.id}
+                onClick={() => { setTab(t.id); setSelected(new Set()) }}
+                style={{
+                  padding: '6px 12px', borderRadius: 7,
+                  background: active ? 'var(--surface-2)' : 'transparent',
+                  border: active ? '1px solid var(--border)' : '1px solid transparent',
+                  color: active ? 'var(--text)' : 'var(--text-soft)',
+                  cursor: 'pointer', fontFamily: 'var(--font-display)', fontSize: 12.5, fontWeight: 700,
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                }}
+              >
+                {t.label}
+                <span style={{
+                  background: active ? '#f59e0b' : 'var(--surface-3)',
+                  color: active ? '#fff' : 'var(--muted)',
+                  padding: '1px 7px', borderRadius: 999, fontSize: 10.5, fontWeight: 800,
+                }}>{counts[t.id] ?? 0}</span>
+              </button>
+            )
+          })}
+        </div>
+        <input
+          className="input"
+          placeholder="Search a post"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ flex: 1, maxWidth: 280, padding: '8px 12px', fontSize: 13 }}
+        />
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 12, color: 'var(--muted)' }}>{visible.length} of {(scripts || []).length}</span>
+      </div>
+
+      {/* Bulk action toolbar */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-soft)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Select all visible rows" />
+          Select All ({visible.length})
+        </label>
+        <span style={{ flex: 1 }} />
+        <button
+          className="btn-secondary" disabled={!selected.size || busyAction !== null}
+          onClick={() => callBulk('generate-captions', 'Captions')}
+          style={{ padding: '8px 12px' }}
+        >{busyAction === 'generate-captions' ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />} Generate Captions</button>
+        <button
+          className="btn-secondary" disabled={!selected.size || busyAction !== null}
+          onClick={() => callBulk('auto-schedule', 'Auto-schedule')}
+          style={{ padding: '8px 12px' }}
+        >{busyAction === 'auto-schedule' ? <Loader2 size={13} className="spin" /> : <CalendarClock size={13} />} Auto Schedule</button>
+        <button
+          className="btn-primary" disabled={!selected.size || busyAction !== null}
+          onClick={async () => {
+            const ok = await confirmDialog({ title: `Publish ${selected.size} selected?`, message: 'Submits each row to upload-post.com immediately (or schedules per its scheduled_at).', confirmText: 'Publish' })
+            if (ok) callBulk('publish-selected', 'Publish')
+          }}
+          style={{ padding: '8px 12px' }}
+        >{busyAction === 'publish-selected' ? <Loader2 size={13} className="spin" /> : <Send size={13} />} Publish Selected</button>
+        <button
+          onClick={exportCsv}
+          style={{
+            padding: '8px 12px', borderRadius: 8,
+            background: 'linear-gradient(135deg, #92400e, #78350f)', color: '#fff',
+            border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 700, fontFamily: 'var(--font-display)',
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}
+        ><Download size={13} /> Export CSV</button>
+      </div>
+
+      {/* Error banner */}
+      {error && (
+        <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '10px 12px', borderRadius: 8, marginBottom: 10, fontSize: 12.5 }}>
+          <AlertCircle size={13} style={{ verticalAlign: '-2px' }} /> {error}
+        </div>
+      )}
+
+      {/* Table */}
+      <div style={{
+        background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12,
+        overflow: 'hidden',
+      }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', minWidth: 1100, borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr>
+                <th style={{ ...headerCell, width: 32 }} aria-label="Select">{' '}</th>
+                <th style={{ ...headerCell, width: 70 }}>Media</th>
+                <th style={{ ...headerCell, minWidth: 160 }}>Title</th>
+                <th style={{ ...headerCell, minWidth: 200 }}>Script</th>
+                <th style={{ ...headerCell, minWidth: 200 }}>Caption</th>
+                <th style={{ ...headerCell, minWidth: 160 }}>Hashtags</th>
+                <th style={{ ...headerCell, minWidth: 160 }}>1st Comment</th>
+                <th style={{ ...headerCell, width: 140 }}>Scheduled</th>
+                <th style={{ ...headerCell, width: 120 }}>Status</th>
+                <th style={{ ...headerCell, width: 80 }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {scripts === null ? (
+                <tr><td colSpan={10} style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}><Loader2 size={18} className="spin" /></td></tr>
+              ) : visible.length === 0 ? (
+                <tr><td colSpan={10} style={{ padding: 60, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
+                  {tab === 'queued' && 'No queued posts. Drop media above to start.'}
+                  {tab === 'error' && 'No failed posts.'}
+                  {tab === 'delivered' && 'Nothing delivered yet.'}
+                </td></tr>
+              ) : visible.map((r) => {
+                const thumb = Array.isArray(r.media_urls) && r.media_urls[0]
+                const isVideo = r.media_type === 'video'
+                return (
+                  <tr key={r.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: 8, verticalAlign: 'top' }}>
+                      <input
+                        type="checkbox"
+                        checked={selected.has(r.id)}
+                        onChange={() => toggleOne(r.id)}
+                        aria-label={`Select ${r.title || 'row'}`}
+                      />
+                    </td>
+                    <td style={{ padding: 8, verticalAlign: 'top' }}>
+                      {thumb ? (
+                        isVideo
+                          ? <video src={thumb} muted playsInline preload="metadata" style={{ width: 56, height: 56, borderRadius: 6, objectFit: 'cover', background: '#000', display: 'block' }} />
+                          : <img src={thumb} alt={r.title || 'media'} style={{ width: 56, height: 56, borderRadius: 6, objectFit: 'cover', background: 'var(--surface-2)', display: 'block' }} />
+                      ) : (
+                        <div style={{ width: 56, height: 56, borderRadius: 6, background: 'var(--surface-2)', display: 'grid', placeItems: 'center', color: 'var(--muted)' }}>
+                          <ImageIcon size={18} />
+                        </div>
+                      )}
+                    </td>
+                    <td style={{ padding: 4, verticalAlign: 'top' }}>
+                      <EditableCell value={r.title} multiline placeholder="Title" onSave={(v) => patchScript(r.id, { title: v })} />
+                    </td>
+                    <td style={{ padding: 4, verticalAlign: 'top' }}>
+                      <EditableCell value={r.full_script} placeholder="Script / transcript" onSave={(v) => patchScript(r.id, { full_script: v })} />
+                    </td>
+                    <td style={{ padding: 4, verticalAlign: 'top' }}>
+                      <EditableCell value={r.caption} placeholder="Caption" onSave={(v) => patchScript(r.id, { caption: v })} />
+                    </td>
+                    <td style={{ padding: 4, verticalAlign: 'top' }}>
+                      <EditableCell value={r.hashtags} placeholder="#hashtags" onSave={(v) => patchScript(r.id, { hashtags: v })} />
+                    </td>
+                    <td style={{ padding: 4, verticalAlign: 'top' }}>
+                      <EditableCell value={r.first_comment} placeholder="First comment" onSave={(v) => patchScript(r.id, { first_comment: v })} />
+                    </td>
+                    <td style={{ padding: 8, verticalAlign: 'top', fontSize: 11.5, color: 'var(--text-soft)' }}>
+                      <input
+                        type="datetime-local"
+                        value={r.scheduled_datetime ? new Date(r.scheduled_datetime).toISOString().slice(0, 16) : ''}
+                        onChange={(e) => {
+                          const v = e.target.value
+                          patchScript(r.id, { scheduled_datetime: v ? new Date(v).toISOString() : null })
+                        }}
+                        style={{ ...cellInput, fontSize: 11.5 }}
+                      />
+                    </td>
+                    <td style={{ padding: 8, verticalAlign: 'top' }}>
+                      <StatusPill status={r.status} />
+                    </td>
+                    <td style={{ padding: 8, verticalAlign: 'top' }}>
+                      <button
+                        aria-label="Delete row"
+                        onClick={() => deleteScript(r.id)}
+                        style={{
+                          background: 'transparent', border: 'none',
+                          color: 'var(--muted)', cursor: 'pointer',
+                          padding: 6, borderRadius: 6,
+                        }}
+                        title="Delete"
+                      ><Trash2 size={14} /></button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}

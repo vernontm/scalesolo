@@ -2110,15 +2110,19 @@ export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges })
 }
 
 // ─── SCHEDULE POST (Upload-Post API) ───────────────────────────────────────
+// `cap` = effective caption character limit per platform. We send the
+// same description to all selected platforms (Upload-Post takes one
+// string), so the *minimum* of the selected caps is the safe upper
+// bound. Anything past gets truncated by the platform on its end.
 const SCHEDULE_PLATFORMS = [
-  { id: 'tiktok',    label: 'TikTok',    kinds: ['video'] },
-  { id: 'instagram', label: 'Instagram', kinds: ['image', 'video'] },
-  { id: 'youtube',   label: 'YouTube',   kinds: ['video'] },
-  { id: 'x',         label: 'X',         kinds: ['image', 'video'] },
-  { id: 'threads',   label: 'Threads',   kinds: ['image', 'video'] },
-  { id: 'linkedin',  label: 'LinkedIn',  kinds: ['image', 'video'] },
-  { id: 'facebook',  label: 'Facebook',  kinds: ['image', 'video'] },
-  { id: 'pinterest', label: 'Pinterest', kinds: ['image', 'video'] },
+  { id: 'tiktok',    label: 'TikTok',    kinds: ['video'],          cap: 2200 },
+  { id: 'instagram', label: 'Instagram', kinds: ['image', 'video'], cap: 2200 },
+  { id: 'youtube',   label: 'YouTube',   kinds: ['video'],          cap: 5000 },
+  { id: 'x',         label: 'X',         kinds: ['image', 'video'], cap: 280  },
+  { id: 'threads',   label: 'Threads',   kinds: ['image', 'video'], cap: 500  },
+  { id: 'linkedin',  label: 'LinkedIn',  kinds: ['image', 'video'], cap: 3000 },
+  { id: 'facebook',  label: 'Facebook',  kinds: ['image', 'video'], cap: 63206 },
+  { id: 'pinterest', label: 'Pinterest', kinds: ['image', 'video'], cap: 500  },
 ]
 
 function SchedulePostBody({ data, onPatch }) {
@@ -2247,6 +2251,28 @@ function SchedulePostBody({ data, onPatch }) {
           </NodeField>
         </>
       )}
+      {/* Per-platform character-cap preview — flags any selected platform
+         whose limit will truncate the wired-in caption. */}
+      {(() => {
+        const incomingDesc = data._ctxIncomingDescriptionLength
+        if (incomingDesc == null || !platforms.length) return null
+        const tightest = SCHEDULE_PLATFORMS.filter((p) => platforms.includes(p.id)).reduce(
+          (acc, p) => p.cap < acc.cap ? p : acc, { cap: Infinity, label: '' }
+        )
+        if (!isFinite(tightest.cap)) return null
+        const over = incomingDesc > tightest.cap
+        return (
+          <div style={{
+            marginTop: 6, padding: '6px 8px', borderRadius: 6, fontSize: 10.5, lineHeight: 1.4,
+            background: over ? 'rgba(245,158,11,0.12)' : 'var(--surface-2)',
+            border: `1px solid ${over ? 'rgba(245,158,11,0.4)' : 'var(--border)'}`,
+            color: over ? 'var(--amber)' : 'var(--text-soft)',
+          }}>
+            Caption: <strong>{incomingDesc}</strong> / {tightest.cap} chars
+            {over && <> — exceeds <strong>{tightest.label}</strong> limit; will be truncated on that platform.</>}
+          </div>
+        )
+      })()}
       <div style={{ fontSize: 10.5, color: 'var(--muted)', lineHeight: 1.4, marginTop: 4 }}>
         Wire a video (or images) plus an optional caption / hashtags / script.
       </div>

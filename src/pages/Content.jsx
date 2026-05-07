@@ -3,6 +3,7 @@ import {
   Sparkles, Library, Calendar, FileEdit, ClipboardCheck, X, Wand2,
   Check, Trash2, Edit3, Send, Eye, AlertCircle, Link2, Plus, ExternalLink,
 } from 'lucide-react'
+import BulkUploadView from '../components/BulkUploadView.jsx'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { useCredits } from '../context/CreditsContext.jsx'
@@ -544,9 +545,9 @@ const TABS = [
 export default function Content() {
   const { session } = useAuth()
   const { selectedProfileId } = useProfile()
-  // Page is named "Schedule" so the calendar view is the most natural
-  // default tab; library / drafts / approvals still available below.
-  const [tab, setTab] = useState('calendar')
+  // Library tab is the bulk-upload + manage table — the primary surface
+  // for the Schedule page. Calendar / Drafts / Approvals still selectable.
+  const [tab, setTab] = useState('library')
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
@@ -609,7 +610,12 @@ export default function Content() {
         </button>
       </div>
 
-      {loading ? (
+      {tab === 'library' ? (
+        // Library tab is now the bulk upload + manage table view (mirrors
+        // VTM's ContentScheduler). It owns its own data fetch + status
+        // tabs internally so we don't need the outer loading guard.
+        <BulkUploadView profileId={selectedProfileId} token={session?.access_token} onChange={refreshPending} />
+      ) : loading ? (
         <div className="card-flat" style={{ padding: 40, textAlign: 'center' }}><span className="spinner" /></div>
       ) : tab === 'calendar' ? (
         <CalendarView items={items} onOpen={setOpened} />

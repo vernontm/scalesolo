@@ -296,7 +296,7 @@ function SpaceNode({ id, data, selected }) {
 // can actually edit. We just need "did anything user-meaningful change".
 function propsHashShort(p) {
   if (!p || typeof p !== 'object') return ''
-  const skip = new Set(['_ctxAvatars', '_ctxPublicAvatars', '_ctxProfiles', '_ctxNamedImages', '_ctxCostPerRun', '_ctxProfileId', '_ctxSyncedPlatforms', '_ctxDetectedKind', '_ctxUpstreamVideoUrl', '_ctxUpstreamScript', '_ctxUpstreamLogoUrl', '_ctxConnectedPlatforms', '_ctxBrandSchedule'])
+  const skip = new Set(['_ctxAvatars', '_ctxPublicAvatars', '_ctxProfiles', '_ctxNamedImages', '_ctxCostPerRun', '_ctxProfileId', '_ctxSyncedPlatforms', '_ctxDetectedKind', '_ctxUpstreamVideoUrl', '_ctxUpstreamScript', '_ctxUpstreamLogoUrl', '_ctxConnectedPlatforms', '_ctxBrandSchedule', '_ctxIncomingDescriptionLength'])
   const parts = []
   for (const k of Object.keys(p).sort()) {
     if (skip.has(k)) continue
@@ -1257,8 +1257,33 @@ function SpaceBuilder({ space, onSave, onClose }) {
         } }
       }
       if (t === 'schedule_post') {
-        // Drives platform-pill enablement + the auto-slot preview.
+        // Drives platform-pill enablement + the auto-slot preview +
+        // the per-platform character-cap warning.
         const activeProfile = (profiles || []).find((p) => p.id === selectedProfileId)
+        // Walk upstream to estimate the description length (caption +
+        // hashtags) that schedule_post would build at run time. Cheap
+        // approximation; updates whenever an upstream node finishes.
+        let descLen = null
+        const seen = new Set([n.id])
+        const queue = [n.id]
+        let captionStr = '', hashtagsStr = ''
+        while (queue.length) {
+          const cur = queue.shift()
+          for (const e of edges) {
+            if (e.target !== cur || seen.has(e.source)) continue
+            seen.add(e.source); queue.push(e.source)
+            const src = nodes.find((x) => x.id === e.source)
+            const o = src?.data?.output
+            if (!o) continue
+            if (typeof o === 'object') {
+              if (!captionStr && typeof o.caption === 'string') captionStr = o.caption
+              if (!hashtagsStr && typeof o.hashtags === 'string') hashtagsStr = o.hashtags
+            }
+          }
+        }
+        if (captionStr || hashtagsStr) {
+          descLen = [captionStr, hashtagsStr].filter(Boolean).join('\n\n').trim().length
+        }
         return { ...n, data: {
           ...n.data,
           _ctxProfileId: selectedProfileId,
@@ -1267,6 +1292,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
             timezone: activeProfile.timezone,
             posting_schedule: activeProfile.posting_schedule,
           } : null,
+          _ctxIncomingDescriptionLength: descLen,
         } }
       }
       if (t === 'save_library') {
