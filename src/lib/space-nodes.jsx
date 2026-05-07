@@ -351,25 +351,28 @@ function ScriptGenBody({ data, onPatch }) {
 }
 
 // ─── 3. CAPTION + HASHTAGS (merged) ─────────────────────────────────────────
-function CaptionGenBody({ data, onPatch }) {
+function CaptionGenBody({ data }) {
+  // Show a per-platform summary once it's run. Each platform's variant is
+  // ready to flow into schedule_post — the connector picks the right one
+  // based on its selected platforms.
+  const out = data.output
+  const variants = out?.per_platform || {}
   return (
     <>
-      <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 6 }}>
-        Connect a script. Outputs caption + hashtags together.
+      <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 6, lineHeight: 1.4 }}>
+        Connect a script. Generates a <strong>title, caption, and 5 hashtags</strong> tuned for every platform — TikTok, Instagram, YouTube, X, LinkedIn — in one call. Schedule_post automatically picks the variant for whichever platforms it's set to publish to.
       </div>
-      <div style={pillRow}>
-        <select style={pillSelect} value={data.props?.platform || 'instagram'} onChange={(e) => onPatch({ platform: e.target.value })}>
-          <option value="instagram">Instagram</option>
-          <option value="tiktok">TikTok</option>
-          <option value="youtube">YouTube</option>
-          <option value="x">X / Threads</option>
-          <option value="linkedin">LinkedIn</option>
-        </select>
-        <select style={pillSelect} value={data.props?.hashtag_count || 10} onChange={(e) => onPatch({ hashtag_count: Number(e.target.value) })}>
-          {[5, 8, 10, 15, 20, 25, 30].map((n) => <option key={n} value={n}>{n} tags</option>)}
-        </select>
-      </div>
-      <NodePreview status={data.status} output={data.output} error={data.error} />
+      {Object.keys(variants).length > 0 && (
+        <div style={{ ...previewBox, marginTop: 6, fontSize: 10.5 }}>
+          {Object.entries(variants).slice(0, 5).map(([p, v]) => (
+            <div key={p} style={{ marginBottom: 4 }}>
+              <strong style={{ textTransform: 'capitalize' }}>{p}:</strong>{' '}
+              <span style={{ color: 'var(--muted)' }}>{v?.caption?.slice(0, 60) || '—'}…</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <NodePreview status={data.status} output={Object.keys(variants).length ? null : out} error={data.error} />
     </>
   )
 }
@@ -1519,7 +1522,6 @@ function VideoPolishBody({ data, onPatch }) {
   const out = data.output
   const props = data.props || {}
   const status = data.status || 'idle'
-  const subsOn = props.captions_enabled !== false && !!props.caption_template_id
   // Spaces.jsx injects these via renderNodes — they let the body show a
   // live overlay preview without reaching back into ReactFlow's nodes/edges.
   const upstreamVideo = data._ctxUpstreamVideoUrl || null
@@ -1554,7 +1556,11 @@ function VideoPolishBody({ data, onPatch }) {
         <ArrowUpRight size={11} style={{ color: 'var(--muted)' }} />
       </button>
       <div style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.35 }}>
-        Captions: <strong>{subsOn ? (props.caption_template_name || 'on') : 'off'}</strong>
+        Title: <strong>{
+          props.title_enabled === false ? 'off'
+          : (props.title_mode || 'auto') === 'auto' ? 'auto'
+          : (props.title || 'manual').slice(0, 18)
+        }</strong>
         {' · '}Logo: <strong>{(props.watermark_position || 'br') === 'none' ? 'off' : `${props.watermark_size_pct ?? 25}%`}</strong>
         {' · '}Music: <strong>{Math.round((Number(props.music_volume ?? 0.15)) * 100)}%</strong>
       </div>
@@ -2003,14 +2009,38 @@ export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges })
 
       {/* Title overlay ─────────────────────────────────────────────────── */}
       <PolishSection icon={Type} title="Title overlay">
-        <div style={{ marginBottom: 10 }}>
-          <input
+        <NodeField label="Title source">
+          <select
             style={tinyInput}
-            placeholder="Your title here"
-            value={props.title || ''}
-            onChange={(e) => setP({ title: e.target.value })}
-          />
-        </div>
+            value={props.title_mode || 'auto'}
+            onChange={(e) => setP({ title_mode: e.target.value })}
+          >
+            <option value="auto">Auto — transcribe video, Claude writes the title</option>
+            <option value="manual">Manual — type my own title below</option>
+          </select>
+        </NodeField>
+        {(props.title_mode || 'auto') === 'auto' ? (
+          <NodeField label="Topic / angle hint (optional)">
+            <textarea
+              style={{ ...tinyInput, minHeight: 56, fontFamily: 'inherit', resize: 'vertical' }}
+              placeholder='e.g. "punchy hook focused on the red flag, max 6 words"'
+              value={props.title_topic || ''}
+              onChange={(e) => setP({ title_topic: e.target.value })}
+            />
+            <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 4, lineHeight: 1.4 }}>
+              ElevenLabs transcribes the audio; Claude writes a click-worthy title using your brand bible + this hint. Costs ~800 ai_tokens per render.
+            </div>
+          </NodeField>
+        ) : (
+          <div style={{ marginBottom: 10 }}>
+            <input
+              style={tinyInput}
+              placeholder="Your title here"
+              value={props.title || ''}
+              onChange={(e) => setP({ title: e.target.value })}
+            />
+          </div>
+        )}
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, cursor: 'pointer' }}>
           <input
             type="checkbox"
@@ -2631,48 +2661,97 @@ export const NODE_REGISTRY = {
   },
 
   caption_gen: {
-    label: 'Caption + hashtags', description: 'Generates a platform caption AND hashtag block from a script. Optional brand profile input.',
+    label: 'Title + caption + hashtags', description: 'Generates a click-worthy title, a platform-tuned caption, and 5 hashtags for EVERY platform (TikTok, Instagram, YouTube, X, LinkedIn) in one Claude call. schedule_post automatically picks the right variant. Hashtag count is locked at 5.',
     icon: Captions, category: 'generators', color: '#f59e0b',
     inputs: [{ id: 'in', label: 'In (script / brand)' }],
     outputs: [{ id: 'out', label: 'Out' }],
-    initialProps: { platform: 'instagram', hashtag_count: 10 },
+    initialProps: {},
     Body: CaptionGenBody,
     run: async ({ data, inputs, ctx }) => {
       const incoming = inputs?.in
       const script = pickScript(incoming)
       if (!script) throw new Error('No script provided')
-      const platform = data.props?.platform || 'instagram'
-      const count = data.props?.hashtag_count || 10
       const brand = pickBrand(incoming)
       const profileId = brand?.profile_id || ctx.profileId
+
+      // One Claude call returns variants for all five platforms as JSON.
+      // Per-platform constraints baked into the prompt so the variants
+      // already respect the tightest character caps (X is the worst at 280).
+      const prompt = `From the script below, write a TITLE, CAPTION, and exactly 5 HASHTAGS for each of: tiktok, instagram, youtube, x, linkedin.
+
+Per-platform constraints (HARD limits — stay under each):
+- tiktok:    caption ≤ 300 chars, fast hook in first sentence
+- instagram: caption ≤ 2200 chars, can be a story; line breaks ok
+- youtube:   caption ≤ 1000 chars, SEO-friendly, first 100 chars matter most
+- x:         caption ≤ 270 chars (HARD — leaves room for hashtags), one punchy line
+- linkedin:  caption ≤ 1500 chars, professional but on-brand voice
+
+Title rules: each title ≤ 80 chars, click-worthy, no number prefix. tiktok title doubles as the upload-post tiktok_title (≤ 90 chars). Each platform should have its OWN title/caption tuned to that platform's vibe — don't just copy/paste.
+
+Hashtags: EXACTLY 5 per platform, space-separated, each starting with #. Lead with the brand's core hashtags from the brand bible, then add topic-specific ones.
+
+Voice: stay on the brand bible's tone (already in your system context). NEVER use em dashes (—); use commas, periods, or colons.
+
+Return ONLY valid JSON, no preamble, no markdown fences. Exact shape:
+{
+  "tiktok":    { "title": "", "caption": "", "hashtags": "#a #b #c #d #e" },
+  "instagram": { "title": "", "caption": "", "hashtags": "#a #b #c #d #e" },
+  "youtube":   { "title": "", "caption": "", "hashtags": "#a #b #c #d #e" },
+  "x":         { "title": "", "caption": "", "hashtags": "#a #b #c #d #e" },
+  "linkedin":  { "title": "", "caption": "", "hashtags": "#a #b #c #d #e" }
+}
+
+Script:
+"""
+${String(script).slice(0, 2000)}
+"""`
+
       const r = await fetch('/api/content/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
         body: JSON.stringify({
           profile_id: profileId,
-          format: 'ig-post',
-          topic: `For platform ${platform}, write the post caption AND a separate block of exactly ${count} hashtags for this script. Return JSON-ish lines: first the caption, then a blank line, then the hashtags space-separated each starting with #. Script: """${String(script).slice(0, 1500)}"""`,
+          format: 'ig-post',  // generic; the prompt does the heavy lifting
+          topic: prompt,
           count: 1,
         }),
       })
       const body = await r.json()
       if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
       const item = body.items?.[0] || {}
-      // Parse the response: split by blank line if needed.
-      let caption = item.caption || ''
-      let hashtags = item.hashtags || ''
-      if (!caption || !hashtags) {
-        const text = item.full_script || item.caption || ''
-        const parts = String(text).split(/\n\s*\n/)
-        if (parts.length >= 2) {
-          caption = caption || parts[0].trim()
-          hashtags = hashtags || parts.slice(1).join(' ').match(/#[\w]+/g)?.join(' ') || ''
-        } else {
-          caption = caption || text
-          hashtags = hashtags || (text.match(/#[\w]+/g) || []).join(' ')
+      const raw = item.full_script || item.caption || ''
+
+      // Parse the JSON — tolerate ```json fences if Claude added them.
+      let perPlatform = {}
+      try {
+        const cleaned = String(raw).replace(/```json\s*|```\s*/gi, '').trim()
+        const m = cleaned.match(/\{[\s\S]*\}/)
+        perPlatform = JSON.parse(m ? m[0] : cleaned)
+      } catch {
+        // Fallback: salvage what we can from the raw text. Better than failing.
+        perPlatform = {
+          instagram: {
+            title: '',
+            caption: String(raw).replace(/#[\w]+/g, '').trim().slice(0, 2200),
+            hashtags: (String(raw).match(/#[\w]+/g) || []).slice(0, 5).join(' '),
+          },
         }
       }
-      return { caption, hashtags }
+
+      // Pick instagram (or the first available) as the default `caption` /
+      // `hashtags` / `title` so existing downstream nodes that read those
+      // fields directly (save_library, the legacy single-caption flow)
+      // keep working without changes.
+      const order = ['instagram', 'tiktok', 'youtube', 'linkedin', 'x']
+      const defaultKey = order.find((k) => perPlatform[k]?.caption) || Object.keys(perPlatform)[0]
+      const def = perPlatform[defaultKey] || {}
+
+      return {
+        title: def.title || '',
+        caption: def.caption || '',
+        hashtags: def.hashtags || '',
+        per_platform: perPlatform,
+      }
     },
   },
 
@@ -3070,6 +3149,8 @@ export const NODE_REGISTRY = {
       // Title overlay
       title: '',
       title_enabled: true,
+      title_mode: 'auto',           // 'auto' | 'manual' — auto transcribes the video and asks Claude for a title
+      title_topic: '',              // optional guidance for the auto title (e.g. "punchy hook about red flags")
       title_font: 'Montserrat ExtraBold',
       title_color: '#ffffff',
       title_bg_color: '#e0467a',
@@ -3089,8 +3170,12 @@ export const NODE_REGISTRY = {
     run: async ({ data, inputs, ctx }) => {
       const arr = asArr(inputs?.in)
       let videoUrl = null, logoUrl = null, musicUrl = null
+      // Also pluck a wired-in title from upstream caption_gen so it can
+      // override the manually-typed prop without the user re-typing.
+      let upstreamTitle = ''
       for (const v of arr) {
         if (!v || typeof v !== 'object') continue
+        if (!upstreamTitle && typeof v.title === 'string') upstreamTitle = v.title
         if (!videoUrl) {
           if (v.video?.video_url) videoUrl = v.video.video_url
           else if (v.video_url) videoUrl = v.video_url
@@ -3109,7 +3194,40 @@ export const NODE_REGISTRY = {
       if (!videoUrl) throw new Error('Wire a video into "in" (avatar_render or combine_videos).')
 
       const p = data.props || {}
-      const titleOn = (p.title_enabled !== false) && !!(p.title || '').trim()
+
+      // Resolve the title:
+      // 1. If title_mode === 'auto' → call /api/videos/auto-title to
+      //    transcribe + generate. The optional title_topic prop steers
+      //    the angle. Falls back to upstream/manual on failure so a
+      //    hiccup in STT/Claude doesn't kill the render.
+      // 2. Otherwise prefer an upstream caption_gen title, then the
+      //    manually-typed prop.
+      let resolvedTitle = ''
+      if (p.title_enabled !== false) {
+        if ((p.title_mode || 'auto') === 'auto') {
+          try {
+            const ar = await fetch('/api/videos/auto-title', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
+              body: JSON.stringify({
+                profile_id: ctx.profileId,
+                video_url: videoUrl,
+                topic: (p.title_topic || '').trim() || undefined,
+              }),
+            })
+            const ab = await ar.json().catch(() => ({}))
+            if (ar.ok && ab?.title) resolvedTitle = ab.title
+          } catch (e) {
+            // fall through to manual / upstream below
+            console.warn('auto-title failed, falling back —', e?.message || e)
+          }
+          if (!resolvedTitle) resolvedTitle = upstreamTitle || (p.title || '').trim()
+        } else {
+          resolvedTitle = upstreamTitle || (p.title || '').trim()
+        }
+      }
+      const titleOn = (p.title_enabled !== false) && !!resolvedTitle
+
       const r = await fetch('/api/videos/polish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
@@ -3120,7 +3238,7 @@ export const NODE_REGISTRY = {
           watermark_image_url: p.watermark_image_url || undefined,
           music_url: musicUrl || undefined,
           // Title overlay
-          title: titleOn ? p.title.trim() : undefined,
+          title: titleOn ? resolvedTitle : undefined,
           title_style: titleOn ? {
             font: p.title_font, color: p.title_color, bg_color: p.title_bg_color,
             size: p.title_size, bg_padding: p.title_bg_padding, y_pos: p.title_y_pos,
@@ -3148,6 +3266,9 @@ export const NODE_REGISTRY = {
         video: { video_url: body.video_url },
         video_url: body.video_url,
         media_type: 'video',
+        // Surface the title so downstream nodes (schedule_post, save_library)
+        // can show / use the auto-generated title without re-transcribing.
+        title: titleOn ? resolvedTitle : undefined,
         polished: true,
       }
     },
@@ -3222,6 +3343,7 @@ export const NODE_REGISTRY = {
       let hashtags = ''
       let script = ''
       let title = ''
+      let perPlatform = null
       const photoUrls = []
       for (const v of arr) {
         if (!v) continue
@@ -3231,6 +3353,7 @@ export const NODE_REGISTRY = {
         if (!script && (v.script || v.full_script)) script = v.script || v.full_script
         if (!caption && v.caption) caption = v.caption
         if (!hashtags && v.hashtags) hashtags = v.hashtags
+        if (!perPlatform && v.per_platform && typeof v.per_platform === 'object') perPlatform = v.per_platform
         if (!videoUrl) {
           if (v.video?.video_url) videoUrl = v.video.video_url
           else if (v.video_url) videoUrl = v.video_url
@@ -3252,6 +3375,25 @@ export const NODE_REGISTRY = {
       if (bad.length) {
         const names = bad.map((id) => SCHEDULE_PLATFORMS.find((p) => p.id === id)?.label || id).join(', ')
         throw new Error(`${names} can't accept ${detectedKind} content.`)
+      }
+
+      // If caption_gen wired in per-platform variants, prefer the variant
+      // that matches THIS publish target. When multiple platforms are
+      // selected we pick the tightest one (shortest cap) so the single
+      // description Upload-Post sends fits everywhere.
+      if (perPlatform) {
+        const ranked = platforms
+          .map((p) => ({ id: p, def: SCHEDULE_PLATFORMS.find((s) => s.id === p) }))
+          .sort((a, b) => (a.def?.cap || Infinity) - (b.def?.cap || Infinity))
+        for (const { id } of ranked) {
+          const v = perPlatform[id]
+          if (v?.caption) {
+            caption = v.caption
+            hashtags = v.hashtags || hashtags
+            title = v.title || title
+            break
+          }
+        }
       }
 
       const description = [caption, hashtags].filter(Boolean).join('\n\n').trim()

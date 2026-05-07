@@ -54,8 +54,8 @@ const NODE_CATALOG = {
     initialProps: { format: 'tiktok-script', topic: '' },
   },
   caption_gen: {
-    label: 'Caption + hashtags',
-    description: 'Generates a platform caption AND hashtags from a script in one step. props: platform (instagram/tiktok/youtube/x/linkedin), hashtag_count (number). The "in" handle accepts the upstream script and an optional brand profile.',
+    label: 'Title + caption + hashtags',
+    description: 'Generates a click-worthy title, a platform caption, AND a hashtag block from a script in one Claude call. Output shape: { title, caption, hashtags }. The title flows downstream into schedule_post (used as tiktok_title), video_polish (title overlay), and save_library (post row title). props: platform (instagram/tiktok/youtube/x/linkedin), hashtag_count (number). The "in" handle accepts the upstream script and an optional brand profile.',
     inputs: ['in'],
     outputs: ['out'],
     initialProps: { platform: 'instagram', hashtag_count: 10 },
