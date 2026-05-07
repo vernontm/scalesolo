@@ -104,7 +104,7 @@ function GenerateModal({ profileId, onClose, onCreated }) {
             <Wand2 size={16} />
           </div>
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, flex: 1 }}>Generate content</h3>
-          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}><X size={20} /></button>
+          <button aria-label="Close" onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6, borderRadius: 6 }}><X size={20} /></button>
         </div>
 
         <div style={{ marginBottom: 14 }}>
@@ -203,7 +203,7 @@ function ItemDetail({ item, onClose, onUpdate }) {
             {item.title || 'Untitled'}
           </h3>
           <span className="pill" style={{ background: pill.bg, color: pill.fg, marginRight: 10 }}>{pill.label}</span>
-          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}><X size={20} /></button>
+          <button aria-label="Close" onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6, borderRadius: 6 }}><X size={20} /></button>
         </div>
 
         {item.approval_status === 'pending' && (
@@ -279,7 +279,12 @@ function ItemDetail({ item, onClose, onUpdate }) {
 function ItemRow({ item, onOpen }) {
   const pill = STATUS_PILL[item.status] || STATUS_PILL.draft
   return (
-    <div style={itemCard} onClick={() => onOpen(item)}
+    <div
+      style={itemCard}
+      role="button" tabIndex={0}
+      aria-label={`Open ${item.title || 'content item'}`}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(item) } }}
+      onClick={() => onOpen(item)}
       onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgba(239,68,68,0.25)'; e.currentTarget.style.cursor = 'pointer' }}
       onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)' }}
     >

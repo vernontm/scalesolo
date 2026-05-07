@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { useCredits } from '../context/CreditsContext.jsx'
 import { supabase } from '../lib/supabase.js'
+import { toast, confirmDialog } from '../components/Toast.jsx'
 
 // Upload a File directly to Supabase Storage (avatar-media bucket) and return
 // the public URL. Bypasses Vercel's ~4.5MB request body limit entirely.
@@ -155,7 +156,7 @@ function CreateAvatarModal({ profileId, models, onClose, onCreated }) {
             <UserCircle2 size={18} />
           </div>
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, flex: 1 }}>Create avatar</h3>
-          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}><X size={20} /></button>
+          <button aria-label="Close" onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6, borderRadius: 6 }}><X size={20} /></button>
         </div>
 
         <div style={{ marginBottom: 16 }}>
@@ -265,7 +266,7 @@ function RenderComposer({ avatar, models, onClose, onSubmitted }) {
             <Video size={18} />
           </div>
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, flex: 1 }}>Render with {avatar.name}</h3>
-          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}><X size={20} /></button>
+          <button aria-label="Close" onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6, borderRadius: 6 }}><X size={20} /></button>
         </div>
 
         {submitted ? (
@@ -435,9 +436,14 @@ function LookFolder({ look, index, onAddImages, onDeleteImage, onRename, busy })
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 8 }}>
             {images.map((im) => (
               <div key={im.id} style={{ position: 'relative' }}>
-                <img src={im.image_url} alt="" style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', borderRadius: 6, border: '1px solid var(--border)' }} />
+                <img src={im.image_url} alt={im.name || 'Look image'} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', borderRadius: 6, border: '1px solid var(--border)' }} />
                 <button
-                  onClick={(e) => { e.stopPropagation(); if (confirm('Delete this image?')) onDeleteImage(im.id) }}
+                  aria-label="Delete this image"
+                  onClick={async (e) => {
+                    e.stopPropagation()
+                    const ok = await confirmDialog({ title: 'Delete this image?', confirmText: 'Delete', destructive: true })
+                    if (ok) onDeleteImage(im.id)
+                  }}
                   style={{
                     position: 'absolute', top: 4, right: 4,
                     background: 'rgba(0,0,0,0.7)', color: '#fff', border: 'none',
@@ -575,7 +581,12 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
   }
 
   const deleteAvatar = async () => {
-    if (!confirm(`Delete avatar "${avatar.name}"?`)) return
+    const ok = await confirmDialog({
+      title: `Delete avatar "${avatar.name}"?`,
+      message: 'This removes the avatar and all its look images. Renders already in the library are not affected.',
+      confirmText: 'Delete', destructive: true,
+    })
+    if (!ok) return
     await fetch(`/api/avatars?id=${avatar.id}`, {
       method: 'DELETE', headers: { Authorization: `Bearer ${session.access_token}` },
     })
@@ -738,7 +749,14 @@ function AvatarList({ avatars, models, onCreate, onOpen }) {
           {avatars.map((a) => {
             const m = models?.[a.model_version || 'v4'] || {}
             return (
-              <div key={a.id} className="card" style={{ cursor: 'pointer', padding: 0, overflow: 'hidden' }} onClick={() => onOpen(a)}>
+              <div
+                key={a.id} className="card"
+                role="button" tabIndex={0}
+                aria-label={`Open avatar ${a.name || 'untitled'}`}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(a) } }}
+                style={{ cursor: 'pointer', padding: 0, overflow: 'hidden' }}
+                onClick={() => onOpen(a)}
+              >
                 {a.photo_url || a.thumbnail_url ? (
                   <img src={a.photo_url || a.thumbnail_url} alt={a.name} style={{ width: '100%', height: 200, objectFit: 'cover' }} />
                 ) : (
@@ -839,7 +857,11 @@ export default function Avatars() {
             // HeyGen is generating asynchronously and the avatar will
             // become ready in a few minutes.
             if (trainingError && avatar?.training_status === 'failed') {
-              alert(`Avatar saved, but HeyGen training had an issue:\n\n${trainingError}\n\nYou can still upload looks and try again later.`)
+              toast({
+                kind: 'warn',
+                message: `Avatar saved, but HeyGen training had an issue: ${trainingError}\n\nYou can still upload looks and try again later.`,
+                ttl: 9000,
+              })
             }
           }}
         />

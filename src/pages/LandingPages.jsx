@@ -59,7 +59,14 @@ function PagesList({ pages, onCreate, onOpen, onDelete, error }) {
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
           {pages.map((p) => (
-            <div key={p.id} className="card" style={{ cursor: 'pointer' }} onClick={() => onOpen(p)}>
+            <div
+              key={p.id} className="card"
+              role="button" tabIndex={0}
+              aria-label={`Open landing page ${p.name || 'untitled'}`}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(p) } }}
+              style={{ cursor: 'pointer' }}
+              onClick={() => onOpen(p)}
+            >
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
                 <LayoutTemplate size={16} style={{ color: 'var(--red)' }} />
                 <span className={p.is_published ? 'pill pill-success' : 'pill pill-muted'}>{p.is_published ? 'Live' : 'Draft'}</span>

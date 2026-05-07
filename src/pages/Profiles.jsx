@@ -125,7 +125,7 @@ function ProfileEditor({ profile, onClose, onSaved }) {
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, flex: 1 }}>
             {isNew ? 'Create a brand profile' : 'Edit brand profile'}
           </h3>
-          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}><X size={20} /></button>
+          <button aria-label="Close" onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6, borderRadius: 6 }}><X size={20} /></button>
         </div>
 
         {/* Bible-import shortcuts. All three feed back into the same form
@@ -313,7 +313,7 @@ function BiblePasteModal({ token, profileId, onClose, onApply }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
           <Upload size={18} style={{ color: 'var(--red)' }} />
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, flex: 1 }}>Import a brand bible</h3>
-          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}><X size={18} /></button>
+          <button aria-label="Close" onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6, borderRadius: 6 }}><X size={18} /></button>
         </div>
         {!parsed ? (
           <>
@@ -417,7 +417,7 @@ function PromptHelperModal({ onClose, onApply }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
           <ClipboardCopy size={18} style={{ color: 'var(--red)' }} />
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, flex: 1 }}>Get an extraction prompt</h3>
-          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}><X size={18} /></button>
+          <button aria-label="Close" onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6, borderRadius: 6 }}><X size={18} /></button>
         </div>
         <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 8, lineHeight: 1.5 }}>
           Step 1. Copy this prompt and paste it into ChatGPT, Claude, or any AI you use. Replace the bracketed placeholder with your brand info or paste docs there.
@@ -503,7 +503,7 @@ function InterviewModal({ onClose, onApply }) {
           <MessageSquare size={18} style={{ color: 'var(--red)' }} />
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, flex: 1 }}>Brand interview</h3>
           <span style={{ fontSize: 11, color: 'var(--muted)' }}>{step + 1} / {INTERVIEW_STEPS.length}</span>
-          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}><X size={18} /></button>
+          <button aria-label="Close" onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6, borderRadius: 6 }}><X size={18} /></button>
         </div>
         <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14, color: 'var(--text)', marginBottom: 10 }}>
           {cur.label}

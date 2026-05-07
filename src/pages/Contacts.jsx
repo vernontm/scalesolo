@@ -93,7 +93,7 @@ function ImportModal({ profileId, onClose, onDone }) {
       <div className="modal-card modal-card-lg" onClick={(e) => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 20 }}>
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, flex: 1 }}>Import contacts from CSV</h3>
-          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}><X size={20} /></button>
+          <button aria-label="Close" onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6, borderRadius: 6 }}><X size={20} /></button>
         </div>
 
         {step === 1 && (
@@ -101,7 +101,7 @@ function ImportModal({ profileId, onClose, onDone }) {
             display: 'block', padding: 40, textAlign: 'center', cursor: 'pointer',
             background: 'var(--surface-2)', border: '2px dashed var(--border)', borderRadius: 14,
           }}>
-            <input type="file" accept=".csv,text/csv" hidden onChange={(e) => onFile(e.target.files?.[0])} />
+            <input type="file" accept=".csv,text/csv" hidden aria-label="Upload contacts CSV file" onChange={(e) => onFile(e.target.files?.[0])} />
             <Upload size={32} style={{ color: 'var(--muted)', marginBottom: 12 }} />
             <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15, color: 'var(--text)', marginBottom: 6 }}>
               Drop a CSV file or click to choose

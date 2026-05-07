@@ -21,6 +21,8 @@ import LandingPublic from './pages/LandingPublic.jsx'
 import Spaces from './pages/Spaces.jsx'
 import FormPublic from './pages/FormPublic.jsx'
 import GlobalAgent from './components/GlobalAgent.jsx'
+import ErrorBoundary from './components/ErrorBoundary.jsx'
+import ToastHost from './components/Toast.jsx'
 import { useAuth } from './context/AuthContext.jsx'
 
 const layoutStyle = { display: 'flex', minHeight: '100vh' }
@@ -146,20 +148,26 @@ export default function App() {
   if (loading) return <LoadingScreen />
   if (!session) {
     return (
-      <Routes>
-        <Route path="/pricing" element={<Pricing />} />
-        <Route path="/f/:slug" element={<FormPublic />} />
-        <Route path="/p/:slug" element={<LandingPublic />} />
-        <Route path="*" element={<Login />} />
-      </Routes>
+      <ErrorBoundary>
+        <Routes>
+          <Route path="/pricing" element={<Pricing />} />
+          <Route path="/f/:slug" element={<FormPublic />} />
+          <Route path="/p/:slug" element={<LandingPublic />} />
+          <Route path="*" element={<Login />} />
+        </Routes>
+        <ToastHost />
+      </ErrorBoundary>
     )
   }
 
   return (
-    <Routes>
-      <Route path="/pricing" element={<Pricing />} />
-      <Route path="/f/:slug" element={<FormPublic />} />
-      <Route path="/*" element={<AppShell />} />
-    </Routes>
+    <ErrorBoundary>
+      <Routes>
+        <Route path="/pricing" element={<Pricing />} />
+        <Route path="/f/:slug" element={<FormPublic />} />
+        <Route path="/*" element={<AppShell />} />
+      </Routes>
+      <ToastHost />
+    </ErrorBoundary>
   )
 }

@@ -60,7 +60,12 @@ function FormsList({ forms, onCreate, onOpen, onDelete }) {
       ) : (
         <div style={grid}>
           {forms.map((f) => (
-            <div key={f.id} style={formCard} onClick={() => onOpen(f)}
+            <div
+              key={f.id} style={formCard}
+              role="button" tabIndex={0}
+              aria-label={`Open form ${f.name || 'untitled'}`}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(f) } }}
+              onClick={() => onOpen(f)}
               onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.borderColor = 'rgba(239,68,68,0.3)' }}
               onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.borderColor = 'var(--border)' }}
             >

@@ -39,8 +39,8 @@
   --border:     rgba(255, 255, 255, 0.07);
   --border-strong: rgba(255, 255, 255, 0.12);
   --text:       #f0f0f0;
-  --text-soft:  #c4c4c8;
-  --muted:      #6b6b72;
+  --text-soft:  #cccccd;            /* bumped from #c4c4c8 for AA on surface-2 */
+  --muted:      #9a9aa3;            /* bumped from #6b6b72 — old value failed WCAG AA on dark surfaces */
   --shadow-card: 0 12px 32px rgba(0, 0, 0, 0.35);
   --shadow-pop:  0 20px 50px rgba(0, 0, 0, 0.55);
 
@@ -256,8 +256,22 @@ a { color: inherit; text-decoration: none; }
 .input:focus,
 .textarea:focus,
 .select:focus {
-  border-color: rgba(239, 68, 68, 0.4);
-  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.6);
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.22);  /* bumped from 0.08 for visible focus on dark theme */
+}
+
+/* Universal keyboard focus ring — keeps mouse hover unstyled but makes
+   tab navigation visible on every interactive element that doesn't already
+   set its own focus state. Required for WCAG 2.1 AA keyboard support. */
+:focus-visible {
+  outline: 2px solid rgba(239, 68, 68, 0.7);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid rgba(239, 68, 68, 0.85);
+  outline-offset: 2px;
 }
 .textarea { min-height: 100px; resize: vertical; }
 .label {
@@ -349,7 +363,8 @@ a { color: inherit; text-decoration: none; }
   body.compact-sidebar .app-main          { margin-left: 60px !important; }
 }
 @media (max-width: 600px) {
-  .modal-card { padding: 22px !important; }
+  .modal-overlay { padding: 16px 8px !important; }
+  .modal-card { padding: 18px !important; }
 }
 
 /* Spaces zoom controls (bottom-left). Custom-styled to match the app and

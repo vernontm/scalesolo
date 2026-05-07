@@ -207,7 +207,7 @@ function NewDealModal({ pipelineId, defaultStage, profileId, onClose, onCreated 
       <div className="modal-card modal-card-sm" onClick={(e) => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 18 }}>
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, flex: 1 }}>New deal</h3>
-          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}><X size={18} /></button>
+          <button aria-label="Close" onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6, borderRadius: 6 }}><X size={18} /></button>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div>

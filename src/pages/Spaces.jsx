@@ -28,6 +28,19 @@ import {
   findUpstreamVideoUrl, findUpstreamScript, findUpstreamLogoUrl,
 } from '../lib/space-nodes.jsx'
 
+// Defensive deep-clone for run snapshots — JSON.parse(JSON.stringify(x))
+// throws on circular refs (rare here, but a node injecting a DOM element
+// into props could stall the runner). Falls back to a shallow snapshot.
+function safeClone(value) {
+  try { return JSON.parse(JSON.stringify(value)) }
+  catch {
+    if (value && typeof value === 'object') {
+      return Array.isArray(value) ? value.slice() : { ...value }
+    }
+    return value
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom node renderer (one component for every registered type)
 
@@ -398,7 +411,7 @@ function RunHistoryModal({ spaceId, token, onClose }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
           <History size={16} style={{ color: 'var(--red)' }} />
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700, flex: 1 }}>Run history</h3>
-          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}><X size={16} /></button>
+          <button aria-label="Close" onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6, borderRadius: 6 }}><X size={16} /></button>
         </div>
         <div style={{ padding: 14, overflowY: 'auto', flex: 1 }}>
           {!spaceId && <div style={{ color: 'var(--muted)', fontSize: 12.5, textAlign: 'center', padding: 30 }}>Save the space first to see history.</div>}
@@ -463,7 +476,14 @@ function SpacesList({ spaces, onCreate, onOpen, onDelete, onHistory, error }) {
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
           {spaces.map((s) => (
-            <div key={s.id} className="card" style={{ cursor: 'pointer' }} onClick={() => onOpen(s)}>
+            <div
+              key={s.id} className="card"
+              role="button" tabIndex={0}
+              aria-label={`Open space ${s.name || 'untitled'}`}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(s) } }}
+              style={{ cursor: 'pointer' }}
+              onClick={() => onOpen(s)}
+            >
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
                 <Boxes size={16} style={{ color: 'var(--red)' }} />
               </div>
@@ -734,13 +754,15 @@ function SpaceBuilder({ space, onSave, onClose }) {
     })
       .then((r) => r.json())
       .then((b) => setAvatars(b.avatars || []))
-      .catch(() => {})
+      // eslint-disable-next-line no-console
+      .catch((e) => console.warn('[Spaces] avatars load failed', e?.message || e))
     fetch(`/api/avatars/heygen-library?profile_id=${selectedProfileId}`, {
       headers: { Authorization: `Bearer ${session.access_token}` },
     })
       .then((r) => r.json())
       .then((b) => setPublicAvatars(Array.isArray(b.groups) ? b.groups : []))
-      .catch(() => {})
+      // eslint-disable-next-line no-console
+      .catch((e) => console.warn('[Spaces] heygen library load failed', e?.message || e))
     // Connected social platforms — used by schedule_post to gate which
     // platform pills can be toggled.
     fetch(`/api/social/profiles?profile_id=${selectedProfileId}`, {
@@ -1038,7 +1060,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
     setNodes((arr) => arr.map((n) => ({ ...n, data: { ...n.data, status: 'idle', output: null, error: null } })))
 
     const ctx = { token: session.access_token, profileId: selectedProfileId, avatars, profiles, shouldAbort: () => abortRunRef.current }
-    const snapshot = JSON.parse(JSON.stringify({ nodes, edges }))
+    const snapshot = safeClone({ nodes, edges })
     const startedAt = Date.now()
     const runId = await recordRunStart({ triggered_by: 'manual', node_count: snapshot.nodes.length })
     try {
@@ -1111,7 +1133,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
       return { ...n, data: { ...n.data, status: 'idle', output: null, error: null } }
     }))
     const ctx = { token: session.access_token, profileId: selectedProfileId, avatars, profiles, shouldAbort: () => abortRunRef.current, runFromTargetId: targetId }
-    const snapshot = JSON.parse(JSON.stringify({ nodes: subsetNodes, edges: subsetEdges }))
+    const snapshot = safeClone({ nodes: subsetNodes, edges: subsetEdges })
     const startedAt = Date.now()
     const triggerType = nodes.find((n) => n.id === targetId)?.data?.type === 'auto_run' ? 'auto_run' : 'per_node'
     const runId = await recordRunStart({ triggered_by: triggerType, node_count: snapshot.nodes.length })
