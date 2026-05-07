@@ -12,3 +12,4 @@ coverage/
 .vscode/
 supabase/.temp/
 supabase/.branches/
+.claude/
