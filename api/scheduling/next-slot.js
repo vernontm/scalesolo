@@ -27,7 +27,7 @@ export default async function handler(req, res) {
 
     // Avoid colliding with already-scheduled posts on this profile.
     const taken = await supaFetch(
-      `content_items?profile_id=eq.${profile_id}&status=eq.scheduled&select=scheduled_datetime`
+      `content_scripts?profile_id=eq.${profile_id}&status=eq.scheduled&select=scheduled_datetime`
     ).catch(() => [])
     const takenIso = (taken || []).map((r) => r.scheduled_datetime).filter(Boolean)
 

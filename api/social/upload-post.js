@@ -118,7 +118,7 @@ export default async function handler(req, res) {
       const profile = rows?.[0]
       if (profile) {
         const taken = await supaFetch(
-          `content_items?profile_id=eq.${profile_id}&status=eq.scheduled&select=scheduled_datetime`
+          `content_scripts?profile_id=eq.${profile_id}&status=eq.scheduled&select=scheduled_datetime`
         ).catch(() => [])
         const takenIso = (taken || []).map((r) => r.scheduled_datetime).filter(Boolean)
         const slot = findNextOpenSlot(profile, takenIso)
@@ -162,16 +162,46 @@ export default async function handler(req, res) {
           body: {
             p_customer_id: customerId, p_pool_type: 'ai_tokens', p_amount: fee,
             p_action: 'consume:upload-post', p_profile_id: profile_id,
-            p_metadata: { platforms, scheduled_iso: scheduled_iso || null, kind: isVideo ? 'video' : 'photos', count: isVideo ? 1 : photos.length },
+            p_metadata: { platforms, scheduled_iso: resolvedScheduledIso || null, kind: isVideo ? 'video' : 'photos', count: isVideo ? 1 : photos.length },
           },
         })
       } catch {}
+    }
+
+    // Persist as a content_scripts row so the post appears on the
+    // Schedule page's Calendar view alongside library-scheduled content.
+    // status='posted' for instant publishes, 'scheduled' for future ISOs.
+    let savedItem = null
+    try {
+      const isFuture = !!resolvedScheduledIso && new Date(resolvedScheduledIso).getTime() > Date.now() + 30_000
+      const status = isFuture ? 'scheduled' : 'posted'
+      const mediaUrls = isVideo ? [video_url] : photos
+      const mediaType = isVideo ? 'video' : 'image'
+      const postType = isVideo ? 'video' : 'post'
+      const titleStr = (title || '').trim() || (description || '').slice(0, 60).trim() || 'Scheduled post'
+      const insertBody = {
+        profile_id,
+        title: titleStr,
+        full_script: description || null,
+        media_urls: mediaUrls,
+        media_type: mediaType,
+        post_type: postType,
+        platforms,
+        status,
+        scheduled_datetime: resolvedScheduledIso || null,
+        generated_by: 'schedule_post',
+      }
+      const inserted = await supaFetch('content_scripts', { method: 'POST', body: insertBody })
+      savedItem = Array.isArray(inserted) ? inserted[0] : inserted
+    } catch (e) {
+      console.warn('schedule_post → content_scripts insert failed:', e.message)
     }
 
     return res.status(200).json({
       request_id: body?.request_id || body?.id || null,
       submitted: true,
       scheduled_iso: resolvedScheduledIso || null,
+      content_id: savedItem?.id || null,
       raw: body,
     })
   } catch (err) {

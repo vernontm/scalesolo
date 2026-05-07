@@ -345,20 +345,48 @@ function CalendarView({ items, onOpen }) {
             </div>
             {dayItems.length === 0 ? (
               <div style={{ fontSize: 11, color: 'var(--muted)' }}>—</div>
-            ) : dayItems.map((item) => (
-              <div key={item.id} onClick={() => onOpen(item)} style={{
-                marginBottom: 6, padding: '6px 8px', borderRadius: 6,
-                background: 'var(--surface-2)', cursor: 'pointer',
-                fontSize: 12, color: 'var(--text-soft)',
-              }}>
-                <div style={{ fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {item.title || 'Untitled'}
+            ) : dayItems.map((item) => {
+              const platforms = Array.isArray(item.platforms) ? item.platforms : []
+              const thumb = Array.isArray(item.media_urls) && item.media_urls[0]
+              const isVideo = item.media_type === 'video'
+              return (
+                <div key={item.id} onClick={() => onOpen(item)} style={{
+                  marginBottom: 6, padding: 6, borderRadius: 6,
+                  background: 'var(--surface-2)', cursor: 'pointer',
+                  fontSize: 12, color: 'var(--text-soft)',
+                  display: 'flex', gap: 8, alignItems: 'flex-start',
+                }}>
+                  {thumb && (
+                    isVideo
+                      ? <video src={thumb} muted playsInline preload="metadata" style={{ width: 32, height: 32, borderRadius: 4, objectFit: 'cover', background: '#000', flexShrink: 0 }} />
+                      : <img src={thumb} alt="" style={{ width: 32, height: 32, borderRadius: 4, objectFit: 'cover', background: 'var(--surface)', flexShrink: 0 }} />
+                  )}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {item.title || 'Untitled'}
+                    </div>
+                    <div style={{ fontSize: 10.5, color: 'var(--muted)' }}>
+                      {new Date(item.scheduled_datetime).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                    </div>
+                    {platforms.length > 0 && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 4 }}>
+                        {platforms.slice(0, 4).map((p) => (
+                          <span key={p} style={{
+                            fontSize: 9, padding: '1px 6px', borderRadius: 999,
+                            background: 'rgba(46,204,113,0.15)', color: '#2ecc71',
+                            fontFamily: 'var(--font-display)', fontWeight: 700,
+                            letterSpacing: '0.04em', textTransform: 'capitalize',
+                          }}>{p}</span>
+                        ))}
+                        {platforms.length > 4 && (
+                          <span style={{ fontSize: 9, color: 'var(--muted)' }}>+{platforms.length - 4}</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div style={{ fontSize: 10.5, color: 'var(--muted)' }}>
-                  {new Date(item.scheduled_datetime).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )
       })}
