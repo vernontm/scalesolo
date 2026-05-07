@@ -278,13 +278,11 @@ export default async function handler(req, res) {
       let aLabel = '[0:a]'
       if (musicPath) {
         const vol = Math.max(0, Math.min(1, Number(music_volume)))
-        const fade = Math.max(0, Math.min(8, Number(music_fade_secs ?? 1.5)))
-        // No ffprobe here — we cap at 60s for the fade start, ffmpeg is
-        // tolerant of an out-of-range start (no-ops if past EOF).
-        const fadeChain = fade > 0
-          ? `volume=${vol},afade=t=out:st=${Math.max(0, 60 - fade).toFixed(2)}:d=${fade.toFixed(2)},apad`
-          : `volume=${vol},apad`
-        filters.push(`[${musicIdx}:a]${fadeChain}[mus]`)
+        // amix with duration=first clips the music when the video ends,
+        // so we don't need a hardcoded fade-start guess. apad pads with
+        // silence if the music is shorter than the video, which keeps
+        // amix from cutting the voice short.
+        filters.push(`[${musicIdx}:a]volume=${vol},apad[mus]`)
         filters.push(`${aLabel}[mus]amix=inputs=2:duration=first:dropout_transition=0[aout]`)
         aLabel = '[aout]'
       }
@@ -298,24 +296,21 @@ export default async function handler(req, res) {
       args.push('-c:a', 'aac', '-b:a', '128k')
       args.push('-movflags', '+faststart', outPath)
 
+      // No silent fallback — if the overlay chain fails we want the user to
+      // know, not to ship them the unmodified video and call it done. The
+      // ffmpeg stderr tail surfaces in the response so the failing filter
+      // is obvious.
       try {
         await runFFmpeg(args)
       } catch (e) {
-        console.warn('Polish: full ffmpeg chain failed, retrying minimal —', e.message)
-        const minArgs = ['-y', '-i', inPath]
-        if (musicPath) {
-          minArgs.push('-i', musicPath)
-          const vol = Math.max(0, Math.min(1, Number(music_volume)))
-          minArgs.push(
-            '-filter_complex', `[1:a]volume=${vol}[m];[0:a][m]amix=inputs=2:duration=first[aout]`,
-            '-map', '0:v', '-map', '[aout]',
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
-          )
-        } else {
-          minArgs.push('-c', 'copy')
-        }
-        minArgs.push('-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', outPath)
-        await runFFmpeg(minArgs)
+        const tail = String(e?.message || e).split('\n').slice(-8).join('\n')
+        console.error('Polish: ffmpeg chain failed\nfilter_complex:\n' + filters.join(';') + '\n\nstderr tail:\n' + tail)
+        return res.status(502).json({
+          error: 'Polish render failed.',
+          ffmpeg_error: tail,
+          filter_complex: filters.join(';'),
+          hint: 'Check the filter_complex above — usually a font path, overlay coord, or audio fade timing issue.',
+        })
       }
 
       intermediateBuf = await readFile(outPath)

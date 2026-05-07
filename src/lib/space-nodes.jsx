@@ -3137,7 +3137,13 @@ export const NODE_REGISTRY = {
         }),
       })
       const body = await r.json().catch(() => ({}))
-      if (!r.ok || !body?.video_url) throw new Error(body?.error || `Polish failed (${r.status})`)
+      if (!r.ok || !body?.video_url) {
+        // Surface ffmpeg detail when present so the user can see which
+        // overlay/filter blew up (font path, overlay coords, etc.).
+        const msg = body?.error || `Polish failed (${r.status})`
+        const detail = body?.ffmpeg_error ? `\n\nffmpeg: ${body.ffmpeg_error}` : ''
+        throw new Error(msg + detail)
+      }
       return {
         video: { video_url: body.video_url },
         video_url: body.video_url,
