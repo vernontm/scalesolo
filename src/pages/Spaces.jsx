@@ -912,6 +912,52 @@ function SpaceBuilder({ space, onSave, onClose }) {
     setNodes((arr) => arr.map((n) => n.id === id ? { ...n, data: { ...n.data, ...patch } } : n))
   }, [])
 
+  // After a run finishes, video_polish nodes that produced a clip but have
+  // no downstream destination silently lose the result — the user has to
+  // manually wire one. Auto-spawn a Collection node beside each polish
+  // node that finished done + dangling, prepopulated with the new clip.
+  const ensureCollectionForVideoPolish = useCallback(() => {
+    const curNodes = nodesRef.current
+    const curEdges = edgesRef.current
+    const additionsN = []
+    const additionsE = []
+    for (const n of curNodes) {
+      if (n.data?.type !== 'video_polish') continue
+      if (n.data?.status !== 'done') continue
+      const url = n.data?.output?.video?.video_url || n.data?.output?.video_url
+      if (!url) continue
+      // If the polish node already feeds anything downstream, leave it alone.
+      if (curEdges.some((e) => e.source === n.id)) continue
+      const collectionId = `n_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}_c`
+      const pos = { x: (n.position?.x || 0) + 360, y: (n.position?.y || 0) + 60 }
+      additionsN.push({
+        id: collectionId,
+        type: 'space',
+        position: pos,
+        data: {
+          type: 'collection', props: {},
+          // Pre-seed the collection with the video that just rendered so
+          // the user sees it immediately without re-running.
+          status: 'done',
+          output: { items: [{ kind: 'video', url, from: 'polish' }] },
+          error: null,
+        },
+      })
+      additionsE.push({
+        id: `e_${n.id}_${collectionId}`,
+        source: n.id, sourceHandle: 'out',
+        target: collectionId, targetHandle: 'in',
+        type: 'scissor', animated: true,
+        markerEnd: { type: MarkerType.ArrowClosed },
+        style: { stroke: 'var(--red)', strokeWidth: 1.5 },
+      })
+    }
+    if (additionsN.length) {
+      setNodes((arr) => [...arr, ...additionsN])
+      setEdges((arr) => [...arr, ...additionsE])
+    }
+  }, [])
+
   // Live id ref so autosave continues to PATCH the same row after the
   // initial POST (the original `space` prop never changes).
   const spaceIdRef = useRef(space.id || null)
@@ -1074,6 +1120,9 @@ function SpaceBuilder({ space, onSave, onClose }) {
         const msg = Object.entries(result.errors).map(([id, e]) => `${id}: ${e}`).join(' · ')
         setError(msg || 'One or more nodes failed')
       }
+      // Auto-spawn collections for terminal video_polish nodes so the
+      // freshly-rendered clip has a place to land on the canvas.
+      ensureCollectionForVideoPolish()
       refreshCredits()
       const errCount = Object.keys(result.errors || {}).length
       await recordRunFinish(runId, {
@@ -1143,6 +1192,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
         const msg = Object.entries(result.errors).map(([id, e]) => `${id}: ${e}`).join(' · ')
         setError(msg || 'Node run failed')
       }
+      ensureCollectionForVideoPolish()
       refreshCredits()
       const errCount = Object.keys(result.errors || {}).length
       await recordRunFinish(runId, {
@@ -1156,7 +1206,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
     } finally {
       setRunning(false)
     }
-  }, [running, nodes, edges, session, selectedProfileId, avatars, patchNode, refreshCredits])
+  }, [running, nodes, edges, session, selectedProfileId, avatars, patchNode, refreshCredits, ensureCollectionForVideoPolish])
 
   // Expose runFromNode + abort through globals so SpaceNode header buttons
   // can call them without prop drilling.
