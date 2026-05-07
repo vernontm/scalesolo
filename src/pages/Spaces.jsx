@@ -15,7 +15,7 @@ import {
   Plus, Play, Save, Trash2, ArrowLeft, Sparkles, Zap, Boxes, AlertCircle,
   GripHorizontal, Minimize2, Maximize2, Wand2, MessageSquare, Send,
   ZoomIn, ZoomOut, Maximize, Scissors, Download, X, History, Clock,
-  CheckCircle2, XCircle, Square,
+  CheckCircle2, XCircle, Square, Settings as SettingsIcon,
 } from 'lucide-react'
 import { useRef } from 'react'
 // (useEffect already imported above for other effects in this file)
@@ -234,6 +234,20 @@ function SpaceNode({ id, data, selected }) {
         <NodeTitle id={id} fallback={def.label} value={data.name || def.label} />
         {/* Collection is purely a passive aggregator — no Run button. It
             picks up new items automatically when upstream nodes finish. */}
+        {def.Editor && (
+          <button
+            type="button"
+            className="nodrag"
+            title="Open settings drawer"
+            onClick={(e) => { e.stopPropagation(); window.__spaceOpenEditor?.(id) }}
+            style={{
+              background: 'transparent', border: 'none',
+              color: 'var(--muted)', cursor: 'pointer',
+              padding: 4, borderRadius: 4, display: 'grid', placeItems: 'center',
+              marginLeft: 'auto',
+            }}
+          ><SettingsIcon size={12} /></button>
+        )}
         {data.type !== 'collection' && (
           <button
             type="button"
@@ -304,6 +318,50 @@ function normalizeEdgeHandles(e) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // List view
+
+// ── Right-side settings drawer for nodes that opt-in via def.Editor ───────
+function NodeEditorDrawer({ title, color, icon: Icon, onClose, children }) {
+  // Esc closes.
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return (
+    <div
+      style={{
+        position: 'fixed', top: 0, right: 0, bottom: 0,
+        width: 'min(420px, 100vw)',
+        zIndex: 90,
+        background: 'var(--surface)',
+        borderLeft: '1px solid var(--border)',
+        boxShadow: '-12px 0 36px rgba(0,0,0,0.45)',
+        display: 'flex', flexDirection: 'column',
+      }}
+    >
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '14px 16px', borderBottom: '1px solid var(--border)',
+        background: 'var(--surface-2)',
+      }}>
+        <div style={{
+          width: 26, height: 26, borderRadius: 6,
+          background: color || 'var(--red)',
+          color: '#fff', display: 'grid', placeItems: 'center',
+        }}>{Icon && <Icon size={14} />}</div>
+        <div style={{ flex: 1, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14 }}>{title}</div>
+        <button
+          onClick={onClose}
+          style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 4 }}
+          title="Close (Esc)"
+        ><X size={16} /></button>
+      </div>
+      <div style={{ padding: 16, overflowY: 'auto', flex: 1 }}>
+        {children}
+      </div>
+    </div>
+  )
+}
 
 // ── Run history modal — recent runs of one space ───────────────────────────
 function RunHistoryModal({ spaceId, token, onClose }) {
@@ -651,6 +709,9 @@ function SpaceBuilder({ space, onSave, onClose }) {
   const [aiBuilding, setAiBuilding] = useState(false)
   const [previewItem, setPreviewItem] = useState(null)  // { url, type } for fullscreen preview
   const [historyOpen, setHistoryOpen] = useState(false)
+  // Right-side settings drawer for nodes whose registry def declares an
+  // `Editor` (currently video_polish). Holds the node id; null = closed.
+  const [editingNodeId, setEditingNodeId] = useState(null)
 
   // Ref mirrors of nodes/edges so global helpers don't read stale closures.
   const nodesRef = useRef(nodes)
@@ -699,6 +760,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
       setEdges((arr) => arr.filter((e) => e.id !== edgeId))
     }
     window.__spaceOpenPreview = (item) => setPreviewItem(item)
+    window.__spaceOpenEditor = (id) => setEditingNodeId(id)
     // Brand-profile sync-to-all: connect (or disconnect) this brand node's
     // "brand" output to every node that has a "brand" input.
     window.__spaceSyncBrandAll = (brandId, enabled) => {
@@ -742,6 +804,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
       window.__spacePatchOutput = null
       window.__spaceDisconnectEdge = null
       window.__spaceOpenPreview = null
+      window.__spaceOpenEditor = null
       window.__spaceAddNodeFromItem = null
       window.__spaceSyncBrandAll = null
     }
@@ -1391,6 +1454,31 @@ function SpaceBuilder({ space, onSave, onClose }) {
             onClose={() => setHistoryOpen(false)}
           />
         )}
+
+        {editingNodeId && (() => {
+          const node = nodes.find((n) => n.id === editingNodeId)
+          if (!node) return null
+          const def = NODE_REGISTRY[node.data?.type]
+          if (!def?.Editor) return null
+          const Editor = def.Editor
+          const Icon = def.icon
+          return (
+            <NodeEditorDrawer
+              title={node.data?.name || def.label}
+              color={def.color}
+              icon={Icon}
+              onClose={() => setEditingNodeId(null)}
+            >
+              <Editor
+                nodeId={editingNodeId}
+                data={node.data}
+                onPatch={(patch) => window.__spacePatchNode?.(editingNodeId, patch)}
+                allNodes={nodes}
+                allEdges={edges}
+              />
+            </NodeEditorDrawer>
+          )
+        })()}
 
         {previewItem && (
           <div

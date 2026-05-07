@@ -9,7 +9,7 @@
 //   @scriptgen1, @"My image" — substituted with the upstream output before
 //   being sent to APIs. Resolution uses the source node's editable name.
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Type, Wand2, Captions, UserCircle2, Save, Image as ImageIcon,
   ListChecks, FileVideo, Upload, Loader2, Maximize2, ArrowUpRight,
@@ -1470,48 +1470,47 @@ function CombineVideosBody({ data }) {
 }
 
 // ─── VIDEO POLISH (subtitles + watermark + bg music in one ffmpeg pass) ────
+//
+// Polish has so many knobs (title fonts/colors, caption styling, watermark
+// position, music level + fade) that cramming them into the node card makes
+// it unreadable. The card body is a thin summary with an "Open settings"
+// button. The full editor lives in a right-side drawer rendered by Spaces —
+// see VideoPolishEditor below + the NodeEditorDrawer in Spaces.jsx.
+const POLISH_FONT_OPTIONS = [
+  'Montserrat ExtraBold', 'Poppins ExtraBold', 'Inter ExtraBold',
+  'Bebas Neue', 'Anton', 'Oswald', 'Roboto Black', 'Sans',
+]
+
 function VideoPolishBody({ data, onPatch }) {
   const out = data.output
   const props = data.props || {}
   const status = data.status || 'idle'
+  const wmLabel = ({ tr: 'Top R', tl: 'Top L', br: 'Bottom R', bl: 'Bottom L', none: 'No logo' })[props.watermark_position || 'br']
+  const subsOn = (props.subtitle_mode || 'auto') !== 'off'
   return (
     <>
-      <NodeField label="Title overlay (optional)">
-        <input style={tinyInput} value={props.title || ''} onChange={(e) => onPatch({ title: e.target.value })} placeholder="Big text near the top" />
-      </NodeField>
-      <NodeField label="Subtitles">
-        <select style={tinyInput} value={props.subtitle_mode || 'auto'} onChange={(e) => onPatch({ subtitle_mode: e.target.value })}>
-          <option value="auto">Auto-burn from upstream script</option>
-          <option value="off">Off</option>
-        </select>
-      </NodeField>
-      <NodeField label="Watermark position">
-        <select style={tinyInput} value={props.watermark_position || 'br'} onChange={(e) => onPatch({ watermark_position: e.target.value })}>
-          <option value="none">None</option>
-          <option value="tr">Top right</option>
-          <option value="tl">Top left</option>
-          <option value="br">Bottom right</option>
-          <option value="bl">Bottom left</option>
-        </select>
-      </NodeField>
-      <NodeField label="Watermark size %">
-        <input
-          type="number" min="2" max="40" className="nodrag"
-          style={tinyInput}
-          value={props.watermark_size_pct ?? 12}
-          onChange={(e) => onPatch({ watermark_size_pct: Number(e.target.value) })}
-        />
-      </NodeField>
-      <NodeField label="Music volume (0–1)">
-        <input
-          type="number" min="0" max="1" step="0.05" className="nodrag"
-          style={tinyInput}
-          value={props.music_volume ?? 0.15}
-          onChange={(e) => onPatch({ music_volume: Number(e.target.value) })}
-        />
-      </NodeField>
-      <div style={{ fontSize: 10.5, color: 'var(--muted)', lineHeight: 1.4, marginTop: 4 }}>
-        Wire a video (avatar_render / combine_videos), optional logo image (image_upload / brand logo), optional music (audio_upload). Subtitles auto-derive from any upstream script.
+      <button
+        type="button"
+        className="nodrag"
+        onClick={(e) => { e.stopPropagation(); window.__spaceOpenEditor?.(data.__id) }}
+        style={{
+          width: '100%', display: 'inline-flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '8px 10px', background: 'var(--surface-2)', border: '1px solid var(--border)',
+          borderRadius: 7, color: 'var(--text)', cursor: 'pointer', fontSize: 11.5,
+          fontFamily: 'var(--font-display)', fontWeight: 700, marginBottom: 8,
+        }}
+      >
+        <span><Sparkles size={11} style={{ verticalAlign: '-2px', marginRight: 6, color: '#0ea5e9' }} /> Open settings</span>
+        <ArrowUpRight size={11} style={{ color: 'var(--muted)' }} />
+      </button>
+      <div style={{ ...previewBox, marginBottom: 8, fontSize: 10.5 }}>
+        <div>Subtitles: <strong>{subsOn ? `${props.caption_words_per_chunk ?? 3} words / chunk` : 'off'}</strong></div>
+        <div>Logo: <strong>{wmLabel}{props.watermark_position !== 'none' ? ` · ${props.watermark_size_pct ?? 12}%` : ''}</strong></div>
+        <div>Music vol: <strong>{Math.round((Number(props.music_volume ?? 0.15)) * 100)}%</strong></div>
+        {props.title && <div>Title: <strong>{props.title.slice(0, 24)}{props.title.length > 24 ? '…' : ''}</strong></div>}
+      </div>
+      <div style={{ fontSize: 10.5, color: 'var(--muted)', lineHeight: 1.4 }}>
+        Wire a video, optional logo image, optional music, optional script (for auto-subtitles).
       </div>
       {out?.video_url && (
         <div style={{ marginTop: 8 }}>
@@ -1519,6 +1518,392 @@ function VideoPolishBody({ data, onPatch }) {
         </div>
       )}
       <NodePreview status={status} output={out?.video_url ? null : out} error={data.error} />
+    </>
+  )
+}
+
+// Walks the wired-input tree backward from the polish node to find the
+// closest already-rendered video so the editor can show a real frame in
+// its live preview. Returns null until at least one upstream node has run.
+function findUpstreamVideoUrl(nodeId, nodes, edges) {
+  if (!nodeId || !Array.isArray(nodes) || !Array.isArray(edges)) return null
+  const seen = new Set([nodeId])
+  const queue = [nodeId]
+  while (queue.length) {
+    const cur = queue.shift()
+    for (const e of edges) {
+      if (e.target !== cur || seen.has(e.source)) continue
+      seen.add(e.source)
+      const src = nodes.find((n) => n.id === e.source)
+      if (!src) continue
+      const out = src.data?.output
+      const url =
+        out?.video?.video_url ||
+        out?.video_url ||
+        (Array.isArray(out?.videos) && out.videos[0]?.video_url) ||
+        null
+      if (url) return url
+      queue.push(e.source)
+    }
+  }
+  return null
+}
+
+function findUpstreamScript(nodeId, nodes, edges) {
+  if (!nodeId) return ''
+  const seen = new Set([nodeId])
+  const queue = [nodeId]
+  while (queue.length) {
+    const cur = queue.shift()
+    for (const e of edges) {
+      if (e.target !== cur || seen.has(e.source)) continue
+      seen.add(e.source)
+      const src = nodes.find((n) => n.id === e.source)
+      if (!src) continue
+      const out = src.data?.output
+      if (typeof out === 'string' && out.length) return out
+      if (out?.full_script) return out.full_script
+      if (out?.script) return out.script
+      if (src.data?.type === 'text_input' && src.data?.props?.text) return src.data.props.text
+      queue.push(e.source)
+    }
+  }
+  return ''
+}
+
+function findUpstreamLogoUrl(nodeId, nodes, edges) {
+  if (!nodeId) return null
+  const seen = new Set([nodeId])
+  const queue = [nodeId]
+  while (queue.length) {
+    const cur = queue.shift()
+    for (const e of edges) {
+      if (e.target !== cur || seen.has(e.source)) continue
+      seen.add(e.source)
+      const src = nodes.find((n) => n.id === e.source)
+      if (!src) continue
+      const out = src.data?.output
+      if (out?.brand?.logo_url) return out.brand.logo_url
+      if (Array.isArray(out?.images) && out.images[0]?.url) return out.images[0].url
+      queue.push(e.source)
+    }
+  }
+  return null
+}
+
+// Tiny labelled slider used throughout the editor sections.
+function PolishSlider({ label, value, min, max, step = 1, suffix = '', onChange }) {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ ...labelStyle, display: 'flex', justifyContent: 'space-between' }}>
+        <span>{label}</span>
+        <span style={{ color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>{value}{suffix}</span>
+      </div>
+      <input
+        type="range" min={min} max={max} step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        style={{ width: '100%', accentColor: '#3b82f6' }}
+      />
+    </div>
+  )
+}
+
+function PolishColorRow({ label, value, onChange }) {
+  return (
+    <div style={{ flex: 1 }}>
+      <div style={labelStyle}>{label}</div>
+      <input
+        type="color" value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          width: '100%', height: 36, padding: 0, border: '1px solid var(--border)',
+          borderRadius: 6, background: 'var(--surface-2)', cursor: 'pointer',
+        }}
+      />
+    </div>
+  )
+}
+
+function PolishSection({ icon: Icon, title, children, defaultOpen = true }) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, marginTop: 14 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 12,
+          background: 'transparent', border: 'none', color: 'var(--text)',
+          cursor: 'pointer', fontFamily: 'var(--font-display)', fontWeight: 700,
+          fontSize: 11.5, letterSpacing: '0.06em', textTransform: 'uppercase', padding: 0,
+        }}
+      >
+        {Icon && <Icon size={13} style={{ color: 'var(--muted)' }} />} {title}
+      </button>
+      {open && children}
+    </div>
+  )
+}
+
+// Build the live preview overlays as plain DOM/CSS so the user sees
+// title/captions/logo placement instantly without needing a render.
+function VideoPolishPreview({ videoUrl, script, props }) {
+  const sample = (script || 'Your script preview line').toUpperCase()
+  const wpc = Math.max(1, Math.min(6, Number(props.caption_words_per_chunk || 3)))
+  const sampleChunk = sample.split(/\s+/).slice(0, wpc).join(' ')
+  const titleEnabled = props.title_enabled !== false && !!props.title
+  return (
+    <div style={{
+      position: 'relative', width: '100%', aspectRatio: '9/16',
+      background: '#000', borderRadius: 10, overflow: 'hidden',
+      border: '1px solid var(--border)',
+    }}>
+      {videoUrl ? (
+        <video
+          src={videoUrl}
+          muted playsInline preload="metadata"
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+        />
+      ) : (
+        <div style={{
+          position: 'absolute', inset: 0, display: 'grid', placeItems: 'center',
+          color: 'var(--muted)', fontSize: 11, padding: 12, textAlign: 'center',
+        }}>Run an upstream node once to see the preview frame.</div>
+      )}
+      {/* Title overlay */}
+      {titleEnabled && (
+        <div style={{
+          position: 'absolute', left: '50%', top: `${props.title_y_pos ?? 15}%`,
+          transform: 'translate(-50%, -50%)',
+          padding: `${(props.title_bg_padding ?? 28) * 0.25}px ${(props.title_bg_padding ?? 28) * 0.4}px`,
+          background: props.title_bg_color || '#e0467a',
+          color: props.title_color || '#ffffff',
+          fontFamily: props.title_font || 'Montserrat ExtraBold',
+          fontSize: `${(props.title_size ?? 72) * 0.18}px`,
+          fontWeight: 800, letterSpacing: '0.01em',
+          borderRadius: 4, textAlign: 'center', maxWidth: '85%',
+          textTransform: props.title_uppercase ? 'uppercase' : 'none',
+          lineHeight: 1.1, whiteSpace: 'normal',
+        }}>{props.title}</div>
+      )}
+      {/* Caption preview */}
+      {(props.subtitle_mode || 'auto') !== 'off' && script && (
+        <div style={{
+          position: 'absolute', left: '50%', top: `${props.caption_y_pos ?? 75}%`,
+          transform: 'translate(-50%, -50%)',
+          color: props.caption_text_color || '#ffffff',
+          fontFamily: props.caption_font || 'Poppins ExtraBold',
+          fontSize: `${(props.caption_size ?? 64) * 0.18}px`,
+          fontWeight: 800, letterSpacing: '0.01em', textAlign: 'center', maxWidth: '90%',
+          WebkitTextStroke: `${(props.caption_outline_thickness ?? 6) * 0.4}px ${props.caption_outline_color || '#e0467a'}`,
+          textShadow: '0 2px 6px rgba(0,0,0,0.6)',
+        }}>
+          {sampleChunk.split(/\s+/).map((w, i) => (
+            <span key={i} style={{
+              color: i === 0 ? (props.caption_highlight_color || props.caption_text_color || '#fff') : undefined,
+              marginRight: 6,
+            }}>{w}</span>
+          ))}
+        </div>
+      )}
+      {/* Logo placeholder block */}
+      {props.watermark_position && props.watermark_position !== 'none' && (
+        <div style={{
+          position: 'absolute',
+          ...(props.watermark_position.includes('t') ? { top: '4%' } : { bottom: '4%' }),
+          ...(props.watermark_position.includes('l') ? { left: '4%' } : { right: '4%' }),
+          width: `${props.watermark_size_pct ?? 12}%`,
+          aspectRatio: '3/1',
+          background: 'rgba(255,255,255,0.18)',
+          border: '1px dashed rgba(255,255,255,0.5)',
+          borderRadius: 4, display: 'grid', placeItems: 'center',
+          color: 'rgba(255,255,255,0.85)', fontSize: 10, fontWeight: 700,
+          letterSpacing: '0.06em', textTransform: 'uppercase',
+        }}>logo</div>
+      )}
+    </div>
+  )
+}
+
+export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges }) {
+  const props = data.props || {}
+  const previewVideo = useMemo(
+    () => data.output?.video_url || findUpstreamVideoUrl(nodeId, allNodes, allEdges),
+    [nodeId, allNodes, allEdges, data.output?.video_url]
+  )
+  const previewScript = useMemo(
+    () => findUpstreamScript(nodeId, allNodes, allEdges),
+    [nodeId, allNodes, allEdges]
+  )
+  const upstreamLogo = useMemo(
+    () => findUpstreamLogoUrl(nodeId, allNodes, allEdges),
+    [nodeId, allNodes, allEdges]
+  )
+
+  const setP = (patch) => onPatch(patch)
+
+  return (
+    <>
+      {/* Live preview ─────────────────────────────────────────────────── */}
+      <div style={{
+        ...labelStyle, display: 'flex', alignItems: 'center', gap: 6,
+        marginBottom: 8,
+      }}>
+        <Play size={11} /> Live preview
+      </div>
+      <VideoPolishPreview videoUrl={previewVideo} script={previewScript} props={props} />
+      <div style={{ marginTop: 6, fontSize: 10.5, color: 'var(--muted)', textAlign: 'center' }}>
+        {previewVideo ? 'Frame from upstream render' : 'Wire & run an upstream video first'}
+      </div>
+
+      {/* Title overlay ─────────────────────────────────────────────────── */}
+      <PolishSection icon={Type} title="Title overlay">
+        <div style={{ marginBottom: 10 }}>
+          <input
+            style={tinyInput}
+            placeholder="Your title here"
+            value={props.title || ''}
+            onChange={(e) => setP({ title: e.target.value })}
+          />
+        </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={props.title_enabled !== false}
+            onChange={(e) => setP({ title_enabled: e.target.checked })}
+          />
+          <span style={{ fontSize: 11.5 }}>Burn title overlay onto renders</span>
+        </label>
+        <NodeField label="Title font">
+          <select style={tinyInput} value={props.title_font || 'Montserrat ExtraBold'} onChange={(e) => setP({ title_font: e.target.value })}>
+            {POLISH_FONT_OPTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
+          </select>
+        </NodeField>
+        <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+          <PolishColorRow label="Text color" value={props.title_color || '#ffffff'} onChange={(v) => setP({ title_color: v })} />
+          <PolishColorRow label="Background" value={props.title_bg_color || '#e0467a'} onChange={(v) => setP({ title_bg_color: v })} />
+        </div>
+        <PolishSlider label="Size" value={Number(props.title_size ?? 72)} min={24} max={140} suffix="px" onChange={(v) => setP({ title_size: v })} />
+        <PolishSlider label="Background padding" value={Number(props.title_bg_padding ?? 28)} min={0} max={64} suffix="px" onChange={(v) => setP({ title_bg_padding: v })} />
+        <PolishSlider label="Y position" value={Number(props.title_y_pos ?? 15)} min={5} max={50} suffix="% from top" onChange={(v) => setP({ title_y_pos: v })} />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={!!props.title_uppercase}
+            onChange={(e) => setP({ title_uppercase: e.target.checked })}
+          />
+          <span style={{ fontSize: 11.5 }}>UPPERCASE</span>
+        </label>
+      </PolishSection>
+
+      {/* Captions ──────────────────────────────────────────────────────── */}
+      <PolishSection icon={Captions} title="Captions">
+        <NodeField label="Mode">
+          <select style={tinyInput} value={props.subtitle_mode || 'auto'} onChange={(e) => setP({ subtitle_mode: e.target.value })}>
+            <option value="auto">Auto-burn from upstream script</option>
+            <option value="off">Off</option>
+          </select>
+        </NodeField>
+        <NodeField label="Font (all variants are bold)">
+          <select style={tinyInput} value={props.caption_font || 'Poppins ExtraBold'} onChange={(e) => setP({ caption_font: e.target.value })}>
+            {POLISH_FONT_OPTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
+          </select>
+        </NodeField>
+        <div style={labelStyle}>Words per chunk</div>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+          {[1, 2, 3, 4].map((n) => {
+            const on = (props.caption_words_per_chunk ?? 3) === n
+            return (
+              <button
+                key={n}
+                type="button"
+                onClick={() => setP({ caption_words_per_chunk: n })}
+                style={{
+                  flex: 1, padding: '6px 0', fontSize: 12, borderRadius: 999,
+                  border: `1px solid ${on ? '#f59e0b' : 'var(--border)'}`,
+                  background: on ? '#f59e0b' : 'var(--surface-2)',
+                  color: on ? '#fff' : 'var(--text-soft)',
+                  cursor: 'pointer', fontFamily: 'var(--font-display)', fontWeight: 800,
+                }}
+              >{n}</button>
+            )
+          })}
+        </div>
+        <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+          <PolishColorRow label="Text color" value={props.caption_text_color || '#ffffff'} onChange={(v) => setP({ caption_text_color: v })} />
+          <PolishColorRow label="Outline color" value={props.caption_outline_color || '#e0467a'} onChange={(v) => setP({ caption_outline_color: v })} />
+        </div>
+        <PolishSlider label="Outline thickness" value={Number(props.caption_outline_thickness ?? 6)} min={0} max={12} suffix="px" onChange={(v) => setP({ caption_outline_thickness: v })} />
+        <div style={{ marginBottom: 12 }}>
+          <PolishColorRow label="Highlight (first word color)" value={props.caption_highlight_color || '#ec3a8a'} onChange={(v) => setP({ caption_highlight_color: v })} />
+        </div>
+        <PolishSlider label="Font size" value={Number(props.caption_size ?? 64)} min={24} max={140} suffix="px" onChange={(v) => setP({ caption_size: v })} />
+        <PolishSlider label="Y position" value={Number(props.caption_y_pos ?? 75)} min={40} max={95} suffix="% from top" onChange={(v) => setP({ caption_y_pos: v })} />
+      </PolishSection>
+
+      {/* Logo / Watermark ──────────────────────────────────────────────── */}
+      <PolishSection icon={ImageIcon} title="Logo / Watermark">
+        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+          {upstreamLogo ? (
+            <img src={upstreamLogo} alt="" style={{
+              width: 50, height: 50, objectFit: 'contain', background: 'var(--surface-2)',
+              border: '1px solid var(--border)', borderRadius: 6, padding: 6,
+            }} />
+          ) : (
+            <div style={{
+              width: 50, height: 50, background: 'var(--surface-2)', border: '1px dashed var(--border)',
+              borderRadius: 6, display: 'grid', placeItems: 'center', color: 'var(--muted)', fontSize: 10,
+            }}>Wire image</div>
+          )}
+          <div style={{ flex: 1, fontSize: 10.5, color: 'var(--muted)', alignSelf: 'center', lineHeight: 1.4 }}>
+            Logo comes from a wired image_upload, image_gen, or the brand profile's logo.
+          </div>
+        </div>
+        <div style={labelStyle}>Position</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 12 }}>
+          {[
+            { id: 'tl', label: 'Top Left' },
+            { id: 'tr', label: 'Top Right' },
+            { id: 'bl', label: 'Bottom Left' },
+            { id: 'br', label: 'Bottom Right' },
+          ].map((p) => {
+            const on = (props.watermark_position || 'br') === p.id
+            return (
+              <button
+                key={p.id} type="button"
+                onClick={() => setP({ watermark_position: p.id })}
+                style={{
+                  padding: '8px 0', borderRadius: 999, fontSize: 11.5,
+                  border: `1px solid ${on ? '#f59e0b' : 'var(--border)'}`,
+                  background: on ? '#f59e0b' : 'var(--surface-2)',
+                  color: on ? '#fff' : 'var(--text-soft)',
+                  cursor: 'pointer', fontFamily: 'var(--font-display)', fontWeight: 700,
+                }}
+              >{p.label}</button>
+            )
+          })}
+        </div>
+        <button
+          type="button"
+          onClick={() => setP({ watermark_position: 'none' })}
+          style={{
+            width: '100%', padding: '6px 0', borderRadius: 6, fontSize: 11,
+            background: 'var(--surface-2)', border: '1px solid var(--border)',
+            color: 'var(--muted)', cursor: 'pointer', marginBottom: 12,
+          }}
+        >Hide logo</button>
+        <PolishSlider label="Logo size" value={Number(props.watermark_size_pct ?? 25)} min={4} max={40} suffix="% of video width" onChange={(v) => setP({ watermark_size_pct: v })} />
+      </PolishSection>
+
+      {/* Music ─────────────────────────────────────────────────────────── */}
+      <PolishSection icon={Mic} title="Music">
+        <div style={{ fontSize: 10.5, color: 'var(--muted)', marginBottom: 10, lineHeight: 1.4 }}>
+          Wire an audio_upload node into "in" to use background music. Volume ducks under the original voice.
+        </div>
+        <PolishSlider label="Volume" value={Math.round(Number(props.music_volume ?? 0.15) * 100)} min={0} max={50} suffix="%" onChange={(v) => setP({ music_volume: v / 100 })} />
+        <PolishSlider label="Auto fade-out" value={Number(props.music_fade_secs ?? 1.5)} min={0} max={5} step={0.1} suffix="s" onChange={(v) => setP({ music_fade_secs: Number(v.toFixed(1)) })} />
+      </PolishSection>
     </>
   )
 }
@@ -2302,13 +2687,35 @@ export const NODE_REGISTRY = {
     inputs: [{ id: 'in', label: 'In (video + logo + music + script)' }],
     outputs: [{ id: 'out', label: 'Out (video)' }],
     initialProps: {
+      // Title overlay
       title: '',
+      title_enabled: true,
+      title_font: 'Montserrat ExtraBold',
+      title_color: '#ffffff',
+      title_bg_color: '#e0467a',
+      title_size: 72,
+      title_bg_padding: 28,
+      title_y_pos: 15,
+      title_uppercase: false,
+      // Captions
       subtitle_mode: 'auto',
+      caption_font: 'Poppins ExtraBold',
+      caption_words_per_chunk: 3,
+      caption_text_color: '#ffffff',
+      caption_outline_color: '#e0467a',
+      caption_outline_thickness: 6,
+      caption_highlight_color: '#ec3a8a',
+      caption_size: 64,
+      caption_y_pos: 75,
+      // Logo / watermark
       watermark_position: 'br',
-      watermark_size_pct: 12,
+      watermark_size_pct: 25,
+      // Music
       music_volume: 0.15,
+      music_fade_secs: 1.5,
     },
     Body: VideoPolishBody,
+    Editor: VideoPolishEditor,
     run: async ({ data, inputs, ctx }) => {
       const arr = asArr(inputs?.in)
       let videoUrl = null
@@ -2338,6 +2745,8 @@ export const NODE_REGISTRY = {
       }
       if (!videoUrl) throw new Error('Wire a video into "in" (avatar_render or combine_videos).')
 
+      const p = data.props || {}
+      const titleOn = (p.title_enabled !== false) && !!(p.title || '').trim()
       const r = await fetch('/api/videos/polish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
@@ -2346,11 +2755,35 @@ export const NODE_REGISTRY = {
           video_url: videoUrl,
           logo_url: logoUrl || undefined,
           music_url: musicUrl || undefined,
-          script: data.props?.subtitle_mode === 'off' ? '' : script,
-          title: (data.props?.title || '').trim() || undefined,
-          watermark_position: data.props?.watermark_position || 'br',
-          watermark_size_pct: data.props?.watermark_size_pct ?? 12,
-          music_volume: data.props?.music_volume ?? 0.15,
+          script: p.subtitle_mode === 'off' ? '' : script,
+          // Title overlay
+          title: titleOn ? p.title.trim() : undefined,
+          title_style: titleOn ? {
+            font: p.title_font,
+            color: p.title_color,
+            bg_color: p.title_bg_color,
+            size: p.title_size,
+            bg_padding: p.title_bg_padding,
+            y_pos: p.title_y_pos,
+            uppercase: p.title_uppercase,
+          } : undefined,
+          // Captions
+          caption_style: {
+            font: p.caption_font,
+            words_per_chunk: p.caption_words_per_chunk,
+            text_color: p.caption_text_color,
+            outline_color: p.caption_outline_color,
+            outline_thickness: p.caption_outline_thickness,
+            highlight_color: p.caption_highlight_color,
+            size: p.caption_size,
+            y_pos: p.caption_y_pos,
+          },
+          // Logo / watermark
+          watermark_position: p.watermark_position || 'br',
+          watermark_size_pct: p.watermark_size_pct ?? 25,
+          // Music
+          music_volume: p.music_volume ?? 0.15,
+          music_fade_secs: p.music_fade_secs ?? 1.5,
         }),
       })
       const body = await r.json().catch(() => ({}))

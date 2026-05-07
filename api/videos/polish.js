@@ -64,19 +64,39 @@ function srtTime(s) {
   return `${h}:${m}:${sec},${milli}`
 }
 
-// TikTok-style: 3 words/chunk, uppercase, evenly spaced over the
+// TikTok-style: N words/chunk, uppercase, evenly spaced over the
 // estimated voice duration. Good enough for rough caption burn-in.
 function buildSrt(script, totalSecs, wordsPerChunk = 3) {
   const words = String(script || '').replace(/[*_`]/g, '').split(/\s+/).filter(Boolean)
   if (!words.length || !totalSecs) return ''
   const chunks = []
-  for (let i = 0; i < words.length; i += wordsPerChunk) {
-    chunks.push(words.slice(i, i + wordsPerChunk).join(' ').toUpperCase())
+  const wpc = Math.max(1, Math.min(6, Number(wordsPerChunk) || 3))
+  for (let i = 0; i < words.length; i += wpc) {
+    chunks.push(words.slice(i, i + wpc).join(' ').toUpperCase())
   }
   const dur = totalSecs / chunks.length
   return chunks
     .map((text, i) => `${i + 1}\n${srtTime(i * dur)} --> ${srtTime((i + 1) * dur)}\n${text}\n`)
     .join('\n')
+}
+
+// libass uses BGR hex with alpha prefix (00 = opaque). Input expects '#RRGGBB'.
+function hexToAssBgr(hex, fallback = '00FFFFFF') {
+  if (!hex || typeof hex !== 'string') return fallback
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
+  if (!m) return fallback
+  const rr = m[1].slice(0, 2)
+  const gg = m[1].slice(2, 4)
+  const bb = m[1].slice(4, 6)
+  return `00${bb}${gg}${rr}`.toUpperCase()
+}
+
+// drawtext box color expects 0xRRGGBB@A or AARRGGBB.
+function hexToDrawtext(hex, fallback = 'white') {
+  if (!hex || typeof hex !== 'string') return fallback
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
+  if (!m) return fallback
+  return `0x${m[1].toUpperCase()}`
 }
 
 function overlayPos(pos, sizePct) {
@@ -112,10 +132,15 @@ export default async function handler(req, res) {
     const {
       profile_id, video_url,
       logo_url, music_url, script, title,
+      title_style,             // { font, color, bg_color, size, bg_padding, y_pos, uppercase }
+      caption_style,           // { font, words_per_chunk, text_color, outline_color, outline_thickness, highlight_color, size, y_pos }
       watermark_position = 'br',
-      watermark_size_pct = 12,
+      watermark_size_pct = 25,
       music_volume = 0.15,
+      music_fade_secs = 1.5,
     } = req.body || {}
+    const ts = title_style || {}
+    const cs = caption_style || {}
 
     if (!profile_id || !video_url) return res.status(400).json({ error: 'profile_id + video_url required' })
     await assertProfileAccess(auth.user.id, profile_id)
@@ -163,7 +188,7 @@ export default async function handler(req, res) {
     // we use ~2.5 words/sec which matches HeyGen's pacing closely.
     const wordCount = String(script || '').split(/\s+/).filter(Boolean).length
     const estDuration = Math.max(3, Math.round(wordCount / 2.5))
-    const srt = script ? buildSrt(script, estDuration) : ''
+    const srt = script ? buildSrt(script, estDuration, cs.words_per_chunk) : ''
     if (srt) ffmpeg.FS('writeFile', 'subs.srt', new TextEncoder().encode(srt))
 
     // ── 2. Build inputs + filter graph ─────────────────────────────────────
@@ -177,8 +202,19 @@ export default async function handler(req, res) {
     let vLabel = '[0:v]'
 
     if (title) {
-      const safe = escDrawtext(String(title).slice(0, 80))
-      filters.push(`${vLabel}drawtext=text='${safe}':fontcolor=white:fontsize=64:borderw=4:bordercolor=black:x=(w-text_w)/2:y=h*0.08[vt]`)
+      // Big title block — bg-boxed drawtext at title_y_pos% from top.
+      const text = ts.uppercase ? String(title).toUpperCase() : String(title)
+      const safe = escDrawtext(text.slice(0, 120))
+      const tSize = Number(ts.size ?? 72)
+      const tBg = hexToDrawtext(ts.bg_color || '#e0467a', '0xE0467A')
+      const tFc = hexToDrawtext(ts.color || '#ffffff', 'white')
+      const tPad = Math.max(0, Number(ts.bg_padding ?? 28))
+      const tYpct = Math.max(0, Math.min(95, Number(ts.y_pos ?? 15))) / 100
+      filters.push(
+        `${vLabel}drawtext=text='${safe}':fontcolor=${tFc}:fontsize=${tSize}` +
+        `:box=1:boxcolor=${tBg}:boxborderw=${tPad}` +
+        `:x=(w-text_w)/2:y=h*${tYpct}-text_h/2[vt]`
+      )
       vLabel = '[vt]'
     }
 
@@ -190,8 +226,24 @@ export default async function handler(req, res) {
     }
 
     if (srt) {
+      // libass force_style — Primary/Outline colors converted to BGR.
+      // Y position approximated assuming a 1920px-tall 9:16 source. We
+      // can't ffprobe inside ffmpeg-wasm easily, so this is a working
+      // estimate that lines up with HeyGen's standard output.
+      const cSize = Number(cs.size ?? 64) / 3   // SRT/libass FontSize is much smaller scale than drawtext px
+      const cText = hexToAssBgr(cs.text_color, '00FFFFFF')
+      const cOut = hexToAssBgr(cs.outline_color, '00000000')
+      const cThick = Math.max(0, Math.min(8, Number(cs.outline_thickness ?? 6) / 1.5))
+      const cYpct = Math.max(40, Math.min(95, Number(cs.y_pos ?? 75))) / 100
+      const marginV = Math.round(1920 * (1 - cYpct))
+      const cFont = (cs.font || 'Sans').replace(/[,;]/g, '')
       filters.push(
-        `${vLabel}subtitles=subs.srt:force_style='FontName=Sans,Fontsize=22,PrimaryColour=&H00FFFFFF&,OutlineColour=&H00000000&,BorderStyle=1,Outline=2,Alignment=2,MarginV=80'[vs]`
+        `${vLabel}subtitles=subs.srt:force_style='` +
+        `FontName=${cFont},Fontsize=${cSize.toFixed(0)},` +
+        `PrimaryColour=&H${cText}&,OutlineColour=&H${cOut}&,` +
+        `BorderStyle=1,Outline=${cThick.toFixed(1)},Shadow=0,` +
+        `Alignment=2,MarginV=${marginV}` +
+        `'[vs]`
       )
       vLabel = '[vs]'
     }
@@ -199,7 +251,11 @@ export default async function handler(req, res) {
     let aLabel = '[0:a]'
     if (hasMusic) {
       const vol = Math.max(0, Math.min(1, Number(music_volume)))
-      filters.push(`[${musicIdx}:a]volume=${vol},apad[mus]`)
+      const fade = Math.max(0, Math.min(8, Number(music_fade_secs ?? 1.5)))
+      const fadeChain = fade > 0
+        ? `volume=${vol},afade=t=out:st=${Math.max(0, estDuration - fade).toFixed(2)}:d=${fade.toFixed(2)},apad`
+        : `volume=${vol},apad`
+      filters.push(`[${musicIdx}:a]${fadeChain}[mus]`)
       filters.push(`${aLabel}[mus]amix=inputs=2:duration=first:dropout_transition=0[aout]`)
       aLabel = '[aout]'
     }
