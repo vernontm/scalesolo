@@ -262,6 +262,37 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     } catch (e) { toast({ kind: 'error', message: e.message }) }
   }
 
+  // Bulk delete every currently-selected row. Fires DELETE in parallel,
+  // surfaces a per-row success/failure summary if any fail.
+  const deleteSelected = async () => {
+    const ids = [...selected]
+    if (!ids.length) return
+    const ok = await confirmDialog({
+      title: `Delete ${ids.length} ${ids.length === 1 ? 'post' : 'posts'}?`,
+      message: 'This permanently removes the rows and their media references from your library. Cannot be undone.',
+      confirmText: 'Delete',
+      destructive: true,
+    })
+    if (!ok) return
+    setBusyAction('delete')
+    const results = await Promise.allSettled(
+      ids.map((id) => fetch(`/api/content?id=${id}`, {
+        method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+      }).then((r) => { if (!r.ok) throw new Error(`${r.status}`); return id }))
+    )
+    const ok_ids = results.filter((r) => r.status === 'fulfilled').map((r) => r.value)
+    const failed = results.length - ok_ids.length
+    setScripts((arr) => arr.filter((r) => !ok_ids.includes(r.id)))
+    setSelected(new Set())
+    setBusyAction(null)
+    if (failed) {
+      toast({ kind: 'error', message: `Deleted ${ok_ids.length} of ${ids.length}; ${failed} failed.` })
+      refresh()
+    } else {
+      toast({ kind: 'success', message: `Deleted ${ok_ids.length} ${ok_ids.length === 1 ? 'post' : 'posts'}.` })
+    }
+  }
+
   // ── bulk actions ──────────────────────────────────────────────────────────
   const callBulk = async (action, label) => {
     const ids = [...selected]
@@ -437,6 +468,27 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           }}
           style={{ padding: '8px 12px' }}
         >{busyAction === 'publish-selected' ? <Loader2 size={13} className="spin" /> : <Send size={13} />} Publish Selected</button>
+        {/* Bulk delete — only renders once at least one row is checked so
+           the toolbar isn't cluttered when nothing's selected. */}
+        {selected.size > 0 && (
+          <button
+            disabled={busyAction !== null}
+            onClick={deleteSelected}
+            aria-label={`Delete ${selected.size} selected ${selected.size === 1 ? 'post' : 'posts'}`}
+            style={{
+              padding: '8px 12px', borderRadius: 8,
+              background: 'rgba(239,68,68,0.12)',
+              color: 'var(--red)', border: '1px solid rgba(239,68,68,0.4)',
+              cursor: busyAction !== null ? 'not-allowed' : 'pointer',
+              opacity: busyAction !== null ? 0.6 : 1,
+              fontSize: 12.5, fontWeight: 700, fontFamily: 'var(--font-display)',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}
+          >
+            {busyAction === 'delete' ? <Loader2 size={13} className="spin" /> : <Trash2 size={13} />}
+            Delete{selected.size > 1 ? ` ${selected.size}` : ''}
+          </button>
+        )}
         <button
           onClick={exportCsv}
           style={{
