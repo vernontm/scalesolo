@@ -15,13 +15,14 @@ import {
   Plus, Play, Save, Trash2, ArrowLeft, Sparkles, Zap, Boxes, AlertCircle,
   GripHorizontal, Minimize2, Maximize2, Wand2, MessageSquare, Send,
   ZoomIn, ZoomOut, Maximize, Scissors, Download, X, History, Clock,
-  CheckCircle2, XCircle, Square, Settings as SettingsIcon,
+  CheckCircle2, XCircle, Square, Settings as SettingsIcon, Copy, Building2,
 } from 'lucide-react'
 import { useRef } from 'react'
 // (useEffect already imported above for other effects in this file)
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { useCredits } from '../context/CreditsContext.jsx'
+import { toast, confirmDialog } from '../components/Toast.jsx'
 import {
   NODE_REGISTRY, NODE_CATEGORIES, runSpace, downloadUrl, readImageItems,
   AUTORUN_OPTIONS, NODE_COST_HINT,
@@ -378,6 +379,77 @@ function NodeEditorDrawer({ title, color, icon: Icon, onClose, children }) {
 }
 
 // ── Run history modal — recent runs of one space ───────────────────────────
+// ── Duplicate space modal — pick a target brand profile (same one for an
+//    in-place copy, or any other profile the user has access to). The
+//    server scrubs avatar / look / watermark refs when crossing profiles
+//    so the clone doesn't carry stale ids that wouldn't resolve.
+function DuplicateSpaceModal({ space, profiles, currentProfileId, token, onClose, onDone }) {
+  const [name, setName] = useState(`${space?.name || 'Space'} (copy)`)
+  const [targetId, setTargetId] = useState(currentProfileId)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+  const submit = async () => {
+    if (!targetId) return
+    setBusy(true); setErr(null)
+    try {
+      const r = await fetch('/api/spaces?action=duplicate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ source_id: space.id, target_profile_id: targetId, name: name.trim() || undefined }),
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body?.error || `Duplicate failed (${r.status})`)
+      const targetProfile = (profiles || []).find((p) => p.id === targetId)
+      toast({
+        kind: 'success',
+        message: body.cross_profile
+          ? `Copied to ${targetProfile?.business_name || 'other profile'}. Avatar / watermark refs were scrubbed — re-pick them in the clone.`
+          : 'Workflow duplicated.',
+      })
+      onDone?.(body.space)
+      onClose()
+    } catch (e) { setErr(e.message) }
+    finally { setBusy(false) }
+  }
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card modal-card-sm" onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          <Copy size={18} style={{ color: 'var(--red)' }} />
+          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, flex: 1 }}>Duplicate space</h3>
+          <button aria-label="Close" onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6, borderRadius: 6 }}><X size={18} /></button>
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label className="label">New name</label>
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label className="label">Copy to brand profile</label>
+          <select className="select" value={targetId || ''} onChange={(e) => setTargetId(e.target.value)}>
+            {(profiles || []).map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.business_name || p.id.slice(0, 8)}
+                {p.id === currentProfileId ? ' (this one)' : ''}
+              </option>
+            ))}
+          </select>
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6, lineHeight: 1.4 }}>
+            <Building2 size={11} style={{ verticalAlign: '-2px', marginRight: 4 }} />
+            Cloning across profiles strips avatar / watermark refs (they don't carry over). Auto-run is reset to inactive in every clone.
+          </div>
+        </div>
+        {err && <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '10px 12px', borderRadius: 8, fontSize: 12.5, marginBottom: 12 }}>{err}</div>}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="btn-primary" onClick={submit} disabled={busy || !targetId}>
+            {busy ? <span className="spinner" /> : <Copy size={13} />} Duplicate
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function RunHistoryModal({ spaceId, token, onClose }) {
   const [runs, setRuns] = useState(null)
   const [error, setError] = useState(null)
@@ -456,7 +528,7 @@ function RunHistoryModal({ spaceId, token, onClose }) {
   )
 }
 
-function SpacesList({ spaces, onCreate, onOpen, onDelete, onHistory, error }) {
+function SpacesList({ spaces, onCreate, onOpen, onDelete, onHistory, onDuplicate, error }) {
   return (
     <div className="fade-up">
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
@@ -489,9 +561,12 @@ function SpacesList({ spaces, onCreate, onOpen, onDelete, onHistory, error }) {
               </div>
               <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15, marginBottom: 4 }}>{s.name}</div>
               <div style={{ fontSize: 12, color: 'var(--muted)' }}>Updated {new Date(s.updated_at).toLocaleDateString()}</div>
-              <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
+              <div style={{ display: 'flex', gap: 6, marginTop: 12, flexWrap: 'wrap' }}>
                 <button className="btn-ghost" style={{ padding: '6px 10px', fontSize: 12 }} onClick={(e) => { e.stopPropagation(); onHistory?.(s) }}>
                   <History size={12} /> History
+                </button>
+                <button className="btn-ghost" style={{ padding: '6px 10px', fontSize: 12 }} onClick={(e) => { e.stopPropagation(); onDuplicate?.(s) }}>
+                  <Copy size={12} /> Duplicate
                 </button>
                 <button className="btn-ghost" style={{ padding: '6px 10px', fontSize: 12 }} onClick={(e) => { e.stopPropagation(); onDelete(s) }}>
                   <Trash2 size={12} /> Delete
@@ -1730,7 +1805,8 @@ export default function Spaces() {
   }
 
   const onDelete = async (s) => {
-    if (!confirm(`Delete "${s.name}"?`)) return
+    const ok = await confirmDialog({ title: `Delete "${s.name}"?`, confirmText: 'Delete', destructive: true })
+    if (!ok) return
     try {
       await fetch(`/api/spaces?id=${s.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${session.access_token}` } })
       refresh()
@@ -1739,6 +1815,8 @@ export default function Spaces() {
 
   const [historyFor, setHistoryFor] = useState(null)
   const onHistory = (s) => setHistoryFor(s)
+  const [duplicateFor, setDuplicateFor] = useState(null)
+  const onDuplicate = (s) => setDuplicateFor(s)
 
   if (!selectedProfileId) {
     return <div className="card-flat fade-up" style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>
@@ -1749,12 +1827,28 @@ export default function Spaces() {
   if (editing) return <SpaceBuilder space={editing} onSave={(s) => { refresh(); setEditing(s) }} onClose={() => { refresh(); setEditing(null) }} />
   return (
     <>
-      <SpacesList spaces={spaces} onCreate={onCreate} onOpen={onOpen} onDelete={onDelete} onHistory={onHistory} error={error} />
+      <SpacesList spaces={spaces} onCreate={onCreate} onOpen={onOpen} onDelete={onDelete} onHistory={onHistory} onDuplicate={onDuplicate} error={error} />
       {historyFor && (
         <RunHistoryModal
           spaceId={historyFor.id}
           token={session.access_token}
           onClose={() => setHistoryFor(null)}
+        />
+      )}
+      {duplicateFor && (
+        <DuplicateSpaceModal
+          space={duplicateFor}
+          profiles={profiles || []}
+          currentProfileId={selectedProfileId}
+          token={session.access_token}
+          onClose={() => setDuplicateFor(null)}
+          onDone={(newSpace) => {
+            // If the clone landed in the *current* profile, it'll show
+            // up after refresh. If it went to a different profile, the
+            // user needs to switch profiles to see it — toast already
+            // told them where it went.
+            if (newSpace?.profile_id === selectedProfileId) refresh()
+          }}
         />
       )}
     </>
