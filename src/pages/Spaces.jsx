@@ -25,6 +25,7 @@ import { useCredits } from '../context/CreditsContext.jsx'
 import {
   NODE_REGISTRY, NODE_CATEGORIES, runSpace, downloadUrl, readImageItems,
   AUTORUN_OPTIONS, NODE_COST_HINT,
+  findUpstreamVideoUrl, findUpstreamScript, findUpstreamLogoUrl,
 } from '../lib/space-nodes.jsx'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -282,7 +283,7 @@ function SpaceNode({ id, data, selected }) {
 // can actually edit. We just need "did anything user-meaningful change".
 function propsHashShort(p) {
   if (!p || typeof p !== 'object') return ''
-  const skip = new Set(['_ctxAvatars', '_ctxPublicAvatars', '_ctxProfiles', '_ctxNamedImages', '_ctxCostPerRun', '_ctxProfileId', '_ctxSyncedPlatforms', '_ctxDetectedKind'])
+  const skip = new Set(['_ctxAvatars', '_ctxPublicAvatars', '_ctxProfiles', '_ctxNamedImages', '_ctxCostPerRun', '_ctxProfileId', '_ctxSyncedPlatforms', '_ctxDetectedKind', '_ctxUpstreamVideoUrl', '_ctxUpstreamScript', '_ctxUpstreamLogoUrl'])
   const parts = []
   for (const k of Object.keys(p).sort()) {
     if (skip.has(k)) continue
@@ -1195,6 +1196,17 @@ function SpaceBuilder({ space, onSave, onClose }) {
       if (t === 'avatar_picker') return { ...n, data: { ...n.data, _ctxAvatars: avatars, _ctxPublicAvatars: publicAvatars } }
       if (t === 'brand_profile') return { ...n, data: { ...n.data, _ctxProfiles: profiles } }
       if (t === 'image_upload')  return { ...n, data: { ...n.data, _ctxProfileId: selectedProfileId } }
+      if (t === 'video_polish') {
+        // Inline live preview in the body needs the upstream video frame +
+        // script + logo without reaching into the ReactFlow graph itself.
+        return { ...n, data: {
+          ...n.data,
+          _ctxProfileId: selectedProfileId,
+          _ctxUpstreamVideoUrl: findUpstreamVideoUrl(n.id, nodes, edges),
+          _ctxUpstreamScript: findUpstreamScript(n.id, nodes, edges),
+          _ctxUpstreamLogoUrl: findUpstreamLogoUrl(n.id, nodes, edges),
+        } }
+      }
       if (t === 'save_library') {
         // Walk back to see what kind of media is wired in (image / video /
         // text), and look up the active brand profile's synced_platforms.

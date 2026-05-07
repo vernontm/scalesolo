@@ -976,6 +976,21 @@ function AutoRunBody({ data, onPatch }) {
   )
 }
 
+// Direct image → landing-media upload used by the polish editor's
+// "upload watermark" button. Different from uploadImageToBucket above
+// (which goes through /api/images/upload-reference for prompt-ref images).
+async function uploadLogoToBucket(file, profileId, kind = 'logos') {
+  const ext = (file.name.split('.').pop() || 'png').toLowerCase()
+  const safeExt = ['png', 'jpg', 'jpeg', 'webp', 'svg'].includes(ext) ? ext : 'png'
+  const path = `${profileId || 'shared'}/${kind}/${Date.now()}.${safeExt}`
+  const { error } = await supabase.storage.from('landing-media').upload(path, file, {
+    contentType: file.type || 'image/png', upsert: false,
+  })
+  if (error) throw new Error(`Upload failed: ${error.message}`)
+  const { data } = supabase.storage.from('landing-media').getPublicUrl(path)
+  return data.publicUrl
+}
+
 // ─── AUDIO UPLOAD ───────────────────────────────────────────────────────────
 async function uploadAudioToBucket(file, profileId) {
   const ext = (file.name.split('.').pop() || 'mp3').toLowerCase()
@@ -1485,10 +1500,26 @@ function VideoPolishBody({ data, onPatch }) {
   const out = data.output
   const props = data.props || {}
   const status = data.status || 'idle'
-  const wmLabel = ({ tr: 'Top R', tl: 'Top L', br: 'Bottom R', bl: 'Bottom L', none: 'No logo' })[props.watermark_position || 'br']
   const subsOn = (props.subtitle_mode || 'auto') !== 'off'
+  // Spaces.jsx injects these via renderNodes — they let the body show a
+  // live overlay preview without reaching back into ReactFlow's nodes/edges.
+  const upstreamVideo = data._ctxUpstreamVideoUrl || null
+  const upstreamScript = data._ctxUpstreamScript || ''
+  const upstreamLogo = data._ctxUpstreamLogoUrl || null
+  const previewLogo = props.watermark_image_url || upstreamLogo
+  const previewVideo = out?.video_url || upstreamVideo
   return (
     <>
+      {/* Inline live preview — same composited DOM the drawer uses, scaled to fit. */}
+      <VideoPolishPreview
+        videoUrl={previewVideo}
+        script={upstreamScript}
+        props={props}
+        logoUrl={previewLogo}
+      />
+      <div style={{ marginTop: 6, marginBottom: 8, fontSize: 10, color: 'var(--muted)', textAlign: 'center', lineHeight: 1.3 }}>
+        {previewVideo ? 'Live preview — overlays update as you edit' : 'Run an upstream node to see the preview frame'}
+      </div>
       <button
         type="button"
         className="nodrag"
@@ -1497,27 +1528,18 @@ function VideoPolishBody({ data, onPatch }) {
           width: '100%', display: 'inline-flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '8px 10px', background: 'var(--surface-2)', border: '1px solid var(--border)',
           borderRadius: 7, color: 'var(--text)', cursor: 'pointer', fontSize: 11.5,
-          fontFamily: 'var(--font-display)', fontWeight: 700, marginBottom: 8,
+          fontFamily: 'var(--font-display)', fontWeight: 700, marginBottom: 6,
         }}
       >
         <span><Sparkles size={11} style={{ verticalAlign: '-2px', marginRight: 6, color: '#0ea5e9' }} /> Open settings</span>
         <ArrowUpRight size={11} style={{ color: 'var(--muted)' }} />
       </button>
-      <div style={{ ...previewBox, marginBottom: 8, fontSize: 10.5 }}>
-        <div>Subtitles: <strong>{subsOn ? `${props.caption_words_per_chunk ?? 3} words / chunk` : 'off'}</strong></div>
-        <div>Logo: <strong>{wmLabel}{props.watermark_position !== 'none' ? ` · ${props.watermark_size_pct ?? 12}%` : ''}</strong></div>
-        <div>Music vol: <strong>{Math.round((Number(props.music_volume ?? 0.15)) * 100)}%</strong></div>
-        {props.title && <div>Title: <strong>{props.title.slice(0, 24)}{props.title.length > 24 ? '…' : ''}</strong></div>}
+      <div style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.35 }}>
+        Subs: <strong>{subsOn ? `${props.caption_words_per_chunk ?? 3} wds` : 'off'}</strong>
+        {' · '}Logo: <strong>{(props.watermark_position || 'br') === 'none' ? 'off' : `${props.watermark_size_pct ?? 25}%`}</strong>
+        {' · '}Music: <strong>{Math.round((Number(props.music_volume ?? 0.15)) * 100)}%</strong>
       </div>
-      <div style={{ fontSize: 10.5, color: 'var(--muted)', lineHeight: 1.4 }}>
-        Wire a video, optional logo image, optional music, optional script (for auto-subtitles).
-      </div>
-      {out?.video_url && (
-        <div style={{ marginTop: 8 }}>
-          <MediaItem url={out.video_url} type="video" from="polished" aspectRatio="9/16" />
-        </div>
-      )}
-      <NodePreview status={status} output={out?.video_url ? null : out} error={data.error} />
+      <NodePreview status={status} output={null} error={data.error} />
     </>
   )
 }
@@ -1525,7 +1547,7 @@ function VideoPolishBody({ data, onPatch }) {
 // Walks the wired-input tree backward from the polish node to find the
 // closest already-rendered video so the editor can show a real frame in
 // its live preview. Returns null until at least one upstream node has run.
-function findUpstreamVideoUrl(nodeId, nodes, edges) {
+export function findUpstreamVideoUrl(nodeId, nodes, edges) {
   if (!nodeId || !Array.isArray(nodes) || !Array.isArray(edges)) return null
   const seen = new Set([nodeId])
   const queue = [nodeId]
@@ -1549,7 +1571,7 @@ function findUpstreamVideoUrl(nodeId, nodes, edges) {
   return null
 }
 
-function findUpstreamScript(nodeId, nodes, edges) {
+export function findUpstreamScript(nodeId, nodes, edges) {
   if (!nodeId) return ''
   const seen = new Set([nodeId])
   const queue = [nodeId]
@@ -1571,7 +1593,7 @@ function findUpstreamScript(nodeId, nodes, edges) {
   return ''
 }
 
-function findUpstreamLogoUrl(nodeId, nodes, edges) {
+export function findUpstreamLogoUrl(nodeId, nodes, edges) {
   if (!nodeId) return null
   const seen = new Set([nodeId])
   const queue = [nodeId]
@@ -1648,7 +1670,7 @@ function PolishSection({ icon: Icon, title, children, defaultOpen = true }) {
 
 // Build the live preview overlays as plain DOM/CSS so the user sees
 // title/captions/logo placement instantly without needing a render.
-function VideoPolishPreview({ videoUrl, script, props }) {
+function VideoPolishPreview({ videoUrl, script, props, logoUrl }) {
   const sample = (script || 'Your script preview line').toUpperCase()
   const wpc = Math.max(1, Math.min(6, Number(props.caption_words_per_chunk || 3)))
   const sampleChunk = sample.split(/\s+/).slice(0, wpc).join(' ')
@@ -1707,22 +1729,106 @@ function VideoPolishPreview({ videoUrl, script, props }) {
           ))}
         </div>
       )}
-      {/* Logo placeholder block */}
+      {/* Logo / watermark — actual image if we have one, dashed placeholder otherwise. */}
       {props.watermark_position && props.watermark_position !== 'none' && (
-        <div style={{
-          position: 'absolute',
-          ...(props.watermark_position.includes('t') ? { top: '4%' } : { bottom: '4%' }),
-          ...(props.watermark_position.includes('l') ? { left: '4%' } : { right: '4%' }),
-          width: `${props.watermark_size_pct ?? 12}%`,
-          aspectRatio: '3/1',
-          background: 'rgba(255,255,255,0.18)',
-          border: '1px dashed rgba(255,255,255,0.5)',
-          borderRadius: 4, display: 'grid', placeItems: 'center',
-          color: 'rgba(255,255,255,0.85)', fontSize: 10, fontWeight: 700,
-          letterSpacing: '0.06em', textTransform: 'uppercase',
-        }}>logo</div>
+        logoUrl ? (
+          <img
+            src={logoUrl} alt=""
+            style={{
+              position: 'absolute',
+              ...(props.watermark_position.includes('t') ? { top: '4%' } : { bottom: '4%' }),
+              ...(props.watermark_position.includes('l') ? { left: '4%' } : { right: '4%' }),
+              width: `${props.watermark_size_pct ?? 12}%`,
+              objectFit: 'contain',
+            }}
+          />
+        ) : (
+          <div style={{
+            position: 'absolute',
+            ...(props.watermark_position.includes('t') ? { top: '4%' } : { bottom: '4%' }),
+            ...(props.watermark_position.includes('l') ? { left: '4%' } : { right: '4%' }),
+            width: `${props.watermark_size_pct ?? 12}%`,
+            aspectRatio: '3/1',
+            background: 'rgba(255,255,255,0.18)',
+            border: '1px dashed rgba(255,255,255,0.5)',
+            borderRadius: 4, display: 'grid', placeItems: 'center',
+            color: 'rgba(255,255,255,0.85)', fontSize: 10, fontWeight: 700,
+            letterSpacing: '0.06em', textTransform: 'uppercase',
+          }}>logo</div>
+        )
       )}
     </div>
+  )
+}
+
+function PolishLogoUpload({ uploadedUrl, upstreamUrl, profileId, onChange }) {
+  const inpRef = useRef(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+  const effective = uploadedUrl || upstreamUrl
+  const isUploaded = !!uploadedUrl
+
+  const onPick = async (file) => {
+    if (!file) return
+    setBusy(true); setErr(null)
+    try {
+      const url = await uploadLogoToBucket(file, profileId, 'logos')
+      onChange(url)
+    } catch (e) { setErr(e.message) }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 10, alignItems: 'center' }}>
+        {effective ? (
+          <img src={effective} alt="" style={{
+            width: 56, height: 56, objectFit: 'contain', background: 'var(--surface-2)',
+            border: '1px solid var(--border)', borderRadius: 6, padding: 6,
+          }} />
+        ) : (
+          <div style={{
+            width: 56, height: 56, background: 'var(--surface-2)', border: '1px dashed var(--border)',
+            borderRadius: 6, display: 'grid', placeItems: 'center', color: 'var(--muted)', fontSize: 10,
+          }}>No logo</div>
+        )}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <button
+            type="button"
+            onClick={() => inpRef.current?.click()}
+            disabled={busy}
+            style={{
+              padding: '6px 10px', borderRadius: 6, fontSize: 11.5,
+              background: 'var(--surface-2)', border: '1px solid var(--border)',
+              color: 'var(--text)', cursor: 'pointer', fontFamily: 'var(--font-display)', fontWeight: 700,
+              display: 'inline-flex', alignItems: 'center', gap: 6, justifyContent: 'center',
+            }}
+          >{busy ? <Loader2 size={11} className="spin" /> : <Upload size={11} />} {isUploaded ? 'Replace' : 'Upload'}</button>
+          {isUploaded && (
+            <button
+              type="button"
+              onClick={() => onChange(null)}
+              style={{
+                padding: '4px 8px', borderRadius: 6, fontSize: 10.5,
+                background: 'transparent', border: '1px solid var(--border)',
+                color: 'var(--muted)', cursor: 'pointer',
+              }}
+            ><Trash2 size={10} style={{ verticalAlign: '-2px', marginRight: 4 }} /> Remove (use wired)</button>
+          )}
+        </div>
+        <input
+          ref={inpRef} type="file" accept="image/*" style={{ display: 'none' }}
+          onChange={(e) => onPick(e.target.files?.[0])}
+        />
+      </div>
+      <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 10, lineHeight: 1.4 }}>
+        {isUploaded
+          ? 'Using your uploaded logo. Remove to fall back to whatever\'s wired in.'
+          : upstreamUrl ? 'Using a logo from a wired image / brand profile. Upload above to override.'
+          : 'Wire an image_upload, image_gen, or brand_profile in — or upload a logo here.'}
+      </div>
+      {err && <div style={{ fontSize: 10.5, color: 'var(--red)', marginBottom: 8 }}>{err}</div>}
+    </>
   )
 }
 
@@ -1752,7 +1858,7 @@ export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges })
       }}>
         <Play size={11} /> Live preview
       </div>
-      <VideoPolishPreview videoUrl={previewVideo} script={previewScript} props={props} />
+      <VideoPolishPreview videoUrl={previewVideo} script={previewScript} props={props} logoUrl={props.watermark_image_url || upstreamLogo} />
       <div style={{ marginTop: 6, fontSize: 10.5, color: 'var(--muted)', textAlign: 'center' }}>
         {previewVideo ? 'Frame from upstream render' : 'Wire & run an upstream video first'}
       </div>
@@ -1844,22 +1950,12 @@ export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges })
 
       {/* Logo / Watermark ──────────────────────────────────────────────── */}
       <PolishSection icon={ImageIcon} title="Logo / Watermark">
-        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-          {upstreamLogo ? (
-            <img src={upstreamLogo} alt="" style={{
-              width: 50, height: 50, objectFit: 'contain', background: 'var(--surface-2)',
-              border: '1px solid var(--border)', borderRadius: 6, padding: 6,
-            }} />
-          ) : (
-            <div style={{
-              width: 50, height: 50, background: 'var(--surface-2)', border: '1px dashed var(--border)',
-              borderRadius: 6, display: 'grid', placeItems: 'center', color: 'var(--muted)', fontSize: 10,
-            }}>Wire image</div>
-          )}
-          <div style={{ flex: 1, fontSize: 10.5, color: 'var(--muted)', alignSelf: 'center', lineHeight: 1.4 }}>
-            Logo comes from a wired image_upload, image_gen, or the brand profile's logo.
-          </div>
-        </div>
+        <PolishLogoUpload
+          uploadedUrl={props.watermark_image_url}
+          upstreamUrl={upstreamLogo}
+          profileId={data?._ctxProfileId}
+          onChange={(url) => setP({ watermark_image_url: url || null })}
+        />
         <div style={labelStyle}>Position</div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 12 }}>
           {[
@@ -2754,6 +2850,7 @@ export const NODE_REGISTRY = {
           profile_id: ctx.profileId,
           video_url: videoUrl,
           logo_url: logoUrl || undefined,
+          watermark_image_url: p.watermark_image_url || undefined,
           music_url: musicUrl || undefined,
           script: p.subtitle_mode === 'off' ? '' : script,
           // Title overlay
