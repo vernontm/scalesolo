@@ -3382,7 +3382,6 @@ ${String(script).slice(0, 2000)}
     Body: SchedulePostBody,
     run: async ({ data, inputs, ctx }) => {
       const arr = asArr(inputs?.in)
-      let videoUrl = null
       let caption = ''
       let hashtags = ''
       let script = ''
@@ -3398,13 +3397,20 @@ ${String(script).slice(0, 2000)}
         if (!caption && v.caption) caption = v.caption
         if (!hashtags && v.hashtags) hashtags = v.hashtags
         if (!perPlatform && v.per_platform && typeof v.per_platform === 'object') perPlatform = v.per_platform
-        if (!videoUrl) {
-          if (v.video?.video_url) videoUrl = v.video.video_url
-          else if (v.video_url) videoUrl = v.video_url
-        }
+        // Image collection / explicit images array.
         if (Array.isArray(v.images)) for (const im of v.images) { if (im?.url) photoUrls.push(im.url) }
         else if (v.url && /\.(png|jpe?g|webp)(\?|$)/i.test(v.url)) photoUrls.push(v.url)
+        // collection node — items[] of mixed kinds. Pull image kinds.
+        if (Array.isArray(v.items)) {
+          for (const it of v.items) {
+            if (it?.kind === 'image' && it.url) photoUrls.push(it.url)
+          }
+        }
       }
+      // Use the shared video-shape resolver: handles single render output,
+      // randomize videos[] arrays, combine_videos playlist fallback, and
+      // collection items[] grids in one place.
+      const videoUrl = pickFirstVideoUrl(arr)
 
       const platforms = Array.isArray(data.props?.platforms) ? data.props.platforms : []
       if (!platforms.length) throw new Error('Pick at least one platform.')
