@@ -25,6 +25,7 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { createClient } from '@supabase/supabase-js'
+import { zapcapAddVideoByUrl, zapcapCreateTask, zapcapPollTask } from '../_lib/zapcap.js'
 import ffmpegPath from 'ffmpeg-static'
 import { spawn } from 'node:child_process'
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises'
@@ -133,15 +134,16 @@ export default async function handler(req, res) {
   try {
     const {
       profile_id, video_url,
-      logo_url, watermark_image_url, music_url, script, title,
-      title_style, caption_style,
+      logo_url, watermark_image_url, music_url, title,
+      title_style,
+      captions_enabled,         // bool — gates the ZapCap pass entirely
+      caption_template_id,      // ZapCap template UUID
       watermark_position = 'br',
       watermark_size_pct = 25,
       music_volume = 0.15,
       music_fade_secs = 1.5,
     } = req.body || {}
     const ts = title_style || {}
-    const cs = caption_style || {}
 
     if (!profile_id || !video_url) return res.status(400).json({ error: 'profile_id + video_url required' })
     await assertProfileAccess(auth.user.id, profile_id)
@@ -162,146 +164,170 @@ export default async function handler(req, res) {
 
     if (!ffmpegPath) return res.status(500).json({ error: 'ffmpeg binary not bundled' })
 
-    workdir = await mkdtemp(join(tmpdir(), 'polish-'))
-    const inPath = join(workdir, 'in.mp4')
-    const outPath = join(workdir, 'out.mp4')
-
-    // ── 1. Stage inputs to /tmp ────────────────────────────────────────────
-    await writeFile(inPath, await fetchToBuffer(video_url))
-
-    const effectiveLogoUrl = watermark_image_url || logo_url
-    let logoPath = null
-    if (effectiveLogoUrl && watermark_position !== 'none') {
-      try {
-        const ext = (effectiveLogoUrl.split('?')[0].split('.').pop() || 'png').toLowerCase()
-        const safeExt = ['png', 'jpg', 'jpeg', 'webp'].includes(ext) ? ext : 'png'
-        logoPath = join(workdir, `logo.${safeExt}`)
-        await writeFile(logoPath, await fetchToBuffer(effectiveLogoUrl))
-      } catch { logoPath = null }
-    }
-
-    let musicPath = null
-    if (music_url) {
-      try {
-        musicPath = join(workdir, 'music.mp3')
-        await writeFile(musicPath, await fetchToBuffer(music_url))
-      } catch { musicPath = null }
-    }
-
-    // Estimate duration from script word count (~2.5 wps for HeyGen).
-    const wordCount = String(script || '').split(/\s+/).filter(Boolean).length
-    const estDuration = Math.max(3, Math.round(wordCount / 2.5))
-    const srt = script ? buildSrt(script, estDuration, cs.words_per_chunk) : ''
-    let srtPath = null
-    if (srt) {
-      srtPath = join(workdir, 'subs.srt')
-      await writeFile(srtPath, srt, 'utf8')
-    }
-
-    // ── 2. Build filter graph ─────────────────────────────────────────────
-    const args = ['-y', '-i', inPath]
-    let nextIdx = 1, logoIdx = -1, musicIdx = -1
-    if (logoPath) { args.push('-i', logoPath); logoIdx = nextIdx++ }
-    if (musicPath) { args.push('-i', musicPath); musicIdx = nextIdx++ }
-
-    const filters = []
-    let vLabel = '[0:v]'
-
-    if (title) {
-      const text = ts.uppercase ? String(title).toUpperCase() : String(title)
-      const safe = escDrawtext(text.slice(0, 120))
-      const tSize = Number(ts.size ?? 72)
-      const tBg = hexToDrawtext(ts.bg_color || '#e0467a', '0xE0467A')
-      const tFc = hexToDrawtext(ts.color || '#ffffff', 'white')
-      const tPad = Math.max(0, Number(ts.bg_padding ?? 28))
-      const tYpct = Math.max(0, Math.min(95, Number(ts.y_pos ?? 15))) / 100
-      filters.push(
-        `${vLabel}drawtext=fontfile=${BUNDLED_FONT_PATH}:text='${safe}':fontcolor=${tFc}:fontsize=${tSize}` +
-        `:box=1:boxcolor=${tBg}:boxborderw=${tPad}` +
-        `:x=(w-text_w)/2:y=h*${tYpct}-text_h/2[vt]`
-      )
-      vLabel = '[vt]'
-    }
-
-    if (logoPath) {
-      const { w, x, y } = overlayPos(watermark_position, watermark_size_pct)
-      filters.push(`[${logoIdx}:v]scale=${w}:-1[lg]`)
-      filters.push(`${vLabel}[lg]overlay=${x}:${y}[vw]`)
-      vLabel = '[vw]'
-    }
-
-    if (srtPath) {
-      const cSize = Number(cs.size ?? 64) / 3
-      const cText = hexToAssBgr(cs.text_color, '00FFFFFF')
-      const cOut = hexToAssBgr(cs.outline_color, '00000000')
-      const cThick = Math.max(0, Math.min(8, Number(cs.outline_thickness ?? 6) / 1.5))
-      const cYpct = Math.max(40, Math.min(95, Number(cs.y_pos ?? 75))) / 100
-      const marginV = Math.round(1920 * (1 - cYpct))
-      // ffmpeg's subtitles filter takes a path with : escaped.
-      const escSrt = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:')
-      const escFontDir = dirname(BUNDLED_FONT_PATH).replace(/\\/g, '/').replace(/:/g, '\\:')
-      filters.push(
-        `${vLabel}subtitles='${escSrt}':fontsdir='${escFontDir}':force_style='` +
-        `FontName=Sans Bold,Fontsize=${cSize.toFixed(0)},` +
-        `PrimaryColour=&H${cText}&,OutlineColour=&H${cOut}&,` +
-        `BorderStyle=1,Outline=${cThick.toFixed(1)},Shadow=0,` +
-        `Alignment=2,MarginV=${marginV}` +
-        `'[vs]`
-      )
-      vLabel = '[vs]'
-    }
-
-    let aLabel = '[0:a]'
-    if (musicPath) {
-      const vol = Math.max(0, Math.min(1, Number(music_volume)))
-      const fade = Math.max(0, Math.min(8, Number(music_fade_secs ?? 1.5)))
-      const fadeChain = fade > 0
-        ? `volume=${vol},afade=t=out:st=${Math.max(0, estDuration - fade).toFixed(2)}:d=${fade.toFixed(2)},apad`
-        : `volume=${vol},apad`
-      filters.push(`[${musicIdx}:a]${fadeChain}[mus]`)
-      filters.push(`${aLabel}[mus]amix=inputs=2:duration=first:dropout_transition=0[aout]`)
-      aLabel = '[aout]'
-    }
-
-    if (vLabel === '[0:v]') { filters.push(`[0:v]null[vfin]`); vLabel = '[vfin]' }
-    if (aLabel === '[0:a]') { filters.push(`[0:a]anull[afin]`); aLabel = '[afin]' }
-
-    args.push('-filter_complex', filters.join(';'))
-    args.push('-map', vLabel, '-map', aLabel)
-    // ultrafast keeps re-encode under 30s for typical HeyGen output.
-    args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23')
-    args.push('-c:a', 'aac', '-b:a', '128k')
-    args.push('-movflags', '+faststart')
-    args.push(outPath)
-
-    // ── 3. Run with one fallback if the overlay graph blows up ────────────
-    try {
-      await runFFmpeg(args)
-    } catch (e) {
-      console.warn('Polish: full chain failed, retrying minimal —', e.message)
-      // Minimal pass: original audio + just the music mix if present, no overlays.
-      const minArgs = ['-y', '-i', inPath]
-      if (musicPath) {
-        minArgs.push('-i', musicPath)
-        const vol = Math.max(0, Math.min(1, Number(music_volume)))
-        minArgs.push(
-          '-filter_complex', `[1:a]volume=${vol}[m];[0:a][m]amix=inputs=2:duration=first[aout]`,
-          '-map', '0:v', '-map', '[aout]',
-          '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
-        )
-      } else {
-        minArgs.push('-c', 'copy')
-      }
-      minArgs.push('-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', outPath)
-      await runFFmpeg(minArgs)
-    }
-
-    const outBuf = await readFile(outPath)
-
-    // ── 4. Upload to storage ──────────────────────────────────────────────
     const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
+    const effectiveLogoUrl = watermark_image_url || logo_url
+    const wantsCaptions = !!(captions_enabled && caption_template_id)
+    const wantsFfmpeg = !!(title || (effectiveLogoUrl && watermark_position !== 'none') || music_url)
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Phase A — native ffmpeg compositing (title + watermark + music). Skipped
+    // entirely if the user only wants captions, in which case we hand the
+    // original video URL straight to ZapCap.
+    // ────────────────────────────────────────────────────────────────────────
+    let intermediateUrl = video_url
+    let intermediateBuf = null
+    let logoPath = null, musicPath = null
+
+    if (wantsFfmpeg) {
+      workdir = await mkdtemp(join(tmpdir(), 'polish-'))
+      const inPath = join(workdir, 'in.mp4')
+      const outPath = join(workdir, 'out.mp4')
+      await writeFile(inPath, await fetchToBuffer(video_url))
+
+      if (effectiveLogoUrl && watermark_position !== 'none') {
+        try {
+          const ext = (effectiveLogoUrl.split('?')[0].split('.').pop() || 'png').toLowerCase()
+          const safeExt = ['png', 'jpg', 'jpeg', 'webp'].includes(ext) ? ext : 'png'
+          logoPath = join(workdir, `logo.${safeExt}`)
+          await writeFile(logoPath, await fetchToBuffer(effectiveLogoUrl))
+        } catch { logoPath = null }
+      }
+
+      if (music_url) {
+        try {
+          musicPath = join(workdir, 'music.mp3')
+          await writeFile(musicPath, await fetchToBuffer(music_url))
+        } catch { musicPath = null }
+      }
+
+      const args = ['-y', '-i', inPath]
+      let nextIdx = 1, logoIdx = -1, musicIdx = -1
+      if (logoPath) { args.push('-i', logoPath); logoIdx = nextIdx++ }
+      if (musicPath) { args.push('-i', musicPath); musicIdx = nextIdx++ }
+
+      const filters = []
+      let vLabel = '[0:v]'
+
+      if (title) {
+        const text = ts.uppercase ? String(title).toUpperCase() : String(title)
+        const safe = escDrawtext(text.slice(0, 120))
+        const tSize = Number(ts.size ?? 72)
+        const tBg = hexToDrawtext(ts.bg_color || '#e0467a', '0xE0467A')
+        const tFc = hexToDrawtext(ts.color || '#ffffff', 'white')
+        const tPad = Math.max(0, Number(ts.bg_padding ?? 28))
+        const tYpct = Math.max(0, Math.min(95, Number(ts.y_pos ?? 15))) / 100
+        filters.push(
+          `${vLabel}drawtext=fontfile=${BUNDLED_FONT_PATH}:text='${safe}':fontcolor=${tFc}:fontsize=${tSize}` +
+          `:box=1:boxcolor=${tBg}:boxborderw=${tPad}` +
+          `:x=(w-text_w)/2:y=h*${tYpct}-text_h/2[vt]`
+        )
+        vLabel = '[vt]'
+      }
+
+      if (logoPath) {
+        const { w, x, y } = overlayPos(watermark_position, watermark_size_pct)
+        filters.push(`[${logoIdx}:v]scale=${w}:-1[lg]`)
+        filters.push(`${vLabel}[lg]overlay=${x}:${y}[vw]`)
+        vLabel = '[vw]'
+      }
+
+      let aLabel = '[0:a]'
+      if (musicPath) {
+        const vol = Math.max(0, Math.min(1, Number(music_volume)))
+        const fade = Math.max(0, Math.min(8, Number(music_fade_secs ?? 1.5)))
+        // No ffprobe here — we cap at 60s for the fade start, ffmpeg is
+        // tolerant of an out-of-range start (no-ops if past EOF).
+        const fadeChain = fade > 0
+          ? `volume=${vol},afade=t=out:st=${Math.max(0, 60 - fade).toFixed(2)}:d=${fade.toFixed(2)},apad`
+          : `volume=${vol},apad`
+        filters.push(`[${musicIdx}:a]${fadeChain}[mus]`)
+        filters.push(`${aLabel}[mus]amix=inputs=2:duration=first:dropout_transition=0[aout]`)
+        aLabel = '[aout]'
+      }
+
+      if (vLabel === '[0:v]') { filters.push(`[0:v]null[vfin]`); vLabel = '[vfin]' }
+      if (aLabel === '[0:a]') { filters.push(`[0:a]anull[afin]`); aLabel = '[afin]' }
+
+      args.push('-filter_complex', filters.join(';'))
+      args.push('-map', vLabel, '-map', aLabel)
+      args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23')
+      args.push('-c:a', 'aac', '-b:a', '128k')
+      args.push('-movflags', '+faststart', outPath)
+
+      try {
+        await runFFmpeg(args)
+      } catch (e) {
+        console.warn('Polish: full ffmpeg chain failed, retrying minimal —', e.message)
+        const minArgs = ['-y', '-i', inPath]
+        if (musicPath) {
+          minArgs.push('-i', musicPath)
+          const vol = Math.max(0, Math.min(1, Number(music_volume)))
+          minArgs.push(
+            '-filter_complex', `[1:a]volume=${vol}[m];[0:a][m]amix=inputs=2:duration=first[aout]`,
+            '-map', '0:v', '-map', '[aout]',
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+          )
+        } else {
+          minArgs.push('-c', 'copy')
+        }
+        minArgs.push('-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', outPath)
+        await runFFmpeg(minArgs)
+      }
+
+      intermediateBuf = await readFile(outPath)
+
+      // If captions are coming next, we need a public URL ZapCap can reach.
+      // Stage to a short-lived "intermediate" path; ZapCap pulls within
+      // seconds so a TTL cleanup isn't urgent.
+      if (wantsCaptions) {
+        const stagePath = `${profile_id}/spaces/polished/intermediate-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`
+        const { error: stageErr } = await supabase.storage.from('landing-media').upload(stagePath, intermediateBuf, {
+          contentType: 'video/mp4', upsert: false,
+        })
+        if (stageErr) return res.status(502).json({ error: `Stage upload failed: ${stageErr.message}` })
+        const { data: stagePub } = supabase.storage.from('landing-media').getPublicUrl(stagePath)
+        intermediateUrl = stagePub.publicUrl
+      }
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Phase B — ZapCap caption pass. Submits the (possibly composited)
+    // intermediate URL, polls until rendered, downloads the result.
+    // ────────────────────────────────────────────────────────────────────────
+    let finalBuf = intermediateBuf
+    let zapcapMeta = null
+    if (wantsCaptions) {
+      try {
+        const zVideoId = await zapcapAddVideoByUrl(intermediateUrl, { ttl: '1d' })
+        const zTaskId = await zapcapCreateTask(zVideoId, { templateId: caption_template_id, autoApprove: true })
+        const zResult = await zapcapPollTask(zVideoId, zTaskId, { timeoutMs: 5 * 60 * 1000, intervalMs: 4000 })
+        const downloadUrl = zResult.downloadUrl || zResult.video?.downloadUrl || zResult.url
+        if (!downloadUrl) throw new Error('ZapCap task completed without a downloadUrl')
+        finalBuf = await fetchToBuffer(downloadUrl)
+        zapcapMeta = { template_id: caption_template_id, video_id: zVideoId, task_id: zTaskId }
+      } catch (e) {
+        // If captions specifically fail, return the ffmpeg-composited video
+        // (if any) with a warning instead of the whole render erroring.
+        if (intermediateBuf) {
+          console.warn('Polish: ZapCap captions failed, returning composite-only —', e.message)
+          finalBuf = intermediateBuf
+          zapcapMeta = { error: e.message }
+        } else {
+          return res.status(502).json({ error: `ZapCap: ${e.message}` })
+        }
+      }
+    }
+
+    if (!finalBuf) {
+      // Nothing was requested — return the original URL as a no-op.
+      return res.status(200).json({ video_url, bytes: 0, no_op: true })
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Final upload
+    // ────────────────────────────────────────────────────────────────────────
     const path = `${profile_id}/spaces/polished/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`
-    const { error: upErr } = await supabase.storage.from('landing-media').upload(path, outBuf, {
+    const { error: upErr } = await supabase.storage.from('landing-media').upload(path, finalBuf, {
       contentType: 'video/mp4', upsert: false,
     })
     if (upErr) return res.status(502).json({ error: `Upload failed: ${upErr.message}` })
@@ -314,13 +340,20 @@ export default async function handler(req, res) {
           body: {
             p_customer_id: customerId, p_pool_type: 'ai_tokens', p_amount: fee,
             p_action: 'consume:video-polish', p_profile_id: profile_id,
-            p_metadata: { video_url, has_logo: !!logoPath, has_music: !!musicPath, has_subs: !!srt, bytes: outBuf.byteLength },
+            p_metadata: {
+              video_url, has_logo: !!logoPath, has_music: !!musicPath,
+              has_captions: wantsCaptions, zapcap: zapcapMeta, bytes: finalBuf.byteLength,
+            },
           },
         })
       } catch {}
     }
 
-    return res.status(200).json({ video_url: pub.publicUrl, bytes: outBuf.byteLength })
+    return res.status(200).json({
+      video_url: pub.publicUrl,
+      bytes: finalBuf.byteLength,
+      zapcap: zapcapMeta,
+    })
   } catch (err) {
     console.error('polish error:', err?.stack || err)
     return res.status(err.status || 500).json({ error: String(err?.message || err) })

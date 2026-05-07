@@ -1500,7 +1500,7 @@ function VideoPolishBody({ data, onPatch }) {
   const out = data.output
   const props = data.props || {}
   const status = data.status || 'idle'
-  const subsOn = (props.subtitle_mode || 'auto') !== 'off'
+  const subsOn = props.captions_enabled !== false && !!props.caption_template_id
   // Spaces.jsx injects these via renderNodes — they let the body show a
   // live overlay preview without reaching back into ReactFlow's nodes/edges.
   const upstreamVideo = data._ctxUpstreamVideoUrl || null
@@ -1535,7 +1535,7 @@ function VideoPolishBody({ data, onPatch }) {
         <ArrowUpRight size={11} style={{ color: 'var(--muted)' }} />
       </button>
       <div style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.35 }}>
-        Subs: <strong>{subsOn ? `${props.caption_words_per_chunk ?? 3} wds` : 'off'}</strong>
+        Captions: <strong>{subsOn ? (props.caption_template_name || 'on') : 'off'}</strong>
         {' · '}Logo: <strong>{(props.watermark_position || 'br') === 'none' ? 'off' : `${props.watermark_size_pct ?? 25}%`}</strong>
         {' · '}Music: <strong>{Math.round((Number(props.music_volume ?? 0.15)) * 100)}%</strong>
       </div>
@@ -1670,10 +1670,7 @@ function PolishSection({ icon: Icon, title, children, defaultOpen = true }) {
 
 // Build the live preview overlays as plain DOM/CSS so the user sees
 // title/captions/logo placement instantly without needing a render.
-function VideoPolishPreview({ videoUrl, script, props, logoUrl }) {
-  const sample = (script || 'Your script preview line').toUpperCase()
-  const wpc = Math.max(1, Math.min(6, Number(props.caption_words_per_chunk || 3)))
-  const sampleChunk = sample.split(/\s+/).slice(0, wpc).join(' ')
+function VideoPolishPreview({ videoUrl, props, logoUrl }) {
   const titleEnabled = props.title_enabled !== false && !!props.title
   return (
     <div style={{
@@ -1709,24 +1706,20 @@ function VideoPolishPreview({ videoUrl, script, props, logoUrl }) {
           lineHeight: 1.1, whiteSpace: 'normal',
         }}>{props.title}</div>
       )}
-      {/* Caption preview */}
-      {(props.subtitle_mode || 'auto') !== 'off' && script && (
+      {/* Caption indicator — actual caption look comes from ZapCap, so we
+         just show a "captions on, style: <name>" badge instead of trying
+         to mimic a style we don't control. */}
+      {props.captions_enabled !== false && props.caption_template_id && (
         <div style={{
-          position: 'absolute', left: '50%', top: `${props.caption_y_pos ?? 75}%`,
-          transform: 'translate(-50%, -50%)',
-          color: props.caption_text_color || '#ffffff',
-          fontFamily: props.caption_font || 'Poppins ExtraBold',
-          fontSize: `${(props.caption_size ?? 64) * 0.18}px`,
-          fontWeight: 800, letterSpacing: '0.01em', textAlign: 'center', maxWidth: '90%',
-          WebkitTextStroke: `${(props.caption_outline_thickness ?? 6) * 0.4}px ${props.caption_outline_color || '#e0467a'}`,
-          textShadow: '0 2px 6px rgba(0,0,0,0.6)',
+          position: 'absolute', left: '50%', bottom: '12%',
+          transform: 'translateX(-50%)',
+          padding: '4px 10px', borderRadius: 999,
+          background: 'rgba(245,158,11,0.92)', color: '#1a1a1a',
+          fontSize: 9, fontFamily: 'var(--font-display)', fontWeight: 800,
+          letterSpacing: '0.06em', textTransform: 'uppercase',
+          whiteSpace: 'nowrap',
         }}>
-          {sampleChunk.split(/\s+/).map((w, i) => (
-            <span key={i} style={{
-              color: i === 0 ? (props.caption_highlight_color || props.caption_text_color || '#fff') : undefined,
-              marginRight: 6,
-            }}>{w}</span>
-          ))}
+          {props.caption_template_name ? `Captions · ${props.caption_template_name}` : 'Captions on'}
         </div>
       )}
       {/* Logo / watermark — actual image if we have one, dashed placeholder otherwise. */}
@@ -1758,6 +1751,110 @@ function VideoPolishPreview({ videoUrl, script, props, logoUrl }) {
         )
       )}
     </div>
+  )
+}
+
+// Fetches the live ZapCap template catalog (proxied through our server so
+// the API key stays server-side), shows a 2-col grid of style cards. The
+// list cache is per-page-load — refreshing the canvas re-fetches.
+let _zapcapCache = null
+function ZapcapTemplatePicker({ selectedId, onChange }) {
+  const [templates, setTemplates] = useState(_zapcapCache || null)
+  const [loading, setLoading] = useState(!_zapcapCache)
+  const [err, setErr] = useState(null)
+
+  useEffect(() => {
+    if (_zapcapCache) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const sess = (await supabase.auth.getSession()).data.session
+        const r = await fetch('/api/zapcap/templates', {
+          headers: { Authorization: `Bearer ${sess?.access_token || ''}` },
+        })
+        const body = await r.json()
+        if (cancelled) return
+        if (!r.ok) throw new Error(body?.error || `Templates fetch failed (${r.status})`)
+        const list = Array.isArray(body.templates) ? body.templates : []
+        _zapcapCache = list
+        setTemplates(list)
+      } catch (e) {
+        if (!cancelled) setErr(e.message)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  if (loading) {
+    return <div style={{ padding: 12, textAlign: 'center', color: 'var(--muted)', fontSize: 11 }}><Loader2 size={12} className="spin" /> Loading styles…</div>
+  }
+  if (err) {
+    return (
+      <div style={{ padding: 10, fontSize: 10.5, lineHeight: 1.45, color: 'var(--amber)', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: 6 }}>
+        Couldn't load ZapCap styles: {err}<br/>
+        Make sure <code style={{ fontSize: 10 }}>ZAPCAP_API_KEY</code> is set in Vercel env. You can still paste a template UUID manually below.
+        <input
+          style={{ ...tinyInput, marginTop: 8 }}
+          placeholder="ZapCap template UUID"
+          value={selectedId}
+          onChange={(e) => onChange({ id: e.target.value, name: 'Custom' })}
+        />
+      </div>
+    )
+  }
+  if (!templates?.length) {
+    return <div style={{ fontSize: 10.5, color: 'var(--muted)' }}>No templates returned by ZapCap.</div>
+  }
+
+  return (
+    <>
+      <div style={{ ...labelStyle, marginBottom: 8 }}>{templates.length} caption style{templates.length === 1 ? '' : 's'} available</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, maxHeight: 360, overflowY: 'auto', paddingRight: 4 }}>
+        {templates.map((t) => {
+          const id = t.id || t._id || t.templateId
+          const name = t.name || t.label || id?.slice(0, 8) || 'Style'
+          const preview = t.previewUrl || t.thumbnailUrl || t.thumbnail || t.preview
+          const on = id === selectedId
+          return (
+            <button
+              key={id}
+              type="button"
+              onClick={() => onChange({ id, name })}
+              style={{
+                position: 'relative',
+                padding: 0, borderRadius: 8, overflow: 'hidden',
+                border: on ? '2px solid #f59e0b' : '1px solid var(--border)',
+                background: 'var(--surface-2)', cursor: 'pointer',
+                aspectRatio: '9/16',
+                display: 'flex', flexDirection: 'column',
+              }}
+            >
+              {preview ? (
+                preview.endsWith('.mp4') || preview.endsWith('.webm')
+                  ? <video src={preview} muted playsInline loop autoPlay style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  : <img src={preview} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : (
+                <div style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--muted)', fontSize: 18, fontWeight: 800, fontFamily: 'var(--font-display)' }}>
+                  Aa
+                </div>
+              )}
+              <div style={{
+                position: 'absolute', left: 0, right: 0, bottom: 0,
+                padding: '4px 6px', fontSize: 10.5, fontWeight: 700,
+                fontFamily: 'var(--font-display)', textAlign: 'center',
+                background: 'linear-gradient(transparent, rgba(0,0,0,0.85))',
+                color: '#fff', letterSpacing: '0.02em',
+              }}>{name}</div>
+              {on && (
+                <div style={{ position: 'absolute', top: 4, right: 4, background: '#f59e0b', color: '#fff', borderRadius: 999, padding: '2px 6px', fontSize: 9, fontWeight: 800 }}>Selected</div>
+              )}
+            </button>
+          )
+        })}
+      </div>
+    </>
   )
 }
 
@@ -1903,49 +2000,22 @@ export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges })
         </label>
       </PolishSection>
 
-      {/* Captions ──────────────────────────────────────────────────────── */}
-      <PolishSection icon={Captions} title="Captions">
-        <NodeField label="Mode">
-          <select style={tinyInput} value={props.subtitle_mode || 'auto'} onChange={(e) => setP({ subtitle_mode: e.target.value })}>
-            <option value="auto">Auto-burn from upstream script</option>
-            <option value="off">Off</option>
-          </select>
-        </NodeField>
-        <NodeField label="Font (all variants are bold)">
-          <select style={tinyInput} value={props.caption_font || 'Poppins ExtraBold'} onChange={(e) => setP({ caption_font: e.target.value })}>
-            {POLISH_FONT_OPTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
-          </select>
-        </NodeField>
-        <div style={labelStyle}>Words per chunk</div>
-        <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
-          {[1, 2, 3, 4].map((n) => {
-            const on = (props.caption_words_per_chunk ?? 3) === n
-            return (
-              <button
-                key={n}
-                type="button"
-                onClick={() => setP({ caption_words_per_chunk: n })}
-                style={{
-                  flex: 1, padding: '6px 0', fontSize: 12, borderRadius: 999,
-                  border: `1px solid ${on ? '#f59e0b' : 'var(--border)'}`,
-                  background: on ? '#f59e0b' : 'var(--surface-2)',
-                  color: on ? '#fff' : 'var(--text-soft)',
-                  cursor: 'pointer', fontFamily: 'var(--font-display)', fontWeight: 800,
-                }}
-              >{n}</button>
-            )
-          })}
-        </div>
-        <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
-          <PolishColorRow label="Text color" value={props.caption_text_color || '#ffffff'} onChange={(v) => setP({ caption_text_color: v })} />
-          <PolishColorRow label="Outline color" value={props.caption_outline_color || '#e0467a'} onChange={(v) => setP({ caption_outline_color: v })} />
-        </div>
-        <PolishSlider label="Outline thickness" value={Number(props.caption_outline_thickness ?? 6)} min={0} max={12} suffix="px" onChange={(v) => setP({ caption_outline_thickness: v })} />
-        <div style={{ marginBottom: 12 }}>
-          <PolishColorRow label="Highlight (first word color)" value={props.caption_highlight_color || '#ec3a8a'} onChange={(v) => setP({ caption_highlight_color: v })} />
-        </div>
-        <PolishSlider label="Font size" value={Number(props.caption_size ?? 64)} min={24} max={140} suffix="px" onChange={(v) => setP({ caption_size: v })} />
-        <PolishSlider label="Y position" value={Number(props.caption_y_pos ?? 75)} min={40} max={95} suffix="% from top" onChange={(v) => setP({ caption_y_pos: v })} />
+      {/* Captions (ZapCap) ─────────────────────────────────────────────── */}
+      <PolishSection icon={Captions} title="Captions (ZapCap)">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={props.captions_enabled !== false}
+            onChange={(e) => setP({ captions_enabled: e.target.checked })}
+          />
+          <span style={{ fontSize: 11.5 }}>Burn captions onto the video</span>
+        </label>
+        {props.captions_enabled !== false && (
+          <ZapcapTemplatePicker
+            selectedId={props.caption_template_id || ''}
+            onChange={(t) => setP({ caption_template_id: t.id, caption_template_name: t.name })}
+          />
+        )}
       </PolishSection>
 
       {/* Logo / Watermark ──────────────────────────────────────────────── */}
@@ -2793,16 +2863,10 @@ export const NODE_REGISTRY = {
       title_bg_padding: 28,
       title_y_pos: 15,
       title_uppercase: false,
-      // Captions
-      subtitle_mode: 'auto',
-      caption_font: 'Poppins ExtraBold',
-      caption_words_per_chunk: 3,
-      caption_text_color: '#ffffff',
-      caption_outline_color: '#e0467a',
-      caption_outline_thickness: 6,
-      caption_highlight_color: '#ec3a8a',
-      caption_size: 64,
-      caption_y_pos: 75,
+      // Captions — handled by ZapCap (style picker, no manual font/colors)
+      captions_enabled: true,
+      caption_template_id: '',
+      caption_template_name: '',
       // Logo / watermark
       watermark_position: 'br',
       watermark_size_pct: 25,
@@ -2852,7 +2916,6 @@ export const NODE_REGISTRY = {
           logo_url: logoUrl || undefined,
           watermark_image_url: p.watermark_image_url || undefined,
           music_url: musicUrl || undefined,
-          script: p.subtitle_mode === 'off' ? '' : script,
           // Title overlay
           title: titleOn ? p.title.trim() : undefined,
           title_style: titleOn ? {
@@ -2864,17 +2927,9 @@ export const NODE_REGISTRY = {
             y_pos: p.title_y_pos,
             uppercase: p.title_uppercase,
           } : undefined,
-          // Captions
-          caption_style: {
-            font: p.caption_font,
-            words_per_chunk: p.caption_words_per_chunk,
-            text_color: p.caption_text_color,
-            outline_color: p.caption_outline_color,
-            outline_thickness: p.caption_outline_thickness,
-            highlight_color: p.caption_highlight_color,
-            size: p.caption_size,
-            y_pos: p.caption_y_pos,
-          },
+          // Captions — handed to ZapCap via the template id.
+          captions_enabled: p.captions_enabled !== false && !!p.caption_template_id,
+          caption_template_id: p.caption_template_id || undefined,
           // Logo / watermark
           watermark_position: p.watermark_position || 'br',
           watermark_size_pct: p.watermark_size_pct ?? 25,
