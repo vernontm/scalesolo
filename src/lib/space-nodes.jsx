@@ -1808,14 +1808,31 @@ function ZapcapTemplatePicker({ selectedId, onChange }) {
     return <div style={{ fontSize: 10.5, color: 'var(--muted)' }}>No templates returned by ZapCap.</div>
   }
 
+  // Pick the most useful preview: prefer a poster IMAGE (no playback noise),
+  // then fall back to a video URL we render *paused* with `preload=metadata`
+  // so only the first frame loads (no auto-looping wall of demo footage).
+  const pickPreview = (t) => {
+    const candidates = [t.thumbnailUrl, t.thumbnail, t.posterUrl, t.poster, t.previewImageUrl, t.previewImage, t.imageUrl, t.image]
+    for (const c of candidates) if (c) return { kind: 'image', src: c }
+    const vidCandidates = [t.previewUrl, t.preview, t.videoUrl]
+    for (const c of vidCandidates) if (c) {
+      if (/\.(jpe?g|png|webp|gif)(\?|#|$)/i.test(c)) return { kind: 'image', src: c }
+      return { kind: 'video', src: c }
+    }
+    return null
+  }
+
   return (
     <>
       <div style={{ ...labelStyle, marginBottom: 8 }}>{templates.length} caption style{templates.length === 1 ? '' : 's'} available</div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, maxHeight: 360, overflowY: 'auto', paddingRight: 4 }}>
+      <div style={{
+        display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8,
+        maxHeight: 480, overflowY: 'auto', paddingRight: 4,
+      }}>
         {templates.map((t) => {
           const id = t.id || t._id || t.templateId
           const name = t.name || t.label || id?.slice(0, 8) || 'Style'
-          const preview = t.previewUrl || t.thumbnailUrl || t.thumbnail || t.preview
+          const preview = pickPreview(t)
           const on = id === selectedId
           return (
             <button
@@ -1827,28 +1844,45 @@ function ZapcapTemplatePicker({ selectedId, onChange }) {
                 padding: 0, borderRadius: 8, overflow: 'hidden',
                 border: on ? '2px solid #f59e0b' : '1px solid var(--border)',
                 background: 'var(--surface-2)', cursor: 'pointer',
-                aspectRatio: '9/16',
+                height: 140,                  // fixed height keeps the grid tidy
                 display: 'flex', flexDirection: 'column',
+                textAlign: 'left',
               }}
+              title={name}
             >
-              {preview ? (
-                preview.endsWith('.mp4') || preview.endsWith('.webm')
-                  ? <video src={preview} muted playsInline loop autoPlay style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  : <img src={preview} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-              ) : (
-                <div style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--muted)', fontSize: 18, fontWeight: 800, fontFamily: 'var(--font-display)' }}>
-                  Aa
-                </div>
-              )}
+              <div style={{ flex: 1, position: 'relative', overflow: 'hidden', background: '#0b0b0b' }}>
+                {preview?.kind === 'image' ? (
+                  <img
+                    src={preview.src} alt=""
+                    loading="lazy"
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                    onError={(e) => { e.currentTarget.style.display = 'none' }}
+                  />
+                ) : preview?.kind === 'video' ? (
+                  <video
+                    src={preview.src}
+                    muted playsInline preload="metadata"
+                    /* No autoplay/loop — keeps the drawer quiet and lightweight. */
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }}
+                  />
+                ) : (
+                  <div style={{
+                    width: '100%', height: '100%', display: 'grid', placeItems: 'center',
+                    color: 'var(--text)', fontSize: 28, fontWeight: 900,
+                    fontFamily: 'var(--font-display)', letterSpacing: '0.02em',
+                    background: 'linear-gradient(135deg, #1f2937, #0f172a)',
+                  }}>Aa</div>
+                )}
+              </div>
               <div style={{
-                position: 'absolute', left: 0, right: 0, bottom: 0,
-                padding: '4px 6px', fontSize: 10.5, fontWeight: 700,
-                fontFamily: 'var(--font-display)', textAlign: 'center',
-                background: 'linear-gradient(transparent, rgba(0,0,0,0.85))',
-                color: '#fff', letterSpacing: '0.02em',
+                padding: '6px 8px', fontSize: 10.5, fontWeight: 700,
+                fontFamily: 'var(--font-display)',
+                background: 'var(--surface-2)', borderTop: '1px solid var(--border)',
+                color: on ? '#f59e0b' : 'var(--text)',
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
               }}>{name}</div>
               {on && (
-                <div style={{ position: 'absolute', top: 4, right: 4, background: '#f59e0b', color: '#fff', borderRadius: 999, padding: '2px 6px', fontSize: 9, fontWeight: 800 }}>Selected</div>
+                <div style={{ position: 'absolute', top: 4, right: 4, background: '#f59e0b', color: '#1a1a1a', borderRadius: 999, padding: '2px 7px', fontSize: 9, fontWeight: 800 }}>✓</div>
               )}
             </button>
           )
