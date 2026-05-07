@@ -17,6 +17,7 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { deriveUploadPostUsername, uploadpostEnsureUserProfile } from '../_lib/uploadpost.js'
+import { findNextOpenSlot } from '../_lib/scheduling.js'
 
 export const config = { maxDuration: 60 }
 
@@ -59,6 +60,7 @@ export default async function handler(req, res) {
       profile_id, upload_post_user, platforms,
       video_url, photo_urls,
       description, title,
+      scheduling_mode,        // 'now' | 'fixed' | 'auto'
       scheduled_iso, timezone,
     } = req.body || {}
 
@@ -105,9 +107,31 @@ export default async function handler(req, res) {
     if (platforms.includes('tiktok') && title) {
       fd.append('tiktok_title', String(title).slice(0, 90))
     }
-    if (scheduled_iso) {
-      fd.append('scheduled_date', scheduled_iso)
-      if (timezone) fd.append('timezone', timezone)
+    // Resolve "auto" mode: pull the brand profile's posting schedule + the
+    // already-scheduled posts on it, find the next open slot. Done at submit
+    // time (not at queue time) so the slot reflects what's actually free
+    // when the run finishes.
+    let resolvedScheduledIso = scheduled_iso || null
+    let resolvedTimezone = timezone || null
+    if (scheduling_mode === 'auto' && !resolvedScheduledIso) {
+      const rows = await supaFetch(`profiles?id=eq.${profile_id}&select=timezone,posting_schedule`)
+      const profile = rows?.[0]
+      if (profile) {
+        const taken = await supaFetch(
+          `content_items?profile_id=eq.${profile_id}&status=eq.scheduled&select=scheduled_datetime`
+        ).catch(() => [])
+        const takenIso = (taken || []).map((r) => r.scheduled_datetime).filter(Boolean)
+        const slot = findNextOpenSlot(profile, takenIso)
+        if (slot) {
+          resolvedScheduledIso = slot
+          resolvedTimezone = resolvedTimezone || profile.timezone
+        }
+      }
+    }
+
+    if (resolvedScheduledIso) {
+      fd.append('scheduled_date', resolvedScheduledIso)
+      if (resolvedTimezone) fd.append('timezone', resolvedTimezone)
     }
 
     if (isVideo) {
@@ -147,6 +171,7 @@ export default async function handler(req, res) {
     return res.status(200).json({
       request_id: body?.request_id || body?.id || null,
       submitted: true,
+      scheduled_iso: resolvedScheduledIso || null,
       raw: body,
     })
   } catch (err) {

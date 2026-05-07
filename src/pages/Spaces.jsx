@@ -283,7 +283,7 @@ function SpaceNode({ id, data, selected }) {
 // can actually edit. We just need "did anything user-meaningful change".
 function propsHashShort(p) {
   if (!p || typeof p !== 'object') return ''
-  const skip = new Set(['_ctxAvatars', '_ctxPublicAvatars', '_ctxProfiles', '_ctxNamedImages', '_ctxCostPerRun', '_ctxProfileId', '_ctxSyncedPlatforms', '_ctxDetectedKind', '_ctxUpstreamVideoUrl', '_ctxUpstreamScript', '_ctxUpstreamLogoUrl'])
+  const skip = new Set(['_ctxAvatars', '_ctxPublicAvatars', '_ctxProfiles', '_ctxNamedImages', '_ctxCostPerRun', '_ctxProfileId', '_ctxSyncedPlatforms', '_ctxDetectedKind', '_ctxUpstreamVideoUrl', '_ctxUpstreamScript', '_ctxUpstreamLogoUrl', '_ctxConnectedPlatforms', '_ctxBrandSchedule'])
   const parts = []
   for (const k of Object.keys(p).sort()) {
     if (skip.has(k)) continue
@@ -713,6 +713,10 @@ function SpaceBuilder({ space, onSave, onClose }) {
   // Right-side settings drawer for nodes whose registry def declares an
   // `Editor` (currently video_polish). Holds the node id; null = closed.
   const [editingNodeId, setEditingNodeId] = useState(null)
+  // Connected social platforms for the active brand (refreshed when the
+  // user picks a different brand). Drives which buttons in schedule_post
+  // are enabled.
+  const [connectedSocialPlatforms, setConnectedSocialPlatforms] = useState([])
 
   // Ref mirrors of nodes/edges so global helpers don't read stale closures.
   const nodesRef = useRef(nodes)
@@ -737,6 +741,20 @@ function SpaceBuilder({ space, onSave, onClose }) {
       .then((r) => r.json())
       .then((b) => setPublicAvatars(Array.isArray(b.groups) ? b.groups : []))
       .catch(() => {})
+    // Connected social platforms — used by schedule_post to gate which
+    // platform pills can be toggled.
+    fetch(`/api/social/profiles?profile_id=${selectedProfileId}`, {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    })
+      .then((r) => r.json())
+      .then((b) => {
+        const social = b?.profile?.social_accounts || {}
+        const connected = Object.entries(social)
+          .filter(([, info]) => info && (info === true || info.access_token || info.connected || info.username))
+          .map(([id]) => id)
+        setConnectedSocialPlatforms(connected)
+      })
+      .catch(() => setConnectedSocialPlatforms([]))
   }, [session, selectedProfileId])
 
   // Wire the global helpers used by node bodies (cheap escape hatch that
@@ -1216,6 +1234,19 @@ function SpaceBuilder({ space, onSave, onClose }) {
           _ctxUpstreamLogoUrl: findUpstreamLogoUrl(n.id, nodes, edges),
         } }
       }
+      if (t === 'schedule_post') {
+        // Drives platform-pill enablement + the auto-slot preview.
+        const activeProfile = (profiles || []).find((p) => p.id === selectedProfileId)
+        return { ...n, data: {
+          ...n.data,
+          _ctxProfileId: selectedProfileId,
+          _ctxConnectedPlatforms: connectedSocialPlatforms,
+          _ctxBrandSchedule: activeProfile ? {
+            timezone: activeProfile.timezone,
+            posting_schedule: activeProfile.posting_schedule,
+          } : null,
+        } }
+      }
       if (t === 'save_library') {
         // Walk back to see what kind of media is wired in (image / video /
         // text), and look up the active brand profile's synced_platforms.
@@ -1288,7 +1319,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
       }
       return n
     }),
-    [nodes, edges, avatars, profiles, publicAvatars, selectedProfileId]
+    [nodes, edges, avatars, profiles, publicAvatars, selectedProfileId, connectedSocialPlatforms]
   )
 
   // Lock body scroll while the builder is mounted (it uses position:fixed).

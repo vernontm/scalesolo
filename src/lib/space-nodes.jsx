@@ -2125,36 +2125,77 @@ function SchedulePostBody({ data, onPatch }) {
   const props = data.props || {}
   const platforms = Array.isArray(props.platforms) ? props.platforms : []
   const out = data.output
+  const connected = Array.isArray(data._ctxConnectedPlatforms) ? data._ctxConnectedPlatforms : []
+  const brandSchedule = data._ctxBrandSchedule || null
+  const profileId = data._ctxProfileId
+  const when = props.when || 'now'
+
   const togglePlatform = (id) => {
+    if (!connected.includes(id)) return  // hard-gated, button is disabled too
     const next = platforms.includes(id) ? platforms.filter((p) => p !== id) : [...platforms, id]
     onPatch({ platforms: next })
   }
   const tz = props.timezone || (typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'UTC')
+
+  // Live preview of the next available slot when in 'auto' mode. Hits the
+  // server which knows about already-scheduled posts; refreshes whenever
+  // the user switches into auto mode.
+  const [autoSlot, setAutoSlot] = useState(null)
+  const [autoSlotLoading, setAutoSlotLoading] = useState(false)
+  useEffect(() => {
+    if (when !== 'auto' || !profileId) { setAutoSlot(null); return }
+    let cancelled = false
+    setAutoSlotLoading(true)
+    ;(async () => {
+      try {
+        const sess = (await supabase.auth.getSession()).data.session
+        const r = await fetch(`/api/scheduling/next-slot?profile_id=${profileId}`, {
+          headers: { Authorization: `Bearer ${sess?.access_token || ''}` },
+        })
+        const body = await r.json()
+        if (!cancelled) setAutoSlot(body?.iso || null)
+      } catch { if (!cancelled) setAutoSlot(null) }
+      finally { if (!cancelled) setAutoSlotLoading(false) }
+    })()
+    return () => { cancelled = true }
+  }, [when, profileId])
+
   return (
     <>
-      {/* Account is auto-derived from the active brand profile and connected
-          on the Schedule page — no per-node setup needed. The dim text
-          here is just a confirmation tag. */}
       <div style={{ fontSize: 10.5, color: 'var(--muted)', marginBottom: 8, lineHeight: 1.4 }}>
         Posts via the connected social accounts on this brand profile.
         {' '}
         <a href="/schedule" style={{ color: 'var(--red)', textDecoration: 'none' }}>Manage →</a>
       </div>
-      <NodeField label="Platforms">
+      <NodeField label={`Platforms (${connected.length} connected)`}>
+        {connected.length === 0 && (
+          <div style={{
+            padding: '6px 8px', marginBottom: 6, fontSize: 10.5, lineHeight: 1.4,
+            background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)',
+            borderRadius: 6, color: 'var(--amber)',
+          }}>
+            No social accounts connected yet. Open <a href="/schedule" style={{ color: 'inherit', fontWeight: 700 }}>Schedule</a> to link your platforms.
+          </div>
+        )}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
           {SCHEDULE_PLATFORMS.map((p) => {
             const on = platforms.includes(p.id)
+            const enabled = connected.includes(p.id)
             return (
               <button
                 key={p.id}
                 type="button"
+                disabled={!enabled}
+                title={enabled ? '' : 'Not connected — link this platform on the Schedule page first.'}
                 onClick={(e) => { e.stopPropagation(); togglePlatform(p.id) }}
                 style={{
                   fontSize: 10.5, padding: '4px 9px', borderRadius: 999,
                   border: `1px solid ${on ? '#2ecc71' : 'var(--border)'}`,
                   background: on ? 'rgba(46,204,113,0.16)' : 'var(--surface-2)',
-                  color: on ? '#2ecc71' : 'var(--text-soft)',
-                  cursor: 'pointer', fontFamily: 'var(--font-display)', fontWeight: 700,
+                  color: on ? '#2ecc71' : enabled ? 'var(--text-soft)' : 'var(--muted)',
+                  opacity: enabled ? 1 : 0.45,
+                  cursor: enabled ? 'pointer' : 'not-allowed',
+                  fontFamily: 'var(--font-display)', fontWeight: 700,
                 }}
               >{p.label}</button>
             )
@@ -2162,12 +2203,30 @@ function SchedulePostBody({ data, onPatch }) {
         </div>
       </NodeField>
       <NodeField label="When">
-        <select style={tinyInput} value={props.when || 'now'} onChange={(e) => onPatch({ when: e.target.value })}>
+        <select style={tinyInput} value={when} onChange={(e) => onPatch({ when: e.target.value })}>
           <option value="now">Publish now</option>
-          <option value="scheduled">Schedule for…</option>
+          <option value="auto">Schedule (next slot from posting schedule)</option>
+          <option value="scheduled">Schedule for specific date / time…</option>
         </select>
       </NodeField>
-      {props.when === 'scheduled' && (
+      {when === 'auto' && (
+        <div style={{
+          padding: '8px 10px', marginTop: 6, marginBottom: 4, fontSize: 11, lineHeight: 1.45,
+          background: 'rgba(46,204,113,0.10)', border: '1px solid rgba(46,204,113,0.35)',
+          borderRadius: 6, color: 'var(--text)',
+        }}>
+          {autoSlotLoading
+            ? <span style={{ color: 'var(--muted)' }}>Checking next open slot…</span>
+            : autoSlot
+              ? <>Next slot: <strong>{new Date(autoSlot).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</strong>{brandSchedule?.timezone ? <span style={{ color: 'var(--muted)' }}> · {brandSchedule.timezone}</span> : null}</>
+              : <span style={{ color: 'var(--amber)' }}>No open slots in your posting schedule. <a href="/profiles" style={{ color: 'inherit', fontWeight: 700 }}>Edit schedule →</a></span>
+          }
+          <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 4 }}>
+            The actual slot is locked in when this node finishes running, so it stays accurate even if the queue moves.
+          </div>
+        </div>
+      )}
+      {when === 'scheduled' && (
         <>
           <NodeField label="Date / time (local)">
             <input
@@ -2189,11 +2248,18 @@ function SchedulePostBody({ data, onPatch }) {
         </>
       )}
       <div style={{ fontSize: 10.5, color: 'var(--muted)', lineHeight: 1.4, marginTop: 4 }}>
-        Wire a video (or images) plus an optional caption / hashtags / script. Submits to upload-post.com via your account; needs <code style={{ fontSize: 10 }}>UPLOADPOST_API_KEY</code> in env.
+        Wire a video (or images) plus an optional caption / hashtags / script.
       </div>
       {out?.request_id && (
         <div style={{ ...previewBox, marginTop: 8 }}>
-          Submitted ✓ <span style={{ color: 'var(--muted)' }}>id: {String(out.request_id).slice(0, 18)}…</span>
+          Submitted ✓
+          {out.scheduled_iso && (
+            <div style={{ marginTop: 2 }}>
+              <span style={{ color: 'var(--muted)' }}>at </span>
+              <strong>{new Date(out.scheduled_iso).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</strong>
+            </div>
+          )}
+          <div style={{ color: 'var(--muted)', fontSize: 10 }}>id: {String(out.request_id).slice(0, 18)}…</div>
         </div>
       )}
       <NodePreview status={data.status} output={out?.request_id ? null : out} error={data.error} />
@@ -3153,11 +3219,18 @@ export const NODE_REGISTRY = {
       const description = [caption, hashtags].filter(Boolean).join('\n\n').trim()
         || String(script || '').slice(0, 500)
 
+      const when = data.props?.when || 'now'
+      // 'now' → no scheduled_iso. 'scheduled' → user-picked datetime-local.
+      // 'auto' → server resolves the next slot at submit time so it reflects
+      // what's actually free when the run finishes.
       let scheduledIso = null
-      if (data.props?.when === 'scheduled' && data.props?.scheduled_local) {
-        // datetime-local has no tz; treat as local + send ISO with offset.
+      let schedulingMode = 'now'
+      if (when === 'scheduled' && data.props?.scheduled_local) {
         const d = new Date(data.props.scheduled_local)
         if (!Number.isNaN(d.getTime())) scheduledIso = d.toISOString()
+        schedulingMode = 'fixed'
+      } else if (when === 'auto') {
+        schedulingMode = 'auto'
       }
 
       const r = await fetch('/api/social/upload-post', {
@@ -3171,6 +3244,7 @@ export const NODE_REGISTRY = {
           photo_urls: !videoUrl && photoUrls.length ? photoUrls : undefined,
           description,
           title: title || (script ? String(script).slice(0, 90) : undefined),
+          scheduling_mode: schedulingMode,
           scheduled_iso: scheduledIso,
           timezone: data.props?.timezone || undefined,
         }),
@@ -3180,7 +3254,8 @@ export const NODE_REGISTRY = {
       return {
         request_id: body?.request_id || null,
         platforms,
-        scheduled_iso: scheduledIso,
+        scheduled_iso: body?.scheduled_iso || scheduledIso,
+        scheduling_mode: schedulingMode,
         kind: detectedKind,
         submitted: true,
       }
