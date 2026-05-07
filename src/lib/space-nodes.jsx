@@ -214,6 +214,27 @@ function pickAudio(v) {
   return null
 }
 
+// Returns the first video URL found in an array of upstream input values.
+// Handles every shape the canvas produces:
+//   { video: { video_url } }                avatar_render single / video_polish / combine_videos success
+//   { video_url }                           loose
+//   { videos: [{ video_url }, …] }          avatar_render randomize OR combine_videos playlist fallback
+//   { items: [{ kind:'video', url }, …] }   collection
+function pickFirstVideoUrl(arr) {
+  for (const v of asArr(arr)) {
+    if (!v || typeof v !== 'object') continue
+    if (v.video?.video_url) return v.video.video_url
+    if (v.video_url) return v.video_url
+    if (Array.isArray(v.videos)) {
+      for (const c of v.videos) if (c?.video_url) return c.video_url
+    }
+    if (Array.isArray(v.items)) {
+      for (const it of v.items) if (it?.kind === 'video' && it.url) return it.url
+    }
+  }
+  return null
+}
+
 function pickImageUrls(v) {
   const out = []
   for (const x of asArr(v)) {
@@ -3191,17 +3212,13 @@ ${String(script).slice(0, 2000)}
     Editor: VideoPolishEditor,
     run: async ({ data, inputs, ctx }) => {
       const arr = asArr(inputs?.in)
-      let videoUrl = null, logoUrl = null, musicUrl = null
+      let logoUrl = null, musicUrl = null
       // Also pluck a wired-in title from upstream caption_gen so it can
       // override the manually-typed prop without the user re-typing.
       let upstreamTitle = ''
       for (const v of arr) {
         if (!v || typeof v !== 'object') continue
         if (!upstreamTitle && typeof v.title === 'string') upstreamTitle = v.title
-        if (!videoUrl) {
-          if (v.video?.video_url) videoUrl = v.video.video_url
-          else if (v.video_url) videoUrl = v.video_url
-        }
         if (!logoUrl) {
           if (v.brand?.logo_url) logoUrl = v.brand.logo_url
           else if (Array.isArray(v.images) && v.images[0]?.url) logoUrl = v.images[0].url
@@ -3213,6 +3230,10 @@ ${String(script).slice(0, 2000)}
           else if (v.url && /\.(mp3|wav|m4a|aac)(\?|$)/i.test(v.url)) musicUrl = v.url
         }
       }
+      // Shared helper picks first video from any upstream shape — handles
+      // single render output, randomize videos[] arrays, combine_videos
+      // playlist fallback, and collection items[] grids.
+      const videoUrl = pickFirstVideoUrl(arr)
       if (!videoUrl) throw new Error('Wire a video into "in" (avatar_render or combine_videos).')
 
       const p = data.props || {}
@@ -3314,12 +3335,13 @@ ${String(script).slice(0, 2000)}
     Editor: CaptionsEditor,
     run: async ({ data, inputs, ctx }) => {
       const arr = asArr(inputs?.in)
-      let videoUrl = null
-      for (const v of arr) {
-        if (!v || typeof v !== 'object') continue
-        if (v.video?.video_url) videoUrl = videoUrl || v.video.video_url
-        else if (v.video_url) videoUrl = videoUrl || v.video_url
-      }
+      // Pick the first video URL from anything upstream — handles every
+      // shape the canvas can produce:
+      //   { video: { video_url } }       single avatar_render / video_polish / combine_videos success
+      //   { video_url }                  loose
+      //   { videos: [{video_url}, …] }   randomize avatar_render OR combine_videos playlist fallback
+      //   { items: [{kind:'video',url},…] }   collection
+      const videoUrl = pickFirstVideoUrl(arr)
       if (!videoUrl) throw new Error('Wire a video into "in" (avatar_render or combine_videos).')
       if (!data.props?.caption_template_id) throw new Error('Pick a caption style first (open settings).')
 
