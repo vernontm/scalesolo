@@ -81,12 +81,12 @@ const NODE_CATALOG = {
     outputs: ['out'],
     initialProps: {},
   },
-  video_polish: {
-    label: 'Polish video',
-    description: 'Adds auto-burned subtitles (TikTok-style 3-word chunks from upstream script), an optional logo / watermark overlay, and an optional ducked background music track to a video. Wire video (avatar_render or combine_videos) + optional logo image + optional music audio + optional script (for subtitles). props: title (optional top overlay), subtitle_mode ("auto" | "off"), watermark_position ("tr"|"tl"|"br"|"bl"|"none"), watermark_size_pct (default 12), music_volume (0-1, default 0.15). Output: { video: { video_url } }.',
+  captions: {
+    label: 'Captions',
+    description: 'Burns animated captions onto a video using the ZapCap API. Wire a video (avatar_render or combine_videos) into "in"; the user picks a style preset in the node\'s settings drawer. props: caption_template_id (ZapCap template UUID — leave blank if unsure, the user will pick), language (default "en"). Output: { video: { video_url } }.',
     inputs: ['in'],
     outputs: ['out'],
-    initialProps: { title: '', subtitle_mode: 'auto', watermark_position: 'br', watermark_size_pct: 12, music_volume: 0.15 },
+    initialProps: { caption_template_id: '', caption_template_name: '', language: 'en' },
   },
   schedule_post: {
     label: 'Schedule post',

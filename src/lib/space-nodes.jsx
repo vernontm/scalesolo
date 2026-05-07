@@ -880,7 +880,7 @@ export const NODE_COST_HINT = {
   avatar_render: 8000,    // ~30s clip equivalent
   collection:    0,
   combine_videos: 1500,
-  video_polish: 1500,
+  captions:      2000,    // ZapCap caption render
   schedule_post: 100,
   save_library:  0,
 }
@@ -2295,6 +2295,87 @@ function SaveBody({ data, onPatch }) {
   )
 }
 
+// ─── CAPTIONS NODE (ZapCap-only) ────────────────────────────────────────────
+function CaptionsBody({ data, onPatch }) {
+  const props = data.props || {}
+  const out = data.output
+  const upstreamVideo = data._ctxUpstreamVideoUrl || null
+  const previewVideo = out?.video_url || upstreamVideo
+  const styleName = props.caption_template_name || (props.caption_template_id ? 'Selected' : null)
+  return (
+    <>
+      {previewVideo ? (
+        <video
+          src={previewVideo}
+          muted playsInline preload="metadata"
+          style={{
+            width: '100%', aspectRatio: '9/16', objectFit: 'cover',
+            background: '#000', borderRadius: 8, marginBottom: 8,
+            border: '1px solid var(--border)',
+          }}
+        />
+      ) : (
+        <div style={{
+          width: '100%', aspectRatio: '9/16',
+          background: '#000', border: '1px dashed var(--border)', borderRadius: 8,
+          display: 'grid', placeItems: 'center', color: 'var(--muted)', fontSize: 11, padding: 12, textAlign: 'center',
+          marginBottom: 8,
+        }}>Run an upstream video node to see a preview frame.</div>
+      )}
+      <button
+        type="button"
+        className="nodrag"
+        onClick={(e) => { e.stopPropagation(); window.__spaceOpenEditor?.(data.__id) }}
+        style={{
+          width: '100%', display: 'inline-flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '8px 10px', background: 'var(--surface-2)', border: '1px solid var(--border)',
+          borderRadius: 7, color: 'var(--text)', cursor: 'pointer', fontSize: 11.5,
+          fontFamily: 'var(--font-display)', fontWeight: 700, marginBottom: 6,
+        }}
+      >
+        <span><Captions size={11} style={{ verticalAlign: '-2px', marginRight: 6, color: '#0ea5e9' }} /> {styleName ? `Style · ${styleName}` : 'Pick caption style'}</span>
+        <ArrowUpRight size={11} style={{ color: 'var(--muted)' }} />
+      </button>
+      <NodePreview status={data.status} output={null} error={data.error} />
+    </>
+  )
+}
+
+export function CaptionsEditor({ nodeId, data, onPatch, allNodes, allEdges }) {
+  const props = data.props || {}
+  const previewVideo = useMemo(
+    () => data.output?.video_url || findUpstreamVideoUrl(nodeId, allNodes, allEdges),
+    [nodeId, allNodes, allEdges, data.output?.video_url]
+  )
+  return (
+    <>
+      <div style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+        <Play size={11} /> Source video
+      </div>
+      {previewVideo ? (
+        <video
+          src={previewVideo} controls muted playsInline preload="metadata"
+          style={{
+            width: '100%', aspectRatio: '9/16', objectFit: 'cover',
+            background: '#000', borderRadius: 10, border: '1px solid var(--border)', marginBottom: 14,
+          }}
+        />
+      ) : (
+        <div style={{
+          width: '100%', aspectRatio: '9/16',
+          background: '#000', border: '1px dashed var(--border)', borderRadius: 10,
+          display: 'grid', placeItems: 'center', color: 'var(--muted)', fontSize: 11, padding: 12, textAlign: 'center',
+          marginBottom: 14,
+        }}>Wire & run an upstream video node first.</div>
+      )}
+      <ZapcapTemplatePicker
+        selectedId={props.caption_template_id || ''}
+        onChange={(t) => onPatch({ caption_template_id: t.id, caption_template_name: t.name })}
+      />
+    </>
+  )
+}
+
 // ── REGISTRY ────────────────────────────────────────────────────────────────
 export const NODE_REGISTRY = {
   text_input: {
@@ -2847,106 +2928,51 @@ export const NODE_REGISTRY = {
     },
   },
 
-  video_polish: {
-    label: 'Polish video', description: 'Burns auto-subtitles from the upstream script, overlays a logo / watermark, and ducks a music track under the original voice — all in a single ffmpeg pass on the server.',
-    icon: Sparkles, category: 'generators', color: '#0ea5e9',
-    inputs: [{ id: 'in', label: 'In (video + logo + music + script)' }],
+  // ── CAPTIONS (ZapCap) ────────────────────────────────────────────────
+  // Slim node: takes a video, hands it to ZapCap with a chosen style,
+  // returns the captioned MP4. Title / logo / music polish features
+  // are temporarily removed but still live in /api/videos/polish.js +
+  // VideoPolishEditor below — re-register video_polish when ready.
+  captions: {
+    label: 'Captions', description: 'Burns animated captions onto a video using ZapCap. Pick a style preset; ZapCap transcribes and renders.',
+    icon: Captions, category: 'generators', color: '#0ea5e9',
+    inputs: [{ id: 'in', label: 'In (video)' }],
     outputs: [{ id: 'out', label: 'Out (video)' }],
     initialProps: {
-      // Title overlay
-      title: '',
-      title_enabled: true,
-      title_font: 'Montserrat ExtraBold',
-      title_color: '#ffffff',
-      title_bg_color: '#e0467a',
-      title_size: 72,
-      title_bg_padding: 28,
-      title_y_pos: 15,
-      title_uppercase: false,
-      // Captions — handled by ZapCap (style picker, no manual font/colors)
-      captions_enabled: true,
       caption_template_id: '',
       caption_template_name: '',
-      // Logo / watermark
-      watermark_position: 'br',
-      watermark_size_pct: 25,
-      // Music
-      music_volume: 0.15,
-      music_fade_secs: 1.5,
+      language: 'en',
     },
-    Body: VideoPolishBody,
-    Editor: VideoPolishEditor,
+    Body: CaptionsBody,
+    Editor: CaptionsEditor,
     run: async ({ data, inputs, ctx }) => {
       const arr = asArr(inputs?.in)
       let videoUrl = null
-      let logoUrl = null
-      let musicUrl = null
-      let script = ''
-      // Walk every wired input and pluck out the bits we need by shape.
       for (const v of arr) {
-        if (!v) continue
-        if (typeof v === 'string') { if (!script) script = v; continue }
-        if (typeof v !== 'object') continue
-        if (!script && (v.script || v.full_script)) script = v.script || v.full_script
-        if (!videoUrl) {
-          if (v.video?.video_url) videoUrl = v.video.video_url
-          else if (v.video_url) videoUrl = v.video_url
-        }
-        if (!logoUrl) {
-          if (v.brand?.logo_url) logoUrl = v.brand.logo_url
-          else if (Array.isArray(v.images) && v.images[0]?.url) logoUrl = v.images[0].url
-          else if (v.url && /\.(png|jpe?g|webp)(\?|$)/i.test(v.url)) logoUrl = v.url
-        }
-        if (!musicUrl) {
-          if (v.audio?.audio_url) musicUrl = v.audio.audio_url
-          else if (v.audio_url) musicUrl = v.audio_url
-          else if (v.url && /\.(mp3|wav|m4a|aac)(\?|$)/i.test(v.url)) musicUrl = v.url
-        }
+        if (!v || typeof v !== 'object') continue
+        if (v.video?.video_url) videoUrl = videoUrl || v.video.video_url
+        else if (v.video_url) videoUrl = videoUrl || v.video_url
       }
       if (!videoUrl) throw new Error('Wire a video into "in" (avatar_render or combine_videos).')
+      if (!data.props?.caption_template_id) throw new Error('Pick a caption style first (open settings).')
 
-      const p = data.props || {}
-      const titleOn = (p.title_enabled !== false) && !!(p.title || '').trim()
-      const r = await fetch('/api/videos/polish', {
+      const r = await fetch('/api/videos/captions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
         body: JSON.stringify({
           profile_id: ctx.profileId,
           video_url: videoUrl,
-          logo_url: logoUrl || undefined,
-          watermark_image_url: p.watermark_image_url || undefined,
-          music_url: musicUrl || undefined,
-          // Title overlay
-          title: titleOn ? p.title.trim() : undefined,
-          title_style: titleOn ? {
-            font: p.title_font,
-            color: p.title_color,
-            bg_color: p.title_bg_color,
-            size: p.title_size,
-            bg_padding: p.title_bg_padding,
-            y_pos: p.title_y_pos,
-            uppercase: p.title_uppercase,
-          } : undefined,
-          // Captions — handed to ZapCap via the template id.
-          captions_enabled: p.captions_enabled !== false && !!p.caption_template_id,
-          caption_template_id: p.caption_template_id || undefined,
-          // Logo / watermark
-          watermark_position: p.watermark_position || 'br',
-          watermark_size_pct: p.watermark_size_pct ?? 25,
-          // Music
-          music_volume: p.music_volume ?? 0.15,
-          music_fade_secs: p.music_fade_secs ?? 1.5,
+          template_id: data.props.caption_template_id,
+          language: data.props.language || 'en',
         }),
       })
       const body = await r.json().catch(() => ({}))
-      if (!r.ok || !body?.video_url) throw new Error(body?.error || `Polish failed (${r.status})`)
-      // Output mirrors what combine_videos / avatar_render emit so the
-      // downstream Combine + Save nodes don't need special-case handling.
+      if (!r.ok || !body?.video_url) throw new Error(body?.error || `Captions failed (${r.status})`)
       return {
         video: { video_url: body.video_url },
         video_url: body.video_url,
         media_type: 'video',
-        polished: true,
+        captioned: true,
       }
     },
   },

@@ -1196,15 +1196,14 @@ function SpaceBuilder({ space, onSave, onClose }) {
       if (t === 'avatar_picker') return { ...n, data: { ...n.data, _ctxAvatars: avatars, _ctxPublicAvatars: publicAvatars } }
       if (t === 'brand_profile') return { ...n, data: { ...n.data, _ctxProfiles: profiles } }
       if (t === 'image_upload')  return { ...n, data: { ...n.data, _ctxProfileId: selectedProfileId } }
-      if (t === 'video_polish') {
-        // Inline live preview in the body needs the upstream video frame +
-        // script + logo without reaching into the ReactFlow graph itself.
+      if (t === 'captions') {
+        // Inline preview frame in the captions body needs the closest
+        // upstream rendered video URL without reaching into the graph
+        // from inside the ReactFlow custom node.
         return { ...n, data: {
           ...n.data,
           _ctxProfileId: selectedProfileId,
           _ctxUpstreamVideoUrl: findUpstreamVideoUrl(n.id, nodes, edges),
-          _ctxUpstreamScript: findUpstreamScript(n.id, nodes, edges),
-          _ctxUpstreamLogoUrl: findUpstreamLogoUrl(n.id, nodes, edges),
         } }
       }
       if (t === 'save_library') {
