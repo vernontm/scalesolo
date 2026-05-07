@@ -777,8 +777,13 @@ function SpaceBuilder({ space, onSave, onClose }) {
       dragging: false,
       data: {
         ...n.data,
+        // Persisted status + output + error survive refresh so the user
+        // can re-open a workflow and see the previous run's results
+        // (videos, captions, etc.) instead of an empty canvas.
+        // 'running' is the only transient we reset — it can't realistically
+        // still be running across a refresh.
         status: n.data?.status === 'running' ? 'idle' : (n.data?.status || 'idle'),
-        error: null,
+        error: n.data?.status === 'running' ? null : (n.data?.error || null),
       },
     }))
   })
@@ -1085,11 +1090,32 @@ function SpaceBuilder({ space, onSave, onClose }) {
     // Cheap structural fingerprint — id + type + serialized props (compact)
     // + position rounded to ints + edges shape. ~100× faster than
     // JSON.stringify of the full nodes array on big canvases with media.
+    //
+    // Includes data.status + a tiny output signature so completed runs
+    // also trigger autosave — otherwise the rendered video URLs would
+    // disappear on page refresh because the fingerprint stayed the same
+    // through the entire idle → running → done transition.
+    const outputSig = (o) => {
+      if (!o || typeof o !== 'object') return ''
+      const url = o.video?.video_url || o.video_url || ''
+      const items = Array.isArray(o.items) ? o.items.length : 0
+      const vids  = Array.isArray(o.videos) ? o.videos.length : 0
+      const imgs  = Array.isArray(o.images) ? o.images.length : 0
+      const cap   = o.caption ? o.caption.length : 0
+      const txt   = o.full_script ? o.full_script.length : 0
+      return `${url.slice(-40)}|${items}|${vids}|${imgs}|${cap}|${txt}`
+    }
     const fp = [
       name,
       nodes.length,
       edges.length,
-      ...nodes.map((n) => `${n.id}|${n.data?.type}|${Math.round(n.position?.x || 0)},${Math.round(n.position?.y || 0)}|${n.data?.name || ''}|${propsHashShort(n.data?.props)}`),
+      ...nodes.map((n) => {
+        const status = n.data?.status || 'idle'
+        // Only let 'done' / 'failed' bump the fingerprint — 'running' is
+        // transient and saving partial state is more confusing than useful.
+        const persistedStatus = (status === 'done' || status === 'failed') ? status : 'idle'
+        return `${n.id}|${n.data?.type}|${Math.round(n.position?.x || 0)},${Math.round(n.position?.y || 0)}|${n.data?.name || ''}|${propsHashShort(n.data?.props)}|${persistedStatus}|${outputSig(n.data?.output)}`
+      }),
       ...edges.map((e) => `${e.source}-${e.target}-${e.targetHandle || 'in'}`),
     ].join('::')
     if (fp === lastPayloadRef.current) return
