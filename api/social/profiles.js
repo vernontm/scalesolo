@@ -12,7 +12,7 @@
 
 import { setCors, requireUser, assertProfileAccess } from '../_lib/supabase.js'
 import {
-  deriveUploadPostUsername, uploadpostEnsureUserProfile, uploadpostGenerateJwt,
+  resolveUploadpostUser, uploadpostEnsureUserProfile, uploadpostGenerateJwt,
 } from '../_lib/uploadpost.js'
 
 export default async function handler(req, res) {
@@ -31,7 +31,7 @@ export default async function handler(req, res) {
       if (!profile_id) return res.status(400).json({ error: 'profile_id required' })
       await assertProfileAccess(auth.user.id, profile_id)
 
-      const username = deriveUploadPostUsername(profile_id)
+      const username = await resolveUploadpostUser(profile_id)
       // Ensure the sub-account exists before requesting a JWT for it.
       await uploadpostEnsureUserProfile(username)
       const jwt = await uploadpostGenerateJwt(username, {
@@ -53,7 +53,7 @@ export default async function handler(req, res) {
       if (!profile_id) return res.status(400).json({ error: 'profile_id required' })
       await assertProfileAccess(auth.user.id, profile_id)
 
-      const username = deriveUploadPostUsername(profile_id)
+      const username = await resolveUploadpostUser(profile_id)
       const profile = await uploadpostEnsureUserProfile(username)
       // Normalize social_accounts into a sorted, lightweight shape.
       const social = profile?.social_accounts || {}

@@ -15,7 +15,7 @@
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { findNextOpenSlot } from '../_lib/scheduling.js'
 import {
-  deriveUploadPostUsername, uploadpostEnsureUserProfile,
+  resolveUploadpostUser, uploadpostEnsureUserProfile,
 } from '../_lib/uploadpost.js'
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
@@ -203,7 +203,7 @@ async function publishSelected({ res, profile_id, script_ids }) {
   const apiKey = process.env.UPLOADPOST_API_KEY
   if (!apiKey) return res.status(500).json({ error: 'UPLOADPOST_API_KEY not configured' })
 
-  const username = deriveUploadPostUsername(profile_id)
+  const username = await resolveUploadpostUser(profile_id)
   await uploadpostEnsureUserProfile(username).catch(() => {})
 
   const rows = await supaFetch(

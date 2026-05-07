@@ -16,7 +16,7 @@
 // because Upload-Post wants the bytes, not a URL.
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
-import { deriveUploadPostUsername, uploadpostEnsureUserProfile } from '../_lib/uploadpost.js'
+import { resolveUploadpostUser, uploadpostEnsureUserProfile } from '../_lib/uploadpost.js'
 import { findNextOpenSlot } from '../_lib/scheduling.js'
 
 export const config = { maxDuration: 60 }
@@ -80,7 +80,7 @@ export default async function handler(req, res) {
     // Derive a stable per-profile sub-account username, auto-creating the
     // Upload-Post profile if it doesn't exist yet. Caller can still pass an
     // explicit upload_post_user to override (useful for shared accounts).
-    const effectiveUser = upload_post_user || deriveUploadPostUsername(profile_id)
+    const effectiveUser = upload_post_user || await resolveUploadpostUser(profile_id)
     if (!upload_post_user) {
       try { await uploadpostEnsureUserProfile(effectiveUser) } catch (e) {
         console.warn('upload-post ensure profile failed:', e.message)

@@ -26,6 +26,24 @@ export function deriveUploadPostUsername(profileId) {
   return `scalesolo_${hex}`
 }
 
+// Honors profiles.uploadpost_user as a manual override so brands that
+// already have a real Upload-Post account (e.g. Karahtx_, rayvaughnceo)
+// can publish through their existing connected handles instead of a
+// fresh whitelabel sub-account. Falls back to the auto-derived name.
+//
+// Imports supaFetch lazily so this module stays usable from contexts
+// that don't have DB access (e.g. unit tests).
+export async function resolveUploadpostUser(profileId) {
+  if (!profileId) return ''
+  try {
+    const { supaFetch } = await import('./supabase.js')
+    const rows = await supaFetch(`profiles?id=eq.${profileId}&select=uploadpost_user`)
+    const explicit = rows?.[0]?.uploadpost_user
+    if (explicit && explicit.trim()) return explicit.trim()
+  } catch {}
+  return deriveUploadPostUsername(profileId)
+}
+
 export async function uploadpost(path, { method = 'GET', body, headers = {}, raw = false } = {}) {
   const init = {
     method,
