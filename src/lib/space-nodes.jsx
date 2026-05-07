@@ -14,7 +14,7 @@ import {
   Type, Wand2, Captions, UserCircle2, Save, Image as ImageIcon,
   ListChecks, FileVideo, Upload, Loader2, Maximize2, ArrowUpRight,
   Download, Trash2, Building2, Repeat, Play, Pause, Combine as CombineIcon,
-  Mic,
+  Mic, Sparkles, Send,
 } from 'lucide-react'
 import { supabase } from './supabase.js'
 
@@ -879,6 +879,9 @@ export const NODE_COST_HINT = {
   avatar_picker: 0,
   avatar_render: 8000,    // ~30s clip equivalent
   collection:    0,
+  combine_videos: 1500,
+  video_polish: 1500,
+  schedule_post: 100,
   save_library:  0,
 }
 
@@ -1464,6 +1467,153 @@ function CombineVideosBody({ data }) {
   }
 
   return <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>Wire an Avatar render (Randomize mode) or a Collection of videos in. Run to stitch them in order.</div>
+}
+
+// ─── VIDEO POLISH (subtitles + watermark + bg music in one ffmpeg pass) ────
+function VideoPolishBody({ data, onPatch }) {
+  const out = data.output
+  const props = data.props || {}
+  const status = data.status || 'idle'
+  return (
+    <>
+      <NodeField label="Title overlay (optional)">
+        <input style={tinyInput} value={props.title || ''} onChange={(e) => onPatch({ title: e.target.value })} placeholder="Big text near the top" />
+      </NodeField>
+      <NodeField label="Subtitles">
+        <select style={tinyInput} value={props.subtitle_mode || 'auto'} onChange={(e) => onPatch({ subtitle_mode: e.target.value })}>
+          <option value="auto">Auto-burn from upstream script</option>
+          <option value="off">Off</option>
+        </select>
+      </NodeField>
+      <NodeField label="Watermark position">
+        <select style={tinyInput} value={props.watermark_position || 'br'} onChange={(e) => onPatch({ watermark_position: e.target.value })}>
+          <option value="none">None</option>
+          <option value="tr">Top right</option>
+          <option value="tl">Top left</option>
+          <option value="br">Bottom right</option>
+          <option value="bl">Bottom left</option>
+        </select>
+      </NodeField>
+      <NodeField label="Watermark size %">
+        <input
+          type="number" min="2" max="40" className="nodrag"
+          style={tinyInput}
+          value={props.watermark_size_pct ?? 12}
+          onChange={(e) => onPatch({ watermark_size_pct: Number(e.target.value) })}
+        />
+      </NodeField>
+      <NodeField label="Music volume (0–1)">
+        <input
+          type="number" min="0" max="1" step="0.05" className="nodrag"
+          style={tinyInput}
+          value={props.music_volume ?? 0.15}
+          onChange={(e) => onPatch({ music_volume: Number(e.target.value) })}
+        />
+      </NodeField>
+      <div style={{ fontSize: 10.5, color: 'var(--muted)', lineHeight: 1.4, marginTop: 4 }}>
+        Wire a video (avatar_render / combine_videos), optional logo image (image_upload / brand logo), optional music (audio_upload). Subtitles auto-derive from any upstream script.
+      </div>
+      {out?.video_url && (
+        <div style={{ marginTop: 8 }}>
+          <MediaItem url={out.video_url} type="video" from="polished" aspectRatio="9/16" />
+        </div>
+      )}
+      <NodePreview status={status} output={out?.video_url ? null : out} error={data.error} />
+    </>
+  )
+}
+
+// ─── SCHEDULE POST (Upload-Post API) ───────────────────────────────────────
+const SCHEDULE_PLATFORMS = [
+  { id: 'tiktok',    label: 'TikTok',    kinds: ['video'] },
+  { id: 'instagram', label: 'Instagram', kinds: ['image', 'video'] },
+  { id: 'youtube',   label: 'YouTube',   kinds: ['video'] },
+  { id: 'x',         label: 'X',         kinds: ['image', 'video'] },
+  { id: 'threads',   label: 'Threads',   kinds: ['image', 'video'] },
+  { id: 'linkedin',  label: 'LinkedIn',  kinds: ['image', 'video'] },
+  { id: 'facebook',  label: 'Facebook',  kinds: ['image', 'video'] },
+  { id: 'pinterest', label: 'Pinterest', kinds: ['image', 'video'] },
+]
+
+function SchedulePostBody({ data, onPatch }) {
+  const props = data.props || {}
+  const platforms = Array.isArray(props.platforms) ? props.platforms : []
+  const out = data.output
+  const togglePlatform = (id) => {
+    const next = platforms.includes(id) ? platforms.filter((p) => p !== id) : [...platforms, id]
+    onPatch({ platforms: next })
+  }
+  const tz = props.timezone || (typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'UTC')
+  return (
+    <>
+      <NodeField label="Upload-Post account">
+        <input
+          style={tinyInput}
+          className="nodrag"
+          value={props.upload_post_user || ''}
+          onChange={(e) => onPatch({ upload_post_user: e.target.value })}
+          placeholder="username from upload-post.com"
+        />
+      </NodeField>
+      <NodeField label="Platforms">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {SCHEDULE_PLATFORMS.map((p) => {
+            const on = platforms.includes(p.id)
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={(e) => { e.stopPropagation(); togglePlatform(p.id) }}
+                style={{
+                  fontSize: 10.5, padding: '4px 9px', borderRadius: 999,
+                  border: `1px solid ${on ? '#2ecc71' : 'var(--border)'}`,
+                  background: on ? 'rgba(46,204,113,0.16)' : 'var(--surface-2)',
+                  color: on ? '#2ecc71' : 'var(--text-soft)',
+                  cursor: 'pointer', fontFamily: 'var(--font-display)', fontWeight: 700,
+                }}
+              >{p.label}</button>
+            )
+          })}
+        </div>
+      </NodeField>
+      <NodeField label="When">
+        <select style={tinyInput} value={props.when || 'now'} onChange={(e) => onPatch({ when: e.target.value })}>
+          <option value="now">Publish now</option>
+          <option value="scheduled">Schedule for…</option>
+        </select>
+      </NodeField>
+      {props.when === 'scheduled' && (
+        <>
+          <NodeField label="Date / time (local)">
+            <input
+              type="datetime-local"
+              className="nodrag"
+              style={tinyInput}
+              value={props.scheduled_local || ''}
+              onChange={(e) => onPatch({ scheduled_local: e.target.value })}
+            />
+          </NodeField>
+          <NodeField label="Timezone">
+            <input
+              className="nodrag"
+              style={tinyInput}
+              value={props.timezone || tz}
+              onChange={(e) => onPatch({ timezone: e.target.value })}
+            />
+          </NodeField>
+        </>
+      )}
+      <div style={{ fontSize: 10.5, color: 'var(--muted)', lineHeight: 1.4, marginTop: 4 }}>
+        Wire a video (or images) plus an optional caption / hashtags / script. Submits to upload-post.com via your account; needs <code style={{ fontSize: 10 }}>UPLOADPOST_API_KEY</code> in env.
+      </div>
+      {out?.request_id && (
+        <div style={{ ...previewBox, marginTop: 8 }}>
+          Submitted ✓ <span style={{ color: 'var(--muted)' }}>id: {String(out.request_id).slice(0, 18)}…</span>
+        </div>
+      )}
+      <NodePreview status={data.status} output={out?.request_id ? null : out} error={data.error} />
+    </>
+  )
 }
 
 // ─── COMBINE (bundle text + media into a unified post package) ─────────────
@@ -2142,6 +2292,166 @@ export const NODE_REGISTRY = {
           is_clip_set: true,
           combine_unavailable: e.message,
         }
+      }
+    },
+  },
+
+  video_polish: {
+    label: 'Polish video', description: 'Burns auto-subtitles from the upstream script, overlays a logo / watermark, and ducks a music track under the original voice — all in a single ffmpeg pass on the server.',
+    icon: Sparkles, category: 'generators', color: '#0ea5e9',
+    inputs: [{ id: 'in', label: 'In (video + logo + music + script)' }],
+    outputs: [{ id: 'out', label: 'Out (video)' }],
+    initialProps: {
+      title: '',
+      subtitle_mode: 'auto',
+      watermark_position: 'br',
+      watermark_size_pct: 12,
+      music_volume: 0.15,
+    },
+    Body: VideoPolishBody,
+    run: async ({ data, inputs, ctx }) => {
+      const arr = asArr(inputs?.in)
+      let videoUrl = null
+      let logoUrl = null
+      let musicUrl = null
+      let script = ''
+      // Walk every wired input and pluck out the bits we need by shape.
+      for (const v of arr) {
+        if (!v) continue
+        if (typeof v === 'string') { if (!script) script = v; continue }
+        if (typeof v !== 'object') continue
+        if (!script && (v.script || v.full_script)) script = v.script || v.full_script
+        if (!videoUrl) {
+          if (v.video?.video_url) videoUrl = v.video.video_url
+          else if (v.video_url) videoUrl = v.video_url
+        }
+        if (!logoUrl) {
+          if (v.brand?.logo_url) logoUrl = v.brand.logo_url
+          else if (Array.isArray(v.images) && v.images[0]?.url) logoUrl = v.images[0].url
+          else if (v.url && /\.(png|jpe?g|webp)(\?|$)/i.test(v.url)) logoUrl = v.url
+        }
+        if (!musicUrl) {
+          if (v.audio?.audio_url) musicUrl = v.audio.audio_url
+          else if (v.audio_url) musicUrl = v.audio_url
+          else if (v.url && /\.(mp3|wav|m4a|aac)(\?|$)/i.test(v.url)) musicUrl = v.url
+        }
+      }
+      if (!videoUrl) throw new Error('Wire a video into "in" (avatar_render or combine_videos).')
+
+      const r = await fetch('/api/videos/polish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
+        body: JSON.stringify({
+          profile_id: ctx.profileId,
+          video_url: videoUrl,
+          logo_url: logoUrl || undefined,
+          music_url: musicUrl || undefined,
+          script: data.props?.subtitle_mode === 'off' ? '' : script,
+          title: (data.props?.title || '').trim() || undefined,
+          watermark_position: data.props?.watermark_position || 'br',
+          watermark_size_pct: data.props?.watermark_size_pct ?? 12,
+          music_volume: data.props?.music_volume ?? 0.15,
+        }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok || !body?.video_url) throw new Error(body?.error || `Polish failed (${r.status})`)
+      // Output mirrors what combine_videos / avatar_render emit so the
+      // downstream Combine + Save nodes don't need special-case handling.
+      return {
+        video: { video_url: body.video_url },
+        video_url: body.video_url,
+        media_type: 'video',
+        polished: true,
+      }
+    },
+  },
+
+  schedule_post: {
+    label: 'Schedule post', description: 'Publishes (or schedules) a video / image bundle to TikTok, Instagram, YouTube, X, LinkedIn, Threads, Facebook, or Pinterest via the upload-post.com API. Wire video/images + caption + hashtags in.',
+    icon: Send, category: 'outputs', color: '#2ecc71',
+    inputs: [{ id: 'in', label: 'In (video / images + caption / hashtags)' }],
+    outputs: [{ id: 'out', label: 'Out (request_id)' }],
+    initialProps: {
+      upload_post_user: '',
+      platforms: [],
+      when: 'now',
+      scheduled_local: '',
+      timezone: '',
+    },
+    Body: SchedulePostBody,
+    run: async ({ data, inputs, ctx }) => {
+      const arr = asArr(inputs?.in)
+      let videoUrl = null
+      let caption = ''
+      let hashtags = ''
+      let script = ''
+      let title = ''
+      const photoUrls = []
+      for (const v of arr) {
+        if (!v) continue
+        if (typeof v === 'string') { if (!script) script = v; continue }
+        if (typeof v !== 'object') continue
+        if (!title && v.title) title = v.title
+        if (!script && (v.script || v.full_script)) script = v.script || v.full_script
+        if (!caption && v.caption) caption = v.caption
+        if (!hashtags && v.hashtags) hashtags = v.hashtags
+        if (!videoUrl) {
+          if (v.video?.video_url) videoUrl = v.video.video_url
+          else if (v.video_url) videoUrl = v.video_url
+        }
+        if (Array.isArray(v.images)) for (const im of v.images) { if (im?.url) photoUrls.push(im.url) }
+        else if (v.url && /\.(png|jpe?g|webp)(\?|$)/i.test(v.url)) photoUrls.push(v.url)
+      }
+
+      const platforms = Array.isArray(data.props?.platforms) ? data.props.platforms : []
+      if (!data.props?.upload_post_user) throw new Error('Set your Upload-Post username in node settings.')
+      if (!platforms.length) throw new Error('Pick at least one platform.')
+      if (!videoUrl && !photoUrls.length) throw new Error('Wire a video or images into "in".')
+
+      // Per-platform kind validation up front so we don't waste an API call.
+      const detectedKind = videoUrl ? 'video' : 'image'
+      const bad = platforms.filter((id) => {
+        const def = SCHEDULE_PLATFORMS.find((p) => p.id === id)
+        return def && !def.kinds.includes(detectedKind)
+      })
+      if (bad.length) {
+        const names = bad.map((id) => SCHEDULE_PLATFORMS.find((p) => p.id === id)?.label || id).join(', ')
+        throw new Error(`${names} can't accept ${detectedKind} content.`)
+      }
+
+      const description = [caption, hashtags].filter(Boolean).join('\n\n').trim()
+        || String(script || '').slice(0, 500)
+
+      let scheduledIso = null
+      if (data.props?.when === 'scheduled' && data.props?.scheduled_local) {
+        // datetime-local has no tz; treat as local + send ISO with offset.
+        const d = new Date(data.props.scheduled_local)
+        if (!Number.isNaN(d.getTime())) scheduledIso = d.toISOString()
+      }
+
+      const r = await fetch('/api/social/upload-post', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
+        body: JSON.stringify({
+          profile_id: ctx.profileId,
+          upload_post_user: data.props.upload_post_user,
+          platforms,
+          video_url: videoUrl || undefined,
+          photo_urls: !videoUrl && photoUrls.length ? photoUrls : undefined,
+          description,
+          title: title || (script ? String(script).slice(0, 90) : undefined),
+          scheduled_iso: scheduledIso,
+          timezone: data.props?.timezone || undefined,
+        }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(body?.error || `Upload-Post failed (${r.status})`)
+      return {
+        request_id: body?.request_id || null,
+        platforms,
+        scheduled_iso: scheduledIso,
+        kind: detectedKind,
+        submitted: true,
       }
     },
   },

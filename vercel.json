@@ -18,6 +18,13 @@
     "api/videos/combine.js": {
       "includeFiles": "node_modules/@ffmpeg/core/**",
       "maxDuration": 300
+    },
+    "api/videos/polish.js": {
+      "includeFiles": "node_modules/@ffmpeg/core/**",
+      "maxDuration": 300
+    },
+    "api/social/upload-post.js": {
+      "maxDuration": 60
     }
   }
 }
