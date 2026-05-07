@@ -10,23 +10,27 @@
 // }
 // Returns: { video_url, bytes }
 //
-// Native ffmpeg via the ffmpeg-static binary. We tried ffmpeg-wasm first
-// but Node-side WASM is single-threaded and a libx264 re-encode of a
-// 30-second clip takes 2-5 minutes — well past Vercel's 60s/300s limits.
-// The static binary is ~50x faster and runs the whole thing in <30s for
-// typical HeyGen output.
+// Native ffmpeg via @ffmpeg-installer/ffmpeg (a fuller build that
+// includes drawtext / libfreetype, which the slimmer ffmpeg-static
+// distribution we tried first DOES NOT — every title overlay was
+// failing with "No such filter: 'drawtext'"). We tried ffmpeg-wasm
+// first but Node-side WASM is single-threaded and a libx264 re-encode
+// of a 30-second clip takes 2-5 minutes — well past Vercel's limits.
+// The static binary is ~50x faster.
 //
 // Pipeline:
 //   1. Download video / logo / music to /tmp.
 //   2. Build a single ffmpeg invocation with optional drawtext (title) +
-//      overlay (logo) + subtitles (auto from script) + amix (bg music).
-//   3. Spawn ffmpeg-static, stream stderr to a buffer for diagnostics.
+//      overlay (logo) + amix (bg music). Captions are a separate
+//      ZapCap pass — see captions node.
+//   3. Spawn ffmpeg, stream stderr to a buffer for diagnostics.
 //   4. Upload the result to landing-media via service role.
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { createClient } from '@supabase/supabase-js'
 import { zapcapAddVideoByUrl, zapcapCreateTask, zapcapPollTask } from '../_lib/zapcap.js'
-import ffmpegPath from 'ffmpeg-static'
+import ffmpegInstaller from '@ffmpeg-installer/ffmpeg'
+const ffmpegPath = ffmpegInstaller.path
 import { spawn } from 'node:child_process'
 import { mkdtemp, readFile, writeFile, rm, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
