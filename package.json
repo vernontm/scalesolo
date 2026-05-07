@@ -19,6 +19,7 @@
     "@supabase/supabase-js": "^2.104.0",
     "@xyflow/react": "^12.3.5",
     "dompurify": "^3.0.11",
+    "ffmpeg-static": "^5.3.0",
     "lucide-react": "^0.445.0",
     "papaparse": "^5.5.3",
     "react": "^18.3.1",

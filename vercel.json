@@ -20,7 +20,7 @@
       "maxDuration": 300
     },
     "api/videos/polish.js": {
-      "includeFiles": "{node_modules/@ffmpeg/core/**,api/_fonts/**}",
+      "includeFiles": "{node_modules/ffmpeg-static/**,api/_fonts/**}",
       "maxDuration": 300
     },
     "api/social/upload-post.js": {
