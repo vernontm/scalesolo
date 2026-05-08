@@ -2308,6 +2308,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
           edgeTypes={EDGE_TYPES}
           isValidConnection={isValidSpaceConnection}
           connectionMode="strict"
+          connectionRadius={45}
           fitView
           /* Two-finger trackpad vertical scroll → zoom in/out.
              Horizontal scroll still pans sideways. Drag pans the canvas. */
