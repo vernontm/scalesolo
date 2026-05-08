@@ -1096,6 +1096,18 @@ function SpaceBuilder({ space, onSave, onClose }) {
   // without going through stale closure state.
   const runningRef = useRef(false)
   useEffect(() => { runningRef.current = running }, [running])
+  // Refresh / close warning while a run is in flight. Doesn't block SPA route
+  // changes — the user-visible header banner below is what catches those.
+  useEffect(() => {
+    if (!running) return
+    const onBeforeUnload = (e) => {
+      e.preventDefault()
+      e.returnValue = ''
+      return ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [running])
   const [skippedTicks, setSkippedTicks] = useState(0)
   // Abort flag for in-flight runs. Read by long-poll generators between
   // ticks. Reset on every new run.
