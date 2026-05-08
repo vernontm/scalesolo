@@ -4,12 +4,16 @@ const ThemeContext = createContext(null)
 const STORAGE_KEY = 'scalesolo.theme'
 
 function readInitial() {
+  // Always default to dark when nothing is stored. We intentionally do
+  // NOT consult prefers-color-scheme: the brand is dark-first and the
+  // public landing is locked to dark; the only way to land on light is
+  // an explicit click of the in-app theme toggle.
   if (typeof window === 'undefined') return 'dark'
   try {
     const stored = localStorage.getItem(STORAGE_KEY)
     if (stored === 'light' || stored === 'dark') return stored
   } catch {}
-  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+  return 'dark'
 }
 
 export function ThemeProvider({ children }) {

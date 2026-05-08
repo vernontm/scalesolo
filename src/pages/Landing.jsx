@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Zap, ArrowRight, Check, Sparkles, Boxes, UserCircle2, Calendar,
@@ -87,6 +88,25 @@ const canvasNodes = [
 export default function Landing() {
   const nav = useNavigate()
   const goSignup = () => nav('/login')
+
+  // Lock the public landing to the dark brand palette regardless of any
+  // light theme an app user may have persisted. The CSS-var overrides
+  // on the page wrapper (see `page` style) take care of everything
+  // *inside* the landing — this effect only forces body background +
+  // color-scheme dark while mounted so iOS Safari's rubber-band scroll
+  // doesn't flash white on overscroll.
+  useEffect(() => {
+    const html = document.documentElement
+    const body = document.body
+    const prevColorScheme = html.style.colorScheme
+    const prevBodyBg = body.style.background
+    html.style.colorScheme = 'dark'
+    body.style.background = '#111112'
+    return () => {
+      html.style.colorScheme = prevColorScheme
+      body.style.background = prevBodyBg
+    }
+  }, [])
 
   return (
     <div style={page}>
@@ -451,9 +471,27 @@ function CanvasMock() {
 // ─────────────────────────────────────────────────────────────────────
 // Styles
 // ─────────────────────────────────────────────────────────────────────
+// The CSS-var overrides below pin the public landing to the dark brand
+// palette even when an app user has persisted a light theme. Vars defined
+// on this wrapper cascade to every descendant, so anything using
+// var(--surface) / var(--text) / etc. resolves to the dark values
+// regardless of the [data-theme] attribute on <html>.
 const page = {
-  background: 'var(--bg)',
-  color: 'var(--text)',
+  '--bg':           '#111112',
+  '--surface':      '#1a1a1c',
+  '--surface-2':    '#222226',
+  '--surface-3':    '#2a2a30',
+  '--border':       'rgba(255, 255, 255, 0.07)',
+  '--border-strong':'rgba(255, 255, 255, 0.12)',
+  '--text':         '#f0f0f0',
+  '--text-soft':    '#cccccd',
+  '--muted':        '#9a9aa3',
+  '--red-soft':     'rgba(239, 68, 68, 0.12)',
+  '--shadow-card':  '0 12px 32px rgba(0, 0, 0, 0.35)',
+  '--shadow-pop':   '0 20px 50px rgba(0, 0, 0, 0.55)',
+  colorScheme:      'dark',
+  background:       'var(--bg)',
+  color:            'var(--text)',
   minHeight: '100vh',
   fontFamily: 'var(--font-body, system-ui, sans-serif)',
   position: 'relative',
