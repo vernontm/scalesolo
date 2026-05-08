@@ -1686,7 +1686,15 @@ function SpaceBuilder({ space, onSave, onClose }) {
         return n
       }
       if (scope === 'up_to_here') {
-        // Wipe every ancestor so they re-execute fresh.
+        // Smart-cache: keep ancestors with cached output, only reset
+        // those that don't have one. The user's intent is "produce the
+        // target's output, re-running upstream as needed" — they did
+        // NOT ask to burn credits re-rendering already-done expensive
+        // nodes. If they really want a fresh upstream pass, they can
+        // click each cached node's ▶ first and pick "Run this node
+        // only" to invalidate, or use the global Run button.
+        const isCached = n.data?.status === 'done' && n.data?.output
+        if (isCached) return n
         return { ...n, data: { ...n.data, status: 'idle', output: null, error: null } }
       }
       // 'full' and auto_run path use the old logic.
@@ -1780,14 +1788,14 @@ function SpaceBuilder({ space, onSave, onClose }) {
           key: 'self_only',
           label: 'Run this node only',
           hint: allParentsCached
-            ? 'Reuses the cached output of every upstream node.'
-            : 'Some upstream nodes haven\'t run yet — this option will fail. Pick "Run up to here" instead.',
+            ? 'Reuses cached upstream. Free aggregators (Collection, Combine, etc.) auto-thread; expensive nodes (Avatar render, Script gen, Polish) only fire if cached.'
+            : 'Some upstream nodes haven\'t run yet. Pick "Run up to here" so they catch up, or run them individually first.',
           primary: true,
         },
         {
           key: 'up_to_here',
           label: 'Run up to this node',
-          hint: 'Re-runs every upstream node, then this one. Anything downstream stays untouched.',
+          hint: 'Cached upstream nodes are reused, uncached ones run. No credit burn on already-done renders. Anything downstream of this node stays untouched.',
         },
       ]
       window.__spaceUserDialogOpen = true

@@ -2783,6 +2783,11 @@ export function CaptionsEditor({ nodeId, data, onPatch, allNodes, allEdges }) {
 // ── REGISTRY ────────────────────────────────────────────────────────────────
 export const NODE_REGISTRY = {
   text_input: {
+    // Marked free=true: zero API/credit cost. The runner is safe to
+    // auto-execute uncached free nodes during 'Run this node only' so
+    // a cached upstream chain can flow through aggregators (collection,
+    // combine, picker) without forcing the user to manually re-run them.
+    free: true,
     label: 'Text', description: 'Topic, hook, or any raw text.',
     icon: Type, category: 'inputs', color: '#94a3b8',
     inputs: [], outputs: [{ id: 'out', label: 'Out' }],
@@ -2792,6 +2797,7 @@ export const NODE_REGISTRY = {
   },
 
   audio_upload: {
+    free: true,
     label: 'Audio', description: 'Upload an audio file (MP3 / WAV / M4A) to use as the voice track for an avatar render. Wire its "out" into Avatar render in place of (or alongside) a script.',
     icon: Mic, category: 'inputs', color: '#22d3ee',
     inputs: [], outputs: [{ id: 'out', label: 'Out' }],
@@ -2805,6 +2811,7 @@ export const NODE_REGISTRY = {
   },
 
   image_upload: {
+    free: true,
     label: 'Reference images', description: 'Upload images to use as references in image gen. Each image gets an editable name (default "image 1", "image 2"). Reference specific ones in a generator prompt with @-mentions, e.g. "she is at @office holding @logo".',
     icon: Upload, category: 'inputs', color: '#0ea5e9',
     inputs: [], outputs: [{ id: 'out', label: 'Out' }],
@@ -2826,6 +2833,7 @@ export const NODE_REGISTRY = {
   },
 
   brand_profile: {
+    free: true,
     label: 'Brand profile', description: 'Pulls in a brand profile and exposes it to downstream generators. Per-node "inject" toggles let each space pass a different slice (voice/audience, theme, logo, bible, hashtags). When sync_all is on, this node auto-wires to every script_gen / caption_gen / image_gen on the canvas.',
     icon: Building2, category: 'inputs', color: '#ec4899',
     inputs: [], outputs: [{ id: 'out', label: 'Out' }],
@@ -3156,6 +3164,7 @@ ${String(script).slice(0, 2000)}
   },
 
   avatar_picker: {
+    free: true,
     label: 'Avatar', description: 'Pick an avatar + a look. Image strategy = Single uses one specific image; Randomize uses every image in the chosen look (Avatar render splits the script across them). Cycle looks (orthogonal toggle) rotates which LOOK is used each run — and the chosen image strategy still applies inside that look. So Cycle on + Randomize images = a different outfit per run AND multiple angles per video. The optional In handle accepts a trigger (typically Auto-run) so the picker is part of the auto-run chain and advances the cycle on every tick.',
     icon: UserCircle2, category: 'inputs', color: '#60a5fa',
     inputs: [{ id: 'in', label: 'In (trigger, optional)' }],
@@ -3397,6 +3406,7 @@ ${String(script).slice(0, 2000)}
   },
 
   collection: {
+    free: true,
     label: 'Collection', description: 'Catches outputs from any connected node and gathers them into a growing list (scripts, images, videos). Accumulates across runs — every time an upstream node re-runs, new items are appended (deduped by URL/text).',
     icon: ListChecks, category: 'outputs', color: '#10b981',
     inputs: [{ id: 'in', label: 'In (anything)' }],
@@ -3842,6 +3852,7 @@ ${String(script).slice(0, 2000)}
   },
 
   combine: {
+    free: true,
     label: 'Combine', description: 'Bundles incoming text (script / caption / hashtags) and media (image / video) into a single post package the save_library node can persist as one library row. Avatar-video mode reserved for a near-future update.',
     icon: CombineIcon, category: 'generators', color: '#0ea5e9',
     inputs: [{ id: 'in', label: 'In (text + media)' }],
@@ -4138,10 +4149,28 @@ export async function runSpace({ ctx, nodes, edges, onNodeChange }) {
     //   cycle_looks queue advances on every full run). Ignored when
     //   runOnlyTargetId is set, see above.
     if (ctx?.runOnlyTargetId && id !== ctx.runOnlyTargetId) {
-      // Non-target in self_only mode → use cache verbatim (whatever it
-      // is, even nothing). Never call def.run(). Status is left alone.
-      if (node.data?.output != null) outputsById.set(id, node.data.output)
-      continue
+      // Non-target in self_only mode. Two paths:
+      //   • Has cached output → use it verbatim. Same as before.
+      //   • No cached output BUT def.free === true → auto-run it. Free
+      //     nodes (collection, combine, picker, brand_profile, text /
+      //     audio / image_upload) are pure aggregators / projectors with
+      //     no API cost. Re-running them is safe and threads the cached
+      //     ancestors through to the target. Without this, a stale
+      //     intermediate (e.g. Collection in 'failed' state) would
+      //     swallow a perfectly good upstream chain and force the user
+      //     to re-render expensive nodes manually.
+      //   • No cached output AND not free → skip silently. The target
+      //     will fail its own input check; that's the honest outcome.
+      if (node.data?.output != null) {
+        outputsById.set(id, node.data.output)
+        continue
+      }
+      if (def.free) {
+        // Fall through to run def.run() below — the inputObj built from
+        // outputsById already contains every cached ancestor's output.
+      } else {
+        continue
+      }
     }
     // The target in self_only mode ALWAYS re-runs. The snapshot is taken
     // before React commits the setNodes reset, so node.data.status may
