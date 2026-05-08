@@ -93,7 +93,15 @@ export function MediaItem({ url, type = 'image', from = '', onDelete, aspectRati
         >
           <Btn Icon={Maximize2} title="Preview" onClick={() => window.__spaceOpenPreview?.({ url, type })} />
           <Btn Icon={ArrowUpRight} title="Add to board as new node" onClick={() => window.__spaceAddNodeFromItem?.({ url, type, from })} />
-          <Btn Icon={Download} title="Download" onClick={() => downloadUrl(url)} />
+          <Btn Icon={Download} title="Download" onClick={() => {
+            // Force the right extension so the OS recognizes the file —
+            // Supabase Storage signed URLs strip the extension off the
+            // download name, so without this the file lands as "download"
+            // and macOS guesses "GIF" since the preview is auto-looping.
+            const ext = type === 'video' ? 'mp4' : (type === 'audio' ? 'mp3' : 'png')
+            const base = (from || 'download').toString().replace(/\W+/g, '-').toLowerCase().slice(0, 60) || 'download'
+            downloadUrl(url, `${base}.${ext}`)
+          }} />
           {onDelete && <Btn Icon={Trash2} title="Remove" onClick={onDelete} />}
         </div>
       )}
