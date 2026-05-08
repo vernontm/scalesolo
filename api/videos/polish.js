@@ -369,7 +369,15 @@ export default async function handler(req, res) {
 
       args.push('-filter_complex', filters.join(';'))
       args.push('-map', vLabel, '-map', aLabel)
-      args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23')
+      // File-size discipline: Supabase Storage's global 50 MB upload cap
+      // (per request, separate from the bucket's file_size_limit) was
+      // bombing polishes that overran. CRF 26 + preset fast cuts size
+      // roughly in half vs ultrafast/crf23 with minimal quality drop,
+      // and -maxrate clamps the peak so we don't blow past 45 MB even on
+      // a high-motion 60-second clip. faststart keeps the moov atom up
+      // front for instant browser/TikTok playback.
+      args.push('-c:v', 'libx264', '-preset', 'fast', '-crf', '26')
+      args.push('-maxrate', '5500k', '-bufsize', '11000k')
       args.push('-c:a', 'aac', '-b:a', '128k')
       args.push('-movflags', '+faststart', outPath)
 
