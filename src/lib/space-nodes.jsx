@@ -1198,8 +1198,14 @@ function AvatarPickerBody({ data, onPatch }) {
   const lookId = data.props?.look_id || ''
   const look = looks.find((l) => l.id === lookId) || looks[0]
   const lookImages = (look?.images || []).slice().sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
-  // Mode: 'single' | 'randomize' (across images in one look) | 'cycle_looks' (across looks per run)
-  const mode = data.props?.mode || 'single'
+  // Image strategy within a look: 'single' = use the picked image_id every
+  // time; 'randomize' = use all images in the look (avatar_render splits
+  // the script across them). Migrate the old standalone 'cycle_looks'
+  // value to mode='randomize' + cycle_looks=true so existing spaces stay
+  // functional after the orthogonal toggle split.
+  const rawMode = data.props?.mode || 'single'
+  const mode = rawMode === 'cycle_looks' ? 'randomize' : rawMode
+  const cycleLooks = !!data.props?.cycle_looks || rawMode === 'cycle_looks'
   const imageId = data.props?.image_id || (lookImages[0]?.id || '')
 
   // Cycle-looks runtime state, populated by run() and persisted on the
@@ -1264,21 +1270,43 @@ function AvatarPickerBody({ data, onPatch }) {
             style={tinyInput}
             value={look?.id || ''}
             onChange={(e) => onPatch({ look_id: e.target.value, image_id: '' })}
-            disabled={mode === 'cycle_looks'}
+            disabled={cycleLooks}
+            title={cycleLooks ? 'Cycle looks is on — the runtime picks a look each tick.' : ''}
           >
             {looks.map((l, i) => <option key={l.id} value={l.id}>{l.name || `Look ${i + 1}`} ({l.images?.length || 0})</option>)}
           </select>
         </NodeField>
       )}
 
-      {(lookImages.length > 0 || looks.length > 1) && (
+      {looks.length > 1 && (
+        <NodeField label="Cycle looks">
+          <button
+            type="button"
+            className="nodrag"
+            onClick={(e) => { e.stopPropagation(); onPatch({ cycle_looks: !cycleLooks, ...(rawMode === 'cycle_looks' ? { mode: 'randomize' } : {}) }) }}
+            title="Each workflow run picks a different look from this avatar's set, then reshuffles after the last."
+            style={{
+              width: '100%', padding: '6px 10px', borderRadius: 6, fontSize: 11,
+              border: `1px solid ${cycleLooks ? 'var(--red)' : 'var(--border)'}`,
+              background: cycleLooks ? 'rgba(239,68,68,0.16)' : 'var(--surface-2)',
+              color: cycleLooks ? 'var(--red)' : 'var(--text-soft)',
+              cursor: 'pointer', fontFamily: 'var(--font-display)', fontWeight: 700,
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            }}
+          >
+            <span>{cycleLooks ? `On — rotates ${looks.length} looks per run` : `Off — uses one fixed look`}</span>
+            <span style={{ fontSize: 10, opacity: 0.8 }}>{cycleLooks ? '✓' : ''}</span>
+          </button>
+        </NodeField>
+      )}
+
+      {lookImages.length > 0 && (
         <>
-          <NodeField label="Mode">
-            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          <NodeField label="Image strategy">
+            <div style={{ display: 'flex', gap: 4 }}>
               {[
                 ['single', 'Single image'],
                 lookImages.length > 1 && ['randomize', `Randomize ${lookImages.length} imgs`],
-                looks.length > 1 && ['cycle_looks', `Cycle ${looks.length} looks`],
               ].filter(Boolean).map(([k, label]) => {
                 const on = mode === k
                 return (
@@ -1300,28 +1328,30 @@ function AvatarPickerBody({ data, onPatch }) {
             </div>
           </NodeField>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4, marginTop: 4 }}>
-            {lookImages.map((im) => {
-              const isPicked = mode === 'single' ? imageId === im.id : true
-              return (
-                <button
-                  key={im.id}
-                  type="button"
-                  className="nodrag"
-                  onClick={(e) => { e.stopPropagation(); if (mode === 'single') onPatch({ image_id: im.id, image_url: im.image_url }) }}
-                  title={mode === 'single' ? 'Use this image' : 'Included in randomization'}
-                  style={{
-                    aspectRatio: '1', padding: 0, borderRadius: 4, cursor: mode === 'single' ? 'pointer' : 'default',
-                    border: `2px solid ${isPicked && mode === 'single' ? 'var(--red)' : 'transparent'}`,
-                    background: 'transparent', overflow: 'hidden',
-                    opacity: mode === 'randomize' || isPicked ? 1 : 0.55,
-                  }}
-                >
-                  <img src={im.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                </button>
-              )
-            })}
-          </div>
+          {!cycleLooks && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4, marginTop: 4 }}>
+              {lookImages.map((im) => {
+                const isPicked = mode === 'single' ? imageId === im.id : true
+                return (
+                  <button
+                    key={im.id}
+                    type="button"
+                    className="nodrag"
+                    onClick={(e) => { e.stopPropagation(); if (mode === 'single') onPatch({ image_id: im.id, image_url: im.image_url }) }}
+                    title={mode === 'single' ? 'Use this image' : 'Included in randomization'}
+                    style={{
+                      aspectRatio: '1', padding: 0, borderRadius: 4, cursor: mode === 'single' ? 'pointer' : 'default',
+                      border: `2px solid ${isPicked && mode === 'single' ? 'var(--red)' : 'transparent'}`,
+                      background: 'transparent', overflow: 'hidden',
+                      opacity: mode === 'randomize' || isPicked ? 1 : 0.55,
+                    }}
+                  >
+                    <img src={im.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                  </button>
+                )
+              })}
+            </div>
+          )}
         </>
       )}
 
@@ -1331,7 +1361,7 @@ function AvatarPickerBody({ data, onPatch }) {
         </div>
       )}
 
-      {mode === 'cycle_looks' && cycleProgressLabel && (
+      {cycleLooks && cycleProgressLabel && (
         <div style={{ marginTop: 6, padding: '6px 8px', borderRadius: 6, background: 'rgba(96,165,250,0.10)', border: '1px solid rgba(96,165,250,0.35)', fontSize: 11, color: '#60a5fa', lineHeight: 1.4 }}>
           {cycleProgressLabel} — next run advances. Reshuffles after the last look.
         </div>
@@ -2973,98 +3003,98 @@ ${String(script).slice(0, 2000)}
   },
 
   avatar_picker: {
-    label: 'Avatar', description: 'Pick an avatar + a look. Mode = Single uses one specific image. Mode = Randomize uses every image in the chosen look (Avatar render splits the script across them). Mode = Cycle looks rotates through every look on the avatar — each workflow run uses a different one, then reshuffles when the cycle finishes. The optional In handle accepts a trigger (typically Auto-run) so the picker counts as part of the auto-triggered chain and advances the cycle on every tick.',
+    label: 'Avatar', description: 'Pick an avatar + a look. Image strategy = Single uses one specific image; Randomize uses every image in the chosen look (Avatar render splits the script across them). Cycle looks (orthogonal toggle) rotates which LOOK is used each run — and the chosen image strategy still applies inside that look. So Cycle on + Randomize images = a different outfit per run AND multiple angles per video. The optional In handle accepts a trigger (typically Auto-run) so the picker is part of the auto-run chain and advances the cycle on every tick.',
     icon: UserCircle2, category: 'inputs', color: '#60a5fa',
-    // Optional trigger input. Nothing is read off it — wiring Auto-run here
-    // simply pulls this node into the auto_run descendant set so it
-    // participates in every tick (and, in cycle_looks mode, advances).
     inputs: [{ id: 'in', label: 'In (trigger, optional)' }],
     outputs: [{ id: 'out', label: 'Out' }],
-    initialProps: { avatar_id: '', look_id: '', image_id: '', mode: 'single' },
-    // Cheap node (no API calls) — and in cycle_looks mode it MUST execute
+    initialProps: { avatar_id: '', look_id: '', image_id: '', mode: 'single', cycle_looks: false },
+    // Cheap node (no API calls) — and when cycle_looks is on it MUST execute
     // every run to advance the queue. Skip the cache short-circuit.
     noCache: true,
     Body: AvatarPickerBody,
     run: async ({ data, ctx }) => {
-      const { avatar_id, look_id, image_id, image_url, mode } = data.props || {}
+      const props = data.props || {}
+      const { avatar_id, image_id, image_url } = props
       if (!avatar_id) throw new Error('Pick an avatar')
 
-      // ── Cycle looks: pick a different look per run, reshuffle on wrap ──
-      if (mode === 'cycle_looks') {
+      // Migrate legacy mode='cycle_looks' (pre-orthogonal-toggle spaces)
+      // to the new shape: mode is now strictly the image strategy, and
+      // cycle_looks is its own boolean.
+      const rawMode = props.mode || 'single'
+      const imageMode = rawMode === 'cycle_looks' ? 'randomize' : (rawMode === 'randomize' ? 'randomize' : 'single')
+      const cycleLooks = !!props.cycle_looks || rawMode === 'cycle_looks'
+
+      // Resolve which look this run uses. Default = the prop. With cycle
+      // looks on, walk the queue.
+      let chosenLookId = props.look_id || null
+      let cycleStatePatch = null
+
+      if (cycleLooks) {
         const myAvatar = (ctx?.avatars || []).find((a) => a.id === avatar_id)
         const allLookIds = (myAvatar?.looks || []).map((l) => l.id).filter(Boolean)
         if (allLookIds.length === 0) throw new Error('Cycle looks needs at least one look on the avatar.')
         if (allLookIds.length === 1) {
-          // Trivial cycle — just use the only look.
-          return {
-            avatar: { avatar_id, look_id: allLookIds[0], image_id: null, image_url: null, mode: 'randomize' },
-            cycle_state: { avatar_id, queue: allLookIds, cursor: 1, pool_key: allLookIds.slice().sort().join(',') },
-          }
-        }
-
-        // Read prior queue if it matches the current avatar + look set.
-        const poolKey = allLookIds.slice().sort().join(',')
-        const prior = data?.output?.cycle_state
-        let queue, cursor
-        if (prior && prior.avatar_id === avatar_id && prior.pool_key === poolKey && Array.isArray(prior.queue) && prior.queue.length === allLookIds.length) {
-          queue = prior.queue
-          cursor = Math.max(0, Math.min(prior.cursor || 0, queue.length))
+          chosenLookId = allLookIds[0]
+          cycleStatePatch = { avatar_id, queue: allLookIds, cursor: 1, pool_key: allLookIds.slice().sort().join(',') }
         } else {
-          // Fresh shuffle (Fisher-Yates).
-          queue = allLookIds.slice()
-          for (let i = queue.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1))
-            ;[queue[i], queue[j]] = [queue[j], queue[i]]
-          }
-          cursor = 0
-        }
-
-        const chosenLookId = queue[cursor]
-        let nextCursor = cursor + 1
-        let nextQueue = queue
-        if (nextCursor >= queue.length) {
-          // Reshuffle for the next cycle. Avoid showing the same look twice
-          // back-to-back across the seam by re-rolling if the new queue's
-          // first id equals the just-used one.
-          let attempts = 0
-          do {
-            const reshuffled = queue.slice()
-            for (let i = reshuffled.length - 1; i > 0; i--) {
+          const poolKey = allLookIds.slice().sort().join(',')
+          const prior = data?.output?.cycle_state
+          let queue, cursor
+          if (prior && prior.avatar_id === avatar_id && prior.pool_key === poolKey && Array.isArray(prior.queue) && prior.queue.length === allLookIds.length) {
+            queue = prior.queue
+            cursor = Math.max(0, Math.min(prior.cursor || 0, queue.length))
+          } else {
+            // Fresh shuffle (Fisher-Yates).
+            queue = allLookIds.slice()
+            for (let i = queue.length - 1; i > 0; i--) {
               const j = Math.floor(Math.random() * (i + 1))
-              ;[reshuffled[i], reshuffled[j]] = [reshuffled[j], reshuffled[i]]
+              ;[queue[i], queue[j]] = [queue[j], queue[i]]
             }
-            nextQueue = reshuffled
-            attempts++
-          } while (nextQueue[0] === chosenLookId && attempts < 8 && nextQueue.length > 1)
-          nextCursor = 0
-        }
-
-        return {
-          avatar: {
-            avatar_id,
-            look_id: chosenLookId,
-            // Like randomize mode, let avatar_render fetch the look's images
-            // server-side rather than locking to a single image_id here.
-            image_id: null,
-            image_url: null,
-            mode: 'randomize',
-          },
-          cycle_state: { avatar_id, queue: nextQueue, cursor: nextCursor, pool_key: poolKey, last_used_look_id: chosenLookId },
+            cursor = 0
+          }
+          chosenLookId = queue[cursor]
+          let nextCursor = cursor + 1
+          let nextQueue = queue
+          if (nextCursor >= queue.length) {
+            // Reshuffle for the next cycle, avoiding back-to-back repeats
+            // across the seam.
+            let attempts = 0
+            do {
+              const reshuffled = queue.slice()
+              for (let i = reshuffled.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1))
+                ;[reshuffled[i], reshuffled[j]] = [reshuffled[j], reshuffled[i]]
+              }
+              nextQueue = reshuffled
+              attempts++
+            } while (nextQueue[0] === chosenLookId && attempts < 8 && nextQueue.length > 1)
+            nextCursor = 0
+          }
+          cycleStatePatch = { avatar_id, queue: nextQueue, cursor: nextCursor, pool_key: poolKey, last_used_look_id: chosenLookId }
         }
       }
 
-      return {
+      // Image strategy applies AFTER the look is picked. In randomize mode
+      // we hand off look_id only and avatar_render fetches the look's
+      // images server-side. In single mode we keep the picked image_id —
+      // unless cycle_looks just rotated us into a different look (the old
+      // image_id wouldn't belong to the new look), in which case fall back
+      // to "first image of this look" by clearing image_id.
+      const lookChanged = cycleLooks && chosenLookId !== props.look_id
+      const useImageId = imageMode === 'single' && !lookChanged ? (image_id || null) : null
+      const useImageUrl = imageMode === 'single' && !lookChanged ? (image_url || null) : null
+
+      const out = {
         avatar: {
           avatar_id,
-          look_id: look_id || null,
-          image_id: mode === 'single' ? (image_id || null) : null,
-          // Single mode also stashes the chosen image_url so avatar_render
-          // doesn't have to refetch. Randomize mode fetches all look images
-          // server-side at run time.
-          image_url: mode === 'single' ? (image_url || null) : null,
-          mode: mode === 'randomize' ? 'randomize' : 'single',
+          look_id: chosenLookId,
+          image_id: useImageId,
+          image_url: useImageUrl,
+          mode: imageMode === 'randomize' ? 'randomize' : 'single',
         },
       }
+      if (cycleStatePatch) out.cycle_state = cycleStatePatch
+      return out
     },
   },
 
