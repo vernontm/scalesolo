@@ -2392,7 +2392,21 @@ function SpaceBuilder({ space, onSave, onClose }) {
             >
               <Editor
                 nodeId={editingNodeId}
-                data={node.data}
+                // Inject the same _ctx* slices the canvas body uses so
+                // editor sub-components (uploaders, brand pickers, etc.)
+                // can read profile id / brand list / upstream urls.
+                // Without this the music + watermark uploaders see
+                // profileId=undefined and stay disabled.
+                data={{
+                  ...node.data,
+                  _ctxProfileId: selectedProfileId,
+                  _ctxProfiles: profiles,
+                  _ctxAvatars: avatars,
+                  _ctxPublicAvatars: publicAvatars,
+                  _ctxUpstreamVideoUrl: findUpstreamVideoUrl(editingNodeId, nodes, edges),
+                  _ctxUpstreamScript: findUpstreamScript(editingNodeId, nodes, edges),
+                  _ctxUpstreamLogoUrl: findUpstreamLogoUrl(editingNodeId, nodes, edges),
+                }}
                 onPatch={(patch) => window.__spacePatchNode?.(editingNodeId, patch)}
                 allNodes={nodes}
                 allEdges={edges}
