@@ -2973,9 +2973,13 @@ ${String(script).slice(0, 2000)}
   },
 
   avatar_picker: {
-    label: 'Avatar', description: 'Pick an avatar + a look. Mode = Single uses one specific image. Mode = Randomize uses every image in the chosen look (Avatar render splits the script across them). Mode = Cycle looks rotates through every look on the avatar — each workflow run uses a different one, then reshuffles when the cycle finishes.',
+    label: 'Avatar', description: 'Pick an avatar + a look. Mode = Single uses one specific image. Mode = Randomize uses every image in the chosen look (Avatar render splits the script across them). Mode = Cycle looks rotates through every look on the avatar — each workflow run uses a different one, then reshuffles when the cycle finishes. The optional In handle accepts a trigger (typically Auto-run) so the picker counts as part of the auto-triggered chain and advances the cycle on every tick.',
     icon: UserCircle2, category: 'inputs', color: '#60a5fa',
-    inputs: [], outputs: [{ id: 'out', label: 'Out' }],
+    // Optional trigger input. Nothing is read off it — wiring Auto-run here
+    // simply pulls this node into the auto_run descendant set so it
+    // participates in every tick (and, in cycle_looks mode, advances).
+    inputs: [{ id: 'in', label: 'In (trigger, optional)' }],
+    outputs: [{ id: 'out', label: 'Out' }],
     initialProps: { avatar_id: '', look_id: '', image_id: '', mode: 'single' },
     // Cheap node (no API calls) — and in cycle_looks mode it MUST execute
     // every run to advance the queue. Skip the cache short-circuit.
