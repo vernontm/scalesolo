@@ -1289,12 +1289,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
     if (!subsetNodes.length) return
 
     setRunning(true); setError(null); abortRunRef.current = false
-    // Build the descendant set (everything downstream of the target) so we
-    // can force-reset them when triggered by auto_run. For an auto_run
-    // tick we want a FRESH chain on every fire — same cached-done short
-    // circuit that's perfect for "re-run combine_videos without re-paying
-    // for avatar render" would otherwise just re-emit the same script
-    // every hour.
+    // Build the descendant set (everything downstream of the target).
     const targetType = nodes.find((n) => n.id === targetId)?.data?.type
     const isAutoTrigger = targetType === 'auto_run'
     const descendants = new Set([targetId])
@@ -1310,21 +1305,34 @@ function SpaceBuilder({ space, onSave, onClose }) {
       }
     }
 
-    // Smart reset rules:
+    // Reset rules:
     //  • The target is always reset so it actually re-runs.
-    //  • For auto_run triggers, every descendant is also force-reset so
-    //    each tick produces fresh content (new script, new render, etc).
-    //  • For per-node manual runs, descendants stay cached when they're
-    //    already 'done' — saves credits when you re-run a single node
-    //    upstream and just want the cascade to re-thread.
+    //  • Manual per-node runs leave descendants cached (saves credits on
+    //    "re-run combine_videos but not avatar render" type retries).
+    //  • Auto_run triggers do NOT pre-clear descendant outputs anymore —
+    //    instead we pass a forceReRun set in ctx so runSpace knows to
+    //    skip the cached-done short-circuit for those nodes. Their old
+    //    outputs stay visible on the canvas while a tick is in flight,
+    //    only getting overwritten when each node completes its new run.
+    //    This means a mid-tick page refresh shows the previous run's
+    //    results instead of a blank chain.
     setNodes((arr) => arr.map((n) => {
       if (!want.has(n.id)) return n
-      const forceReset = n.id === targetId || (isAutoTrigger && descendants.has(n.id))
-      const isCached = !forceReset && n.data?.status === 'done' && n.data?.output
-      if (isCached) return n
-      return { ...n, data: { ...n.data, status: 'idle', output: null, error: null } }
+      if (n.id === targetId) {
+        return { ...n, data: { ...n.data, status: 'idle', output: null, error: null } }
+      }
+      // Sibling sources / non-auto runs use the old cache logic.
+      if (!isAutoTrigger) {
+        const isCached = n.data?.status === 'done' && n.data?.output
+        if (isCached) return n
+        return { ...n, data: { ...n.data, status: 'idle', output: null, error: null } }
+      }
+      // Auto_run: leave descendant state alone — runSpace will overwrite
+      // each node's output when its fresh run completes.
+      return n
     }))
-    const ctx = { token: session.access_token, profileId: selectedProfileId, avatars, profiles, shouldAbort: () => abortRunRef.current, runFromTargetId: targetId }
+    const forceReRun = isAutoTrigger ? new Set([...descendants].filter((id) => id !== targetId)) : null
+    const ctx = { token: session.access_token, profileId: selectedProfileId, avatars, profiles, shouldAbort: () => abortRunRef.current, runFromTargetId: targetId, forceReRun }
     const snapshot = safeClone({ nodes: subsetNodes, edges: subsetEdges })
     const startedAt = Date.now()
     const triggerType = nodes.find((n) => n.id === targetId)?.data?.type === 'auto_run' ? 'auto_run' : 'per_node'

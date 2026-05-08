@@ -3844,12 +3844,16 @@ export async function runSpace({ ctx, nodes, edges, onNodeChange }) {
       if (sname) inputsByName[sname] = sourceOut
     }
 
-    // Cached short-circuit: node arrived already "done" with output (set by
-    // runFromNode's smart reset). Skip def.run() and seed outputsById from
-    // its existing output so downstream nodes thread through correctly.
-    // The target node itself is always re-run (runFromNode forces its
-    // status back to 'idle' before the snapshot).
-    if (node.data?.status === 'done' && node.data?.output) {
+    // Cached short-circuit: node arrived already "done" with output. Skip
+    // def.run() and seed outputsById from its existing output so downstream
+    // nodes thread through correctly.
+    //
+    // ctx.forceReRun is a Set passed by runFromNode when the trigger is an
+    // auto_run node — we want each tick to re-execute the chain even if
+    // descendants still hold last-tick's outputs. Skip the cache for any
+    // node in that set so def.run() actually fires.
+    const skipCache = ctx?.forceReRun && ctx.forceReRun.has?.(id)
+    if (!skipCache && node.data?.status === 'done' && node.data?.output) {
       outputsById.set(id, node.data.output)
       continue
     }
