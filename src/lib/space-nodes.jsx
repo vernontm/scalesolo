@@ -17,6 +17,7 @@ import {
   Mic, Sparkles, Send,
 } from 'lucide-react'
 import { supabase } from './supabase.js'
+import MusicMixPreview from '../components/MusicMixPreview.jsx'
 
 // ── shared download helper ──────────────────────────────────────────────────
 export async function downloadUrl(url, filename) {
@@ -1831,6 +1832,30 @@ export function findUpstreamLogoUrl(nodeId, nodes, edges) {
   return null
 }
 
+// Walk upstream from `nodeId` and return the first audio_upload's URL.
+// Used by the music-preview block in the polish editor so the user can
+// hear the mix before paying for a render.
+export function findUpstreamMusicUrl(nodeId, nodes, edges) {
+  if (!nodeId) return null
+  const seen = new Set([nodeId])
+  const queue = [nodeId]
+  while (queue.length) {
+    const cur = queue.shift()
+    for (const e of edges) {
+      if (e.target !== cur || seen.has(e.source)) continue
+      seen.add(e.source)
+      const src = nodes.find((n) => n.id === e.source)
+      if (!src) continue
+      if (src.data?.type === 'audio_upload') {
+        const url = src.data?.props?.url
+        if (url) return url
+      }
+      queue.push(e.source)
+    }
+  }
+  return null
+}
+
 // Tiny labelled slider used throughout the editor sections.
 function PolishSlider({ label, value, min, max, step = 1, suffix = '', onChange }) {
   return (
@@ -2192,6 +2217,17 @@ export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges })
     () => findUpstreamLogoUrl(nodeId, allNodes, allEdges),
     [nodeId, allNodes, allEdges]
   )
+  // Music preview pulls the upstream rendered video + the wired-in audio
+  // file so the user can A/B the mix with a slider before paying for a
+  // polish render.
+  const upstreamVideo = useMemo(
+    () => data.output?.video_url || findUpstreamVideoUrl(nodeId, allNodes, allEdges),
+    [nodeId, allNodes, allEdges, data.output?.video_url]
+  )
+  const upstreamMusic = useMemo(
+    () => findUpstreamMusicUrl(nodeId, allNodes, allEdges),
+    [nodeId, allNodes, allEdges]
+  )
 
   const setP = (patch) => onPatch(patch)
 
@@ -2329,10 +2365,16 @@ export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges })
       {/* Music ─────────────────────────────────────────────────────────── */}
       <PolishSection icon={Mic} title="Music">
         <div style={{ fontSize: 10.5, color: 'var(--muted)', marginBottom: 10, lineHeight: 1.4 }}>
-          Wire an audio_upload node into "in" to use background music. Volume ducks under the original voice.
+          Wire an audio_upload node into "in" to use background music. Volume ducks under the original voice. Preview the mix before you render.
         </div>
-        <PolishSlider label="Volume" value={Math.round(Number(props.music_volume ?? 0.15) * 100)} min={0} max={50} suffix="%" onChange={(v) => setP({ music_volume: v / 100 })} />
-        <PolishSlider label="Auto fade-out" value={Number(props.music_fade_secs ?? 1.5)} min={0} max={5} step={0.1} suffix="s" onChange={(v) => setP({ music_fade_secs: Number(v.toFixed(1)) })} />
+        <MusicMixPreview
+          videoUrl={upstreamVideo}
+          musicUrl={upstreamMusic}
+          volume={Number(props.music_volume ?? 0.15)}
+          fadeSecs={Number(props.music_fade_secs ?? 1.5)}
+          onChange={(v) => setP({ music_volume: v })}
+          onChangeFade={(v) => setP({ music_fade_secs: v })}
+        />
       </PolishSection>
     </>
   )

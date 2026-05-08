@@ -1,6 +1,7 @@
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Sparkles, Menu, Bot } from 'lucide-react'
 import ThemeToggle from './ThemeToggle.jsx'
+import NotificationBell from './NotificationBell.jsx'
 import CreditsBadge from './CreditsBadge.jsx'
 import ProfileSwitcher from './ProfileSwitcher.jsx'
 import { useAgent } from '../context/AgentContext.jsx'
@@ -136,6 +137,8 @@ export default function Header({ onOpenSidebar }) {
       <ProfileSwitcher />
 
       <CreditsBadge />
+
+      <NotificationBell />
 
       <ThemeToggle />
 
