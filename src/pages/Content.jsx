@@ -510,11 +510,21 @@ function SocialAccountsPanel({ profileId, token }) {
         {SOCIAL_PLATFORMS.map((p) => {
           const connected = connectedIds.includes(p.id)
           const info = social[p.id]
-          const handle = info?.username || info?.display_name || info?.handle
+          // Only show a handle in the pill if it looks like an actual
+          // username (starts with a letter, mostly alphanumeric, < 30
+          // chars). Upload-Post sometimes returns numeric platform IDs
+          // (Instagram graph user_id, TikTok open_id, etc.) — those are
+          // useless to the user and look like leaked internals.
+          const rawHandle = info?.username || info?.display_name || info?.handle || ''
+          const looksLikeRealHandle = typeof rawHandle === 'string'
+            && rawHandle.length > 0
+            && rawHandle.length < 30
+            && /^[a-zA-Z][a-zA-Z0-9._-]*$/.test(rawHandle)
+          const handle = looksLikeRealHandle ? rawHandle : null
           return (
             <div
               key={p.id}
-              title={connected && handle ? `Connected as ${handle}` : connected ? 'Connected' : 'Not connected'}
+              title={connected && handle ? `Connected as @${handle}` : connected ? 'Connected' : 'Not connected'}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 6,
                 padding: '5px 10px', borderRadius: 999,
@@ -530,16 +540,11 @@ function SocialAccountsPanel({ profileId, token }) {
                 background: connected ? '#2ecc71' : 'var(--muted)',
               }} />
               {p.label}
-              {connected && handle && <span style={{ color: 'var(--muted)', fontWeight: 500 }}>· {handle}</span>}
+              {connected && handle && <span style={{ color: 'var(--muted)', fontWeight: 500 }}>· @{handle}</span>}
             </div>
           )
         })}
       </div>
-      {profile?.username && (
-        <div style={{ marginTop: 10, fontSize: 10.5, color: 'var(--muted)' }}>
-          Profile: <code style={{ background: 'var(--surface-2)', padding: '1px 6px', borderRadius: 4 }}>{profile.username}</code>
-        </div>
-      )}
     </div>
   )
 }

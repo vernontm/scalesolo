@@ -1818,14 +1818,31 @@ function SpaceBuilder({ space, onSave, onClose }) {
   const runFromNodeRef = useRef(runFromNode)
   useEffect(() => { runFromNodeRef.current = runFromNode }, [runFromNode])
 
+  // Remember which auto_run nodes were already active on the previous
+  // render so we can distinguish two cases:
+  //   (a) The user just toggled an auto_run from off → on → fire ONE
+  //       run immediately, then continue on cadence.
+  //   (b) The canvas mounted with auto_run already active (refresh /
+  //       re-open) → only schedule the cadence interval, do NOT fire.
+  // Without this ref the effect can't tell the two apart and either
+  // both refresh and toggle-on fire (annoying) or neither does (also
+  // annoying; the user wants to confirm activation worked).
+  const prevActiveAutoRunIdsRef = useRef(new Set())
+
   useEffect(() => {
     const activeTriggers = nodes.filter((n) => n.data?.type === 'auto_run' && n.data?.props?.active)
+    const currentIds = new Set(activeTriggers.map((n) => n.id))
+    const prevIds = prevActiveAutoRunIdsRef.current
+    const newlyActivated = new Set([...currentIds].filter((id) => !prevIds.has(id)))
+    prevActiveAutoRunIdsRef.current = currentIds
+
     if (!activeTriggers.length) return
     const timers = []
     const firstTickTimers = []
     for (const trig of activeTriggers) {
       const opt = AUTORUN_OPTIONS.find((o) => o.id === trig.data.props.cadence) || AUTORUN_OPTIONS[2]
       const id = trig.id
+      const justActivated = newlyActivated.has(id)
       const tick = async () => {
         const live = nodesRef.current.find((n) => n.id === id)
         if (!live || !live.data?.props?.active) return
@@ -1870,16 +1887,16 @@ function SpaceBuilder({ space, onSave, onClose }) {
         }
       }
 
-      // NEVER fire on mount. Auto-run only ticks on its cadence
-      // interval going forward — opening / refreshing the canvas
-      // does not trigger a workflow run. The user explicitly asked
-      // for this: the only ways to start a run are
-      //   1) the next cadence boundary,
-      //   2) the global Run button in the toolbar,
-      //   3) the per-node play button.
-      // last_run_at gets stamped each tick, so if the canvas was
-      // closed for hours the next tick still fires correctly at the
-      // next cadence boundary from when this useEffect ran.
+      // Fire immediately ONLY on a fresh activation (off → on toggle).
+      // Refresh / re-mount with active=true persisted does NOT trigger
+      // anything — the effect's prevActiveAutoRunIdsRef tracks who was
+      // active last render, so we only fire for nodes that just flipped
+      // on this render.
+      // 800ms delay so the toast renders + state settles before the run
+      // starts; the user gets a clear "Auto-run firing" feedback.
+      if (justActivated) {
+        firstTickTimers.push(setTimeout(tick, 800))
+      }
       timers.push(setInterval(tick, opt.ms))
     }
     return () => {
