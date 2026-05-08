@@ -559,7 +559,7 @@ function SocialAccountsPanel({ profileId, token }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────
 const TABS = [
-  { value: 'library',    label: 'Library',    icon: Library,        filter: 'library',    empty: 'Generate your first piece of content to fill the library.' },
+  { value: 'library',    label: 'All',        icon: Library,        filter: 'library',    empty: 'Generate your first piece of content to fill this view.' },
   // (the "library" tab still exists — Schedule is the page name, Library
   // is just one view inside it)
   { value: 'calendar',   label: 'Calendar',   icon: Calendar,       filter: 'scheduled',  empty: 'Nothing scheduled in the next two weeks.' },

@@ -165,7 +165,7 @@ export default function LibraryPage() {
                 <div style={{ position: 'relative', aspectRatio: '9/16', background: '#000' }}>
                   {isVideo ? (
                     <>
-                      <video src={url} muted playsInline preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      <video src={url} autoPlay loop muted playsInline preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                       <div style={{
                         position: 'absolute', inset: 0, display: 'grid', placeItems: 'center',
                         background: 'linear-gradient(180deg, rgba(0,0,0,0) 50%, rgba(0,0,0,0.45) 100%)',

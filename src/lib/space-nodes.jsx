@@ -63,14 +63,20 @@ export function MediaItem({ url, type = 'image', from = '', onDelete, aspectRati
       style={{ position: 'relative', width: '100%', aspectRatio, borderRadius: rounded, overflow: 'hidden', background: 'var(--surface-2)' }}
     >
       {type === 'video' ? (
+        // GIF-style preview: auto-loop, muted, no controls. Click the
+        // Preview button in the hover overlay to open the fullscreen
+        // player with sound. disablePictureInPicture + the inline play
+        // suppress every native control browsers might surface.
         <video
           src={url}
-          controls
-          onPlay={(e) => {
-            const me = e.currentTarget
-            document.querySelectorAll('video').forEach((v) => { if (v !== me && !v.paused) v.pause() })
-          }}
-          style={{ width: '100%', height: '100%', objectFit: fit, background: '#000' }}
+          autoPlay
+          loop
+          muted
+          playsInline
+          preload="metadata"
+          disablePictureInPicture
+          controlsList="nodownload nofullscreen noremoteplayback"
+          style={{ width: '100%', height: '100%', objectFit: fit, background: '#000', pointerEvents: 'none' }}
         />
       ) : (
         <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: fit, display: 'block' }} />
