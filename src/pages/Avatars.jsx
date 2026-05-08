@@ -859,7 +859,7 @@ export default function Avatars() {
             if (trainingError && avatar?.training_status === 'failed') {
               toast({
                 kind: 'warn',
-                message: `Avatar saved, but HeyGen training had an issue: ${trainingError}\n\nYou can still upload looks and try again later.`,
+                message: `Avatar saved, but training had an issue: ${trainingError}\n\nYou can still upload looks and try again later.`,
                 ttl: 9000,
               })
             }

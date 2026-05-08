@@ -869,15 +869,15 @@ function PromptHighlightField({ textareaRef, value, placeholder, minHeight, onCh
               : <span
                   key={s.k}
                   style={{
+                    // CRITICAL: backdrop must keep identical glyph widths to
+                    // the underlying textarea so the caret never drifts.
+                    // Color + background only — no padding, border, margin,
+                    // or font-family change. Anything that affects layout
+                    // breaks click-to-position and mid-word typing.
                     color: colorFor(s.kind),
                     background: bgFor(s.kind),
-                    border: `1px solid ${s.kind === 'brand' ? 'rgba(236,72,153,0.45)' : 'rgba(168,85,247,0.45)'}`,
-                    borderRadius: 999,
-                    padding: '0 7px',
-                    fontWeight: 700,
-                    fontFamily: 'var(--font-display)',
-                    margin: '0 1px',
-                    whiteSpace: 'nowrap',
+                    borderRadius: 4,
+                    fontWeight: 'inherit',
                   }}
                 >{s.text}</span>
           )}
@@ -1372,7 +1372,7 @@ function AudioUploadBody({ data, onPatch }) {
       // upload that the avatar render will refuse anyway.
       const seconds = await readAudioDuration(file).catch(() => 0)
       if (seconds && seconds > AUDIO_MAX_SECONDS) {
-        throw new Error(`Audio is ${Math.round(seconds)}s — please trim to ${AUDIO_MAX_SECONDS}s or less. Avatar renders chop the audio across look images, and longer clips burn HeyGen credits + Vercel time.`)
+        throw new Error(`Audio is ${Math.round(seconds)}s — please trim to ${AUDIO_MAX_SECONDS}s or less.`)
       }
       const u = await uploadAudioToBucket(file, profileId)
       onPatch({ url: u, name: file.name, duration_secs: Math.round(seconds || 0) })
@@ -1564,7 +1564,7 @@ function AvatarPickerBody({ data, onPatch }) {
   const trainingStatus = selected?.training_status
   const trainingMsg = trainingStatus && !['ready', 'completed', 'success'].includes(trainingStatus)
     ? (trainingStatus === 'training'
-        ? 'HeyGen is still processing this avatar. Renders will fail until training completes.'
+        ? 'This avatar is still training. Renders will fail until it finishes.'
         : `Training status: ${trainingStatus}. Renders will fail; re-create the avatar.`)
     : null
 
@@ -1745,7 +1745,7 @@ function AvatarRenderBody({ data }) {
               {clipCount} {clipCount === 1 ? 'clip' : 'clips'} ready
             </span>
             {partialFails > 0 && (
-              <span title="Some clips failed during this render — see HeyGen logs." style={{ fontSize: 10.5, color: 'var(--amber)' }}>
+              <span title="Some clips failed during this render." style={{ fontSize: 10.5, color: 'var(--amber)' }}>
                 {partialFails} skipped
               </span>
             )}
@@ -3273,7 +3273,7 @@ function CombineBody({ data, onPatch }) {
       </NodeField>
       {mode === 'avatar_video' && (
         <div style={{ marginTop: 4, padding: '8px 10px', background: 'rgba(14,165,233,0.12)', border: '1px solid rgba(14,165,233,0.4)', borderRadius: 6, fontSize: 11, color: '#0ea5e9', lineHeight: 1.45 }}>
-          Wire a photo (image_upload, image_gen, or brand logo) + script + optional Avatar voice. HeyGen creates a talking photo from the image and renders the script. Voice falls back to the brand's default if not provided.
+          Wire a photo (image_upload, image_gen, or brand logo) + script + optional Avatar voice. Creates a talking photo from the image and renders the script. Voice falls back to the brand's default if not provided.
         </div>
       )}
       {summary.length > 0 && (
@@ -3955,7 +3955,7 @@ ${String(script).slice(0, 2000)}
   },
 
   avatar_render: {
-    label: 'Avatar video (HeyGen)', description: 'HeyGen renders an avatar from the connected look + voice. Wire a script for TTS lip-sync, OR an uploaded audio file to lip-sync to your own voice. With Cycle Looks or Randomize, the input is split across every look image and rendered as a series of clips you can stitch with Combine videos.',
+    label: 'Avatar video', description: 'Renders an avatar from the connected look + voice. Wire a script for TTS lip-sync, OR an uploaded audio file to lip-sync to your own voice. With Cycle Looks or Randomize, the input is split across every look image and rendered as a series of clips you can stitch with Combine videos.',
     icon: FileVideo, category: 'generators', color: '#ef4444',
     inputs: [{ id: 'in',  label: 'In (avatar + script or audio)' }],
     outputs: [{ id: 'out', label: 'Out' }],
