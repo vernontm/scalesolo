@@ -114,20 +114,12 @@ export default function MusicMixPreview({ videoUrl, musicUrl, volume, fadeSecs, 
     }
   }
 
-  if (!videoUrl) {
-    return (
-      <div style={hint}>
-        Wire a video into "in" — we'll mix it with the music here so you can hear the levels before paying for a render.
-      </div>
-    )
-  }
-  if (!musicUrl) {
-    return (
-      <div style={hint}>
-        Wire an audio_upload node into "in" to enable music + live preview.
-      </div>
-    )
-  }
+  // No video upstream → no point rendering a player. Stay quiet; the
+  // editor's other sections still work fine without it.
+  if (!videoUrl) return null
+  // No music yet → also stay quiet. The PolishMusicUpload component
+  // above already handles the empty state with its own dropzone.
+  if (!musicUrl) return null
 
   return (
     <div>

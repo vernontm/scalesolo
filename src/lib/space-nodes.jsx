@@ -1765,19 +1765,43 @@ function VideoPolishBody({ data, onPatch }) {
   const upstreamScript = data._ctxUpstreamScript || ''
   const upstreamLogo = data._ctxUpstreamLogoUrl || null
   const previewLogo = props.watermark_image_url || upstreamLogo
-  const previewVideo = out?.video_url || upstreamVideo
+  // Once the polish has actually rendered, the cached video already
+  // contains the burned overlays — so showing the live-overlay
+  // preview on top of it is wrong (double title, double watermark,
+  // wrong scale). Fall back to the rendered MediaItem; switch back
+  // to the live preview when the user edits or re-runs.
+  const hasRenderedVideo = !!out?.video_url
   return (
     <>
-      {/* Inline live preview — same composited DOM the drawer uses, scaled to fit. */}
-      <VideoPolishPreview
-        videoUrl={previewVideo}
-        script={upstreamScript}
-        props={props}
-        logoUrl={previewLogo}
-      />
-      <div style={{ marginTop: 6, marginBottom: 8, fontSize: 10, color: 'var(--muted)', textAlign: 'center', lineHeight: 1.3 }}>
-        {previewVideo ? 'Live preview — overlays update as you edit' : 'Run an upstream node to see the preview frame'}
-      </div>
+      {hasRenderedVideo ? (
+        <>
+          <MediaItem url={out.video_url} type="video" from={data.name || 'polished'} aspectRatio="9/16" />
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); downloadUrl(out.video_url, `${(data.name || 'polished').replace(/\W+/g, '-')}.mp4`) }}
+            style={{
+              marginTop: 8, width: '100%', padding: '6px 8px', fontSize: 11,
+              background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 6,
+              color: 'var(--text)', cursor: 'pointer',
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              marginBottom: 6,
+            }}
+          ><Download size={11} /> Download polished video</button>
+        </>
+      ) : (
+        <>
+          {/* Inline live preview — same composited DOM the drawer uses, scaled to fit. */}
+          <VideoPolishPreview
+            videoUrl={upstreamVideo}
+            script={upstreamScript}
+            props={props}
+            logoUrl={previewLogo}
+          />
+          <div style={{ marginTop: 6, marginBottom: 8, fontSize: 10, color: 'var(--muted)', textAlign: 'center', lineHeight: 1.3 }}>
+            {upstreamVideo ? 'Live preview — overlays update as you edit' : 'Run an upstream node to see the preview frame'}
+          </div>
+        </>
+      )}
       {/* Per-section toggles. Clicking the checkbox flips the section
           on / off without opening the editor. Click the row label to
           open the sidebar focused on that section. */}
