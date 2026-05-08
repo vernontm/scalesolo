@@ -1628,7 +1628,13 @@ function SpaceBuilder({ space, onSave, onClose }) {
       return n
     }))
     const forceReRun = isAutoTrigger ? new Set([...descendants].filter((id) => id !== targetId)) : null
-    const ctx = { token: session.access_token, profileId: selectedProfileId, avatars, profiles, shouldAbort: () => abortRunRef.current, runFromTargetId: targetId, forceReRun }
+    // self_only mode: pin a runOnlyTargetId so runSpace forces every
+    // non-target node to skip def.run() (even noCache ones like
+    // avatar_picker) and use its cached output verbatim. Without this
+    // pin, ancestors with status='idle' OR with noCache=true would
+    // re-execute and the user sees the whole chain run again.
+    const runOnlyTargetId = scope === 'self_only' ? targetId : null
+    const ctx = { token: session.access_token, profileId: selectedProfileId, avatars, profiles, shouldAbort: () => abortRunRef.current, runFromTargetId: targetId, forceReRun, runOnlyTargetId }
     const snapshot = safeClone({ nodes: subsetNodes, edges: subsetEdges })
     const startedAt = Date.now()
     const triggerType = nodes.find((n) => n.id === targetId)?.data?.type === 'auto_run' ? 'auto_run' : 'per_node'

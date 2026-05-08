@@ -4121,15 +4121,34 @@ export async function runSpace({ ctx, nodes, edges, onNodeChange }) {
       if (sname) inputsByName[sname] = sourceOut
     }
 
-    // Cached short-circuit: node arrived already "done" with output. Skip
-    // def.run() and seed outputsById from its existing output so downstream
-    // nodes thread through correctly.
+    // ── Cache / re-run policy ──────────────────────────────────────────
     //
-    // ctx.forceReRun is a Set passed by runFromNode when the trigger is an
-    // auto_run node — we want each tick to re-execute the chain even if
-    // descendants still hold last-tick's outputs. Skip the cache for any
-    // node in that set so def.run() actually fires.
-    const skipCache = (ctx?.forceReRun && ctx.forceReRun.has?.(id)) || def.noCache
+    // ctx.runOnlyTargetId — set by runFromNode when scope='self_only'.
+    //   In that mode every NON-target node MUST use its cached output
+    //   verbatim and must not run def.run(). This overrides def.noCache
+    //   too — avatar_picker's cycle queue does not advance when the
+    //   user picks "Run this node only", because they didn't ask for a
+    //   fresh upstream pass. Only the target re-executes.
+    //
+    // ctx.forceReRun — set by runFromNode for auto_run ticks: the
+    //   target's descendants must re-execute even if cached so each tick
+    //   produces fresh output downstream.
+    //
+    // def.noCache — node-level opt-out (avatar_picker uses it so the
+    //   cycle_looks queue advances on every full run). Ignored when
+    //   runOnlyTargetId is set, see above.
+    if (ctx?.runOnlyTargetId && id !== ctx.runOnlyTargetId) {
+      // Non-target in self_only mode → use cache verbatim (whatever it
+      // is, even nothing). Never call def.run(). Status is left alone.
+      if (node.data?.output != null) outputsById.set(id, node.data.output)
+      continue
+    }
+    // The target in self_only mode ALWAYS re-runs. The snapshot is taken
+    // before React commits the setNodes reset, so node.data.status may
+    // still read 'done' here — without this short-circuit the runner
+    // would skip def.run() and the user's click would do nothing.
+    const isRunOnlyTarget = ctx?.runOnlyTargetId === id
+    const skipCache = isRunOnlyTarget || (ctx?.forceReRun && ctx.forceReRun.has?.(id)) || def.noCache
     if (!skipCache && node.data?.status === 'done' && node.data?.output) {
       outputsById.set(id, node.data.output)
       continue
