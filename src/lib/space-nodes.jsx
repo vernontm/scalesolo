@@ -1069,8 +1069,8 @@ function ImageGenBody({ data, onPatch }) {
           type="button"
           onClick={(e) => { e.stopPropagation(); onPatch({ enhance_prompt: !(data.props?.enhance_prompt ?? true) }) }}
           title={(data.props?.enhance_prompt ?? true)
-            ? 'Claude rewrites your prompt with composition, lighting, and brand cues before sending to the image model. Click to disable.'
-            : 'Send your prompt verbatim. Click to let Claude enhance it.'}
+            ? 'AI rewrites your prompt with composition, lighting, and brand cues before sending to the image model. Click to disable.'
+            : 'Send your prompt verbatim. Click to let AI enhance it.'}
           style={{
             ...pillSelect,
             cursor: 'pointer',
@@ -2891,7 +2891,7 @@ export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges })
                 value={props.title_mode || 'auto'}
                 onChange={(e) => setP({ title_mode: e.target.value })}
               >
-                <option value="auto">Auto — transcribe + Claude writes</option>
+                <option value="auto">Auto — transcribe + AI writes</option>
                 <option value="manual">Manual — type my own</option>
               </select>
             </NodeField>
@@ -2904,7 +2904,7 @@ export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges })
                   onChange={(e) => setP({ title_topic: e.target.value })}
                 />
                 <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 4, lineHeight: 1.4 }}>
-                  ElevenLabs transcribes; Claude writes the title using your brand bible. ~800 ai_tokens per render.
+                  ElevenLabs transcribes; AI writes the title using your brand bible. ~800 ai_tokens per render.
                 </div>
               </NodeField>
             ) : (
@@ -3647,7 +3647,7 @@ export const NODE_REGISTRY = {
   },
 
   script_gen: {
-    label: 'Script generator', description: 'Claude writes a script from a topic. Supports @-mentions and an optional brand profile input.',
+    label: 'Script generator', description: 'AI writes a script from a topic. Supports @-mentions and an optional brand profile input.',
     icon: Wand2, category: 'generators', color: '#ef4444',
     inputs: [{ id: 'in', label: 'In (topic / brand)' }],
     outputs: [{ id: 'out', label: 'Out' }],
@@ -3684,7 +3684,7 @@ export const NODE_REGISTRY = {
   },
 
   caption_gen: {
-    label: 'Title + caption + hashtags', description: 'Generates a click-worthy title, a platform-tuned caption, and 5 hashtags for EVERY platform (TikTok, Instagram, YouTube, X, LinkedIn) in one Claude call. schedule_post automatically picks the right variant. Hashtag count is locked at 5.',
+    label: 'Title + caption + hashtags', description: 'Generates a click-worthy title, a platform-tuned caption, and 5 hashtags for EVERY platform (TikTok, Instagram, YouTube, X, LinkedIn) in one AI call. schedule_post automatically picks the right variant. Hashtag count is locked at 5.',
     icon: Captions, category: 'generators', color: '#f59e0b',
     inputs: [{ id: 'in', label: 'In (script / brand)' }],
     outputs: [{ id: 'out', label: 'Out' }],

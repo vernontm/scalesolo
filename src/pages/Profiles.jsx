@@ -318,7 +318,7 @@ function BiblePasteModal({ token, profileId, onClose, onApply }) {
         {!parsed ? (
           <>
             <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 10, lineHeight: 1.5 }}>
-              Paste your brand bible, voice doc, or any prose that describes your brand. Claude will extract structured fields (voice, audience, colors, fonts, handles, etc.) you can review before applying.
+              Paste your brand bible, voice doc, or any prose that describes your brand. Our AI will extract structured fields (voice, audience, colors, fonts, handles, etc.) you can review before applying.
             </div>
             <textarea
               className="textarea"
@@ -331,7 +331,7 @@ function BiblePasteModal({ token, profileId, onClose, onApply }) {
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
               <button className="btn-secondary" onClick={onClose}>Cancel</button>
               <button className="btn-primary" onClick={parse} disabled={busy || !text.trim()}>
-                {busy ? <Loader2 size={13} className="spin" /> : <Wand2 size={13} />} Parse with Claude
+                {busy ? <Loader2 size={13} className="spin" /> : <Wand2 size={13} />} Parse with AI
               </button>
             </div>
           </>
@@ -420,7 +420,7 @@ function PromptHelperModal({ onClose, onApply }) {
           <button aria-label="Close" onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6, borderRadius: 6 }}><X size={18} /></button>
         </div>
         <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 8, lineHeight: 1.5 }}>
-          Step 1. Copy this prompt and paste it into ChatGPT, Claude, or any AI you use. Replace the bracketed placeholder with your brand info or paste docs there.
+          Step 1. Copy this prompt and paste it into any AI tool you use. Replace the bracketed placeholder with your brand info or paste docs there.
         </div>
         <div style={{ position: 'relative', marginBottom: 14 }}>
           <pre style={{
@@ -933,7 +933,7 @@ export default function Profiles() {
     <div className="fade-up">
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8, gap: 8 }}>
         <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, flex: 1 }}>Brand profiles</h2>
-        <button className="btn-secondary" onClick={startQuickstart} title="Let Claude draft a brand profile from your handle + description">
+        <button className="btn-secondary" onClick={startQuickstart} title="Let AI draft a brand profile from your handle + description">
           <Sparkles size={14} /> Quickstart
         </button>
         <button className="btn-primary" onClick={startNew}><Plus size={14} /> New profile</button>
@@ -946,7 +946,7 @@ export default function Profiles() {
             Set up your first brand
           </div>
           <div style={{ fontSize: 13, marginBottom: 22, lineHeight: 1.5, maxWidth: 420, margin: '0 auto 22px' }}>
-            One brand profile = one identity. Quickstart lets you paste a social handle + a sentence, and Claude drafts the bible, voice, audience, and hashtags for you. Or build from scratch.
+            One brand profile = one identity. Quickstart lets you paste a social handle + a sentence, and AI drafts the bible, voice, audience, and hashtags for you. Or build from scratch.
           </div>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
             <button className="btn-primary" onClick={startQuickstart}><Sparkles size={15} /> Quickstart with AI</button>
