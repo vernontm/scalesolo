@@ -1,79 +1,48 @@
 // SVG → PNG title-overlay renderer.
 //
-// The drawtext path in api/videos/polish.js was producing visibly off-
-// center text because:
-//   • ffmpeg < 7 has no text_align option, so multi-line drawtext
-//     renders left-aligned within its drawn box.
-//   • The fix attempted in wrapTitleLines() pads shorter lines with
-//     space chars to "match" the longest line. Spaces aren't the
-//     same width as average glyphs in proportional fonts, so the
-//     centering is a few pixels off — visible on bold faces with
-//     wide glyph variance (Montserrat ExtraBold, Poppins ExtraBold).
+// Renders a centered, wrapped title block as a PNG. We use @resvg/resvg-js
+// (a Rust-backed SVG rasterizer) instead of sharp's librsvg, because
+// librsvg's @font-face data-URI support is unreliable on Vercel's
+// serverless runtime — it silently falls back to whatever sans is
+// registered with fontconfig, and on Vercel that's effectively nothing,
+// so glyphs render as tofu rectangles.
 //
-// This renderer takes the same title + style props and produces a PNG
-// with the text *truly centered*: SVG `<text text-anchor="middle">`
-// uses real glyph metrics from the embedded font. Worker has its own
-// copy of this logic (same SVG, same approach); we keep them in sync
-// by hand because they live in different deploy targets.
-//
-// renderTitlePng({ title, font, size, color, bg_color, bg_padding,
-//                  uppercase, max_width }) → Buffer (PNG bytes) | null
+// resvg accepts an explicit `font.fontFiles` array of TTF paths and
+// registers them with its own font database. As long as the SVG's
+// `font-family` matches the font's `name` table family, layout works
+// reliably across cold starts.
 
-import sharp from 'sharp'
+import { Resvg } from '@resvg/resvg-js'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { readFile } from 'node:fs/promises'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+const FONTS_DIR = join(__dirname, '..', '_fonts')
 
 // Filename mapping from the dropdown labels in the UI to the bundled
-// .ttf in api/_fonts/. Drop matching files there to enable the look;
-// missing files silently fall back to a system sans, which still
-// centers correctly via SVG text metrics — just without the brand
-// face.
+// .ttf in api/_fonts/. The "family" string MUST match the font file's
+// embedded family name — that's what resvg uses to pick the glyph table.
+// The names below are taken from the Google Fonts metadata of each
+// distributed file.
 const FONT_FILES = {
-  'Montserrat ExtraBold': 'Montserrat-ExtraBold.ttf',
-  'Poppins ExtraBold':    'Poppins-ExtraBold.ttf',
-  'Inter ExtraBold':      'Inter-ExtraBold.ttf',
-  'Bebas Neue':           'BebasNeue-Regular.ttf',
-  'Anton':                'Anton-Regular.ttf',
-  'Oswald':               'Oswald-Bold.ttf',
-  'Roboto Black':         'Roboto-Black.ttf',
+  'Montserrat ExtraBold': { file: 'Montserrat-ExtraBold.ttf', family: 'Montserrat',  weight: 800 },
+  'Poppins ExtraBold':    { file: 'Poppins-ExtraBold.ttf',    family: 'Poppins',     weight: 800 },
+  'Inter ExtraBold':      { file: 'Inter-ExtraBold.ttf',      family: 'Inter 18pt',  weight: 800 },
+  'Bebas Neue':           { file: 'BebasNeue-Regular.ttf',    family: 'Bebas Neue',  weight: 400 },
+  'Anton':                { file: 'Anton-Regular.ttf',        family: 'Anton',       weight: 400 },
+  'Oswald':               { file: 'Oswald-Bold.ttf',          family: 'Oswald',      weight: 700 },
+  'Roboto Black':         { file: 'Roboto-Black.ttf',         family: 'Roboto',      weight: 900 },
 }
 
-// Always-available fallback. We bundle Roboto Bold as Sans-Bold.ttf so
-// even when the user's chosen font file isn't shipped (most aren't yet),
-// the SVG still has a real font face to lay out with — librsvg on Vercel
-// has no installed system fonts beyond a tiny shared set, so without a
-// bundled face the rasterizer falls back to "tofu" rectangles.
-const FALLBACK_FONT_FILE = 'Sans-Bold.ttf'
+const FALLBACK = { file: 'Sans-Bold.ttf', family: 'Roboto', weight: 700 }
 
-const _fontCache = new Map()
-async function loadFontFaceCssRaw(filename) {
-  if (_fontCache.has(filename)) return _fontCache.get(filename)
-  const path = join(__dirname, '..', '_fonts', filename)
-  try {
-    const buf = await readFile(path)
-    const css = `@font-face { font-family: 'TitleFont'; font-style: normal; font-weight: 700; src: url(data:font/ttf;base64,${buf.toString('base64')}) format('truetype'); }`
-    _fontCache.set(filename, css)
-    return css
-  } catch {
-    _fontCache.set(filename, '')
-    return ''
-  }
+// Pick a font config for a label, falling back to Sans-Bold.
+function fontConfig(label) {
+  return FONT_FILES[label] || FALLBACK
 }
 
-async function loadFontFaceCss(filename) {
-  const primary = filename ? await loadFontFaceCssRaw(filename) : ''
-  if (primary) return primary
-  // Try the always-bundled fallback. If the user's requested file isn't
-  // shipped, render with Sans-Bold rather than producing tofu boxes.
-  return loadFontFaceCssRaw(FALLBACK_FONT_FILE)
-}
-
-// Greedy word wrap. SVG itself doesn't auto-wrap, so we precompute the
-// line breaks. The width estimate is approximate (font * 0.58); SVG's
-// actual rasterizer will use real metrics for the centering, so a few
+// Greedy word wrap. The width estimate is approximate (font * 0.58);
+// resvg's actual rasterizer uses real metrics for centering, so a few
 // extra characters per line are fine.
 function wrapForSvg(text, fontSize, maxWidth) {
   const usableWidth = maxWidth * 0.82
@@ -112,29 +81,31 @@ export async function renderTitlePng({
   const lines = wrapForSvg(text, size, max_width)
   if (!lines.length) return null
 
+  const cfg = fontConfig(font)
   const lineHeight  = Math.round(size * 1.18)
   const totalText   = lines.length * lineHeight
   const blockHeight = totalText + bg_padding * 2
   const blockWidth  = max_width
 
-  const fontFile = FONT_FILES[font] || FONT_FILES['Roboto Black']
-  const fontFaceCss = fontFile ? await loadFontFaceCss(fontFile) : ''
-  const fontFamilyCss = fontFaceCss ? "'TitleFont', sans-serif" : 'sans-serif'
-
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${blockWidth}" height="${blockHeight}">
-    <style>${fontFaceCss}
-      .t { font-family: ${fontFamilyCss}; font-size: ${size}px; font-weight: 800; fill: ${color}; }
-    </style>
     <rect x="0" y="0" width="${blockWidth}" height="${blockHeight}" rx="${Math.round(bg_padding * 0.4)}" ry="${Math.round(bg_padding * 0.4)}" fill="${bg_color}" />
     ${lines.map((l, i) => {
       const y = bg_padding + (i + 1) * lineHeight - Math.round(size * 0.2)
-      return `<text class="t" x="${blockWidth / 2}" y="${y}" text-anchor="middle" dominant-baseline="alphabetic">${escapeXml(l)}</text>`
+      return `<text x="${blockWidth / 2}" y="${y}" font-family="${cfg.family}" font-size="${size}" font-weight="${cfg.weight}" fill="${color}" text-anchor="middle" dominant-baseline="alphabetic">${escapeXml(l)}</text>`
     }).join('\n    ')}
   </svg>`
 
-  // density=144 raises the rendered DPI so rounded edges aren't blurry
-  // when overlaid on 1080p video.
-  return sharp(Buffer.from(svg), { density: 144 })
-    .png({ compressionLevel: 6 })
-    .toBuffer()
+  const resvg = new Resvg(Buffer.from(svg), {
+    background: 'rgba(0,0,0,0)',
+    font: {
+      // Register every bundled .ttf so any choice in the dropdown finds
+      // its face. resvg pulls the `name` table family from each file.
+      fontFiles: Object.values(FONT_FILES).map((f) => join(FONTS_DIR, f.file))
+        .concat(join(FONTS_DIR, FALLBACK.file)),
+      // Fallback chain when an SVG font-family doesn't match anything.
+      defaultFontFamily: cfg.family,
+      loadSystemFonts: false,
+    },
+  })
+  return resvg.render().asPng()
 }

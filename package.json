@@ -17,6 +17,7 @@
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@ffmpeg/core": "^0.10.0",
     "@ffmpeg/ffmpeg": "^0.10.1",
+    "@resvg/resvg-js": "^2.6.2",
     "@supabase/supabase-js": "^2.104.0",
     "@xyflow/react": "^12.3.5",
     "dompurify": "^3.0.11",

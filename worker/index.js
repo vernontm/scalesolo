@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url'
 import { mkdtemp, writeFile, rm, readFile } from 'node:fs/promises'
 import { createClient } from '@supabase/supabase-js'
 import sharp from 'sharp'
+import { Resvg } from '@resvg/resvg-js'
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -60,22 +61,21 @@ const requireSecret = (req, res, next) => {
 // Replaces the broken whitespace-padding "centering" hack in the Vercel
 // polish. SVG `text-anchor="middle"` is pixel-accurate per line, with no
 // font-metric guesswork. Returns the rendered PNG buffer (binary).
+const FONTS_DIR = join(__dirname, 'fonts')
+// Filename mapping from dropdown labels in the UI to the bundled TTF in
+// worker/fonts/. The "family" string MUST match the font's embedded name
+// table — that's what resvg uses to pick the glyph table at render time.
 const FONT_FILES = {
-  'Montserrat ExtraBold': 'Montserrat-ExtraBold.ttf',
-  'Poppins ExtraBold':    'Poppins-ExtraBold.ttf',
-  'Inter ExtraBold':      'Inter-ExtraBold.ttf',
-  'Bebas Neue':           'BebasNeue-Regular.ttf',
-  'Anton':                'Anton-Regular.ttf',
-  'Oswald':               'Oswald-Bold.ttf',
-  'Roboto Black':         'Roboto-Black.ttf',
+  'Montserrat ExtraBold': { file: 'Montserrat-ExtraBold.ttf', family: 'Montserrat',  weight: 800 },
+  'Poppins ExtraBold':    { file: 'Poppins-ExtraBold.ttf',    family: 'Poppins',     weight: 800 },
+  'Inter ExtraBold':      { file: 'Inter-ExtraBold.ttf',      family: 'Inter 18pt',  weight: 800 },
+  'Bebas Neue':           { file: 'BebasNeue-Regular.ttf',    family: 'Bebas Neue',  weight: 400 },
+  'Anton':                { file: 'Anton-Regular.ttf',        family: 'Anton',       weight: 400 },
+  'Oswald':               { file: 'Oswald-Bold.ttf',          family: 'Oswald',      weight: 700 },
+  'Roboto Black':         { file: 'Roboto-Black.ttf',         family: 'Roboto',      weight: 900 },
 }
-// Bundled fallback in worker/fonts/ — guarantees a real glyph face is
-// available so librsvg never lays out tofu boxes when the user's chosen
-// font file isn't shipped.
-const FALLBACK_FONT_FILE = 'Sans-Bold.ttf'
-function fontFamily(label) {
-  return label || 'Roboto Black'
-}
+const FALLBACK = { file: 'Sans-Bold.ttf', family: 'Roboto', weight: 700 }
+function fontConfig(label) { return FONT_FILES[label] || FALLBACK }
 
 // Greedy-wrap so titles fit within ~82% of 1080. Letter widths are
 // approximated; the SVG renderer wraps the actual glyph metrics so this
@@ -111,66 +111,33 @@ async function renderTitlePng({
   const lines = wrapForSvg(text, size)
   if (!lines.length) return null
 
-  // Per-line line-height — slightly tighter than 1.0 for ExtraBold faces.
+  const cfg = fontConfig(font)
   const lineHeight = Math.round(size * 1.18)
   const totalTextHeight = lines.length * lineHeight
   const blockHeight = totalTextHeight + bg_padding * 2
-  const blockWidth = max_width  // SVG is centered horizontally; we pad x in ffmpeg overlay
-
-  // Build the SVG. Each <text> uses text-anchor="middle" so it's
-  // perfectly centered within the canvas, which is exactly what was
-  // missing from the drawtext path. <rect> draws the bg pill behind.
-  // Local fonts fall through to system fallbacks if the named family
-  // isn't installed (we bundle the TTFs at /usr/share/fonts in Docker
-  // OR use a <style>@font-face base64 trick — see fontFaceCss below).
-  const fontFile = FONT_FILES[fontFamily(font)] || FONT_FILES['Roboto Black']
-  const fontFaceCss = await loadFontFaceBase64(fontFile)
+  const blockWidth  = max_width
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${blockWidth}" height="${blockHeight}">
-    <style>${fontFaceCss}
-      .t { font-family: 'TitleFont'; font-size: ${size}px; font-weight: 800; fill: ${color}; }
-    </style>
     <rect x="0" y="0" width="${blockWidth}" height="${blockHeight}" rx="${Math.round(bg_padding * 0.4)}" ry="${Math.round(bg_padding * 0.4)}" fill="${bg_color}" />
     ${lines.map((l, i) => {
       const y = bg_padding + (i + 1) * lineHeight - Math.round(size * 0.2)
-      return `<text class="t" x="${blockWidth / 2}" y="${y}" text-anchor="middle" dominant-baseline="alphabetic">${escapeXml(l)}</text>`
+      return `<text x="${blockWidth / 2}" y="${y}" font-family="${cfg.family}" font-size="${size}" font-weight="${cfg.weight}" fill="${color}" text-anchor="middle" dominant-baseline="alphabetic">${escapeXml(l)}</text>`
     }).join('\n    ')}
   </svg>`
 
-  // sharp renders the SVG, including @font-face. Density bumps the raster
-  // resolution so the rounded edges aren't blurry on 1080p video.
-  const png = await sharp(Buffer.from(svg), { density: 144 })
-    .png({ compressionLevel: 6 })
-    .toBuffer()
-  return png
-}
-
-// Slurp a TTF, base64-embed as @font-face so SVG renders with the
-// designed glyph widths (and centering per text-anchor="middle"
-// becomes perfectly accurate). One small fetch per cold start, cached
-// in module memory.
-const _fontCache = new Map()
-async function loadFontFaceRaw(filename) {
-  if (!filename) return ''
-  if (_fontCache.has(filename)) return _fontCache.get(filename)
-  const path = join(__dirname, 'fonts', filename)
-  try {
-    const buf = await readFile(path)
-    const css = `@font-face { font-family: 'TitleFont'; font-style: normal; font-weight: 700; src: url(data:font/ttf;base64,${buf.toString('base64')}) format('truetype'); }`
-    _fontCache.set(filename, css)
-    return css
-  } catch {
-    _fontCache.set(filename, '')
-    return ''
-  }
-}
-async function loadFontFaceBase64(filename) {
-  // Try the user's chosen font first. If that file isn't shipped, fall
-  // back to the bundled Sans-Bold so the SVG always has a real face to
-  // render with — without this librsvg renders tofu rectangles.
-  const primary = await loadFontFaceRaw(filename)
-  if (primary) return primary
-  return loadFontFaceRaw(FALLBACK_FONT_FILE)
+  // resvg with explicit fontFiles — sharp/librsvg's @font-face data-URI
+  // path is unreliable in serverless. Registering every bundled .ttf
+  // up-front means resvg's font DB has the exact face the SVG names.
+  const resvg = new Resvg(Buffer.from(svg), {
+    background: 'rgba(0,0,0,0)',
+    font: {
+      fontFiles: Object.values(FONT_FILES).map((f) => join(FONTS_DIR, f.file))
+        .concat(join(FONTS_DIR, FALLBACK.file)),
+      defaultFontFamily: cfg.family,
+      loadSystemFonts: false,
+    },
+  })
+  return resvg.render().asPng()
 }
 
 function escapeXml(s) {
