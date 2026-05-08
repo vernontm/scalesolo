@@ -69,6 +69,10 @@ const FONT_FILES = {
   'Oswald':               'Oswald-Bold.ttf',
   'Roboto Black':         'Roboto-Black.ttf',
 }
+// Bundled fallback in worker/fonts/ — guarantees a real glyph face is
+// available so librsvg never lays out tofu boxes when the user's chosen
+// font file isn't shipped.
+const FALLBACK_FONT_FILE = 'Sans-Bold.ttf'
 function fontFamily(label) {
   return label || 'Roboto Black'
 }
@@ -146,22 +150,27 @@ async function renderTitlePng({
 // becomes perfectly accurate). One small fetch per cold start, cached
 // in module memory.
 const _fontCache = new Map()
-async function loadFontFaceBase64(filename) {
+async function loadFontFaceRaw(filename) {
+  if (!filename) return ''
   if (_fontCache.has(filename)) return _fontCache.get(filename)
-  // Fonts are bundled under worker/fonts/ at deploy time. Fall back to
-  // an empty CSS string if the file is missing — sharp will substitute
-  // a default sans-serif, still pixel-accurate for centering, just less
-  // brand-y.
   const path = join(__dirname, 'fonts', filename)
   try {
     const buf = await readFile(path)
-    const css = `@font-face { font-family: 'TitleFont'; font-style: normal; font-weight: 800; src: url(data:font/ttf;base64,${buf.toString('base64')}) format('truetype'); }`
+    const css = `@font-face { font-family: 'TitleFont'; font-style: normal; font-weight: 700; src: url(data:font/ttf;base64,${buf.toString('base64')}) format('truetype'); }`
     _fontCache.set(filename, css)
     return css
   } catch {
     _fontCache.set(filename, '')
     return ''
   }
+}
+async function loadFontFaceBase64(filename) {
+  // Try the user's chosen font first. If that file isn't shipped, fall
+  // back to the bundled Sans-Bold so the SVG always has a real face to
+  // render with — without this librsvg renders tofu rectangles.
+  const primary = await loadFontFaceRaw(filename)
+  if (primary) return primary
+  return loadFontFaceRaw(FALLBACK_FONT_FILE)
 }
 
 function escapeXml(s) {

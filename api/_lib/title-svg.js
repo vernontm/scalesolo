@@ -41,19 +41,34 @@ const FONT_FILES = {
   'Roboto Black':         'Roboto-Black.ttf',
 }
 
+// Always-available fallback. We bundle Roboto Bold as Sans-Bold.ttf so
+// even when the user's chosen font file isn't shipped (most aren't yet),
+// the SVG still has a real font face to lay out with — librsvg on Vercel
+// has no installed system fonts beyond a tiny shared set, so without a
+// bundled face the rasterizer falls back to "tofu" rectangles.
+const FALLBACK_FONT_FILE = 'Sans-Bold.ttf'
+
 const _fontCache = new Map()
-async function loadFontFaceCss(filename) {
+async function loadFontFaceCssRaw(filename) {
   if (_fontCache.has(filename)) return _fontCache.get(filename)
   const path = join(__dirname, '..', '_fonts', filename)
   try {
     const buf = await readFile(path)
-    const css = `@font-face { font-family: 'TitleFont'; font-style: normal; font-weight: 800; src: url(data:font/ttf;base64,${buf.toString('base64')}) format('truetype'); }`
+    const css = `@font-face { font-family: 'TitleFont'; font-style: normal; font-weight: 700; src: url(data:font/ttf;base64,${buf.toString('base64')}) format('truetype'); }`
     _fontCache.set(filename, css)
     return css
   } catch {
     _fontCache.set(filename, '')
     return ''
   }
+}
+
+async function loadFontFaceCss(filename) {
+  const primary = filename ? await loadFontFaceCssRaw(filename) : ''
+  if (primary) return primary
+  // Try the always-bundled fallback. If the user's requested file isn't
+  // shipped, render with Sans-Bold rather than producing tofu boxes.
+  return loadFontFaceCssRaw(FALLBACK_FONT_FILE)
 }
 
 // Greedy word wrap. SVG itself doesn't auto-wrap, so we precompute the
