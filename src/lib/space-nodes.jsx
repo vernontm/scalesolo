@@ -1735,31 +1735,101 @@ function VideoPolishBody({ data, onPatch }) {
       <div style={{ marginTop: 6, marginBottom: 8, fontSize: 10, color: 'var(--muted)', textAlign: 'center', lineHeight: 1.3 }}>
         {previewVideo ? 'Live preview — overlays update as you edit' : 'Run an upstream node to see the preview frame'}
       </div>
+      {/* Per-section toggles. Clicking the checkbox flips the section
+          on / off without opening the editor. Click the row label to
+          open the sidebar focused on that section. */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 6 }}>
+        <PolishToggle
+          label="Captions"
+          on={props.captions_enabled !== false}
+          summary={props.captions_enabled !== false
+            ? (props.caption_template_name || 'No template picked')
+            : 'Off'}
+          onToggle={(v) => onPatch({ captions_enabled: v })}
+          onOpen={() => window.__spaceOpenEditor?.(data.__id)}
+        />
+        <PolishToggle
+          label="Title overlay"
+          on={props.title_enabled !== false}
+          summary={props.title_enabled === false
+            ? 'Off'
+            : (props.title_mode || 'auto') === 'auto' ? 'Auto from script' : ((props.title || 'Manual').slice(0, 28))}
+          onToggle={(v) => onPatch({ title_enabled: v })}
+          onOpen={() => window.__spaceOpenEditor?.(data.__id)}
+        />
+        <PolishToggle
+          label="Watermark / logo"
+          on={(props.watermark_position || 'br') !== 'none'}
+          summary={(props.watermark_position || 'br') === 'none'
+            ? 'Off'
+            : `${props.watermark_size_pct ?? 25}% · ${(props.watermark_position || 'br').toUpperCase()}`}
+          onToggle={(v) => onPatch({ watermark_position: v ? 'br' : 'none' })}
+          onOpen={() => window.__spaceOpenEditor?.(data.__id)}
+        />
+        <PolishToggle
+          label="Music"
+          on={(props.music_volume ?? 0.15) > 0}
+          summary={(props.music_volume ?? 0.15) > 0
+            ? `${Math.round((Number(props.music_volume ?? 0.15)) * 100)}% · ${(props.music_fade_secs ?? 1.5).toFixed(1)}s fade`
+            : 'Off'}
+          onToggle={(v) => onPatch({ music_volume: v ? (props.music_volume_remembered ?? 0.15) : 0, music_volume_remembered: v ? undefined : (props.music_volume ?? 0.15) })}
+          onOpen={() => window.__spaceOpenEditor?.(data.__id)}
+        />
+      </div>
       <button
         type="button"
         className="nodrag"
         onClick={(e) => { e.stopPropagation(); window.__spaceOpenEditor?.(data.__id) }}
         style={{
-          width: '100%', display: 'inline-flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '8px 10px', background: 'var(--surface-2)', border: '1px solid var(--border)',
-          borderRadius: 7, color: 'var(--text)', cursor: 'pointer', fontSize: 11.5,
-          fontFamily: 'var(--font-display)', fontWeight: 700, marginBottom: 6,
+          width: '100%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          padding: '7px 10px', gap: 6,
+          background: 'linear-gradient(135deg, var(--red), var(--red-dark))', border: 'none',
+          borderRadius: 7, color: '#fff', cursor: 'pointer', fontSize: 11.5,
+          fontFamily: 'var(--font-display)', fontWeight: 700, marginBottom: 4,
+          boxShadow: '0 4px 10px rgba(239,68,68,0.25)',
         }}
       >
-        <span><Sparkles size={11} style={{ verticalAlign: '-2px', marginRight: 6, color: '#0ea5e9' }} /> Open settings</span>
-        <ArrowUpRight size={11} style={{ color: 'var(--muted)' }} />
+        <Sparkles size={11} /> Open all settings
       </button>
-      <div style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.35 }}>
-        Title: <strong>{
-          props.title_enabled === false ? 'off'
-          : (props.title_mode || 'auto') === 'auto' ? 'auto'
-          : (props.title || 'manual').slice(0, 18)
-        }</strong>
-        {' · '}Logo: <strong>{(props.watermark_position || 'br') === 'none' ? 'off' : `${props.watermark_size_pct ?? 25}%`}</strong>
-        {' · '}Music: <strong>{Math.round((Number(props.music_volume ?? 0.15)) * 100)}%</strong>
-      </div>
       <NodePreview status={status} output={null} error={data.error} />
     </>
+  )
+}
+
+// Compact on/off row for each polish section. Checkbox flips the
+// section instantly; clicking the label opens the editor sidebar so
+// the user can tune values without remembering to right-click /
+// double-click the node.
+function PolishToggle({ label, on, summary, onToggle, onOpen }) {
+  return (
+    <div
+      className="nodrag"
+      onClick={onOpen}
+      role="button" tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen() } }}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '6px 8px', borderRadius: 6,
+        background: 'var(--surface-2)', border: '1px solid var(--border)',
+        cursor: 'pointer', fontSize: 11,
+      }}
+    >
+      <input
+        type="checkbox"
+        checked={on}
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => { e.stopPropagation(); onToggle(e.target.checked) }}
+        style={{ accentColor: 'var(--red)' }}
+      />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--text)' }}>{label}</div>
+        <div style={{
+          fontSize: 10, color: on ? 'var(--text-soft)' : 'var(--muted)',
+          marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>{summary}</div>
+      </div>
+      <ArrowUpRight size={10} style={{ color: 'var(--muted)' }} />
+    </div>
   )
 }
 
@@ -1887,6 +1957,37 @@ function PolishColorRow({ label, value, onChange }) {
         }}
       />
     </div>
+  )
+}
+
+// Pill-style enable toggle that lives at the top of each editor section.
+// Visually different from the inline body toggles so the user has one
+// canonical "this whole section on/off" control inside the drawer.
+function SectionEnable({ label, checked, onChange }) {
+  return (
+    <label
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '8px 12px', borderRadius: 8, cursor: 'pointer',
+        background: checked ? 'rgba(46,204,113,0.10)' : 'var(--surface-2)',
+        border: `1px solid ${checked ? 'rgba(46,204,113,0.40)' : 'var(--border)'}`,
+        marginBottom: 14,
+      }}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        style={{ accentColor: '#2ecc71', cursor: 'pointer' }}
+      />
+      <span style={{
+        fontSize: 12, fontFamily: 'var(--font-display)', fontWeight: 700,
+        color: checked ? '#2ecc71' : 'var(--text-soft)',
+      }}>{label}</span>
+      <span style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--muted)', fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+        {checked ? 'On' : 'Off'}
+      </span>
+    </label>
   )
 }
 
@@ -2238,143 +2339,274 @@ export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges })
 
       {/* Title overlay ─────────────────────────────────────────────────── */}
       <PolishSection icon={Type} title="Title overlay">
-        <NodeField label="Title source">
-          <select
-            style={tinyInput}
-            value={props.title_mode || 'auto'}
-            onChange={(e) => setP({ title_mode: e.target.value })}
-          >
-            <option value="auto">Auto — transcribe video, Claude writes the title</option>
-            <option value="manual">Manual — type my own title below</option>
-          </select>
-        </NodeField>
-        {(props.title_mode || 'auto') === 'auto' ? (
-          <NodeField label="Topic / angle hint (optional)">
-            <textarea
-              style={{ ...tinyInput, minHeight: 56, fontFamily: 'inherit', resize: 'vertical' }}
-              placeholder='e.g. "punchy hook focused on the red flag, max 6 words"'
-              value={props.title_topic || ''}
-              onChange={(e) => setP({ title_topic: e.target.value })}
-            />
-            <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 4, lineHeight: 1.4 }}>
-              ElevenLabs transcribes the audio; Claude writes a click-worthy title using your brand bible + this hint. Costs ~800 ai_tokens per render.
+        <SectionEnable
+          label="Burn a title overlay onto the video"
+          checked={props.title_enabled !== false}
+          onChange={(v) => setP({ title_enabled: v })}
+        />
+        {props.title_enabled !== false && (
+          <>
+            {/* Quick presets — one click, they can fine-tune below. */}
+            <div style={labelStyle}>Style preset</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4, marginBottom: 14 }}>
+              {[
+                { id: 'tiktok',    name: 'TikTok',    font: 'Montserrat ExtraBold', color: '#ffffff', bg_color: '#e0467a', size: 72,  padding: 28, uppercase: false },
+                { id: 'instagram', name: 'Instagram', font: 'Poppins ExtraBold',    color: '#ffffff', bg_color: '#000000', size: 64,  padding: 22, uppercase: true  },
+                { id: 'youtube',   name: 'YouTube',   font: 'Inter ExtraBold',      color: '#ffffff', bg_color: '#ef4444', size: 80,  padding: 32, uppercase: true  },
+                { id: 'minimal',   name: 'Minimal',   font: 'Bebas Neue',           color: '#1f1f1f', bg_color: '#fde68a', size: 56,  padding: 18, uppercase: false },
+              ].map((preset) => {
+                const isActive =
+                  props.title_font === preset.font &&
+                  props.title_color === preset.color &&
+                  props.title_bg_color === preset.bg_color &&
+                  Number(props.title_size) === preset.size
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => setP({
+                      title_font: preset.font, title_color: preset.color,
+                      title_bg_color: preset.bg_color, title_size: preset.size,
+                      title_bg_padding: preset.padding, title_uppercase: preset.uppercase,
+                    })}
+                    style={{
+                      padding: '7px 6px', borderRadius: 6, fontSize: 10.5,
+                      border: `1px solid ${isActive ? '#0ea5e9' : 'var(--border)'}`,
+                      background: isActive ? 'rgba(14,165,233,0.16)' : 'var(--surface-2)',
+                      color: isActive ? '#0ea5e9' : 'var(--text-soft)',
+                      cursor: 'pointer', fontFamily: 'var(--font-display)', fontWeight: 700,
+                    }}
+                  >{preset.name}</button>
+                )
+              })}
             </div>
-          </NodeField>
-        ) : (
-          <div style={{ marginBottom: 10 }}>
-            <input
-              style={tinyInput}
-              placeholder="Your title here"
-              value={props.title || ''}
-              onChange={(e) => setP({ title: e.target.value })}
-            />
-          </div>
+
+            <NodeField label="Title source">
+              <select
+                style={tinyInput}
+                value={props.title_mode || 'auto'}
+                onChange={(e) => setP({ title_mode: e.target.value })}
+              >
+                <option value="auto">Auto — transcribe + Claude writes</option>
+                <option value="manual">Manual — type my own</option>
+              </select>
+            </NodeField>
+            {(props.title_mode || 'auto') === 'auto' ? (
+              <NodeField label="Angle hint (optional)">
+                <textarea
+                  style={{ ...tinyInput, minHeight: 56, fontFamily: 'inherit', resize: 'vertical' }}
+                  placeholder='e.g. "punchy red-flag hook, max 6 words"'
+                  value={props.title_topic || ''}
+                  onChange={(e) => setP({ title_topic: e.target.value })}
+                />
+                <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 4, lineHeight: 1.4 }}>
+                  ElevenLabs transcribes; Claude writes the title using your brand bible. ~800 ai_tokens per render.
+                </div>
+              </NodeField>
+            ) : (
+              <NodeField label="Title text">
+                <input
+                  style={tinyInput}
+                  placeholder="Your title here"
+                  value={props.title || ''}
+                  onChange={(e) => setP({ title: e.target.value })}
+                  maxLength={120}
+                />
+                <div style={{ fontSize: 10, color: (props.title?.length || 0) > 80 ? 'var(--amber)' : 'var(--muted)', marginTop: 3, textAlign: 'right' }}>
+                  {(props.title || '').length} / 120
+                </div>
+              </NodeField>
+            )}
+
+            <NodeField label="Font">
+              <select style={tinyInput} value={props.title_font || 'Montserrat ExtraBold'} onChange={(e) => setP({ title_font: e.target.value })}>
+                {POLISH_FONT_OPTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </NodeField>
+
+            <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+              <PolishColorRow label="Text" value={props.title_color || '#ffffff'} onChange={(v) => setP({ title_color: v })} />
+              <PolishColorRow label="Background" value={props.title_bg_color || '#e0467a'} onChange={(v) => setP({ title_bg_color: v })} />
+            </div>
+
+            <PolishSlider label="Size" value={Number(props.title_size ?? 72)} min={24} max={140} suffix="px" onChange={(v) => setP({ title_size: v })} />
+            <PolishSlider label="Background padding" value={Number(props.title_bg_padding ?? 28)} min={0} max={64} suffix="px" onChange={(v) => setP({ title_bg_padding: v })} />
+            <PolishSlider label="Vertical position" value={Number(props.title_y_pos ?? 15)} min={5} max={85} suffix="% from top" onChange={(v) => setP({ title_y_pos: v })} />
+            <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: -4, marginBottom: 10, lineHeight: 1.4 }}>
+              Tip: keep the title in the top third (~10–25%) so it doesn't fight the burned captions which sit center / bottom.
+            </div>
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={!!props.title_uppercase}
+                onChange={(e) => setP({ title_uppercase: e.target.checked })}
+              />
+              <span style={{ fontSize: 11.5 }}>UPPERCASE</span>
+            </label>
+          </>
         )}
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={props.title_enabled !== false}
-            onChange={(e) => setP({ title_enabled: e.target.checked })}
-          />
-          <span style={{ fontSize: 11.5 }}>Burn title overlay onto renders</span>
-        </label>
-        <NodeField label="Title font">
-          <select style={tinyInput} value={props.title_font || 'Montserrat ExtraBold'} onChange={(e) => setP({ title_font: e.target.value })}>
-            {POLISH_FONT_OPTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
-          </select>
-        </NodeField>
-        <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
-          <PolishColorRow label="Text color" value={props.title_color || '#ffffff'} onChange={(v) => setP({ title_color: v })} />
-          <PolishColorRow label="Background" value={props.title_bg_color || '#e0467a'} onChange={(v) => setP({ title_bg_color: v })} />
-        </div>
-        <PolishSlider label="Size" value={Number(props.title_size ?? 72)} min={24} max={140} suffix="px" onChange={(v) => setP({ title_size: v })} />
-        <PolishSlider label="Background padding" value={Number(props.title_bg_padding ?? 28)} min={0} max={64} suffix="px" onChange={(v) => setP({ title_bg_padding: v })} />
-        <PolishSlider label="Y position" value={Number(props.title_y_pos ?? 15)} min={5} max={50} suffix="% from top" onChange={(v) => setP({ title_y_pos: v })} />
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={!!props.title_uppercase}
-            onChange={(e) => setP({ title_uppercase: e.target.checked })}
-          />
-          <span style={{ fontSize: 11.5 }}>UPPERCASE</span>
-        </label>
       </PolishSection>
 
       {/* Captions (ZapCap) ─────────────────────────────────────────────── */}
-      <PolishSection icon={Captions} title="Captions (ZapCap)">
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={props.captions_enabled !== false}
-            onChange={(e) => setP({ captions_enabled: e.target.checked })}
-          />
-          <span style={{ fontSize: 11.5 }}>Burn captions onto the video</span>
-        </label>
+      <PolishSection icon={Captions} title="Captions">
+        <SectionEnable
+          label="Burn captions onto the video"
+          checked={props.captions_enabled !== false}
+          onChange={(v) => setP({ captions_enabled: v })}
+        />
         {props.captions_enabled !== false && (
-          <ZapcapTemplatePicker
-            selectedId={props.caption_template_id || ''}
-            onChange={(t) => setP({ caption_template_id: t.id, caption_template_name: t.name })}
-          />
+          <>
+            {props.caption_template_name && (
+              <div style={{
+                marginBottom: 10, padding: '8px 10px', borderRadius: 6,
+                background: 'rgba(46,204,113,0.08)', border: '1px solid rgba(46,204,113,0.30)',
+                fontSize: 11.5, color: 'var(--text)',
+              }}>
+                <span style={{ color: 'var(--muted)' }}>Selected style: </span>
+                <strong>{props.caption_template_name}</strong>
+              </div>
+            )}
+            <div style={{ fontSize: 10.5, color: 'var(--muted)', marginBottom: 10, lineHeight: 1.45 }}>
+              Pick a caption style. ZapCap renders word-by-word burned captions in this style. Style position is handled by the template (most are bottom-center) — see Title section above to keep your title and captions from overlapping.
+            </div>
+            <ZapcapTemplatePicker
+              selectedId={props.caption_template_id || ''}
+              onChange={(t) => setP({ caption_template_id: t.id, caption_template_name: t.name })}
+            />
+          </>
         )}
       </PolishSection>
 
       {/* Logo / Watermark ──────────────────────────────────────────────── */}
       <PolishSection icon={ImageIcon} title="Logo / Watermark">
-        <PolishLogoUpload
-          uploadedUrl={props.watermark_image_url}
-          upstreamUrl={upstreamLogo}
-          profileId={data?._ctxProfileId}
-          onChange={(url) => setP({ watermark_image_url: url || null })}
+        <SectionEnable
+          label="Show a logo / watermark on the video"
+          checked={(props.watermark_position || 'br') !== 'none'}
+          onChange={(v) => setP({ watermark_position: v ? (props.watermark_position_remembered || 'br') : 'none', watermark_position_remembered: v ? undefined : (props.watermark_position || 'br') })}
         />
-        <div style={labelStyle}>Position</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 12 }}>
-          {[
-            { id: 'tl', label: 'Top Left' },
-            { id: 'tr', label: 'Top Right' },
-            { id: 'bl', label: 'Bottom Left' },
-            { id: 'br', label: 'Bottom Right' },
-          ].map((p) => {
-            const on = (props.watermark_position || 'br') === p.id
-            return (
-              <button
-                key={p.id} type="button"
-                onClick={() => setP({ watermark_position: p.id })}
-                style={{
-                  padding: '8px 0', borderRadius: 999, fontSize: 11.5,
-                  border: `1px solid ${on ? '#f59e0b' : 'var(--border)'}`,
-                  background: on ? '#f59e0b' : 'var(--surface-2)',
-                  color: on ? '#fff' : 'var(--text-soft)',
-                  cursor: 'pointer', fontFamily: 'var(--font-display)', fontWeight: 700,
-                }}
-              >{p.label}</button>
-            )
-          })}
-        </div>
-        <button
-          type="button"
-          onClick={() => setP({ watermark_position: 'none' })}
-          style={{
-            width: '100%', padding: '6px 0', borderRadius: 6, fontSize: 11,
-            background: 'var(--surface-2)', border: '1px solid var(--border)',
-            color: 'var(--muted)', cursor: 'pointer', marginBottom: 12,
-          }}
-        >Hide logo</button>
-        <PolishSlider label="Logo size" value={Number(props.watermark_size_pct ?? 25)} min={4} max={40} suffix="% of video width" onChange={(v) => setP({ watermark_size_pct: v })} />
+        {(props.watermark_position || 'br') !== 'none' && (
+          <>
+            <PolishLogoUpload
+              uploadedUrl={props.watermark_image_url}
+              upstreamUrl={upstreamLogo}
+              profileId={data?._ctxProfileId}
+              onChange={(url) => setP({ watermark_image_url: url || null })}
+            />
+
+            <div style={labelStyle}>Position</div>
+            {/* Visual 2x2 corner picker. The active corner is highlighted
+                inside a phone-shaped frame so the user can see exactly
+                where the logo lands. */}
+            <div style={{
+              position: 'relative', width: '100%', aspectRatio: '9/16', maxHeight: 140,
+              margin: '0 auto 10px', borderRadius: 10,
+              background: 'linear-gradient(135deg, var(--surface-2), var(--surface-3, var(--surface-2)))',
+              border: '1px solid var(--border)', overflow: 'hidden',
+            }}>
+              {[
+                { id: 'tl', top: 6,  left: 6  },
+                { id: 'tr', top: 6,  right: 6 },
+                { id: 'bl', bottom: 6, left: 6  },
+                { id: 'br', bottom: 6, right: 6 },
+              ].map((p) => {
+                const on = (props.watermark_position || 'br') === p.id
+                return (
+                  <button
+                    key={p.id} type="button"
+                    onClick={() => setP({ watermark_position: p.id })}
+                    title={`Place at ${p.id.toUpperCase()}`}
+                    style={{
+                      position: 'absolute',
+                      top: p.top, left: p.left, right: p.right, bottom: p.bottom,
+                      width: 28, height: 28, borderRadius: 6,
+                      border: `1px solid ${on ? '#f59e0b' : 'var(--border)'}`,
+                      background: on ? '#f59e0b' : 'rgba(255,255,255,0.06)',
+                      color: on ? '#fff' : 'var(--muted)', cursor: 'pointer',
+                      display: 'grid', placeItems: 'center',
+                      fontSize: 14, fontWeight: 700,
+                    }}
+                  >{on ? '●' : ''}</button>
+                )
+              })}
+              <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: 'var(--muted)', fontSize: 10, fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', pointerEvents: 'none' }}>
+                Video frame
+              </div>
+            </div>
+
+            <PolishSlider
+              label="Logo size"
+              value={Number(props.watermark_size_pct ?? 25)}
+              min={4} max={40} suffix="% of video width"
+              onChange={(v) => setP({ watermark_size_pct: v })}
+            />
+            <PolishSlider
+              label="Opacity"
+              value={Math.round((props.watermark_opacity ?? 1) * 100)}
+              min={20} max={100} suffix="%"
+              onChange={(v) => setP({ watermark_opacity: v / 100 })}
+            />
+            <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: -2, lineHeight: 1.4 }}>
+              Lower opacity reads as a subtle watermark instead of a hard logo stamp.
+            </div>
+          </>
+        )}
       </PolishSection>
 
       {/* Music ─────────────────────────────────────────────────────────── */}
-      <PolishSection icon={Mic} title="Music">
-        <div style={{ fontSize: 10.5, color: 'var(--muted)', marginBottom: 10, lineHeight: 1.4 }}>
-          Wire an audio_upload node into "in" to use background music. Volume ducks under the original voice. Preview the mix before you render.
-        </div>
-        <MusicMixPreview
-          videoUrl={upstreamVideo}
-          musicUrl={upstreamMusic}
-          volume={Number(props.music_volume ?? 0.15)}
-          fadeSecs={Number(props.music_fade_secs ?? 1.5)}
-          onChange={(v) => setP({ music_volume: v })}
-          onChangeFade={(v) => setP({ music_fade_secs: v })}
+      <PolishSection icon={Mic} title="Background music">
+        <SectionEnable
+          label="Mix background music under the voice"
+          checked={(props.music_volume ?? 0.15) > 0}
+          onChange={(v) => setP({
+            music_volume: v ? (props.music_volume_remembered ?? 0.15) : 0,
+            music_volume_remembered: v ? undefined : (props.music_volume ?? 0.15),
+          })}
         />
+        {(props.music_volume ?? 0.15) > 0 && (
+          <>
+            <div style={{ fontSize: 10.5, color: 'var(--muted)', marginBottom: 10, lineHeight: 1.45 }}>
+              Wire an <strong>audio_upload</strong> node into the polish input. The track ducks under the original voice automatically.
+            </div>
+
+            {/* Volume preset chips — one click for the common levels. */}
+            <div style={labelStyle}>Quick volume</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4, marginBottom: 12 }}>
+              {[
+                { id: 'sub',  label: 'Subtle',     pct: 8  },
+                { id: 'low',  label: 'Low',        pct: 15 },
+                { id: 'med',  label: 'Medium',     pct: 25 },
+                { id: 'high', label: 'High',       pct: 40 },
+              ].map((p) => {
+                const cur = Math.round((Number(props.music_volume ?? 0.15)) * 100)
+                const on = cur === p.pct
+                return (
+                  <button
+                    key={p.id} type="button"
+                    onClick={() => setP({ music_volume: p.pct / 100 })}
+                    style={{
+                      padding: '6px 4px', borderRadius: 6, fontSize: 10.5,
+                      border: `1px solid ${on ? '#0ea5e9' : 'var(--border)'}`,
+                      background: on ? 'rgba(14,165,233,0.16)' : 'var(--surface-2)',
+                      color: on ? '#0ea5e9' : 'var(--text-soft)',
+                      cursor: 'pointer', fontFamily: 'var(--font-display)', fontWeight: 700,
+                    }}
+                    title={`Set music volume to ${p.pct}%`}
+                  >{p.label}<br /><span style={{ fontSize: 9, opacity: 0.7 }}>{p.pct}%</span></button>
+                )
+              })}
+            </div>
+
+            <MusicMixPreview
+              videoUrl={upstreamVideo}
+              musicUrl={upstreamMusic}
+              volume={Number(props.music_volume ?? 0.15)}
+              fadeSecs={Number(props.music_fade_secs ?? 1.5)}
+              onChange={(v) => setP({ music_volume: v })}
+              onChangeFade={(v) => setP({ music_fade_secs: v })}
+            />
+          </>
+        )}
       </PolishSection>
     </>
   )
@@ -3519,7 +3751,8 @@ ${String(script).slice(0, 2000)}
 
   // ── POLISH VIDEO (title overlay + logo/watermark + bg music) ──────────
   video_polish: {
-    label: 'Video overlays', description: 'Adds a title overlay, a logo / watermark, and ducks a background music track under the original voice. Runs on our native ffmpeg server. Captions live in their own node (ZapCap).',
+    label: 'Finish video',
+    description: 'All-in-one finisher: burned captions, title overlay, watermark, and background music in one ffmpeg pass. Toggle each section on or off in the node body, click Open settings for full customization. Replaces the standalone Captions / Title / Music nodes — one step instead of four.',
     icon: Sparkles, category: 'generators', color: '#0ea5e9',
     inputs: [{ id: 'in', label: 'In (video + logo + music)' }],
     outputs: [{ id: 'out', label: 'Out (video)' }],
