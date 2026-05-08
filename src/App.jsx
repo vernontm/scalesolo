@@ -20,6 +20,7 @@ import LandingPages from './pages/LandingPages.jsx'
 import LandingPublic from './pages/LandingPublic.jsx'
 import Spaces from './pages/Spaces.jsx'
 import Library from './pages/Library.jsx'
+import Landing from './pages/Landing.jsx'
 import FormPublic from './pages/FormPublic.jsx'
 import GlobalAgent from './components/GlobalAgent.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
@@ -153,7 +154,9 @@ export default function App() {
     return (
       <ErrorBoundary>
         <Routes>
+          <Route path="/" element={<Landing />} />
           <Route path="/pricing" element={<Pricing />} />
+          <Route path="/login" element={<Login />} />
           <Route path="/f/:slug" element={<FormPublic />} />
           <Route path="/p/:slug" element={<LandingPublic />} />
           <Route path="*" element={<Login />} />
