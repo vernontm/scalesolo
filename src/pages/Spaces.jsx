@@ -23,7 +23,7 @@ import { useRef } from 'react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { useCredits } from '../context/CreditsContext.jsx'
-import { toast, confirmDialog } from '../components/Toast.jsx'
+import { toast, confirmDialog, chooseDialog } from '../components/Toast.jsx'
 import {
   NODE_REGISTRY, NODE_CATEGORIES, runSpace, downloadUrl, readImageItems,
   AUTORUN_OPTIONS, NODE_COST_HINT,
@@ -268,11 +268,13 @@ function SpaceNode({ id, data, selected }) {
           <button
             type="button"
             className="nodrag"
-            title={status === 'running' ? 'Stop run' : 'Run this node (and any unrun upstream)'}
-            onClick={(e) => {
+            title={status === 'running' ? 'Stop run' : 'Run this node'}
+            onClick={async (e) => {
               e.stopPropagation()
-              if (status === 'running') window.__spaceAbortRun?.()
-              else window.__spaceRunFromNode?.(id)
+              if (status === 'running') { window.__spaceAbortRun?.(); return }
+              const choice = await window.__spaceChooseRunScope?.(id)
+              if (!choice) return  // user cancelled
+              window.__spaceRunFromNode?.(id, choice)
             }}
             style={{
               marginLeft: 'auto',
@@ -1109,48 +1111,25 @@ function SpaceBuilder({ space, onSave, onClose }) {
   useEffect(() => {
     if (typeof window === 'undefined') return
     window.__spacePatchNode = (id, patch) => {
-      // UI prop edits invalidate the cached run for this node AND every
-      // node downstream of it. Without the cascade, changing an Avatar's
-      // look would dirty avatar_picker but avatar_render would stay 'done'
-      // with its old videos[] output — runSpace's "done + has output"
-      // short-circuit would skip re-execution and the user would never see
-      // the new look. Pure renames (just __name) don't cascade. Internal
-      // context injections (_ctx*) don't invalidate either.
+      // UI prop edits invalidate the changed node's cached run only.
+      // Downstream cache invalidation is handled at run time inside
+      // runSpace by comparing each ancestor's new output to its prior
+      // output — that way "Run this node only" really does only run
+      // this node when nothing material upstream changed. Pure renames
+      // (just __name) and internal context injections (_ctx*) don't
+      // invalidate at all.
       const hasRealPropChange = Object.keys(patch).some((k) => k !== '__name' && !k.startsWith('_ctx'))
-      let dirtyIds = null
-      if (hasRealPropChange) {
-        // BFS forward from `id` over the live edge set.
-        const dirty = new Set([id])
-        const eList = edgesRef.current || []
-        const q = [id]
-        while (q.length) {
-          const cur = q.shift()
-          for (const e of eList) {
-            if (e.source === cur && !dirty.has(e.target)) {
-              dirty.add(e.target); q.push(e.target)
-            }
-          }
-        }
-        dirtyIds = dirty
-      }
       setNodes((arr) => arr.map((n) => {
-        if (n.id === id) {
-          if (Object.prototype.hasOwnProperty.call(patch, '__name')) {
-            const { __name, ...rest } = patch
-            const nextData = { ...n.data, name: __name, props: { ...(n.data?.props || {}), ...rest } }
-            if (hasRealPropChange) { nextData.status = 'idle'; nextData.output = null; nextData.error = null }
-            return { ...n, data: nextData }
-          }
-          const nextData = { ...n.data, props: { ...(n.data?.props || {}), ...patch } }
+        if (n.id !== id) return n
+        if (Object.prototype.hasOwnProperty.call(patch, '__name')) {
+          const { __name, ...rest } = patch
+          const nextData = { ...n.data, name: __name, props: { ...(n.data?.props || {}), ...rest } }
           if (hasRealPropChange) { nextData.status = 'idle'; nextData.output = null; nextData.error = null }
           return { ...n, data: nextData }
         }
-        // Downstream cascade: just dirty status/output/error, leave props
-        // alone so the user's config is preserved.
-        if (dirtyIds && dirtyIds.has(n.id)) {
-          return { ...n, data: { ...n.data, status: 'idle', output: null, error: null } }
-        }
-        return n
+        const nextData = { ...n.data, props: { ...(n.data?.props || {}), ...patch } }
+        if (hasRealPropChange) { nextData.status = 'idle'; nextData.output = null; nextData.error = null }
+        return { ...n, data: nextData }
       }))
     }
     // Replace data.output (used by hover-action delete buttons on MediaItem).
@@ -1519,49 +1498,71 @@ function SpaceBuilder({ space, onSave, onClose }) {
     }
   }
 
-  // Run a node + all its ancestors AND all its descendants. The ancestor walk
-  // ensures we have fresh upstream values; the descendant walk auto-pushes
-  // the new output forward so anything connected downstream (collection,
-  // caption gen, save library, etc.) updates without a separate click.
-  const runFromNode = useCallback(async (targetId) => {
-    // Read the live ref instead of the closure-captured `running` state —
-    // the immediate auto-run tick can fire before React has propagated
-    // the state to this useCallback's closure, causing a phantom bounce.
+  // Run a node with one of three scopes:
+  //   'self_only':  target only — ancestors must already be cached, no
+  //                 descendants run. "I just want this node re-executed."
+  //   'up_to_here': target + every ancestor (full upstream chain) + sibling
+  //                 sources of any ancestor. No descendants. "Refresh
+  //                 everything that produces this node's input."
+  //   'full' (default): target + ancestors + descendants + sibling sources
+  //                 of descendants. Used by Auto-run ticks and the global
+  //                 Run button.
+  const runFromNode = useCallback(async (targetId, scope = 'full') => {
     if (runningRef.current) return
     const want = new Set([targetId])
-    // BFS up — collect ancestors of the target.
-    const upQueue = [targetId]
-    while (upQueue.length) {
-      const id = upQueue.shift()
-      for (const e of edges) {
-        if (e.target === id && !want.has(e.source)) {
-          want.add(e.source); upQueue.push(e.source)
+
+    // BFS up — ancestors. Always included unless scope='self_only'.
+    if (scope !== 'self_only') {
+      const upQueue = [targetId]
+      while (upQueue.length) {
+        const id = upQueue.shift()
+        for (const e of edges) {
+          if (e.target === id && !want.has(e.source)) {
+            want.add(e.source); upQueue.push(e.source)
+          }
         }
       }
     }
-    // BFS down — collect descendants so output cascades forward.
-    const downQueue = [targetId]
-    while (downQueue.length) {
-      const id = downQueue.shift()
-      for (const e of edges) {
-        if (e.source === id && !want.has(e.target)) {
-          want.add(e.target); downQueue.push(e.target)
+
+    // BFS down — descendants. Only for the full-chain scope.
+    if (scope === 'full') {
+      const downQueue = [targetId]
+      while (downQueue.length) {
+        const id = downQueue.shift()
+        for (const e of edges) {
+          if (e.source === id && !want.has(e.target)) {
+            want.add(e.target); downQueue.push(e.target)
+          }
+        }
+      }
+      // Sibling sources for any descendant — they need their inputs in
+      // the run subset too (e.g. auto_run → script_gen → avatar_render
+      // where avatar_picker is a sibling source feeding avatar_render).
+      const siblingQueue = [...want]
+      while (siblingQueue.length) {
+        const id = siblingQueue.shift()
+        for (const e of edges) {
+          if (e.target === id && !want.has(e.source)) {
+            want.add(e.source); siblingQueue.push(e.source)
+          }
         }
       }
     }
-    // For every descendant we just added, walk UP from it too — this
-    // pulls in SIBLING source nodes that feed into the chain but aren't
-    // downstream of the target. Classic case: auto_run → script_gen →
-    // avatar_render, where avatar_picker also feeds avatar_render but
-    // isn't a descendant of auto_run. Without this, avatar_render runs
-    // with no avatar config and throws "Connect an Avatar picker".
-    const siblingQueue = [...want]
-    while (siblingQueue.length) {
-      const id = siblingQueue.shift()
-      for (const e of edges) {
-        if (e.target === id && !want.has(e.source)) {
-          want.add(e.source); siblingQueue.push(e.source)
-        }
+
+    // Self-only sanity check: the target's inputs must already be cached.
+    // If any ancestor is missing output, fail loudly so the user knows
+    // why nothing happened (instead of running with empty inputs and
+    // surfacing a confusing "Wire X in" error).
+    if (scope === 'self_only') {
+      const directParents = edges.filter((e) => e.target === targetId).map((e) => e.source)
+      const missing = directParents.filter((pid) => {
+        const p = nodes.find((n) => n.id === pid)
+        return !(p?.data?.status === 'done' && p?.data?.output)
+      })
+      if (missing.length) {
+        const names = missing.map((pid) => nodes.find((n) => n.id === pid)?.data?.name || pid.slice(0, 6)).join(', ')
+        setError(`Can't run just this node — upstream nodes haven't run yet: ${names}. Pick "Run up to here" instead.`)
+        return
       }
     }
     const subsetNodes = nodes.filter((n) => want.has(n.id))
@@ -1645,7 +1646,45 @@ function SpaceBuilder({ space, onSave, onClose }) {
     if (typeof window === 'undefined') return
     window.__spaceRunFromNode = runFromNode
     window.__spaceAbortRun = () => { abortRunRef.current = true }
-    return () => { window.__spaceRunFromNode = null; window.__spaceAbortRun = null }
+    // Per-node play button uses this to ask the user which scope to run.
+    // Returns one of 'self_only' | 'up_to_here' | null (cancelled).
+    window.__spaceChooseRunScope = async (nodeId) => {
+      const node = nodesRef.current.find((n) => n.id === nodeId)
+      const label = node?.data?.name || NODE_REGISTRY[node?.data?.type]?.label || 'this node'
+      const directParents = (edgesRef.current || []).filter((e) => e.target === nodeId).map((e) => e.source)
+      const hasParents = directParents.length > 0
+      const allParentsCached = directParents.every((pid) => {
+        const p = nodesRef.current.find((n) => n.id === pid)
+        return p?.data?.status === 'done' && p?.data?.output
+      })
+      // No parents → nothing to choose; just run.
+      if (!hasParents) return 'self_only'
+      const options = [
+        {
+          key: 'self_only',
+          label: 'Run this node only',
+          hint: allParentsCached
+            ? 'Reuses the cached output of every upstream node.'
+            : 'Some upstream nodes haven\'t run yet — this option will fail. Pick "Run up to here" instead.',
+          primary: true,
+        },
+        {
+          key: 'up_to_here',
+          label: 'Run up to this node',
+          hint: 'Re-runs every upstream node, then this one. Anything downstream stays untouched.',
+        },
+      ]
+      return chooseDialog({
+        title: `Run ${label}`,
+        message: 'Pick the scope. Downstream nodes won\'t run either way — use the global Run button to fire the whole space.',
+        options,
+      })
+    }
+    return () => {
+      window.__spaceRunFromNode = null
+      window.__spaceAbortRun = null
+      window.__spaceChooseRunScope = null
+    }
   }, [runFromNode])
 
   // ── Auto-run drivers ──────────────────────────────────────────────────────

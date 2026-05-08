@@ -11,6 +11,17 @@ import { useEffect, useState } from 'react'
 
 let _toastDispatch = null
 let _confirmDispatch = null
+let _chooseDispatch = null
+
+// chooseDialog({ title, message, options: [{ key, label, primary?, kind? }] })
+// Returns the chosen key, or null if cancelled. Used by the per-node
+// play button to ask "this node only" vs "up to this node".
+export function chooseDialog(opts) {
+  return new Promise((resolve) => {
+    if (!_chooseDispatch) { resolve(null); return }
+    _chooseDispatch({ ...opts, resolve })
+  })
+}
 
 export function toast(input) {
   if (!_toastDispatch) {
@@ -37,6 +48,7 @@ export function confirmDialog(opts) {
 export default function ToastHost() {
   const [toasts, setToasts] = useState([])
   const [confirmState, setConfirmState] = useState(null)
+  const [chooseState, setChooseState] = useState(null)
 
   useEffect(() => {
     _toastDispatch = (t) => {
@@ -47,7 +59,8 @@ export default function ToastHost() {
       }, ttl)
     }
     _confirmDispatch = (c) => setConfirmState(c)
-    return () => { _toastDispatch = null; _confirmDispatch = null }
+    _chooseDispatch  = (c) => setChooseState(c)
+    return () => { _toastDispatch = null; _confirmDispatch = null; _chooseDispatch = null }
   }, [])
 
   const dismiss = (id) => setToasts((arr) => arr.filter((t) => t.id !== id))
@@ -56,15 +69,24 @@ export default function ToastHost() {
     confirmState.resolve(ok)
     setConfirmState(null)
   }
+  const closeChoose = (key) => {
+    if (!chooseState) return
+    chooseState.resolve(key)
+    setChooseState(null)
+  }
 
-  // Esc closes the confirm dialog.
+  // Esc closes the confirm / choose dialogs.
   useEffect(() => {
-    if (!confirmState) return
-    const onKey = (e) => { if (e.key === 'Escape') closeConfirm(false) }
+    if (!confirmState && !chooseState) return
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return
+      if (confirmState) closeConfirm(false)
+      else if (chooseState) closeChoose(null)
+    }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [confirmState])
+  }, [confirmState, chooseState])
 
   return (
     <>
@@ -110,6 +132,67 @@ export default function ToastHost() {
           )
         })}
       </div>
+      {chooseState && (
+        <div
+          role="dialog" aria-modal="true" aria-labelledby="choose-title"
+          onClick={() => closeChoose(null)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 220,
+            background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)',
+            display: 'grid', placeItems: 'center', padding: 20,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              maxWidth: 440, width: '100%',
+              background: 'var(--surface)', border: '1px solid var(--border)',
+              borderRadius: 12, padding: 22,
+              boxShadow: '0 20px 50px rgba(0,0,0,0.5)',
+            }}
+          >
+            <h2 id="choose-title" style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 17, margin: '0 0 6px' }}>
+              {chooseState.title || 'Pick one'}
+            </h2>
+            {chooseState.message && (
+              <p style={{ fontSize: 13, color: 'var(--text-soft)', lineHeight: 1.5, margin: '0 0 16px', whiteSpace: 'pre-wrap' }}>
+                {chooseState.message}
+              </p>
+            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {(chooseState.options || []).map((opt) => (
+                <button
+                  key={opt.key}
+                  onClick={() => closeChoose(opt.key)}
+                  className={opt.primary ? 'btn-primary' : 'btn-secondary'}
+                  style={{
+                    width: '100%', textAlign: 'left',
+                    padding: '12px 14px', borderRadius: 10,
+                    fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13.5,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <div>{opt.label}</div>
+                  {opt.hint && (
+                    <div style={{ fontFamily: 'var(--font-body)', fontWeight: 400, fontSize: 11.5, marginTop: 3, opacity: 0.85 }}>
+                      {opt.hint}
+                    </div>
+                  )}
+                </button>
+              ))}
+              <button
+                onClick={() => closeChoose(null)}
+                style={{
+                  marginTop: 4, padding: '8px 14px', borderRadius: 8,
+                  background: 'transparent', border: 'none',
+                  color: 'var(--muted)', cursor: 'pointer',
+                  fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 12.5,
+                }}
+              >Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
       {confirmState && (
         <div
           role="dialog" aria-modal="true" aria-labelledby="confirm-title"
