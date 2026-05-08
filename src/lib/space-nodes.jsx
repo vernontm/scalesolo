@@ -3799,6 +3799,24 @@ ${String(script).slice(0, 2000)}
         if (m && m.length) hashtags = m.join(' ')
       }
 
+      // 'Don't queue until we have everything' rule: refuse to fire if
+      // the bundle is missing user-facing copy (caption AND hashtags
+      // both empty almost always means caption_gen upstream failed or
+      // wasn't wired). Bailing here avoids inserting half-baked rows
+      // into the queue. Script-only fallback still allowed because
+      // some workflows publish raw script (e.g. text-only posts).
+      if (!caption && !hashtags && !script) {
+        throw new Error('Nothing to publish — caption / hashtags / script are all empty. Wire a caption generator (or fix it) before scheduling.')
+      }
+      if (!caption && !hashtags) {
+        // Have script but no caption — only allow when script is the
+        // whole post (text-only kinds). For video / image posts a
+        // missing caption usually means caption_gen choked silently.
+        if (videoUrl || photoUrls.length) {
+          throw new Error('Caption + hashtags are empty. Re-run caption_gen (or wait for it to finish) before scheduling — otherwise the post lands in the queue blank.')
+        }
+      }
+
       const description = [caption, hashtags].filter(Boolean).join('\n\n').trim()
         || String(script || '').slice(0, 500)
 
@@ -3956,26 +3974,35 @@ ${String(script).slice(0, 2000)}
   },
 
   save_library: {
-    label: 'Save to library', description: 'Bundles the incoming script + caption + hashtags + media into one library entry, tagged with the platforms you chose. Accepts script, caption + hashtags, image(s), or video — whatever upstream nodes are wired.',
+    free: true,
+    label: 'Save to library', description: 'Bundles the incoming script + caption + hashtags + media into one in-memory package and forwards it to schedule_post. Nothing is written to the queue until schedule_post completes — that prevents partial drafts from cluttering the schedule.',
     icon: Save, category: 'outputs', color: '#2ecc71',
     inputs: [{ id: 'in', label: 'In (script / caption / image / video)' }],
-    outputs: [],
-    initialProps: { title: '', status: 'draft', platforms: [] },
+    outputs: [{ id: 'out', label: 'Out (bundle for schedule_post)' }],
+    initialProps: { title: '', platforms: [] },
     Body: SaveBody,
-    run: async ({ data, inputs, ctx }) => {
+    // Pure in-memory bundler. No /api/content insert. Per the
+    // 'nothing in queue until schedule_post says done' rule: the
+    // queue / calendar should only ever reflect rows that
+    // schedule_post created on a successful Upload-Post submission.
+    // save_library used to insert a status='draft' row on every run,
+    // which (a) cluttered the Library tab with partial drafts and
+    // (b) doubled the row count when schedule_post fired right after.
+    run: async ({ data, inputs }) => {
       const arr = asArr(inputs?.in)
-      let script = '', caption = '', hashtags = '', videoUrl = null, incomingTitle = ''
+      let script = '', caption = '', hashtags = '', firstComment = '', videoUrl = null, incomingTitle = '', perPlatform = null
       const imageUrls = []
       for (const v of arr) {
         if (!v) continue
         if (typeof v === 'string') { if (!script) script = v; continue }
         if (typeof v !== 'object') continue
-        // Combine node passes a pre-bundled package — use its title if our
-        // own props.title is empty.
         if (v.combined && v.title) incomingTitle = incomingTitle || v.title
+        if (v.title && !incomingTitle) incomingTitle = v.title
         if (v.script || v.full_script) script = script || v.script || v.full_script
         if (v.caption) caption = caption || v.caption
         if (v.hashtags) hashtags = hashtags || v.hashtags
+        if (v.first_comment) firstComment = firstComment || v.first_comment
+        if (!perPlatform && v.per_platform && typeof v.per_platform === 'object') perPlatform = v.per_platform
         if (v.video?.video_url) videoUrl = videoUrl || v.video.video_url
         if (v.video_url) videoUrl = videoUrl || v.video_url
         if (Array.isArray(v.images)) for (const im of v.images) { if (im?.url) imageUrls.push(im.url) }
@@ -3987,9 +4014,6 @@ ${String(script).slice(0, 2000)}
       const platforms = Array.isArray(data.props?.platforms) && data.props.platforms.length
         ? data.props.platforms
         : null
-      // Validate compatibility — refuse to save if any selected platform
-      // can't accept the produced media kind. Surfaces in the node's red
-      // error state, doesn't burn cycles trying to schedule garbage.
       if (platforms?.length) {
         const bad = platforms.filter((id) => {
           const def = PLATFORMS.find((p) => p.id === id)
@@ -4000,21 +4024,23 @@ ${String(script).slice(0, 2000)}
           throw new Error(`${names} can't accept ${mediaType} content. Remove it or change what's wired in.`)
         }
       }
-      const postType = mediaType === 'video' ? 'video' : (mediaType === 'image' ? 'post' : 'post')
-      const r = await fetch('/api/content', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
-        body: JSON.stringify({
-          profile_id: ctx.profileId, title, full_script: script, caption, hashtags,
-          media_urls: mediaUrls, media_type: mediaType,
-          post_type: postType,
-          platforms,
-          status: data.props?.status || 'draft', generated_by: 'space',
-        }),
-      })
-      const body = await r.json()
-      if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
-      return { content_id: body.item?.id, platforms, media_type: mediaType }
+      // Emit a complete bundle so a downstream schedule_post can run
+      // without re-walking every upstream input.
+      return {
+        bundle: true,
+        title,
+        script,
+        full_script: script,
+        caption,
+        hashtags,
+        first_comment: firstComment,
+        per_platform: perPlatform,
+        video_url: videoUrl,
+        images: imageUrls.length ? imageUrls.map((url) => ({ url })) : undefined,
+        media_urls: mediaUrls,
+        media_type: mediaType,
+        platforms,
+      }
     },
   },
 }

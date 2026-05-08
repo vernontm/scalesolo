@@ -175,8 +175,18 @@ export default async function handler(req, res) {
     }
 
     // Persist as a content_scripts row so the post appears on the
-    // Schedule page's Calendar view alongside library-scheduled content.
-    // status='posted' for instant publishes, 'scheduled' for future ISOs.
+    // Schedule page's Calendar view alongside library-scheduled
+    // content. status='posted' for instant publishes, 'scheduled' for
+    // future ISOs.
+    //
+    // Dedup window: if a row with the same media_url + profile_id was
+    // created in the last 5 minutes, UPDATE that row in place instead
+    // of inserting a new one. Prevents two near-simultaneous workflow
+    // runs (auto-tick races, double-clicks, retries) from producing
+    // duplicate rows in the queue. 5 min is wider than any realistic
+    // workflow but tighter than a posting cadence, so legitimate
+    // re-renders of the same content separated by hours still create
+    // their own rows.
     let savedItem = null
     try {
       const isFuture = !!resolvedScheduledIso && new Date(resolvedScheduledIso).getTime() > Date.now() + 30_000
@@ -185,7 +195,21 @@ export default async function handler(req, res) {
       const mediaType = isVideo ? 'video' : 'image'
       const postType = isVideo ? 'video' : 'post'
       const titleStr = (title || '').trim() || (description || '').slice(0, 60).trim() || 'Scheduled post'
-      const insertBody = {
+      const primaryMediaUrl = mediaUrls?.[0]
+      const fiveMinAgo = new Date(Date.now() - 5 * 60_000).toISOString()
+
+      let existing = null
+      if (primaryMediaUrl) {
+        const matches = await supaFetch(
+          `content_scripts?profile_id=eq.${profile_id}` +
+          `&media_urls=cs.{${encodeURIComponent('"' + primaryMediaUrl + '"')}}` +
+          `&created_at=gte.${encodeURIComponent(fiveMinAgo)}` +
+          `&order=created_at.desc&limit=1&select=id,status`
+        ).catch(() => [])
+        existing = Array.isArray(matches) ? matches[0] : null
+      }
+
+      const payload = {
         profile_id,
         title: titleStr,
         full_script: description || null,
@@ -197,10 +221,18 @@ export default async function handler(req, res) {
         scheduled_datetime: resolvedScheduledIso || null,
         generated_by: 'schedule_post',
       }
-      const inserted = await supaFetch('content_scripts', { method: 'POST', body: insertBody })
-      savedItem = Array.isArray(inserted) ? inserted[0] : inserted
+      if (existing?.id) {
+        // Same media inserted moments ago — patch the existing row
+        // (e.g. update status from scheduled→posted, or refresh
+        // scheduled_datetime). No new queue slot.
+        const updated = await supaFetch(`content_scripts?id=eq.${existing.id}`, { method: 'PATCH', body: payload })
+        savedItem = Array.isArray(updated) ? updated[0] : updated
+      } else {
+        const inserted = await supaFetch('content_scripts', { method: 'POST', body: payload })
+        savedItem = Array.isArray(inserted) ? inserted[0] : inserted
+      }
     } catch (e) {
-      console.warn('schedule_post → content_scripts insert failed:', e.message)
+      console.warn('schedule_post → content_scripts persist failed:', e.message)
     }
 
     // Best-effort notification — bell pings instantly via Realtime.
