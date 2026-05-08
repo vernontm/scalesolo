@@ -16,13 +16,14 @@ import {
   GripHorizontal, Minimize2, Maximize2, Wand2, MessageSquare, Send,
   ZoomIn, ZoomOut, Maximize, Scissors, Download, X, History, Clock,
   CheckCircle2, XCircle, Square, Settings as SettingsIcon, Copy, Building2,
-  BookOpen, ChevronLeft, ChevronRight, Lock, Globe, Bookmark,
+  BookOpen, ChevronLeft, ChevronRight, Lock, Globe, Bookmark, FileVideo,
 } from 'lucide-react'
 import { useRef } from 'react'
 // (useEffect already imported above for other effects in this file)
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
-import { useCredits } from '../context/CreditsContext.jsx'
+import { useCredits, fmtCount } from '../context/CreditsContext.jsx'
+import { useNavigate } from 'react-router-dom'
 import { toast, confirmDialog, chooseDialog } from '../components/Toast.jsx'
 import {
   NODE_REGISTRY, NODE_CATEGORIES, runSpace, downloadUrl, readImageItems,
@@ -743,6 +744,50 @@ function TemplateGuidePanel({ guide, nodes, onClose }) {
         ))}
       </div>
     </aside>
+  )
+}
+
+// Slim credits pill for the SpaceBuilder toolbar. Shows AI tokens +
+// video units side-by-side. Each pool turns red at <10% of grant so
+// the user has a visual that something's about to fail. Clicking goes
+// to /billing.
+function SpaceCreditsPill() {
+  const navigate = useNavigate()
+  const { pools } = useCredits()
+  const tokens = pools?.ai_tokens?.balance ?? 0
+  const tokensGrant = pools?.ai_tokens?.monthly_grant ?? 0
+  const videos = pools?.video_units?.balance ?? 0
+  const videosGrant = pools?.video_units?.monthly_grant ?? 0
+  const tokensLow = tokensGrant > 0 && tokens < tokensGrant * 0.1
+  const videosLow = videosGrant > 0 && videos < videosGrant * 0.1
+  const anyLow = tokensLow || videosLow
+  const anyEmpty = tokens === 0 || videos === 0
+
+  return (
+    <button
+      onClick={() => navigate('/billing')}
+      title="Click for billing details"
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 8,
+        height: 30, padding: '0 10px', borderRadius: 8,
+        background: anyEmpty ? 'rgba(239,68,68,0.12)' : 'var(--surface)',
+        border: `1px solid ${anyEmpty ? 'rgba(239,68,68,0.45)' : anyLow ? 'rgba(245,158,11,0.45)' : 'var(--border)'}`,
+        color: 'var(--text)', cursor: 'pointer',
+        fontFamily: 'var(--font-display)', fontSize: 11.5,
+      }}
+    >
+      <Sparkles size={11} style={{ color: tokensLow ? 'var(--red)' : 'var(--red)' }} strokeWidth={2.4} />
+      <span style={{ color: tokensLow ? 'var(--red)' : 'var(--text)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+        {fmtCount(tokens)}
+      </span>
+      <span style={{ color: 'var(--muted)', fontWeight: 600 }}>tokens</span>
+      <span style={{ width: 1, height: 14, background: 'var(--border)' }} />
+      <FileVideo size={11} style={{ color: videosLow ? 'var(--red)' : '#f59e0b' }} strokeWidth={2.4} />
+      <span style={{ color: videosLow ? 'var(--red)' : 'var(--text)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+        {fmtCount(videos)}
+      </span>
+      <span style={{ color: 'var(--muted)', fontWeight: 600 }}>video</span>
+    </button>
   )
 }
 
@@ -1808,27 +1853,16 @@ function SpaceBuilder({ space, onSave, onClose }) {
         }
       }
 
-      // Smart immediate tick: only fire if it's actually been longer
-      // than the cadence since the last tick. Without this, every page
-      // load (or every auto_run prop change — name, max_runs, etc.) was
-      // firing a fresh tick within 50ms, which steamrolled per-node
-      // clicks the user made right after opening the canvas.
-      const lastIso = trig.data.props?.last_run_at
-      const lastMs = lastIso ? new Date(lastIso).getTime() : 0
-      const dueAt = lastMs + opt.ms
-      const overdueBy = Date.now() - dueAt
-      if (overdueBy >= 0) {
-        // Genuinely overdue (last run was more than `cadence` ago) — fire
-        // soon, but give the canvas a beat to settle so users opening
-        // the page can see what's about to happen and Stop it if they
-        // want. 1500ms is long enough to read the toast, short enough
-        // that an actively scheduled cadence isn't disrupted.
-        firstTickTimers.push(setTimeout(tick, 1500))
-      } else {
-        // Not yet due — schedule the first real tick at the original
-        // cadence boundary. No "immediate" tick on mount.
-        firstTickTimers.push(setTimeout(tick, Math.max(1500, -overdueBy)))
-      }
+      // NEVER fire on mount. Auto-run only ticks on its cadence
+      // interval going forward — opening / refreshing the canvas
+      // does not trigger a workflow run. The user explicitly asked
+      // for this: the only ways to start a run are
+      //   1) the next cadence boundary,
+      //   2) the global Run button in the toolbar,
+      //   3) the per-node play button.
+      // last_run_at gets stamped each tick, so if the canvas was
+      // closed for hours the next tick still fires correctly at the
+      // next cadence boundary from when this useEffect ran.
       timers.push(setInterval(tick, opt.ms))
     }
     return () => {
@@ -2088,6 +2122,12 @@ function SpaceBuilder({ space, onSave, onClose }) {
             {skippedTicks} skipped
           </span>
         )}
+        {/* Live credit balances — clicking jumps to /billing. The
+            renders that hit "Insufficient credit. This operation
+            requires 'api' credits." come out of video_units, so both
+            pools are surfaced here side-by-side. Goes red below 10%
+            of the monthly grant so the user sees the wall coming. */}
+        <SpaceCreditsPill />
         <button className="btn-ghost" onClick={() => setHistoryOpen(true)} title="Run history" style={{ padding: '6px 10px' }}>
           <History size={13} /> History
         </button>
