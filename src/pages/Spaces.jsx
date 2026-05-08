@@ -1244,7 +1244,10 @@ function SpaceBuilder({ space, onSave, onClose }) {
   // the new output forward so anything connected downstream (collection,
   // caption gen, save library, etc.) updates without a separate click.
   const runFromNode = useCallback(async (targetId) => {
-    if (running) return
+    // Read the live ref instead of the closure-captured `running` state —
+    // the immediate auto-run tick can fire before React has propagated
+    // the state to this useCallback's closure, causing a phantom bounce.
+    if (runningRef.current) return
     const want = new Set([targetId])
     // BFS up — collect ancestors
     const upQueue = [targetId]
@@ -1330,6 +1333,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
     const activeTriggers = nodes.filter((n) => n.data?.type === 'auto_run' && n.data?.props?.active)
     if (!activeTriggers.length) return
     const timers = []
+    const firstTickTimers = []
     for (const trig of activeTriggers) {
       const opt = AUTORUN_OPTIONS.find((o) => o.id === trig.data.props.cadence) || AUTORUN_OPTIONS[2]
       const id = trig.id
@@ -1343,28 +1347,39 @@ function SpaceBuilder({ space, onSave, onClose }) {
         // looks like the run "happened" without anything actually firing.
         if (runningRef.current) {
           setSkippedTicks((n) => n + 1)
-          console.warn('auto-run tick skipped — previous run still in progress')
+          toast({ kind: 'warn', message: 'Auto-run skipped — previous run still in progress.' })
           return
         }
         const used = Number(live.data.props.runs_used || 0)
         const cap  = Number(live.data.props.max_runs || 10)
         if (used >= cap) {
           patchNode(id, { props: { ...live.data.props, active: false } })
+          toast({ kind: 'info', message: `Auto-run reached its cap (${cap} runs). Toggle off to reset, or bump max_runs.` })
           return
         }
         // Increment + record before run so concurrent ticks (which we now
         // guard against above) can't double-fire even if scheduling drifts.
         patchNode(id, { props: { ...live.data.props, runs_used: used + 1, last_run_at: new Date().toISOString() } })
+        toast({ kind: 'info', message: `Auto-run firing (${used + 1} / ${cap}) — running the workflow…` })
         try {
           await runFromNodeRef.current(id)
         } catch (e) {
+          // eslint-disable-next-line no-console
           console.warn('auto-run tick failed:', e.message)
+          toast({ kind: 'error', message: `Auto-run failed: ${e.message}` })
         }
       }
-      tick()
+      // Immediate tick on activation, but pushed to a microtask so React
+      // has finished applying the state change that flipped `active=true`
+      // before we read nodesRef. Otherwise the very first tick can race
+      // and read stale `active=false`.
+      firstTickTimers.push(setTimeout(tick, 50))
       timers.push(setInterval(tick, opt.ms))
     }
-    return () => timers.forEach((t) => clearInterval(t))
+    return () => {
+      firstTickTimers.forEach((t) => clearTimeout(t))
+      timers.forEach((t) => clearInterval(t))
+    }
     // We deliberately don't depend on `nodes` (would re-create the timer on
     // every node update). Watch only the active-trigger fingerprint.
     // eslint-disable-next-line react-hooks/exhaustive-deps
