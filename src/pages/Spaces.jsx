@@ -1249,7 +1249,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
     // the state to this useCallback's closure, causing a phantom bounce.
     if (runningRef.current) return
     const want = new Set([targetId])
-    // BFS up — collect ancestors
+    // BFS up — collect ancestors of the target.
     const upQueue = [targetId]
     while (upQueue.length) {
       const id = upQueue.shift()
@@ -1259,13 +1259,28 @@ function SpaceBuilder({ space, onSave, onClose }) {
         }
       }
     }
-    // BFS down — collect descendants so output cascades forward
+    // BFS down — collect descendants so output cascades forward.
     const downQueue = [targetId]
     while (downQueue.length) {
       const id = downQueue.shift()
       for (const e of edges) {
         if (e.source === id && !want.has(e.target)) {
           want.add(e.target); downQueue.push(e.target)
+        }
+      }
+    }
+    // For every descendant we just added, walk UP from it too — this
+    // pulls in SIBLING source nodes that feed into the chain but aren't
+    // downstream of the target. Classic case: auto_run → script_gen →
+    // avatar_render, where avatar_picker also feeds avatar_render but
+    // isn't a descendant of auto_run. Without this, avatar_render runs
+    // with no avatar config and throws "Connect an Avatar picker".
+    const siblingQueue = [...want]
+    while (siblingQueue.length) {
+      const id = siblingQueue.shift()
+      for (const e of edges) {
+        if (e.target === id && !want.has(e.source)) {
+          want.add(e.source); siblingQueue.push(e.source)
         }
       }
     }
