@@ -117,27 +117,35 @@ async function renderTitlePng({
   const blockHeight = totalTextHeight + bg_padding * 2
   const blockWidth  = max_width
 
+  const fontOpts = {
+    fontFiles: Object.values(FONT_FILES).map((f) => join(FONTS_DIR, f.file))
+      .concat(join(FONTS_DIR, FALLBACK.file)),
+    defaultFontFamily: cfg.family,
+    loadSystemFonts: false,
+  }
+
+  // Probe render to measure actual text width — bg pill hugs the text
+  // instead of stretching across the full canvas.
+  const probeLines = lines.map((l, i) => {
+    const y = bg_padding + (i + 1) * lineHeight - Math.round(size * 0.2)
+    return `<text x="${blockWidth / 2}" y="${y}" font-family="${cfg.family}" font-size="${size}" font-weight="${cfg.weight}" fill="${color}" text-anchor="middle" dominant-baseline="alphabetic">${escapeXml(l)}</text>`
+  }).join('\n    ')
+  const probeSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${blockWidth}" height="${blockHeight}">${probeLines}</svg>`
+  let textWidth = blockWidth
+  try {
+    const bb = new Resvg(Buffer.from(probeSvg), { font: fontOpts, background: 'rgba(0,0,0,0)' }).getBBox()
+    if (bb && bb.width) textWidth = bb.width
+  } catch {}
+
+  const rectWidth = Math.min(blockWidth, Math.round(textWidth + bg_padding * 2))
+  const rectX     = Math.round((blockWidth - rectWidth) / 2)
+
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${blockWidth}" height="${blockHeight}">
-    <rect x="0" y="0" width="${blockWidth}" height="${blockHeight}" rx="${Math.round(bg_padding * 0.4)}" ry="${Math.round(bg_padding * 0.4)}" fill="${bg_color}" />
-    ${lines.map((l, i) => {
-      const y = bg_padding + (i + 1) * lineHeight - Math.round(size * 0.2)
-      return `<text x="${blockWidth / 2}" y="${y}" font-family="${cfg.family}" font-size="${size}" font-weight="${cfg.weight}" fill="${color}" text-anchor="middle" dominant-baseline="alphabetic">${escapeXml(l)}</text>`
-    }).join('\n    ')}
+    <rect x="${rectX}" y="0" width="${rectWidth}" height="${blockHeight}" rx="${Math.round(bg_padding * 0.4)}" ry="${Math.round(bg_padding * 0.4)}" fill="${bg_color}" />
+    ${probeLines}
   </svg>`
 
-  // resvg with explicit fontFiles — sharp/librsvg's @font-face data-URI
-  // path is unreliable in serverless. Registering every bundled .ttf
-  // up-front means resvg's font DB has the exact face the SVG names.
-  const resvg = new Resvg(Buffer.from(svg), {
-    background: 'rgba(0,0,0,0)',
-    font: {
-      fontFiles: Object.values(FONT_FILES).map((f) => join(FONTS_DIR, f.file))
-        .concat(join(FONTS_DIR, FALLBACK.file)),
-      defaultFontFamily: cfg.family,
-      loadSystemFonts: false,
-    },
-  })
-  return resvg.render().asPng()
+  return new Resvg(Buffer.from(svg), { background: 'rgba(0,0,0,0)', font: fontOpts }).render().asPng()
 }
 
 function escapeXml(s) {
