@@ -4366,6 +4366,13 @@ ${String(script).slice(0, 2000)}
       const arr = asArr(inputs?.in)
       let logoUrl = null, musicUrl = null
       const p = data.props || {}
+      // Loud failure when captions are enabled but no ZapCap template id is
+      // set. Without this the polish API silently drops Phase B (it gates
+      // on `captions_enabled && caption_template_id`), and the user just
+      // sees "no captions" with no clue why.
+      if (p.captions_enabled !== false && !p.caption_template_id) {
+        throw new Error('Captions are on but no style picked. Open settings → Captions and choose a template.')
+      }
       if (p.music_url) musicUrl = p.music_url
       // Also pluck a wired-in title from upstream caption_gen so it can
       // override the manually-typed prop without the user re-typing.
