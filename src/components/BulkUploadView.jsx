@@ -127,8 +127,17 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   const [search, setSearch] = useState('')
   const [busyAction, setBusyAction] = useState(null) // 'captions' | 'schedule' | 'publish'
   const [uploads, setUploads] = useState([]) // {id, name, kind, progress, error?}
+  const [previewItem, setPreviewItem] = useState(null) // { url, type, title } for fullscreen media preview
   const dropRef = useRef(null)
   const fileRef = useRef(null)
+
+  // Esc closes the preview overlay.
+  useEffect(() => {
+    if (!previewItem) return
+    const onKey = (e) => { if (e.key === 'Escape') setPreviewItem(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [previewItem])
 
   // ── load ──────────────────────────────────────────────────────────────────
   const refresh = async () => {
@@ -552,9 +561,31 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                     </td>
                     <td style={{ padding: 8, verticalAlign: 'top' }}>
                       {thumb ? (
-                        isVideo
-                          ? <video src={thumb} muted playsInline preload="metadata" style={{ width: 56, height: 56, borderRadius: 6, objectFit: 'cover', background: '#000', display: 'block' }} />
-                          : <img src={thumb} alt={r.title || 'media'} style={{ width: 56, height: 56, borderRadius: 6, objectFit: 'cover', background: 'var(--surface-2)', display: 'block' }} />
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setPreviewItem({ url: thumb, type: isVideo ? 'video' : 'image', title: r.title }) }}
+                          aria-label={`Preview ${r.title || 'media'}`}
+                          title="Click to preview"
+                          style={{
+                            position: 'relative',
+                            width: 56, height: 56, padding: 0, borderRadius: 6,
+                            border: '1px solid var(--border)', background: '#000',
+                            cursor: 'pointer', overflow: 'hidden', display: 'block',
+                          }}
+                        >
+                          {isVideo
+                            ? <video src={thumb} muted playsInline preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }} />
+                            : <img src={thumb} alt={r.title || 'media'} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }} />}
+                          {isVideo && (
+                            <span style={{
+                              position: 'absolute', inset: 0,
+                              display: 'grid', placeItems: 'center',
+                              color: '#fff', fontSize: 18,
+                              background: 'rgba(0,0,0,0.25)',
+                              pointerEvents: 'none',
+                            }}>▶</span>
+                          )}
+                        </button>
                       ) : (
                         <div style={{ width: 56, height: 56, borderRadius: 6, background: 'var(--surface-2)', display: 'grid', placeItems: 'center', color: 'var(--muted)' }}>
                           <ImageIcon size={18} />
@@ -609,6 +640,70 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           </table>
         </div>
       </div>
+
+      {/* Fullscreen media preview overlay — clicking the thumbnail in the
+          Media column opens this. Esc / click-outside closes. */}
+      {previewItem && (
+        <div
+          role="dialog" aria-modal="true" aria-label="Media preview"
+          onClick={() => setPreviewItem(null)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 100,
+            background: 'rgba(0,0,0,0.92)', backdropFilter: 'blur(6px)',
+            display: 'grid', placeItems: 'center', padding: 24,
+            cursor: 'zoom-out',
+          }}
+        >
+          {/* Close + download buttons (top corners). */}
+          <button
+            aria-label="Close preview"
+            onClick={(e) => { e.stopPropagation(); setPreviewItem(null) }}
+            style={{
+              position: 'absolute', top: 18, left: 18,
+              width: 38, height: 38, borderRadius: 999,
+              background: 'rgba(255,255,255,0.10)', border: 'none', color: '#fff',
+              cursor: 'pointer', display: 'grid', placeItems: 'center', fontSize: 16,
+            }}
+          >×</button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              const a = document.createElement('a')
+              a.href = previewItem.url
+              a.download = previewItem.title || (previewItem.type === 'video' ? 'video.mp4' : 'image')
+              a.click()
+            }}
+            style={{
+              position: 'absolute', top: 18, right: 18,
+              padding: '8px 14px', borderRadius: 999,
+              background: 'rgba(255,255,255,0.12)', border: 'none', color: '#fff',
+              cursor: 'pointer', fontSize: 12, fontWeight: 700, letterSpacing: '0.04em',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}
+          ><Download size={13} /> Download</button>
+          {previewItem.title && (
+            <div style={{
+              position: 'absolute', top: 24, left: '50%', transform: 'translateX(-50%)',
+              color: '#fff', fontSize: 13, opacity: 0.85, fontFamily: 'var(--font-display)',
+              maxWidth: '60vw', textAlign: 'center', overflow: 'hidden',
+              textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>{previewItem.title}</div>
+          )}
+          {previewItem.type === 'video' ? (
+            <video
+              src={previewItem.url} controls autoPlay
+              onClick={(e) => e.stopPropagation()}
+              style={{ maxWidth: '92vw', maxHeight: '88vh', borderRadius: 8, background: '#000' }}
+            />
+          ) : (
+            <img
+              src={previewItem.url} alt={previewItem.title || ''}
+              onClick={(e) => e.stopPropagation()}
+              style={{ maxWidth: '92vw', maxHeight: '88vh', borderRadius: 8, objectFit: 'contain' }}
+            />
+          )}
+        </div>
+      )}
     </div>
   )
 }
