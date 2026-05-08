@@ -175,7 +175,23 @@ function wrapTitleLines(rawText, fontSize) {
     else cur = cur + ' ' + w
   }
   if (cur) lines.push(cur)
-  return lines.join('\n')   // real newline character → goes into textfile
+  // ffmpeg < 7.0 doesn't support drawtext's text_align option, so we
+  // can't ask drawtext to center each line within the bounding box.
+  // The whole block is x-centered via x=(w-text_w)/2 so all lines will
+  // be the same horizontal extent — good enough when line lengths are
+  // similar after greedy wrap. Pad the shorter line(s) with whitespace
+  // on each side so they visually center under the longer line.
+  if (lines.length > 1) {
+    const maxLen = Math.max(...lines.map((l) => l.length))
+    return lines.map((l) => {
+      const total = maxLen - l.length
+      if (total <= 0) return l
+      const left = Math.floor(total / 2)
+      const right = total - left
+      return ' '.repeat(left) + l + ' '.repeat(right)
+    }).join('\n')
+  }
+  return lines.join('\n')
 }
 
 // Spawn ffmpeg with the given args, capture stderr for error reporting.
@@ -306,18 +322,16 @@ export default async function handler(req, res) {
         // ffmpeg path option values escape : and \ — escape both for
         // textfile= and fontfile= so the filter parser doesn't choke.
         const escapePath = (p) => String(p).replace(/\\/g, '\\\\').replace(/:/g, '\\:')
-        // text_align=C+M centers each line horizontally within the box
-        // (and vertically within line height). Without it, multi-line
-        // titles stack flush-left even though the whole text block is
-        // centered horizontally — looks lopsided when line lengths differ.
-        // ffmpeg ≥ 5.1 supports this; older builds will ignore the option.
+        // ffmpeg < 7.0 (the build @ffmpeg-installer ships) doesn't have
+        // text_align — multi-line drawtext renders left-aligned within
+        // the box, so wrapTitleLines pads shorter lines with whitespace
+        // to visually center them under the longest line.
         filters.push(
           `${vLabel}drawtext=fontfile=${escapePath(titleFontPath)}` +
             `:textfile=${escapePath(titleFilePath)}` +
             `:fontcolor=${tFc}:fontsize=${tSize}` +
             `:box=1:boxcolor=${tBg}:boxborderw=${tPad}` +
             `:line_spacing=${Math.round(tSize * 0.18)}` +
-            `:text_align=C+M` +
             `:x=(w-text_w)/2:y=h*${tYpct}-text_h/2[vt]`
         )
         vLabel = '[vt]'
