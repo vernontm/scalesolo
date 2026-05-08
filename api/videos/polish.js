@@ -473,39 +473,17 @@ export default async function handler(req, res) {
       } catch {}
     }
 
-    // Persist a draft content_scripts row so the polished video shows up
-    // on the Schedule page's Library tab immediately. Previously only
-    // schedule_post wrote to this table, so any render that hadn't yet
-    // reached scheduling (or where scheduling failed) was invisible
-    // outside the canvas — refreshing the Schedule page lost it.
-    let savedRow = null
-    try {
-      const titleStr = (title || '').trim() || 'Polished video'
-      const inserted = await supaFetch('content_scripts', {
-        method: 'POST',
-        body: {
-          profile_id,
-          title: titleStr.slice(0, 120),
-          media_urls: [pub.publicUrl],
-          media_type: 'video',
-          post_type: 'video',
-          status: 'draft',
-          generated_by: 'video_polish',
-        },
-      })
-      savedRow = Array.isArray(inserted) ? inserted[0] : inserted
-    } catch (e) {
-      // Don't fail the render just because the library insert tripped —
-      // the user still gets the polished URL back; they just won't see
-      // this particular run in the Library list.
-      console.warn('polish → content_scripts insert skipped:', e.message)
-    }
-
+    // Don't auto-insert a "Polished video" content_scripts row here. The
+    // save_library node downstream is the canonical owner of the library
+    // entry — auto-inserting from polish.js produced a separate empty
+    // row for every render, polluting the Library tab. Polished URL is
+    // returned to the canvas; if the user wants a library record without
+    // wiring save_library, they can drag one in.
     return res.status(200).json({
       video_url: pub.publicUrl,
       bytes: finalBuf.byteLength,
       zapcap: zapcapMeta,
-      content_id: savedRow?.id || null,
+      content_id: null,
     })
   } catch (err) {
     console.error('polish error:', err?.stack || err)

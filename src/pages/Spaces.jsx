@@ -1050,23 +1050,44 @@ function SpaceBuilder({ space, onSave, onClose }) {
   const [aiSuggestion, setAiSuggestion] = useState(null)
 
   // Load avatars (custom + HeyGen public library) so the AvatarPicker node
-  // can list them.
+  // can list them. Also re-fetches whenever the tab regains focus / the
+  // page becomes visible so a look added on the Avatars page shows up
+  // here without a hard refresh — otherwise the picker dropdown holds the
+  // stale list and selecting the "new" look silently misses.
   useEffect(() => {
     if (!session || !selectedProfileId) return
-    fetch(`/api/avatars?profile_id=${selectedProfileId}`, {
-      headers: { Authorization: `Bearer ${session.access_token}` },
-    })
-      .then((r) => r.json())
-      .then((b) => setAvatars(b.avatars || []))
-      // eslint-disable-next-line no-console
-      .catch((e) => console.warn('[Spaces] avatars load failed', e?.message || e))
+    let alive = true
+    const loadAvatars = () => {
+      fetch(`/api/avatars?profile_id=${selectedProfileId}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+        .then((r) => r.json())
+        .then((b) => { if (alive) setAvatars(b.avatars || []) })
+        // eslint-disable-next-line no-console
+        .catch((e) => console.warn('[Spaces] avatars load failed', e?.message || e))
+    }
+    loadAvatars()
     fetch(`/api/avatars/heygen-library?profile_id=${selectedProfileId}`, {
       headers: { Authorization: `Bearer ${session.access_token}` },
     })
       .then((r) => r.json())
-      .then((b) => setPublicAvatars(Array.isArray(b.groups) ? b.groups : []))
+      .then((b) => { if (alive) setPublicAvatars(Array.isArray(b.groups) ? b.groups : []) })
       // eslint-disable-next-line no-console
       .catch((e) => console.warn('[Spaces] heygen library load failed', e?.message || e))
+
+    const onVisible = () => { if (document.visibilityState === 'visible') loadAvatars() }
+    const onFocus = () => loadAvatars()
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      alive = false
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [session, selectedProfileId])
+
+  useEffect(() => {
+    if (!session || !selectedProfileId) return
     // Connected social platforms — used by schedule_post to gate which
     // platform pills can be toggled.
     fetch(`/api/social/profiles?profile_id=${selectedProfileId}`, {
@@ -1088,24 +1109,48 @@ function SpaceBuilder({ space, onSave, onClose }) {
   useEffect(() => {
     if (typeof window === 'undefined') return
     window.__spacePatchNode = (id, patch) => {
+      // UI prop edits invalidate the cached run for this node AND every
+      // node downstream of it. Without the cascade, changing an Avatar's
+      // look would dirty avatar_picker but avatar_render would stay 'done'
+      // with its old videos[] output — runSpace's "done + has output"
+      // short-circuit would skip re-execution and the user would never see
+      // the new look. Pure renames (just __name) don't cascade. Internal
+      // context injections (_ctx*) don't invalidate either.
+      const hasRealPropChange = Object.keys(patch).some((k) => k !== '__name' && !k.startsWith('_ctx'))
+      let dirtyIds = null
+      if (hasRealPropChange) {
+        // BFS forward from `id` over the live edge set.
+        const dirty = new Set([id])
+        const eList = edgesRef.current || []
+        const q = [id]
+        while (q.length) {
+          const cur = q.shift()
+          for (const e of eList) {
+            if (e.source === cur && !dirty.has(e.target)) {
+              dirty.add(e.target); q.push(e.target)
+            }
+          }
+        }
+        dirtyIds = dirty
+      }
       setNodes((arr) => arr.map((n) => {
-        if (n.id !== id) return n
-        // UI prop edits invalidate the cached run. Without this, runSpace's
-        // "done + has output" short-circuit reuses stale output (e.g. you
-        // change the avatar look but the renderer keeps the old look_id).
-        // We only invalidate when actual props changed — a pure rename
-        // (just __name) shouldn't re-trigger a render. Internal context
-        // injections (_ctx*) also shouldn't invalidate.
-        const hasRealPropChange = Object.keys(patch).some((k) => k !== '__name' && !k.startsWith('_ctx'))
-        if (Object.prototype.hasOwnProperty.call(patch, '__name')) {
-          const { __name, ...rest } = patch
-          const nextData = { ...n.data, name: __name, props: { ...(n.data?.props || {}), ...rest } }
+        if (n.id === id) {
+          if (Object.prototype.hasOwnProperty.call(patch, '__name')) {
+            const { __name, ...rest } = patch
+            const nextData = { ...n.data, name: __name, props: { ...(n.data?.props || {}), ...rest } }
+            if (hasRealPropChange) { nextData.status = 'idle'; nextData.output = null; nextData.error = null }
+            return { ...n, data: nextData }
+          }
+          const nextData = { ...n.data, props: { ...(n.data?.props || {}), ...patch } }
           if (hasRealPropChange) { nextData.status = 'idle'; nextData.output = null; nextData.error = null }
           return { ...n, data: nextData }
         }
-        const nextData = { ...n.data, props: { ...(n.data?.props || {}), ...patch } }
-        if (hasRealPropChange) { nextData.status = 'idle'; nextData.output = null; nextData.error = null }
-        return { ...n, data: nextData }
+        // Downstream cascade: just dirty status/output/error, leave props
+        // alone so the user's config is preserved.
+        if (dirtyIds && dirtyIds.has(n.id)) {
+          return { ...n, data: { ...n.data, status: 'idle', output: null, error: null } }
+        }
+        return n
       }))
     }
     // Replace data.output (used by hover-action delete buttons on MediaItem).

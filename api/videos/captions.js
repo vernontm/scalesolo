@@ -82,34 +82,14 @@ export default async function handler(req, res) {
       } catch {}
     }
 
-    // Persist a draft content_scripts row so the captioned video shows
-    // up on the Schedule page's Library tab immediately. polish.js does
-    // the same — without these auto-inserts, any render that didn't make
-    // it to schedule_post would be invisible outside the canvas.
-    let savedRow = null
-    try {
-      const inserted = await supaFetch('content_scripts', {
-        method: 'POST',
-        body: {
-          profile_id,
-          title: 'Captioned video',
-          media_urls: [pub.publicUrl],
-          media_type: 'video',
-          post_type: 'video',
-          status: 'draft',
-          generated_by: 'captions',
-        },
-      })
-      savedRow = Array.isArray(inserted) ? inserted[0] : inserted
-    } catch (e) {
-      console.warn('captions → content_scripts insert skipped:', e.message)
-    }
-
+    // Don't auto-insert a "Captioned video" content_scripts row. Like
+    // polish.js, the save_library node is the canonical writer — auto
+    // inserts here just produced empty Library rows for every run.
     return res.status(200).json({
       video_url: pub.publicUrl,
       bytes: buf.byteLength,
       zapcap: { template_id, video_id: zVideoId, task_id: zTaskId },
-      content_id: savedRow?.id || null,
+      content_id: null,
     })
   } catch (err) {
     console.error('captions error:', err?.stack || err)
