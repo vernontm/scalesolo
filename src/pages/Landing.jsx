@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Zap, ArrowRight, Check, Sparkles, Boxes, UserCircle2, Calendar,
@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import PricingPlans from '../components/PricingPlans.jsx'
 import WorkflowDemo from '../components/WorkflowDemo.jsx'
+import UseCaseGrid from '../components/UseCaseGrid.jsx'
 
 // ─────────────────────────────────────────────────────────────────────
 //  Public marketing landing for scalesolo.ai
@@ -81,6 +82,22 @@ export default function Landing() {
   const nav = useNavigate()
   const goSignup = () => nav('/login')
 
+  // Persona-driven canvas morphing. When the user clicks a card in
+  // <UseCaseGrid />, we (a) scroll back up to the canvas section and
+  // (b) hand the persona down to <WorkflowDemo /> which dims the
+  // non-relevant nodes and starts an auto-tour of just that path.
+  const [activePersona, setActivePersona] = useState(null)
+  const canvasRef = useRef(null)
+  const handleSelectPersona = (p) => {
+    // Toggle off if the same card is clicked twice.
+    if (activePersona?.key === p.key) {
+      setActivePersona(null)
+      return
+    }
+    setActivePersona(p)
+    canvasRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
   // Lock the public landing to the dark brand palette regardless of any
   // light theme an app user may have persisted. The CSS-var overrides
   // on the page wrapper (see `page` style) take care of everything
@@ -115,6 +132,7 @@ export default function Landing() {
           <nav style={navLinks}>
             <a href="#features" style={navLink}>Features</a>
             <a href="#canvas" style={navLink}>How it works</a>
+            <a href="#use-cases" style={navLink}>Use cases</a>
             <a href="#testimonials" style={navLink}>Loved by</a>
             <a href="#pricing" style={navLink}>Pricing</a>
           </nav>
@@ -228,10 +246,24 @@ export default function Landing() {
       </section>
 
       {/* ── INTERACTIVE WORKFLOW WALKTHROUGH ────────────────────────── */}
-      <section id="canvas" style={section} className="fade-up">
+      <section id="canvas" ref={canvasRef} style={section} className="fade-up">
         <h2 style={sectionH}>9 steps. One workflow. Forever.</h2>
-        <p style={sectionSub}>This is the full AI Podcaster pipeline — exactly as it runs in your dashboard. Click any node to see what it does. Or hit Auto-tour to walk through the whole thing.</p>
-        <WorkflowDemo />
+        <p style={sectionSub}>
+          {activePersona
+            ? <>Showing the path for <span style={{ color: 'var(--red)', fontWeight: 700 }}>{activePersona.label}</span>. Pick another use case below to morph the canvas.</>
+            : <>This is the full AI Podcaster pipeline — exactly as it runs in your dashboard. Click any node to see what it does, or hit Auto-tour to walk through the whole thing.</>
+          }
+        </p>
+        <WorkflowDemo persona={activePersona} onClearPersona={() => setActivePersona(null)} />
+      </section>
+
+      {/* ── USE CASES ───────────────────────────────────────────────── */}
+      {/* Click a persona card → scrolls up to the canvas and morphs it
+          to highlight only the steps relevant to that audience. */}
+      <section id="use-cases" style={section} className="fade-up">
+        <h2 style={sectionH}>Built for every kind of creator</h2>
+        <p style={sectionSub}>Click a use case to morph the workflow above. The relevant nodes light up, the rest fade — see exactly what runs for the way you create.</p>
+        <UseCaseGrid activePersona={activePersona} onSelectPersona={handleSelectPersona} />
       </section>
 
       {/* ── VALUE GRID ──────────────────────────────────────────────── */}
@@ -330,6 +362,7 @@ export default function Landing() {
               <div style={footerColTitle}>Product</div>
               <a href="#features" style={footerLink}>Features</a>
               <a href="#canvas" style={footerLink}>How it works</a>
+              <a href="#use-cases" style={footerLink}>Use cases</a>
               <a href="#templates" style={footerLink}>Templates</a>
               <a href="#pricing" style={footerLink}>Pricing</a>
             </div>

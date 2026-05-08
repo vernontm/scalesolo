@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   Zap, Wand2, UserCircle2, Image as ImageIcon, Video, Boxes,
   Captions as CaptionsIcon, Type, Calendar,
-  ChevronLeft, ChevronRight, Play, Pause,
+  ChevronLeft, ChevronRight, Play, Pause, X,
 } from 'lucide-react'
 
 // ─────────────────────────────────────────────────────────────────────
@@ -119,23 +119,57 @@ const CONNECTORS = [
   'M 62 82 L 73 82',                 // 8 → 9
 ]
 
-export default function WorkflowDemo() {
+export default function WorkflowDemo({ persona, onClearPersona }) {
   const [activeStep, setActiveStep] = useState(0)
   const [autoTour, setAutoTour]     = useState(false)
 
-  // Auto-tour: tick the active step every 4.5s.
+  // Sorted ascending list of step indices the active persona cares about
+  // (e.g. Podcasters → [2,4,5,7,8]). Empty/undefined when no persona.
+  const personaPath = persona?.steps?.length
+    ? [...persona.steps].sort((a, b) => a - b)
+    : null
+  const inPath = (i) => !personaPath || personaPath.includes(i)
+
+  // Whenever the persona changes, snap to its first relevant step and
+  // auto-start the tour so the visitor sees the path play out.
+  useEffect(() => {
+    if (personaPath) {
+      setActiveStep(personaPath[0])
+      setAutoTour(true)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [persona?.key])
+
+  // Auto-tour: tick the active step every 4.5s. When a persona is
+  // active, cycle ONLY through that persona's steps (looping back to
+  // the first relevant step at the end).
   useEffect(() => {
     if (!autoTour) return
     const id = setInterval(() => {
-      setActiveStep((s) => (s + 1) % STEPS.length)
+      setActiveStep((s) => {
+        if (personaPath) {
+          const next = personaPath.find((idx) => idx > s)
+          return next !== undefined ? next : personaPath[0]
+        }
+        return (s + 1) % STEPS.length
+      })
     }, 4500)
     return () => clearInterval(id)
-  }, [autoTour])
+  }, [autoTour, personaPath])
 
-  // Pause auto-tour on any explicit click.
+  // Pause auto-tour on any explicit click. When a persona is active,
+  // wrap prev/next around the persona's steps; otherwise around all 9.
   const select = (i) => { setActiveStep(i); setAutoTour(false) }
-  const prev   = ()  => select((activeStep - 1 + STEPS.length) % STEPS.length)
-  const next   = ()  => select((activeStep + 1) % STEPS.length)
+  const stepUniverse = personaPath || STEPS.map((_, i) => i)
+  const stepIndex = stepUniverse.indexOf(activeStep)
+  const prev = () => {
+    const safeIdx = stepIndex >= 0 ? stepIndex : 0
+    select(stepUniverse[(safeIdx - 1 + stepUniverse.length) % stepUniverse.length])
+  }
+  const next = () => {
+    const safeIdx = stepIndex >= 0 ? stepIndex : -1
+    select(stepUniverse[(safeIdx + 1) % stepUniverse.length])
+  }
 
   const active = STEPS[activeStep]
 
@@ -166,7 +200,13 @@ export default function WorkflowDemo() {
           </defs>
 
           {CONNECTORS.map((d, i) => {
-            const isActive = i + 1 === activeStep   // connector i feeds node i+1
+            // Connector i wires step i → step i+1.
+            const fromStep = i
+            const toStep   = i + 1
+            const isActive = toStep === activeStep
+            // When a persona is active, dim connectors that aren't part
+            // of the persona's path (both endpoints must be in the path).
+            const onPath = !personaPath || (personaPath.includes(fromStep) && personaPath.includes(toStep))
             return (
               <path
                 key={i}
@@ -179,6 +219,8 @@ export default function WorkflowDemo() {
                 style={{
                   animation: `flowDash ${isActive ? 0.9 : 1.4}s linear ${i * 0.15}s infinite`,
                   filter: isActive ? 'drop-shadow(0 0 1.5px rgba(255,180,100,0.9))' : 'none',
+                  opacity: onPath ? 1 : 0.18,
+                  transition: 'opacity 320ms var(--ease)',
                 }}
               />
             )
@@ -189,6 +231,8 @@ export default function WorkflowDemo() {
         {STEPS.map((step, i) => {
           const tone = TONES[step.tone] || TONES.neutral
           const isActive = i === activeStep
+          const isOnPath = inPath(i)
+          const dimmed = personaPath && !isOnPath
           return (
             <button
               key={step.title}
@@ -196,9 +240,12 @@ export default function WorkflowDemo() {
               style={{
                 ...nodeBtn,
                 ...nodePos(step.grid),
+                ...(isOnPath && personaPath && !isActive ? nodeBtnOnPath : null),
                 ...(isActive ? nodeBtnActive : null),
+                ...(dimmed ? nodeBtnDimmed : null),
               }}
               aria-pressed={isActive}
+              aria-disabled={dimmed}
             >
               <div style={stepNumberBadge}>{i + 1}</div>
               <div style={nodeHeader}>
@@ -220,6 +267,23 @@ export default function WorkflowDemo() {
 
       {/* Detail panel — sits below the canvas */}
       <div style={panel}>
+        {persona && (
+          <div style={personaBadgeRow}>
+            <span style={personaBadge}>
+              <span style={personaBadgeDot} />
+              Showing path for <strong style={{ marginLeft: 4 }}>{persona.label}</strong>
+              <span style={personaBadgeMeta}>· {personaPath.length} of {STEPS.length} steps</span>
+            </span>
+            <button
+              onClick={onClearPersona}
+              className="btn-ghost"
+              aria-label="Show all steps"
+              style={{ padding: '6px 10px', fontSize: 11.5 }}
+            >
+              <X size={12} /> Show all steps
+            </button>
+          </div>
+        )}
         <div style={panelHead}>
           <span style={panelStep}>STEP {activeStep + 1} OF {STEPS.length}</span>
           <h3 style={panelTitle}>{active.title}</h3>
@@ -318,6 +382,19 @@ const nodeBtnActive = {
   boxShadow: '0 0 0 1px rgba(239,68,68,0.35), 0 12px 32px rgba(239,68,68,0.30), 0 0 40px rgba(239,68,68,0.18)',
   transform: 'translate(-50%, -50%) scale(1.04)',
 }
+// On-path-but-not-active: subtle constant glow so the persona's full
+// route is visible even when only one step is "selected". Keeps the
+// transform identical to the base so the node doesn't shift.
+const nodeBtnOnPath = {
+  borderColor: 'rgba(239,68,68,0.40)',
+  background: 'linear-gradient(180deg, rgba(239,68,68,0.06), var(--surface-2) 80%)',
+  boxShadow: '0 0 0 1px rgba(239,68,68,0.18), 0 8px 24px rgba(239,68,68,0.16)',
+}
+// Dimmed: not part of the persona's path. Faded but still readable.
+const nodeBtnDimmed = {
+  opacity: 0.32,
+  filter: 'saturate(0.55)',
+}
 const nodeHeader = {
   display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8,
 }
@@ -383,6 +460,30 @@ const panel = {
   padding: '22px 26px',
   boxShadow: 'var(--shadow-card)',
 }
+// Persona badge — sits above panelHead when a persona is morphing the canvas.
+const personaBadgeRow = {
+  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+  gap: 12, flexWrap: 'wrap', marginBottom: 14,
+  paddingBottom: 14, borderBottom: '1px solid var(--border)',
+}
+const personaBadge = {
+  display: 'inline-flex', alignItems: 'center', gap: 8,
+  padding: '7px 13px', borderRadius: 999,
+  background: 'rgba(239,68,68,0.12)',
+  border: '1px solid rgba(239,68,68,0.35)',
+  fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 12,
+  color: 'var(--text)',
+}
+const personaBadgeDot = {
+  width: 8, height: 8, borderRadius: '50%',
+  background: 'var(--red)',
+  boxShadow: '0 0 8px rgba(239,68,68,0.7)',
+  animation: 'pulseGlow 1.8s var(--ease) infinite',
+}
+const personaBadgeMeta = {
+  marginLeft: 6, color: 'var(--muted)', fontWeight: 500,
+}
+
 const panelHead = { display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 8 }
 const panelStep = {
   fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 11,
