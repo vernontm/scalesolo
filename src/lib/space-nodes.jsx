@@ -1117,6 +1117,28 @@ async function uploadAudioToBucket(file, profileId) {
   return data.publicUrl
 }
 
+// Hard cap on audio length. Avatar render with audio uses the
+// transcribe + chunk + slice flow; longer audio means longer rendering
+// time and more HeyGen credits, and ElevenLabs STT scales linearly too.
+// 60s is roughly a TikTok / IG Reel ceiling and keeps Vercel function
+// time + cost predictable.
+const AUDIO_MAX_SECONDS = 60
+
+// Read duration from a File via an off-DOM <audio> element. Resolves
+// in 1-2s for typical 60s clips. Used to reject long audio at upload
+// time instead of letting it through and failing later in the render.
+function readAudioDuration(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file)
+    const a = document.createElement('audio')
+    a.preload = 'metadata'
+    const cleanup = () => { try { URL.revokeObjectURL(url) } catch {} }
+    a.onloadedmetadata = () => { cleanup(); resolve(a.duration || 0) }
+    a.onerror = () => { cleanup(); reject(new Error('Could not read audio metadata')) }
+    a.src = url
+  })
+}
+
 function AudioUploadBody({ data, onPatch }) {
   const inpRef = useRef(null)
   const [busy, setBusy] = useState(false)
@@ -1124,25 +1146,43 @@ function AudioUploadBody({ data, onPatch }) {
   const profileId = data?._ctxProfileId
   const url = data.props?.url
   const name = data.props?.name || ''
+  const duration = Number(data.props?.duration_secs || 0)
 
   async function onPick(e) {
     const file = e.target.files?.[0]
     if (!file || !profileId) return
     setBusy(true); setErr(null)
     try {
+      // Reject long audio up front so the user doesn't pay for an
+      // upload that the avatar render will refuse anyway.
+      const seconds = await readAudioDuration(file).catch(() => 0)
+      if (seconds && seconds > AUDIO_MAX_SECONDS) {
+        throw new Error(`Audio is ${Math.round(seconds)}s — please trim to ${AUDIO_MAX_SECONDS}s or less. Avatar renders chop the audio across look images, and longer clips burn HeyGen credits + Vercel time.`)
+      }
       const u = await uploadAudioToBucket(file, profileId)
-      onPatch({ url: u, name: file.name })
+      onPatch({ url: u, name: file.name, duration_secs: Math.round(seconds || 0) })
     } catch (e) { setErr(e.message) }
     finally { setBusy(false); if (inpRef.current) inpRef.current.value = '' }
   }
-  function clear() { onPatch({ url: '', name: '' }) }
+  function clear() { onPatch({ url: '', name: '', duration_secs: null }) }
 
   return (
     <>
       {url ? (
         <>
           <audio src={url} controls style={{ width: '100%', marginBottom: 8 }} />
-          <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, color: 'var(--muted)', marginBottom: 6, gap: 8 }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{name}</span>
+            {duration > 0 && (
+              <span style={{
+                fontSize: 10, fontVariantNumeric: 'tabular-nums', flexShrink: 0,
+                padding: '2px 6px', borderRadius: 999,
+                background: duration > AUDIO_MAX_SECONDS - 5 ? 'rgba(245,158,11,0.18)' : 'var(--surface-2)',
+                color: duration > AUDIO_MAX_SECONDS - 5 ? 'var(--amber)' : 'var(--text-soft)',
+                border: '1px solid var(--border)', fontFamily: 'var(--font-display)', fontWeight: 700,
+              }}>{duration}s</span>
+            )}
+          </div>
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); clear() }}
@@ -1160,9 +1200,12 @@ function AudioUploadBody({ data, onPatch }) {
             background: 'var(--surface-2)', borderStyle: 'dashed',
           }}>
           {busy ? <Loader2 size={13} className="spin" /> : <Mic size={13} />}
-          {busy ? 'Uploading…' : 'Upload audio (MP3 / WAV / M4A)'}
+          {busy ? 'Uploading…' : `Upload voice audio (≤${AUDIO_MAX_SECONDS}s)`}
         </button>
       )}
+      <div style={{ marginTop: 6, fontSize: 10, color: 'var(--muted)', lineHeight: 1.4 }}>
+        Wire into Avatar render to drive lip-sync from your own voice instead of script + TTS. The render transcribes, splits at sentence boundaries, and renders one clip per look.
+      </div>
       <input ref={inpRef} type="file" accept="audio/*" onChange={onPick} style={{ display: 'none' }} />
       {err && <div style={{ marginTop: 6, color: 'var(--red)', fontSize: 11 }}>{err}</div>}
     </>
@@ -3038,7 +3081,16 @@ export const NODE_REGISTRY = {
     run: async ({ data }) => {
       const url = data.props?.url
       if (!url) throw new Error('Upload an audio file first')
-      return { audio: { url, name: data.props?.name || '' } }
+      return {
+        audio: {
+          url,
+          name: data.props?.name || '',
+          // Duration is captured at upload time in AudioUploadBody so
+          // avatar_render can size its chunk count accurately without
+          // re-probing.
+          duration_secs: Number(data.props?.duration_secs || 0) || null,
+        },
+      }
     },
   },
 
@@ -3543,10 +3595,11 @@ ${String(script).slice(0, 2000)}
 
       // ── Randomize when explicitly set, OR auto-randomize when single
       //    mode was picked but no specific image_id was chosen and the
-      //    look has multiple images (the most common "I forgot to flip
-      //    the toggle" case — better to just do the right thing).
+      //    look has multiple images. Both script-driven AND audio-
+      //    driven flows route here when the avatar has multiple
+      //    images — audio just goes through a different chunker.
       const wantsRandomize = avatar.mode === 'randomize'
-      const couldAutoRandomize = avatar.mode === 'single' && !avatar.image_id && !audio && avatar.look_id
+      const couldAutoRandomize = avatar.mode === 'single' && !avatar.image_id && avatar.look_id
       if (wantsRandomize || couldAutoRandomize) {
         if (!avatar.look_id) throw new Error('Randomize mode needs a look. Pick one in the avatar node.')
         const imgR = await fetch(`/api/avatars/look-images?look_id=${avatar.look_id}`, { headers })
@@ -3555,30 +3608,76 @@ ${String(script).slice(0, 2000)}
         const images = (imgB.images || []).slice().sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
         if (!images.length) throw new Error('Look has no images')
 
-        // Audio randomize doesn't make sense (one audio track) — fall back
-        // to single mode on the first image. Same when only one image
-        // exists OR auto-randomize was triggered with just one.
-        if (audio || images.length === 1) {
+        // Single image → can't really chop. Just render one clip.
+        if (images.length === 1) {
           const photo = images[0].image_url
-          const r = await renderOne({ photo_url: photo, scriptChunk: script, audioUrl: audio?.url })
+          const r = await renderOne({ photo_url: photo, scriptChunk: audio ? '' : script, audioUrl: audio?.url })
           return { video: { video_url: r.video_url, media_type: 'video' } }
         }
 
-        // Decide how many clips to render. We don't want to be stuck at
-        // image_count when the user only has 2 images and an 80-word
-        // script — that produces two long static clips and feels stale.
-        // Instead, target ~7 seconds of speaking per clip (TikTok B-roll
-        // pacing) so visuals change ~every 7s. Cycle through the
-        // available images via images[i % images.length].
+        // ── Audio-driven path ────────────────────────────────────────
+        // Transcribe with ElevenLabs, balance sentences across the
+        // look images, ffmpeg-slice the source audio into one MP3 per
+        // bucket, then submit one HeyGen photo render per bucket with
+        // its sliced audio_url + the assigned look image.
+        if (audio?.url) {
+          const TARGET_CLIP_SECS = 7
+          const clipsCount = Math.min(
+            12,
+            Math.max(images.length, Math.ceil((Number(audio.duration_secs) || images.length * TARGET_CLIP_SECS) / TARGET_CLIP_SECS))
+          )
+          const cR = await fetch('/api/avatars/audio-chunks', {
+            method: 'POST', headers,
+            body: JSON.stringify({
+              audio_url: audio.url,
+              look_count: clipsCount,
+              profile_id: ctx.profileId,
+            }),
+          })
+          const cBody = await cR.json()
+          if (!cR.ok) throw new Error(cBody.error || `Audio chunking failed (${cR.status})`)
+          const chunks = Array.isArray(cBody.chunks) ? cBody.chunks : []
+          if (!chunks.length) throw new Error('No audio chunks produced — try a longer or clearer take.')
+
+          const assignments = chunks.map((c, i) => ({
+            chunk: c,
+            image: images[i % images.length],
+            order: i,
+          }))
+          const settled = await Promise.allSettled(assignments.map(async (a) => {
+            const r = await renderOne({ photo_url: a.image.image_url, audioUrl: a.chunk.audio_url })
+            return {
+              video_url: r.video_url,
+              order: a.order,
+              image_url: a.image.image_url,
+              sentence: a.chunk.sentence || '',
+              audio_chunk_url: a.chunk.audio_url,
+            }
+          }))
+          const clips = []
+          const failures = []
+          for (let i = 0; i < settled.length; i++) {
+            const s = settled[i]
+            if (s.status === 'fulfilled') clips.push(s.value)
+            else failures.push({ clip_index: i, error: s.reason?.message || String(s.reason) })
+          }
+          if (!clips.length) throw new Error(`All ${assignments.length} clips failed. First error: ${failures[0]?.error || 'unknown'}`)
+          return {
+            videos: clips,
+            media_type: 'video',
+            is_clip_set: true,
+            ...(failures.length ? { partial_failures: failures } : {}),
+          }
+        }
+
+        // ── Script-driven path (unchanged) ──────────────────────────
         const wordCount = String(script).split(/\s+/).filter(Boolean).length
         const estDurationSecs = Math.max(3, Math.round(wordCount / 2.5))
         const TARGET_CLIP_SECS = 7
         const clipsCount = Math.min(
-          12,                                                // hard cap so credit usage stays sane
+          12,
           Math.max(images.length, Math.ceil(estDurationSecs / TARGET_CLIP_SECS))
         )
-
-        // Split the script into clipsCount chunks via Claude.
         const sp = await fetch('/api/scripts/split', {
           method: 'POST', headers,
           body: JSON.stringify({ script, count: clipsCount }),
@@ -3586,20 +3685,9 @@ ${String(script).slice(0, 2000)}
         const spBody = await sp.json()
         if (!sp.ok) throw new Error(spBody.error || 'Script split failed')
         const chunks = Array.isArray(spBody.chunks) ? spBody.chunks : [script]
-
-        // Build the [chunk, image] assignment cycling images so a 2-image
-        // look across a 6-clip render goes: img1, img2, img1, img2, img1, img2.
         const assignments = chunks.map((chunk, i) => ({
-          chunk,
-          image: images[i % images.length],
-          order: i,
+          chunk, image: images[i % images.length], order: i,
         }))
-
-        // Submit + poll all clips in parallel — but tolerate per-clip
-        // failures (Promise.allSettled). HeyGen's "missing image
-        // dimensions" error sometimes hits one image while the rest
-        // succeed; we want the user to keep the working clips instead
-        // of losing the whole batch to a cascade fail.
         const settled = await Promise.allSettled(assignments.map(async (a) => {
           const r = await renderOne({ photo_url: a.image.image_url, scriptChunk: a.chunk || script })
           return {
@@ -3616,15 +3704,9 @@ ${String(script).slice(0, 2000)}
           if (s.status === 'fulfilled') clips.push(s.value)
           else failures.push({ clip_index: i, error: s.reason?.message || String(s.reason) })
         }
-        // All clips failed → still throw so the cascade poison kicks in.
-        // Otherwise we ship what we have plus a list of which clips failed.
-        if (!clips.length) {
-          throw new Error(`All ${assignments.length} clips failed. First error: ${failures[0]?.error || 'unknown'}`)
-        }
+        if (!clips.length) throw new Error(`All ${assignments.length} clips failed. First error: ${failures[0]?.error || 'unknown'}`)
         return {
-          videos: clips,
-          media_type: 'video',
-          is_clip_set: true,
+          videos: clips, media_type: 'video', is_clip_set: true,
           ...(failures.length ? { partial_failures: failures } : {}),
         }
       }
