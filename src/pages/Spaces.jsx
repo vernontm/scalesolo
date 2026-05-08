@@ -268,24 +268,46 @@ function SpaceNode({ id, data, selected }) {
         {data.type !== 'collection' && (
           <button
             type="button"
-            className="nodrag"
+            className="nodrag space-node-runbtn"
             title={status === 'running' ? 'Stop run' : 'Run this node'}
             onClick={async (e) => {
               e.stopPropagation()
               if (status === 'running') { window.__spaceAbortRun?.(); return }
               const choice = await window.__spaceChooseRunScope?.(id)
-              if (!choice) return  // user cancelled
+              if (!choice) return
               window.__spaceRunFromNode?.(id, choice)
             }}
             style={{
               marginLeft: 'auto',
-              background: status === 'running' ? 'rgba(239,68,68,0.16)' : 'transparent',
-              border: 'none',
-              color: status === 'running' ? 'var(--red)' : 'var(--muted)',
+              background: status === 'running'
+                ? 'rgba(239,68,68,0.18)'
+                : 'linear-gradient(135deg, rgba(46,204,113,0.18), rgba(46,204,113,0.10))',
+              border: `1px solid ${status === 'running' ? 'rgba(239,68,68,0.45)' : 'rgba(46,204,113,0.45)'}`,
+              color: status === 'running' ? 'var(--red)' : '#2ecc71',
               cursor: 'pointer',
-              padding: 4, borderRadius: 4, display: 'grid', placeItems: 'center',
+              padding: '5px 10px', borderRadius: 6,
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 11,
+              letterSpacing: '0.04em', textTransform: 'uppercase',
+              transition: 'transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease',
+              boxShadow: status === 'running' ? '0 0 0 0 rgba(239,68,68,0)' : '0 1px 2px rgba(0,0,0,0.10)',
             }}
-          >{status === 'running' ? <Square size={11} /> : <Play size={12} />}</button>
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-1px)'
+              e.currentTarget.style.filter = 'brightness(1.1)'
+              e.currentTarget.style.boxShadow = status === 'running'
+                ? '0 4px 12px rgba(239,68,68,0.30)'
+                : '0 4px 12px rgba(46,204,113,0.32)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)'
+              e.currentTarget.style.filter = 'brightness(1)'
+              e.currentTarget.style.boxShadow = '0 1px 2px rgba(0,0,0,0.10)'
+            }}
+          >
+            {status === 'running' ? <Square size={11} /> : <Play size={12} />}
+            {status === 'running' ? 'Stop' : 'Run'}
+          </button>
         )}
         <span style={{ ...statusPill, marginLeft: data.type === 'collection' ? 'auto' : 0 }}>{status}</span>
       </div>
@@ -870,6 +892,11 @@ function FloatingPalette({ onAdd }) {
   const grouped = useMemo(() => {
     const g = {}
     for (const [key, def] of Object.entries(NODE_REGISTRY)) {
+      // Legacy nodes still load on existing canvases (so old spaces
+      // keep rendering), but they're hidden from the palette so users
+      // can't drag them into new workflows. Polish + the all-in-one
+      // 'Save to drafts' replace these.
+      if (def.hidden) continue
       if (!g[def.category]) g[def.category] = []
       g[def.category].push({ key, def })
     }

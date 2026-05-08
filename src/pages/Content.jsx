@@ -511,15 +511,23 @@ function SocialAccountsPanel({ profileId, token }) {
           const connected = connectedIds.includes(p.id)
           const info = social[p.id]
           // Only show a handle in the pill if it looks like an actual
-          // username (starts with a letter, mostly alphanumeric, < 30
-          // chars). Upload-Post sometimes returns numeric platform IDs
-          // (Instagram graph user_id, TikTok open_id, etc.) — those are
-          // useless to the user and look like leaked internals.
+          // username. Upload-Post returns whatever the platform stores;
+          // for some that's a numeric ID (Instagram graph user_id,
+          // TikTok open_id) or a YouTube channel ID (24 chars,
+          // typically starting with UC). All of those are useless to
+          // the user and look like leaked internals — filter them.
           const rawHandle = info?.username || info?.display_name || info?.handle || ''
-          const looksLikeRealHandle = typeof rawHandle === 'string'
-            && rawHandle.length > 0
-            && rawHandle.length < 30
-            && /^[a-zA-Z][a-zA-Z0-9._-]*$/.test(rawHandle)
+          const looksLikeRealHandle = (() => {
+            if (typeof rawHandle !== 'string') return false
+            if (!rawHandle.length || rawHandle.length >= 30) return false
+            if (!/^[a-zA-Z][a-zA-Z0-9._-]*$/.test(rawHandle)) return false
+            // YouTube channel id pattern: UC + 22 alphanumeric/-_ chars.
+            if (/^UC[A-Za-z0-9_-]{22}$/.test(rawHandle)) return false
+            // Mostly digits → almost certainly an internal ID.
+            const digits = (rawHandle.match(/\d/g) || []).length
+            if (rawHandle.length >= 10 && digits / rawHandle.length > 0.6) return false
+            return true
+          })()
           const handle = looksLikeRealHandle ? rawHandle : null
           return (
             <div

@@ -87,28 +87,56 @@ export default async function handler(req, res) {
     const autoApprove = aggressiveness === 'aggressive'
 
     // ── Uniqueness check: pull the most-similar past pieces for this brand
-    // and feed them back so Claude doesn't restate them. Best-effort — if
-    // the embedding/RPC fails we just generate without dedup context.
+    // and feed them back so Claude doesn't restate them. Lowered the
+    // similarity floor to 0.40 (was 0.55) and bumped the match count to
+    // 10 because the original threshold was missing topically-similar
+    // hooks ("if he wants to show up he will" written 5 different ways
+    // rated 0.45-0.50 each — they should all read as 'you said this'
+    // to the model). Also fetches the 12 most-recent rows
+    // unconditionally so the model has a hard corpus to diff against
+    // even when embeddings are noisy. Best-effort — if either query
+    // fails we just generate without dedup context.
     let avoidBlock = ''
     let topicEmbedding = null
     try {
       const { embedding } = await embedOne(`Topic: ${topic}\nFormat: ${format}`)
       topicEmbedding = embedding
-      const matches = await supaFetch('rpc/match_content_history', {
+      const semantic = await supaFetch('rpc/match_content_history', {
         method: 'POST',
         body: {
           p_profile_id: profile_id,
           p_query_embedding: embedding,
-          p_match_count: 6,
-          p_min_similarity: 0.55,
+          p_match_count: 10,
+          p_min_similarity: 0.40,
           p_kinds: ['script', 'caption'],
         },
-      })
-      const list = Array.isArray(matches) ? matches.slice(0, 6) : []
-      if (list.length) {
-        avoidBlock = `\n\n## Previously written for this brand — DO NOT repeat angles, hooks, or examples from these:\n` +
-          list.map((m, i) => `${i + 1}. (${m.kind}, ${Math.round(m.similarity * 100)}% similar) ${String(m.text).slice(0, 220).replace(/\s+/g, ' ')}…`).join('\n') +
-          `\n\nRules: pick a fresh angle, fresh examples, fresh hook. If your output overlaps materially with anything above, reframe it.`
+      }).catch(() => [])
+      // Latest-by-time fallback. Embeddings catch semantic matches;
+      // this catches "I literally wrote about this an hour ago".
+      const recent = await supaFetch(
+        `content_history?profile_id=eq.${profile_id}&kind=eq.script&order=created_at.desc&limit=12&select=text,topic,created_at`
+      ).catch(() => [])
+      const seen = new Set()
+      const merged = []
+      for (const m of (Array.isArray(semantic) ? semantic : [])) {
+        const k = String(m.text || '').slice(0, 200)
+        if (seen.has(k)) continue
+        seen.add(k); merged.push({ kind: 'similar', text: m.text, similarity: m.similarity })
+      }
+      for (const r of (Array.isArray(recent) ? recent : [])) {
+        const k = String(r.text || '').slice(0, 200)
+        if (seen.has(k)) continue
+        seen.add(k); merged.push({ kind: 'recent', text: r.text, topic: r.topic })
+      }
+      if (merged.length) {
+        avoidBlock = `\n\n## Previously written for this brand — DO NOT restate the angles, examples, hooks, or core talking points from any of these:\n` +
+          merged.slice(0, 16).map((m, i) => `${i + 1}. ${String(m.text || '').slice(0, 240).replace(/\s+/g, ' ')}…`).join('\n') +
+          `\n\nRULES — read carefully:` +
+          `\n- "Don't repeat" means at the IDEA level, not just word level. If the previous script's central insight was "his actions tell you who he is", DON'T write a script with that same insight phrased differently.` +
+          `\n- Pick a different angle: a different scenario, a different lesson, a different emotional beat, a different platform-native format (story-time vs hot take vs myth-bust vs before/after).` +
+          `\n- If you find yourself reaching for a thesis you've already used, switch the framing entirely (e.g. flip from "what to avoid" to "what to do instead").` +
+          `\n- Use a fresh hook in the first sentence — different setup, different word choice.` +
+          `\n- Stay on the brand's voice + niche, but the SUBSTANCE must be new.`
       }
     } catch (e) {
       console.warn('content_history dedup skipped:', e.message)

@@ -399,6 +399,41 @@ async function uploadImageToBucket(file, profileId) {
   return body.url
 }
 
+// Direct-to-storage video upload for the Upload Media node. The
+// reference-image route is JSON+base64 (works fine for small images
+// but blows up on multi-MB videos hitting Vercel's body cap). Going
+// straight to Supabase storage is faster and dodges that wall.
+async function uploadVideoToBucket(file, profileId) {
+  const ext = (file.name?.split('.').pop() || 'mp4').toLowerCase()
+  const safeExt = ['mp4', 'mov', 'webm', 'm4v'].includes(ext) ? ext : 'mp4'
+  const path = `${profileId || 'shared'}/uploads/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`
+  const { error } = await supabase.storage.from('landing-media').upload(path, file, {
+    contentType: file.type || 'video/mp4', upsert: false,
+  })
+  if (error) throw new Error(`Video upload failed: ${error.message}`)
+  const { data } = supabase.storage.from('landing-media').getPublicUrl(path)
+  return data.publicUrl
+}
+
+// Off-DOM probe: load video metadata + first frame, return
+// { width, height, duration } so the upload UI can reject non-vertical
+// videos before they hit storage. The 9:16 enforcement matches what
+// downstream nodes (avatar render, finish video) actually consume.
+function probeVideoMeta(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file)
+    const v = document.createElement('video')
+    v.preload = 'metadata'
+    const cleanup = () => { try { URL.revokeObjectURL(url) } catch {} }
+    v.onloadedmetadata = () => {
+      cleanup()
+      resolve({ width: v.videoWidth, height: v.videoHeight, duration: v.duration || 0 })
+    }
+    v.onerror = () => { cleanup(); reject(new Error('Could not read video metadata')) }
+    v.src = url
+  })
+}
+
 // ─── 1. TEXT INPUT ──────────────────────────────────────────────────────────
 function TextInputBody({ data, onPatch }) {
   return (
@@ -419,8 +454,38 @@ function ScriptGenBody({ data, onPatch }) {
   const format = data.props?.format || 'tiktok-script'
   // Length picker only makes sense for spoken-script formats. Other
   // formats (caption, thread, blog) are governed by per-format hints.
+  // Cap at 60s — anything longer is rarely useful for short-form
+  // social content and burns more credits per render.
   const showLengthPicker = format === 'tiktok-script' || format === 'youtube-short'
   const lenSecs = Number(data.props?.target_length_secs ?? 45)
+  const profiles = data?._ctxProfiles || []
+  const out = data.output
+  const script = out?.script || out?.full_script || ''
+  const [copied, setCopied] = useState(false)
+
+  const onAutoPrompt = () => {
+    // Build a generic-enough auto-prompt that works for any brand
+    // profile the user has tagged in @ mentions or selected via
+    // brand_profile upstream. The generator's own system prompt
+    // injects brand bible / voice / hashtags from the profile, so
+    // we just need to give it a rotation framework it can run
+    // through.
+    const tag = profiles[0]?.business_name
+      ? `@${profiles[0].business_name.replace(/[^A-Za-z0-9_-]/g, '')}`
+      : '@your-brand'
+    const auto = `Pick a fresh angle for a short-form script for ${tag}. Rotate between: a story-time, a lesson learned, a hot take on a common myth, before/after transformation, friend-giving-tough-love rant, things never to tolerate / settle for, a pattern to spot early, a standards reset, a behind-the-scenes peek, a "what I'd tell my younger self" reflection. Stay on the brand's voice and core topics from the brand bible. NO em dashes — use commas, periods, or colons. Don't repeat angles or core talking points from previous runs.`
+    onPatch({ topic: auto })
+  }
+
+  const copyScript = () => {
+    if (!script) return
+    try {
+      navigator.clipboard?.writeText(script)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1600)
+    } catch {}
+  }
+
   return (
     <>
       <MentionPrompt
@@ -428,8 +493,25 @@ function ScriptGenBody({ data, onPatch }) {
         onChange={(v) => onPatch({ topic: v })}
         placeholder="Topic or hook. Type @ to tag a brand profile."
         minHeight={70}
-        brands={data?._ctxProfiles || []}
+        brands={profiles}
       />
+      <div style={{ display: 'flex', gap: 4, marginTop: 4, marginBottom: 6 }}>
+        <button
+          type="button"
+          className="nodrag"
+          onClick={(e) => { e.stopPropagation(); onAutoPrompt() }}
+          title="Drop a brand-aware rotation prompt into the topic field"
+          style={{
+            flex: 1, padding: '5px 8px', borderRadius: 6, fontSize: 10.5,
+            background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.40)',
+            color: 'var(--red)', cursor: 'pointer',
+            fontFamily: 'var(--font-display)', fontWeight: 700,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+          }}
+        >
+          <Wand2 size={10} /> Auto prompt
+        </button>
+      </div>
       <div style={pillRow}>
         <select style={pillSelect} value={format} onChange={(e) => onPatch({ format: e.target.value })}>
           <option value="tiktok-script">TikTok</option>
@@ -444,45 +526,113 @@ function ScriptGenBody({ data, onPatch }) {
             style={pillSelect}
             value={lenSecs}
             onChange={(e) => onPatch({ target_length_secs: Number(e.target.value) })}
-            title="Target script length in seconds (Claude pads/trims to roughly hit it)"
+            title="Target script length in seconds (max 60 — short-form sweet spot)"
           >
             <option value={15}>~15 sec</option>
             <option value={30}>~30 sec</option>
             <option value={45}>~45 sec</option>
             <option value={60}>~60 sec</option>
-            <option value={90}>~90 sec</option>
-            <option value={120}>~2 min</option>
           </select>
         )}
       </div>
-      <NodePreview status={data.status} output={data.output} error={data.error} />
+      {script && (
+        <div style={{
+          marginTop: 8, padding: '10px 12px', borderRadius: 8,
+          background: 'var(--surface-2)', border: '1px solid var(--border)',
+          fontSize: 11.5, lineHeight: 1.5, color: 'var(--text-soft)',
+          maxHeight: 220, overflowY: 'auto', whiteSpace: 'pre-wrap',
+        }}>
+          {script}
+        </div>
+      )}
+      {script && (
+        <button
+          type="button"
+          className="nodrag"
+          onClick={(e) => { e.stopPropagation(); copyScript() }}
+          style={{
+            marginTop: 6, width: '100%', padding: '6px 8px', fontSize: 11,
+            background: copied ? 'rgba(46,204,113,0.15)' : 'var(--surface-2)',
+            border: `1px solid ${copied ? 'rgba(46,204,113,0.40)' : 'var(--border)'}`,
+            borderRadius: 6,
+            color: copied ? '#2ecc71' : 'var(--text)',
+            cursor: 'pointer', fontFamily: 'var(--font-display)', fontWeight: 700,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+          }}
+        >
+          <Copy size={11} /> {copied ? 'Copied!' : 'Copy script'}
+        </button>
+      )}
+      {!script && <NodePreview status={data.status} output={null} error={data.error} />}
     </>
   )
 }
 
 // ─── 3. CAPTION + HASHTAGS (merged) ─────────────────────────────────────────
-function CaptionGenBody({ data }) {
-  // Show a per-platform summary once it's run. Each platform's variant is
-  // ready to flow into schedule_post — the connector picks the right one
-  // based on its selected platforms.
+function CaptionGenBody({ data, onPatch }) {
+  // Simplified body: one editable title + caption + hashtags row.
+  // The internal per_platform variants still drive Schedule_post's
+  // platform routing, but the user only edits one canonical version
+  // here and Schedule_post falls back to it when no per-platform
+  // variant exists for a target.
   const out = data.output
   const variants = out?.per_platform || {}
+  const hasOutput = !!out
+  // The shown values: prefer overrides the user typed (props), then
+  // the picked variant's value, then the loose top-level output.
+  const editedTitle    = data.props?.edited_title    ?? null
+  const editedCaption  = data.props?.edited_caption  ?? null
+  const editedHashtags = data.props?.edited_hashtags ?? null
+  const baseTitle    = out?.title    || variants.instagram?.title    || variants.tiktok?.title    || ''
+  const baseCaption  = out?.caption  || variants.instagram?.caption  || variants.tiktok?.caption  || ''
+  const baseHashtags = out?.hashtags || variants.instagram?.hashtags || variants.tiktok?.hashtags || ''
+  const title    = editedTitle    ?? baseTitle
+  const caption  = editedCaption  ?? baseCaption
+  const hashtags = editedHashtags ?? baseHashtags
+
   return (
     <>
-      <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 6, lineHeight: 1.4 }}>
-        Connect a script. Generates a <strong>title, caption, and 5 hashtags</strong> tuned for every platform — TikTok, Instagram, YouTube, X, LinkedIn — in one call. Schedule_post automatically picks the variant for whichever platforms it's set to publish to.
+      <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 8, lineHeight: 1.4 }}>
+        Connect a script. Generates a <strong>title, caption, and 5 hashtags</strong> tuned for every platform.
       </div>
-      {Object.keys(variants).length > 0 && (
-        <div style={{ ...previewBox, marginTop: 6, fontSize: 10.5 }}>
-          {Object.entries(variants).slice(0, 5).map(([p, v]) => (
-            <div key={p} style={{ marginBottom: 4 }}>
-              <strong style={{ textTransform: 'capitalize' }}>{p}:</strong>{' '}
-              <span style={{ color: 'var(--muted)' }}>{v?.caption?.slice(0, 60) || '—'}…</span>
-            </div>
-          ))}
-        </div>
+      {hasOutput && (
+        <>
+          <NodeField label="Title">
+            <input
+              className="nodrag"
+              style={tinyInput}
+              value={title}
+              onChange={(e) => { e.stopPropagation(); onPatch({ edited_title: e.target.value }) }}
+              onClick={(e) => e.stopPropagation()}
+              placeholder="Title"
+            />
+          </NodeField>
+          <NodeField label="Caption">
+            <textarea
+              className="nodrag"
+              style={{ ...tinyInput, minHeight: 70, resize: 'vertical', fontFamily: 'inherit' }}
+              value={caption}
+              onChange={(e) => { e.stopPropagation(); onPatch({ edited_caption: e.target.value }) }}
+              onClick={(e) => e.stopPropagation()}
+              placeholder="Caption"
+            />
+          </NodeField>
+          <NodeField label="Hashtags">
+            <input
+              className="nodrag"
+              style={tinyInput}
+              value={hashtags}
+              onChange={(e) => { e.stopPropagation(); onPatch({ edited_hashtags: e.target.value }) }}
+              onClick={(e) => e.stopPropagation()}
+              placeholder="#tag1 #tag2"
+            />
+          </NodeField>
+          <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 4, lineHeight: 1.4 }}>
+            Edits override the AI output for the next downstream step. Re-run to regenerate from the script.
+          </div>
+        </>
       )}
-      <NodePreview status={data.status} output={Object.keys(variants).length ? null : out} error={data.error} />
+      {!hasOutput && <NodePreview status={data.status} output={null} error={data.error} />}
     </>
   )
 }
@@ -565,16 +715,30 @@ function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = 
 
   return (
     <div style={{ position: 'relative' }}>
-      {(brands.length > 0 || namedImages.length > 0) && (
+      {/* Tag chip row used to render unconditionally — too much noise.
+          Now only appears when the user is actively typing @. The
+          suggest popover below covers them otherwise. */}
+      {suggest.open && (brands.length > 0 || namedImages.length > 0) && filtered.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
           <span style={{ fontSize: 9.5, color: 'var(--muted)', fontFamily: 'var(--font-display)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', alignSelf: 'center' }}>tag:</span>
+          {filtered.map((it) => (
+            <button key={it.key} type="button" className="nodrag" onClick={(e) => { e.stopPropagation(); insertTag(it.name) }} title={`Insert ${tagFor(it.name)}`} style={chipStyle(it.kind)}>
+              {tagFor(it.name)}
+            </button>
+          ))}
+        </div>
+      )}
+      {/* Legacy code path retained below for the old name/image suggestion
+          layout — neutralized by the always-false guard above. */}
+      {false && (
+        <div>
           {brands.map((b) => (
-            <button key={`b-${b.id}`} type="button" className="nodrag" onClick={(e) => { e.stopPropagation(); insertTag(b.name) }} title={`Insert ${tagFor(b.name)} — references this brand profile`} style={chipStyle('brand')}>
+            <button key={`b-${b.id}`} type="button" className="nodrag" onClick={(e) => { e.stopPropagation(); insertTag(b.name) }} style={chipStyle('brand')}>
               {tagFor(b.name)}
             </button>
           ))}
           {namedImages.map((im) => (
-            <button key={`i-${im.url}`} type="button" onClick={(e) => { e.stopPropagation(); insertTag(im.name) }} title={`Insert ${tagFor(im.name)}`} style={chipStyle('image')}>
+            <button key={`i-${im.url}`} type="button" onClick={(e) => { e.stopPropagation(); insertTag(im.name) }} style={chipStyle('image')}>
               {tagFor(im.name)}
             </button>
           ))}
@@ -863,7 +1027,11 @@ function ImageUploadBody({ data, onPatch }) {
   const [err, setErr] = useState(null)
   const [editingIdx, setEditingIdx] = useState(-1)
   const [draftName, setDraftName] = useState('')
-  const items = readImageItems(data.props)
+  // The node's data shape used to be just images. Now it carries
+  // mixed media — each item has `url`, `name` (alt tag), and `kind`
+  // ('image' | 'video'). Old saved spaces have no kind field; treat
+  // them as images for backwards compat.
+  const items = readImageItems(data.props).map((it) => ({ kind: it.kind || 'image', ...it }))
   const profileId = data?._ctxProfileId
 
   async function onPick(e) {
@@ -873,8 +1041,23 @@ function ImageUploadBody({ data, onPatch }) {
     try {
       const next = [...items]
       for (const f of files) {
-        const u = await uploadImageToBucket(f, profileId)
-        next.push({ url: u, name: `image ${next.length + 1}` })
+        const isVideo = (f.type || '').startsWith('video/') || /\.(mp4|mov|webm|m4v)$/i.test(f.name || '')
+        if (isVideo) {
+          // Vertical-only enforcement: avatar render + finish video both
+          // assume 9:16 throughout, so reject anything substantially off.
+          const meta = await probeVideoMeta(f).catch(() => null)
+          if (meta && meta.width && meta.height) {
+            const aspect = meta.width / meta.height
+            if (aspect > 0.65) {
+              throw new Error(`Vertical (9:16) video required — yours is ${meta.width}×${meta.height}. Re-export from your editor as 1080×1920.`)
+            }
+          }
+          const url = await uploadVideoToBucket(f, profileId)
+          next.push({ kind: 'video', url, name: `video ${next.filter((x) => x.kind === 'video').length + 1}` })
+        } else {
+          const u = await uploadImageToBucket(f, profileId)
+          next.push({ kind: 'image', url: u, name: `image ${next.filter((x) => x.kind !== 'video').length + 1}` })
+        }
       }
       onPatch({ urls: next })
     } catch (e) {
@@ -888,7 +1071,7 @@ function ImageUploadBody({ data, onPatch }) {
     onPatch({ urls: items.filter((_, j) => j !== idx) })
   }
   function commitName(idx) {
-    const trimmed = (draftName || '').trim() || `image ${idx + 1}`
+    const trimmed = (draftName || '').trim() || `media ${idx + 1}`
     onPatch({ urls: items.map((it, j) => j === idx ? { ...it, name: trimmed } : it) })
     setEditingIdx(-1); setDraftName('')
   }
@@ -899,8 +1082,12 @@ function ImageUploadBody({ data, onPatch }) {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 8 }}>
           {items.map((it, idx) => (
             <div key={`${it.url}-${idx}`} style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <div style={{ position: 'relative', aspectRatio: '1', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' }}>
-                <img src={it.url} alt={it.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              <div style={{ position: 'relative', aspectRatio: '1', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)', background: '#000' }}>
+                {it.kind === 'video' ? (
+                  <video src={it.url} muted playsInline preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  <img src={it.url} alt={it.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                )}
                 <button
                   onClick={(e) => { e.stopPropagation(); remove(idx) }}
                   style={{
@@ -952,9 +1139,12 @@ function ImageUploadBody({ data, onPatch }) {
           background: 'var(--surface-2)', borderStyle: 'dashed',
         }}>
         {busy ? <Loader2 size={13} className="spin" /> : <Upload size={13} />}
-        {busy ? 'Uploading…' : items.length ? 'Add more images' : 'Upload reference images'}
+        {busy ? 'Uploading…' : items.length ? 'Add more media' : 'Upload images or 9:16 video'}
       </button>
-      <input ref={inpRef} type="file" multiple accept="image/*" onChange={onPick} style={{ display: 'none' }} />
+      <div style={{ marginTop: 4, fontSize: 10, color: 'var(--muted)', lineHeight: 1.4 }}>
+        Each item gets an alt tag. Reference one in any generator prompt with @altTag (e.g. "she's holding @logo").
+      </div>
+      <input ref={inpRef} type="file" multiple accept="image/*,video/mp4,video/quicktime,video/webm" onChange={onPick} style={{ display: 'none' }} />
       {err && <div style={{ marginTop: 6, color: 'var(--red)', fontSize: 11 }}>{err}</div>}
     </>
   )
@@ -3256,14 +3446,26 @@ export const NODE_REGISTRY = {
 
   image_upload: {
     free: true,
-    label: 'Reference images', description: 'Upload images to use as references in image gen. Each image gets an editable name (default "image 1", "image 2"). Reference specific ones in a generator prompt with @-mentions, e.g. "she is at @office holding @logo".',
+    label: 'Upload media',
+    description: 'Upload reference images or vertical (9:16) videos. Each item gets an alt tag — reference one in any generator prompt with @altTag, or wire a video into Finish video to add captions / overlays / music to your own footage.',
     icon: Upload, category: 'inputs', color: '#0ea5e9',
     inputs: [], outputs: [{ id: 'out', label: 'Out' }],
     initialProps: { urls: [] },
     Body: ImageUploadBody,
     run: async ({ data }) => {
-      const items = readImageItems(data.props)
-      return { images: items.map(({ url, name }) => ({ url, name })) }
+      const items = readImageItems(data.props).map((it) => ({ kind: it.kind || 'image', url: it.url, name: it.name }))
+      const images = items.filter((it) => it.kind !== 'video').map(({ url, name }) => ({ url, name }))
+      const videos = items.filter((it) => it.kind === 'video').map(({ url, name }) => ({ url, name }))
+      // Backward compat: `images` retains its old shape so any consumer
+      // that expects the array still works. `videos` is additive — Finish
+      // video already accepts a video_url from upstream so it'll consume
+      // these naturally via pickFirstVideoUrl.
+      const out = { images }
+      if (videos.length) {
+        out.videos = videos
+        out.video_url = videos[0].url
+      }
+      return out
     },
   },
 
@@ -3442,18 +3644,21 @@ ${String(script).slice(0, 2000)}
         }
       }
 
-      // Pick instagram (or the first available) as the default `caption` /
-      // `hashtags` / `title` so existing downstream nodes that read those
-      // fields directly (save_library, the legacy single-caption flow)
-      // keep working without changes.
       const order = ['instagram', 'tiktok', 'youtube', 'linkedin', 'x']
       const defaultKey = order.find((k) => perPlatform[k]?.caption) || Object.keys(perPlatform)[0]
       const def = perPlatform[defaultKey] || {}
 
+      // User edits in the body override the AI output for this run's
+      // downstream consumers (Save to drafts / Schedule post). Stored
+      // on the node's props as edited_*; if present, they win.
+      const userTitle    = data.props?.edited_title
+      const userCaption  = data.props?.edited_caption
+      const userHashtags = data.props?.edited_hashtags
+
       return {
-        title: def.title || '',
-        caption: def.caption || '',
-        hashtags: def.hashtags || '',
+        title: (userTitle    ?? def.title)    || '',
+        caption: (userCaption  ?? def.caption)  || '',
+        hashtags: (userHashtags ?? def.hashtags) || '',
         per_platform: perPlatform,
       }
     },
@@ -3705,7 +3910,7 @@ ${String(script).slice(0, 2000)}
   },
 
   avatar_render: {
-    label: 'Avatar render', description: 'HeyGen renders an avatar talking the script (or lip-syncing to an uploaded audio file). When the picker is in Randomize mode, the script is split across every image in the look and rendered as a series of clips.',
+    label: 'Avatar video (HeyGen)', description: 'HeyGen renders an avatar from the connected look + voice. Wire a script for TTS lip-sync, OR an uploaded audio file to lip-sync to your own voice. With Cycle Looks or Randomize, the input is split across every look image and rendered as a series of clips you can stitch with Combine videos.',
     icon: FileVideo, category: 'generators', color: '#ef4444',
     inputs: [{ id: 'in',  label: 'In (avatar + script or audio)' }],
     outputs: [{ id: 'out', label: 'Out' }],
@@ -4140,7 +4345,8 @@ ${String(script).slice(0, 2000)}
   // returns the captioned MP4. Polish (title, watermark, music) is its
   // own node — chain captions → video_polish if you want both.
   captions: {
-    label: 'Captions', description: 'Burns animated captions onto a video using ZapCap. Pick a style preset; ZapCap transcribes and renders.',
+    hidden: true,
+    label: 'Captions (legacy)', description: 'Standalone ZapCap caption burner. Replaced by the Captions section inside the Finish video node — kept around so older spaces still load.',
     icon: Captions, category: 'generators', color: '#0ea5e9',
     inputs: [{ id: 'in', label: 'In (video)' }],
     outputs: [{ id: 'out', label: 'Out (video)' }],
@@ -4354,7 +4560,8 @@ ${String(script).slice(0, 2000)}
 
   combine: {
     free: true,
-    label: 'Combine', description: 'Bundles incoming text (script / caption / hashtags) and media (image / video) into a single post package the save_library node can persist as one library row. Avatar-video mode reserved for a near-future update.',
+    hidden: true,
+    label: 'Combine (legacy)', description: 'Manual bundler — replaced by Save to drafts which auto-bundles. Hidden from the palette but still loads on older spaces.',
     icon: CombineIcon, category: 'generators', color: '#0ea5e9',
     inputs: [{ id: 'in', label: 'In (text + media)' }],
     outputs: [{ id: 'out', label: 'Out (post)' }],
@@ -4458,7 +4665,7 @@ ${String(script).slice(0, 2000)}
 
   save_library: {
     free: true,
-    label: 'Save to library', description: 'Bundles the incoming script + caption + hashtags + media into one in-memory package and forwards it to schedule_post. Nothing is written to the queue until schedule_post completes — that prevents partial drafts from cluttering the schedule.',
+    label: 'Save to drafts', description: 'Bundles the incoming script + caption + hashtags + media into one in-memory package and forwards it to schedule_post. The bundle becomes a real draft you can edit on the Drafts page only when schedule_post completes — nothing is reserved in the queue until then.',
     icon: Save, category: 'outputs', color: '#2ecc71',
     inputs: [{ id: 'in', label: 'In (script / caption / image / video)' }],
     outputs: [{ id: 'out', label: 'Out (bundle for schedule_post)' }],

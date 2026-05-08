@@ -73,7 +73,7 @@ function ChangePlanCard({ tierKey, tierDef, currentTier, currentCycle, cycle, bu
         style={{
           marginTop: 'auto',
           padding: '9px 12px', borderRadius: 8,
-          border: 'none', cursor: isCurrent ? 'default' : 'pointer',
+          cursor: isCurrent ? 'default' : 'pointer',
           fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 12.5,
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
           background: isCurrent
