@@ -1274,15 +1274,39 @@ function SpaceBuilder({ space, onSave, onClose }) {
     if (!subsetNodes.length) return
 
     setRunning(true); setError(null); abortRunRef.current = false
-    // Smart reset: only clear nodes that aren't already 'done' with output.
-    // Done nodes' cached outputs feed downstream — runSpace will detect them
-    // and skip re-execution. This makes per-node Run useful for retries
-    // (re-run combine_videos without re-paying for avatar render, etc.).
-    // The TARGET is always reset so it actually re-runs.
+    // Build the descendant set (everything downstream of the target) so we
+    // can force-reset them when triggered by auto_run. For an auto_run
+    // tick we want a FRESH chain on every fire — same cached-done short
+    // circuit that's perfect for "re-run combine_videos without re-paying
+    // for avatar render" would otherwise just re-emit the same script
+    // every hour.
+    const targetType = nodes.find((n) => n.id === targetId)?.data?.type
+    const isAutoTrigger = targetType === 'auto_run'
+    const descendants = new Set([targetId])
+    {
+      const q = [targetId]
+      while (q.length) {
+        const id = q.shift()
+        for (const e of edges) {
+          if (e.source === id && !descendants.has(e.target)) {
+            descendants.add(e.target); q.push(e.target)
+          }
+        }
+      }
+    }
+
+    // Smart reset rules:
+    //  • The target is always reset so it actually re-runs.
+    //  • For auto_run triggers, every descendant is also force-reset so
+    //    each tick produces fresh content (new script, new render, etc).
+    //  • For per-node manual runs, descendants stay cached when they're
+    //    already 'done' — saves credits when you re-run a single node
+    //    upstream and just want the cascade to re-thread.
     setNodes((arr) => arr.map((n) => {
       if (!want.has(n.id)) return n
-      const isCached = n.id !== targetId && n.data?.status === 'done' && n.data?.output
-      if (isCached) return n  // keep its done state + output
+      const forceReset = n.id === targetId || (isAutoTrigger && descendants.has(n.id))
+      const isCached = !forceReset && n.data?.status === 'done' && n.data?.output
+      if (isCached) return n
       return { ...n, data: { ...n.data, status: 'idle', output: null, error: null } }
     }))
     const ctx = { token: session.access_token, profileId: selectedProfileId, avatars, profiles, shouldAbort: () => abortRunRef.current, runFromTargetId: targetId }
