@@ -4441,8 +4441,12 @@ ${String(script).slice(0, 2000)}
             size: p.title_size, bg_padding: p.title_bg_padding, y_pos: p.title_y_pos,
             uppercase: p.title_uppercase,
           } : undefined,
-          // Captions handled by the dedicated `captions` node — never here.
-          captions_enabled: false,
+          // Finish Video now owns the ZapCap caption pass directly — the
+          // legacy captions node was hidden when finish_video shipped, so
+          // burn-in only happens if we forward these flags.
+          captions_enabled: p.captions_enabled !== false,
+          caption_template_id: p.caption_template_id || undefined,
+          caption_language:    p.caption_language    || undefined,
           // Logo / watermark
           watermark_position: p.watermark_position || 'br',
           watermark_size_pct: p.watermark_size_pct ?? 25,
