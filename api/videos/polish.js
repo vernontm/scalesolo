@@ -30,6 +30,7 @@ import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/su
 import { createClient } from '@supabase/supabase-js'
 import { NotifyKind } from '../_lib/notify.js'
 import { zapcapAddVideoByUrl, zapcapCreateTask, zapcapPollTask } from '../_lib/zapcap.js'
+import { renderTitlePng } from '../_lib/title-svg.js'
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg'
 const ffmpegPath = ffmpegInstaller.path
 import { spawn } from 'node:child_process'
@@ -398,46 +399,52 @@ export default async function handler(req, res) {
         } catch { musicPath = null }
       }
 
+      // Render the title overlay AHEAD of the ffmpeg invocation as an
+      // SVG-derived PNG. The previous drawtext-with-whitespace-padding
+      // path was visibly off-center because spaces aren't the same
+      // width as average glyphs in proportional fonts. SVG with
+      // text-anchor="middle" uses real glyph metrics, so each line
+      // is pixel-perfect centered. We then overlay the PNG at the
+      // requested vertical position via ffmpeg's overlay filter.
+      let titlePngPath = null
+      if (title) {
+        try {
+          const png = await renderTitlePng({
+            title: String(title).slice(0, 120),
+            font: ts.font,
+            size: Number(ts.size ?? 72),
+            color: ts.color || '#ffffff',
+            bg_color: ts.bg_color || '#e0467a',
+            bg_padding: Math.max(0, Number(ts.bg_padding ?? 28)),
+            uppercase: !!ts.uppercase,
+            max_width: 1080,
+          })
+          if (png) {
+            titlePngPath = join(workdir, 'title.png')
+            await writeFile(titlePngPath, png)
+          }
+        } catch (e) {
+          console.warn('[polish] title PNG render failed; skipping title overlay:', e.message)
+          titlePngPath = null
+        }
+      }
+
       const args = ['-y', '-i', inPath]
-      let nextIdx = 1, logoIdx = -1, musicIdx = -1
-      if (logoPath) { args.push('-i', logoPath); logoIdx = nextIdx++ }
-      if (musicPath) { args.push('-i', musicPath); musicIdx = nextIdx++ }
+      let nextIdx = 1, titleIdx = -1, logoIdx = -1, musicIdx = -1
+      if (titlePngPath) { args.push('-i', titlePngPath); titleIdx = nextIdx++ }
+      if (logoPath)     { args.push('-i', logoPath);     logoIdx  = nextIdx++ }
+      if (musicPath)    { args.push('-i', musicPath);    musicIdx = nextIdx++ }
 
       const filters = []
       let vLabel = '[0:v]'
 
-      if (title) {
-        const text = ts.uppercase ? String(title).toUpperCase() : String(title)
-        const tSize = Number(ts.size ?? 72)
-        // Wrap the title to fit within the safe area, then persist real
-        // newlines to a file and tell drawtext to read from there. The
-        // `text=` parameter is fragile w.r.t. embedded \n through the
-        // filter-graph parser; `textfile=` is unambiguous.
-        const wrapped = wrapTitleLines(text.slice(0, 120), tSize)
-        const titleFilePath = join(workdir, 'title.txt')
-        await writeFile(titleFilePath, wrapped, 'utf8')
-        const tBg = hexToDrawtext(ts.bg_color || '#e0467a', '0xE0467A')
-        const tFc = hexToDrawtext(ts.color || '#ffffff', 'white')
-        const tPad = Math.max(0, Number(ts.bg_padding ?? 28))
+      if (titleIdx !== -1) {
+        // SVG → PNG title is rendered at video width (1080) already.
+        // Position by y_pos % from top. format=rgba so the alpha
+        // channel from sharp's PNG carries through the overlay.
         const tYpct = Math.max(0, Math.min(95, Number(ts.y_pos ?? 15))) / 100
-        // Resolve the chosen font (downloads + caches the TTF on cold
-        // start). Falls back to bundled Roboto if the fetch fails.
-        const titleFontPath = await resolveFontPath(ts.font)
-        // ffmpeg path option values escape : and \ — escape both for
-        // textfile= and fontfile= so the filter parser doesn't choke.
-        const escapePath = (p) => String(p).replace(/\\/g, '\\\\').replace(/:/g, '\\:')
-        // ffmpeg < 7.0 (the build @ffmpeg-installer ships) doesn't have
-        // text_align — multi-line drawtext renders left-aligned within
-        // the box, so wrapTitleLines pads shorter lines with whitespace
-        // to visually center them under the longest line.
-        filters.push(
-          `${vLabel}drawtext=fontfile=${escapePath(titleFontPath)}` +
-            `:textfile=${escapePath(titleFilePath)}` +
-            `:fontcolor=${tFc}:fontsize=${tSize}` +
-            `:box=1:boxcolor=${tBg}:boxborderw=${tPad}` +
-            `:line_spacing=${Math.round(tSize * 0.18)}` +
-            `:x=(w-text_w)/2:y=h*${tYpct}-text_h/2[vt]`
-        )
+        filters.push(`[${titleIdx}:v]format=rgba[tov]`)
+        filters.push(`${vLabel}[tov]overlay=(W-w)/2:H*${tYpct}-h/2[vt]`)
         vLabel = '[vt]'
       }
 
