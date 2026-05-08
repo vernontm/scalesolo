@@ -3483,15 +3483,33 @@ ${String(script).slice(0, 2000)}
         const ranked = platforms
           .map((p) => ({ id: p, def: SCHEDULE_PLATFORMS.find((s) => s.id === p) }))
           .sort((a, b) => (a.def?.cap || Infinity) - (b.def?.cap || Infinity))
+        let picked = null
         for (const { id } of ranked) {
           const v = perPlatform[id]
           if (v?.caption) {
             caption = v.caption
-            hashtags = v.hashtags || hashtags
-            title = v.title || title
+            if (v.hashtags) hashtags = v.hashtags
+            if (v.title) title = v.title
+            picked = id
             break
           }
         }
+        // If the chosen platform's variant had no hashtags but ANOTHER
+        // platform's variant did, borrow them rather than ship none.
+        if (!hashtags) {
+          for (const id of Object.keys(perPlatform)) {
+            if (id === picked) continue
+            if (perPlatform[id]?.hashtags) { hashtags = perPlatform[id].hashtags; break }
+          }
+        }
+      }
+
+      // Last-resort: scrape #tags out of the caption itself if hashtags
+      // is still empty (e.g. caption_gen failed entirely and we're in the
+      // legacy single-string path with hashtags inlined).
+      if (!hashtags && caption) {
+        const m = String(caption).match(/#[\w]+/g)
+        if (m && m.length) hashtags = m.join(' ')
       }
 
       const description = [caption, hashtags].filter(Boolean).join('\n\n').trim()

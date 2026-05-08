@@ -306,12 +306,18 @@ export default async function handler(req, res) {
         // ffmpeg path option values escape : and \ — escape both for
         // textfile= and fontfile= so the filter parser doesn't choke.
         const escapePath = (p) => String(p).replace(/\\/g, '\\\\').replace(/:/g, '\\:')
+        // text_align=C+M centers each line horizontally within the box
+        // (and vertically within line height). Without it, multi-line
+        // titles stack flush-left even though the whole text block is
+        // centered horizontally — looks lopsided when line lengths differ.
+        // ffmpeg ≥ 5.1 supports this; older builds will ignore the option.
         filters.push(
           `${vLabel}drawtext=fontfile=${escapePath(titleFontPath)}` +
             `:textfile=${escapePath(titleFilePath)}` +
             `:fontcolor=${tFc}:fontsize=${tSize}` +
             `:box=1:boxcolor=${tBg}:boxborderw=${tPad}` +
             `:line_spacing=${Math.round(tSize * 0.18)}` +
+            `:text_align=C+M` +
             `:x=(w-text_w)/2:y=h*${tYpct}-text_h/2[vt]`
         )
         vLabel = '[vt]'
