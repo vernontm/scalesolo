@@ -684,6 +684,10 @@ function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = 
   // Strip every non-token char (anything besides letters, digits, _, -) so
   // brands like "VernonTech & Media" produce a clean "@VernonTechMedia"
   // tag the parser can match end-to-end.
+  // Coerce to string up-front. Some upstream callers pass numbers (e.g. the
+  // 60-second cap on script_gen wires duration through), and value.match()
+  // crashes the whole canvas if the prop ever lands as non-string.
+  const promptStr = typeof value === 'string' ? value : (value == null ? '' : String(value))
   const tagFor = (name) => `@${(name || '').replace(/[^A-Za-z0-9_-]/g, '')}`
 
   function insertTag(name) {
@@ -735,7 +739,7 @@ function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = 
     if (!suggest.prefix) return true
     return (it.name || '').toLowerCase().replace(/[^a-z0-9_-]/g, '').startsWith(suggest.prefix)
   })
-  const tokens = Array.from(new Set(prompt.match(/@(?:"[^"]+"|[A-Za-z0-9_-]+)/g) || []))
+  const tokens = Array.from(new Set(promptStr.match(/@(?:"[^"]+"|[A-Za-z0-9_-]+)/g) || []))
 
   const chipStyle = (kind, on) => ({
     fontSize: 10, padding: '2px 7px', borderRadius: 999,
@@ -791,7 +795,7 @@ function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = 
       )}
       <PromptHighlightField
         textareaRef={ref}
-        value={prompt}
+        value={promptStr}
         placeholder={placeholder}
         minHeight={minHeight}
         onChange={onTextareaChange}
@@ -849,6 +853,9 @@ function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = 
 // and spacing match exactly.
 function PromptHighlightField({ textareaRef, value, placeholder, minHeight, onChange, onBlur, onSelect, brands, namedImages }) {
   const backdropRef = useRef(null)
+  // Defensive — same coercion the outer MentionPrompt does, in case this
+  // component ever gets used standalone with a non-string value.
+  const safeValue = typeof value === 'string' ? value : (value == null ? '' : String(value))
   const brandSet = new Set((brands || []).map((b) => (b.name || '').toLowerCase().replace(/[^a-z0-9_-]/g, '')))
   const imageSet = new Set((namedImages || []).map((im) => (im.name || '').toLowerCase().replace(/[^a-z0-9_-]/g, '')))
 
@@ -859,15 +866,15 @@ function PromptHighlightField({ textareaRef, value, placeholder, minHeight, onCh
   let cursor = 0
   let m
   let key = 0
-  while ((m = re.exec(value || '')) !== null) {
-    if (m.index > cursor) segments.push({ k: key++, kind: 'text', text: value.slice(cursor, m.index) })
+  while ((m = re.exec(safeValue)) !== null) {
+    if (m.index > cursor) segments.push({ k: key++, kind: 'text', text: safeValue.slice(cursor, m.index) })
     const tok = m[0]
     const norm = tok.replace(/^@"?|"?$/g, '').toLowerCase().replace(/[^a-z0-9_-]/g, '')
     const tokKind = brandSet.has(norm) ? 'brand' : (imageSet.has(norm) ? 'image' : 'unknown')
     segments.push({ k: key++, kind: tokKind, text: tok })
     cursor = m.index + tok.length
   }
-  if (cursor < (value || '').length) segments.push({ k: key++, kind: 'text', text: value.slice(cursor) })
+  if (cursor < safeValue.length) segments.push({ k: key++, kind: 'text', text: safeValue.slice(cursor) })
 
   // Lock down EVERY typography knob so the backdrop and textarea produce
   // pixel-identical glyph layout. If any of these diverge between the two
@@ -921,7 +928,7 @@ function PromptHighlightField({ textareaRef, value, placeholder, minHeight, onCh
           overflow: 'hidden',
         }}
       >
-        {segments.length === 0 && !value
+        {segments.length === 0 && !safeValue
           ? <span style={{ color: 'var(--muted)' }}>{placeholder}</span>
           : segments.map((s) => s.kind === 'text'
               ? <span key={s.k}>{s.text}</span>
@@ -955,7 +962,7 @@ function PromptHighlightField({ textareaRef, value, placeholder, minHeight, onCh
           outline: 'none',
         }}
         placeholder={placeholder}
-        value={value}
+        value={safeValue}
         onChange={onChange}
         onBlur={onBlur}
         onSelect={onSelect}
