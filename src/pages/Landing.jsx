@@ -6,6 +6,7 @@ import {
   Instagram, Youtube, Twitter, Linkedin, Music2, Captions as CaptionsIcon,
 } from 'lucide-react'
 import PricingPlans from '../components/PricingPlans.jsx'
+import WorkflowDemo from '../components/WorkflowDemo.jsx'
 
 // ─────────────────────────────────────────────────────────────────────
 //  Public marketing landing for scalesolo.ai
@@ -74,15 +75,6 @@ const testimonials = [
   { name: 'Lena R.',    role: 'Lifestyle Creator',  quote: 'I wired in my @brand mention once and the script generator never forgets. Tone is consistent across 3 months of content.' },
   { name: 'Sam D.',     role: 'B2B Marketer',       quote: 'The schedule node + Upload-Post integration replaced two of my tools. Drafts go out at 8am Tuesdays, no babysitting.' },
   { name: 'Aiyana W.',  role: 'Podcast Producer',   quote: 'Audio upload → ElevenLabs transcribe → split → render across looks. We cut 9-clip shorts from 60-second clips in under 4 minutes.' },
-]
-
-// 4-node mock that mirrors the actual in-app Spaces canvas. The
-// connectors are SVG paths animated via stroke-dashoffset (flowDash).
-const canvasNodes = [
-  { Icon: Wand2,        title: 'Script generator',  status: 'DONE', tint: '#ef4444', preview: 'Pick a fresh angle for short-form…' },
-  { Icon: UserCircle2,  title: 'Avatar render',     status: 'DONE', tint: '#a855f7', preview: '6 clips · cycle looks' },
-  { Icon: CaptionsIcon, title: 'Captions + title',  status: 'DONE', tint: '#f59e0b', preview: 'Burn-in · Poppins ExtraBold' },
-  { Icon: Calendar,     title: 'Schedule',          status: 'RUN',  tint: '#22c55e', preview: 'TikTok · IG · YT · X · LI' },
 ]
 
 export default function Landing() {
@@ -235,11 +227,11 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── MOCK SPACES CANVAS ──────────────────────────────────────── */}
+      {/* ── INTERACTIVE WORKFLOW WALKTHROUGH ────────────────────────── */}
       <section id="canvas" style={section} className="fade-up">
-        <h2 style={sectionH}>Drag, drop, ship.</h2>
-        <p style={sectionSub}>Wire your workflow once on the visual canvas. Click Run. Walk away. Forever.</p>
-        <CanvasMock />
+        <h2 style={sectionH}>9 steps. One workflow. Forever.</h2>
+        <p style={sectionSub}>This is the full AI Podcaster pipeline — exactly as it runs in your dashboard. Click any node to see what it does. Or hit Auto-tour to walk through the whole thing.</p>
+        <WorkflowDemo />
       </section>
 
       {/* ── VALUE GRID ──────────────────────────────────────────────── */}
@@ -411,62 +403,9 @@ function ParticleField() {
   )
 }
 
-// Mock visual of the in-app Spaces canvas: 4 nodes wired up by SVG
-// connectors with animated flowing dashes. The connector path is
-// drawn from each node's right edge to the next node's left edge
-// via a gentle Bézier curve.
-function CanvasMock() {
-  return (
-    <div style={canvasFrame}>
-      {/* Subtle grid backdrop, soft red wash */}
-      <div aria-hidden style={canvasBackdrop} />
-
-      {/* Connector lines behind the nodes */}
-      <svg style={connectorSvg} viewBox="0 0 1000 220" preserveAspectRatio="none" aria-hidden>
-        <defs>
-          <linearGradient id="wireGrad" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%"  stopColor="rgba(239,68,68,0.15)" />
-            <stop offset="50%" stopColor="rgba(239,68,68,0.85)" />
-            <stop offset="100%" stopColor="rgba(239,68,68,0.15)" />
-          </linearGradient>
-        </defs>
-        {/* Three Bézier paths between the 4 nodes */}
-        <path d="M 235,110 C 280,110 280,110 325,110" stroke="url(#wireGrad)" strokeWidth="2" fill="none" strokeDasharray="6 7" style={{ animation: 'flowDash 1.4s linear infinite' }} />
-        <path d="M 485,110 C 530,110 530,110 575,110" stroke="url(#wireGrad)" strokeWidth="2" fill="none" strokeDasharray="6 7" style={{ animation: 'flowDash 1.4s linear infinite', animationDelay: '0.3s' }} />
-        <path d="M 735,110 C 780,110 780,110 825,110" stroke="url(#wireGrad)" strokeWidth="2" fill="none" strokeDasharray="6 7" style={{ animation: 'flowDash 1.4s linear infinite', animationDelay: '0.6s' }} />
-      </svg>
-
-      {/* Nodes */}
-      <div style={nodesRow}>
-        {canvasNodes.map((n, i) => (
-          <div
-            key={n.title}
-            style={{ ...nodeCard, animation: `nodeBreathe 4s var(--ease) ${i * 0.6}s infinite` }}
-          >
-            <div style={nodeHeader}>
-              <div style={{ ...nodeIconBox, background: `${n.tint}1f`, color: n.tint }}>
-                <n.Icon size={12} strokeWidth={2.4} />
-              </div>
-              <div style={{ fontFamily: 'var(--font-display)', fontSize: 12, fontWeight: 700 }}>{n.title}</div>
-              <div style={{
-                marginLeft: 'auto', fontSize: 9.5, fontFamily: 'var(--font-display)', fontWeight: 800,
-                letterSpacing: '0.06em', padding: '2px 7px', borderRadius: 999,
-                background: n.status === 'RUN' ? 'rgba(239,68,68,0.18)' : 'rgba(34,197,94,0.18)',
-                color: n.status === 'RUN' ? '#ef4444' : '#22c55e',
-                border: `1px solid ${n.status === 'RUN' ? 'rgba(239,68,68,0.35)' : 'rgba(34,197,94,0.35)'}`,
-              }}>
-                {n.status}
-              </div>
-            </div>
-            <div style={nodePreview}>{n.preview}</div>
-            <div style={nodePort('left')} />
-            <div style={nodePort('right')} />
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
+// (CanvasMock removed — replaced by <WorkflowDemo /> from
+// src/components/WorkflowDemo.jsx, an interactive 9-node walkthrough
+// of the AI Podcaster pipeline.)
 
 // ─────────────────────────────────────────────────────────────────────
 // Styles
@@ -703,73 +642,8 @@ const featureTitle = { fontFamily: 'var(--font-display)', fontWeight: 800, fontS
 const featureBody = { fontSize: 13.5, color: 'var(--text-soft)', lineHeight: 1.55 }
 
 // ── Canvas mock ─────────────────────────────────────────────────────
-const canvasFrame = {
-  position: 'relative',
-  maxWidth: 1100, margin: '0 auto',
-  borderRadius: 22,
-  border: '1px solid var(--border)',
-  background: 'var(--surface)',
-  padding: '50px 32px',
-  overflow: 'hidden',
-  boxShadow: 'var(--shadow-card), 0 0 80px rgba(239,68,68,0.10)',
-  isolation: 'isolate',
-}
-const canvasBackdrop = {
-  position: 'absolute', inset: 0,
-  background:
-    'radial-gradient(ellipse at 20% 30%, rgba(239,68,68,0.10), transparent 50%), ' +
-    'radial-gradient(ellipse at 80% 70%, rgba(168,85,247,0.08), transparent 50%), ' +
-    // 24px grid
-    'linear-gradient(var(--border) 1px, transparent 1px), ' +
-    'linear-gradient(90deg, var(--border) 1px, transparent 1px)',
-  backgroundSize: 'auto, auto, 24px 24px, 24px 24px',
-  maskImage: 'radial-gradient(ellipse at center, black 60%, transparent 100%)',
-  WebkitMaskImage: 'radial-gradient(ellipse at center, black 60%, transparent 100%)',
-  pointerEvents: 'none', zIndex: 0,
-}
-const connectorSvg = {
-  position: 'absolute', inset: 0, width: '100%', height: '100%',
-  pointerEvents: 'none', zIndex: 1,
-}
-const nodesRow = {
-  position: 'relative', zIndex: 2,
-  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-  gap: 24, flexWrap: 'wrap',
-}
-const nodeCard = {
-  flex: '1 1 200px', minWidth: 200, maxWidth: 240,
-  position: 'relative',
-  background: 'var(--surface-2)',
-  border: '1px solid var(--border)',
-  borderRadius: 12,
-  padding: '12px 14px',
-  boxShadow: 'var(--shadow-card)',
-}
-const nodeHeader = {
-  display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8,
-}
-const nodeIconBox = {
-  width: 22, height: 22, borderRadius: 6,
-  display: 'grid', placeItems: 'center',
-  border: '1px solid currentColor',
-  flexShrink: 0,
-}
-const nodePreview = {
-  fontSize: 11.5, color: 'var(--text-soft)', lineHeight: 1.5,
-  background: 'var(--bg)',
-  border: '1px solid var(--border)',
-  borderRadius: 8, padding: '8px 10px',
-  fontFamily: 'var(--font-display)',
-}
-function nodePort(side) {
-  return {
-    position: 'absolute', top: '50%',
-    [side]: -5, transform: 'translateY(-50%)',
-    width: 10, height: 10, borderRadius: '50%',
-    background: 'var(--red)',
-    boxShadow: '0 0 0 3px var(--surface), 0 0 8px rgba(239,68,68,0.6)',
-  }
-}
+// (Canvas / node styles moved into src/components/WorkflowDemo.jsx
+// alongside the new interactive walkthrough.)
 
 // ── Value grid ──────────────────────────────────────────────────────
 const valueGridStyle = {
