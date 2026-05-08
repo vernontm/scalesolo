@@ -639,36 +639,45 @@ function NewSpaceModal({ profileId, token, onClose, onPicked }) {
             No templates yet. Save any space as a template from inside the builder.
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10 }}>
-            {[...publicTemplates, ...privateTemplates].map((tpl) => (
-              <div
-                key={tpl.id}
-                role="button" tabIndex={0}
-                onClick={() => !busy && useTemplate(tpl)}
-                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); !busy && useTemplate(tpl) } }}
-                className="card"
-                style={{ cursor: busy ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 12, padding: 14 }}
-              >
-                <div style={{ width: 36, height: 36, borderRadius: 10, background: tpl.template_visibility === 'public' ? 'rgba(239,68,68,0.10)' : 'var(--surface-2)', display: 'grid', placeItems: 'center' }}>
-                  {tpl.template_visibility === 'public' ? <Globe size={15} style={{ color: 'var(--red)' }} /> : <Lock size={15} style={{ color: 'var(--muted)' }} />}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {[
+              { key: 'public',  label: 'Default templates', icon: Globe, list: publicTemplates },
+              { key: 'private', label: 'Your templates',    icon: Lock,  list: privateTemplates },
+            ].filter((g) => g.list.length).map((group) => (
+              <div key={group.key}>
+                <div style={{ fontSize: 10.5, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <group.icon size={11} /> {group.label} <span style={{ opacity: 0.7 }}>({group.list.length})</span>
                 </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    {tpl.name}
-                    {tpl.template_visibility === 'private' && <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'var(--surface-2)', color: 'var(--muted)', fontFamily: 'inherit', textTransform: 'uppercase', letterSpacing: '0.05em' }}>private</span>}
-                  </div>
-                  {(tpl.template_summary || tpl.description) && (
-                    <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3, lineHeight: 1.4 }}>
-                      {tpl.template_summary || tpl.description}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
+                  {group.list.map((tpl) => (
+                    <div
+                      key={tpl.id}
+                      role="button" tabIndex={0}
+                      onClick={() => !busy && useTemplate(tpl)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); !busy && useTemplate(tpl) } }}
+                      className="card"
+                      style={{ cursor: busy ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 12, padding: 14 }}
+                    >
+                      <div style={{ width: 36, height: 36, borderRadius: 10, background: tpl.template_visibility === 'public' ? 'rgba(239,68,68,0.10)' : 'var(--surface-2)', display: 'grid', placeItems: 'center' }}>
+                        {tpl.template_visibility === 'public' ? <Globe size={15} style={{ color: 'var(--red)' }} /> : <Lock size={15} style={{ color: 'var(--muted)' }} />}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14 }}>{tpl.name}</div>
+                        {(tpl.template_summary || tpl.description) && (
+                          <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3, lineHeight: 1.4 }}>
+                            {tpl.template_summary || tpl.description}
+                          </div>
+                        )}
+                      </div>
+                      {Array.isArray(tpl.template_guide) && tpl.template_guide.length > 0 && (
+                        <span style={{ fontSize: 11, color: 'var(--muted)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <BookOpen size={11} /> {tpl.template_guide.length} steps
+                        </span>
+                      )}
+                      <ChevronRight size={14} style={{ color: 'var(--muted)' }} />
                     </div>
-                  )}
+                  ))}
                 </div>
-                {Array.isArray(tpl.template_guide) && tpl.template_guide.length > 0 && (
-                  <span style={{ fontSize: 11, color: 'var(--muted)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                    <BookOpen size={11} /> {tpl.template_guide.length} steps
-                  </span>
-                )}
-                <ChevronRight size={14} style={{ color: 'var(--muted)' }} />
               </div>
             ))}
           </div>
@@ -1967,6 +1976,8 @@ function SpaceBuilder({ space, onSave, onClose }) {
   // Esc closes the preview modal.
   useEffect(() => {
     if (!previewItem) return
+    // Pause every other video on the page when fullscreen preview opens.
+    document.querySelectorAll('video').forEach((v) => { try { v.pause() } catch {} })
     const onKey = (e) => { if (e.key === 'Escape') setPreviewItem(null) }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

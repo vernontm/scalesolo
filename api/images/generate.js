@@ -9,6 +9,29 @@
 // resultJson is a JSON-encoded STRING that needs to be parsed.
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { message as anthropicMessage } from '../_lib/anthropic.js'
+
+// Optional prompt enhancement — Claude rewrites the user's bare prompt with
+// composition, lighting, and brand cues so the image model has more to work
+// with. Falls through to the original prompt on any error so a transient
+// Anthropic hiccup never blocks the actual render.
+async function enhancePrompt(rawPrompt) {
+  try {
+    const out = await anthropicMessage({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 600,
+      system:
+        'You rewrite short user prompts into vivid image-generation prompts. Output ONLY the rewritten prompt — no preamble, no quotes. ' +
+        'Preserve every concrete detail the user gave (subject, brand, palette, references). Add: composition, camera angle, lighting, mood, ' +
+        'background detail, render style. If a "BRAND IDENTITY DIRECTIVE" block is present, keep it verbatim at the top and only enhance the body.',
+      messages: [{ role: 'user', content: rawPrompt }],
+    })
+    const text = (out?.content || []).map((c) => c?.text || '').join('').trim()
+    return text || rawPrompt
+  } catch {
+    return rawPrompt
+  }
+}
 
 // Resolve the UI's friendly model id to the actual KIE model slug, honoring
 // reference images by routing GPT to its image-to-image variant when refs
@@ -129,9 +152,12 @@ export default async function handler(req, res) {
       aspect = '1:1',
       quality,
       reference_urls,
+      enhance_prompt = false,
     } = req.body || {}
     if (!profile_id || !prompt) return res.status(400).json({ error: 'profile_id + prompt required' })
     await assertProfileAccess(auth.user.id, profile_id)
+
+    const finalPrompt = enhance_prompt ? await enhancePrompt(String(prompt)) : prompt
 
     const apiKey = process.env.KIE_API_KEY
     if (!apiKey) return res.status(500).json({ error: 'KIE_API_KEY not configured. Add it in Vercel env.' })
@@ -148,7 +174,7 @@ export default async function handler(req, res) {
 
     const hasRefs = Array.isArray(reference_urls) && reference_urls.length > 0
     const kieModel = resolveKieModel(model || 'nano-banana-2', hasRefs)
-    const input = buildInput(kieModel, { prompt, aspect, count, quality, reference_urls })
+    const input = buildInput(kieModel, { prompt: finalPrompt, aspect, count, quality, reference_urls })
 
     // Submit task via the unified jobs endpoint
     const submitResp = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {

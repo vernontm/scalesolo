@@ -63,7 +63,15 @@ export function MediaItem({ url, type = 'image', from = '', onDelete, aspectRati
       style={{ position: 'relative', width: '100%', aspectRatio, borderRadius: rounded, overflow: 'hidden', background: 'var(--surface-2)' }}
     >
       {type === 'video' ? (
-        <video src={url} controls style={{ width: '100%', height: '100%', objectFit: fit, background: '#000' }} />
+        <video
+          src={url}
+          controls
+          onPlay={(e) => {
+            const me = e.currentTarget
+            document.querySelectorAll('video').forEach((v) => { if (v !== me && !v.paused) v.pause() })
+          }}
+          style={{ width: '100%', height: '100%', objectFit: fit, background: '#000' }}
+        />
       ) : (
         <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: fit, display: 'block' }} />
       )}
@@ -980,6 +988,23 @@ function ImageGenBody({ data, onPatch }) {
           <option value="2K">2K</option>
           <option value="4K">4K</option>
         </select>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onPatch({ enhance_prompt: !(data.props?.enhance_prompt ?? true) }) }}
+          title={(data.props?.enhance_prompt ?? true)
+            ? 'Claude rewrites your prompt with composition, lighting, and brand cues before sending to the image model. Click to disable.'
+            : 'Send your prompt verbatim. Click to let Claude enhance it.'}
+          style={{
+            ...pillSelect,
+            cursor: 'pointer',
+            background: (data.props?.enhance_prompt ?? true) ? 'rgba(168,85,247,0.18)' : 'var(--surface-2)',
+            color: (data.props?.enhance_prompt ?? true) ? '#a855f7' : 'var(--text-soft)',
+            borderColor: (data.props?.enhance_prompt ?? true) ? 'rgba(168,85,247,0.4)' : 'var(--border)',
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+          }}
+        >
+          <Sparkles size={10} /> {(data.props?.enhance_prompt ?? true) ? 'Enhance: on' : 'Enhance: off'}
+        </button>
       </div>
 
       {imgs.length > 1 && (
@@ -1734,11 +1759,28 @@ function AvatarRenderBody({ data }) {
       )}
 
       {data.status === 'failed' && <NodePreview status="failed" error={data.error} />}
-      {data.status === 'running' && <NodePreview status="running" />}
+      {data.status === 'running' && <ProgressPill progress={data.progress} fallback="Rendering…" />}
       {data.status === 'done' && !out?.video_url && clipCount === 0 && (
         <div style={{ ...previewBox, color: 'var(--text-soft)' }}>Done</div>
       )}
     </>
+  )
+}
+
+function ProgressPill({ progress, fallback = 'Working…' }) {
+  const total = Number(progress?.total) || 0
+  const done = Number(progress?.done) || 0
+  const pct = total ? Math.min(100, Math.round((done / total) * 100)) : null
+  return (
+    <div style={{ ...previewBox, color: 'var(--amber)' }}>
+      <Loader2 size={11} className="spin" style={{ marginRight: 6, verticalAlign: '-1px' }} />
+      {progress?.message || fallback}
+      {pct != null && (
+        <div style={{ marginTop: 6, height: 4, background: 'var(--surface)', borderRadius: 999, overflow: 'hidden' }}>
+          <div style={{ width: `${pct}%`, height: '100%', background: 'var(--amber)', transition: 'width 250ms ease' }} />
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -2048,7 +2090,9 @@ function VideoPolishBody({ data, onPatch }) {
       >
         <Sparkles size={11} /> Open all settings
       </button>
-      <NodePreview status={status} output={null} error={data.error} />
+      {status === 'running'
+        ? <ProgressPill progress={data.progress} fallback="Polishing video…" />
+        : <NodePreview status={status} output={null} error={data.error} />}
     </>
   )
 }
@@ -3669,7 +3713,7 @@ ${String(script).slice(0, 2000)}
     icon: ImageIcon, category: 'generators', color: '#a855f7',
     inputs: [{ id: 'in',  label: 'In (prompt / brand / refs)' }],
     outputs: [{ id: 'out', label: 'Out' }],
-    initialProps: { prompt: '', model: 'nano-banana-2', aspect: '1:1', count: 1, quality: '2K' },
+    initialProps: { prompt: '', model: 'nano-banana-2', aspect: '1:1', count: 1, quality: '2K', enhance_prompt: true },
     Body: ImageGenBody,
     run: async ({ data, inputs, inputsByName, ctx }) => {
       const incoming = inputs?.in
@@ -3775,6 +3819,7 @@ ${String(script).slice(0, 2000)}
           aspect: data.props?.aspect || '1:1',
           quality: data.props?.quality || '2K',
           reference_urls: refs.length ? refs : undefined,
+          enhance_prompt: data.props?.enhance_prompt ?? true,
         }),
       })
       const submit = await submitR.json()
@@ -3916,7 +3961,7 @@ ${String(script).slice(0, 2000)}
     outputs: [{ id: 'out', label: 'Out' }],
     initialProps: {},
     Body: AvatarRenderBody,
-    run: async ({ inputs, ctx }) => {
+    run: async ({ inputs, ctx, reportProgress }) => {
       const incoming = inputs?.in
       const avatar = pickAvatarConfig(incoming)
       if (!avatar?.avatar_id) throw new Error('Connect an Avatar picker')
@@ -4009,8 +4054,13 @@ ${String(script).slice(0, 2000)}
             image: images[i % images.length],
             order: i,
           }))
+          const total = assignments.length
+          let done = 0
+          reportProgress?.({ done: 0, total, message: `Rendering 0 of ${total} clips…` })
           const settled = await Promise.allSettled(assignments.map(async (a) => {
             const r = await renderOne({ photo_url: a.image.image_url, audioUrl: a.chunk.audio_url })
+            done += 1
+            reportProgress?.({ done, total, message: `Rendered ${done} of ${total} clips` })
             return {
               video_url: r.video_url,
               order: a.order,
@@ -4053,8 +4103,13 @@ ${String(script).slice(0, 2000)}
         const assignments = chunks.map((chunk, i) => ({
           chunk, image: images[i % images.length], order: i,
         }))
+        const total = assignments.length
+        let done = 0
+        reportProgress?.({ done: 0, total, message: `Rendering 0 of ${total} clips…` })
         const settled = await Promise.allSettled(assignments.map(async (a) => {
           const r = await renderOne({ photo_url: a.image.image_url, scriptChunk: a.chunk || script })
+          done += 1
+          reportProgress?.({ done, total, message: `Rendered ${done} of ${total} clips` })
           return {
             video_url: r.video_url,
             order: a.order,
@@ -4230,12 +4285,9 @@ ${String(script).slice(0, 2000)}
     },
     Body: VideoPolishBody,
     Editor: VideoPolishEditor,
-    run: async ({ data, inputs, ctx }) => {
+    run: async ({ data, inputs, ctx, reportProgress }) => {
       const arr = asArr(inputs?.in)
       let logoUrl = null, musicUrl = null
-      // Inline-uploaded music (Music section in editor) wins over a
-      // wired-in audio_upload node. Most users will use the inline path
-      // — the wired path stays as a fallback for older spaces.
       const p = data.props || {}
       if (p.music_url) musicUrl = p.music_url
       // Also pluck a wired-in title from upstream caption_gen so it can
@@ -4271,6 +4323,7 @@ ${String(script).slice(0, 2000)}
       let resolvedTitle = ''
       if (p.title_enabled !== false) {
         if ((p.title_mode || 'auto') === 'auto') {
+          reportProgress?.({ message: 'Transcribing for auto-title…' })
           try {
             const ar = await fetch('/api/videos/auto-title', {
               method: 'POST',
@@ -4294,6 +4347,7 @@ ${String(script).slice(0, 2000)}
       }
       const titleOn = (p.title_enabled !== false) && !!resolvedTitle
 
+      reportProgress?.({ message: 'Compositing overlays + music…' })
       const r = await fetch('/api/videos/polish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
@@ -4911,12 +4965,13 @@ export async function runSpace({ ctx, nodes, edges, onNodeChange }) {
           if (ctx?.shouldAbort?.()) { clearInterval(abortTimer); rej(new Error('Stopped')) }
         }, 500)
       })
+      const reportProgress = (progress) => onNodeChange?.(id, { progress })
       const result = await Promise.race([
-        def.run({ data: node.data, inputs: inputObj, inputsByName, ctx }),
+        def.run({ id, data: node.data, inputs: inputObj, inputsByName, ctx, reportProgress }),
         abortPromise,
       ]).finally(() => { try { clearInterval(abortTimer) } catch {} })
       outputsById.set(id, result || {})
-      onNodeChange?.(id, { status: 'done', output: result })
+      onNodeChange?.(id, { status: 'done', output: result, progress: null })
     } catch (err) {
       // Tag insufficient-credit errors so the UI can offer a top-up CTA.
       const isCreditError = /insufficient/i.test(err?.message || '') || err?.code === 'insufficient_credits'
