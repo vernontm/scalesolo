@@ -104,33 +104,22 @@ const TONES = {
   neutral: { fg: '#a3a3a8', bg: 'rgba(255,255,255,0.04)', bd: 'rgba(255,255,255,0.12)' },
 }
 
-// Snake-layout grid coordinates (0–100 in viewBox / % of canvas).
-// Used both for the static connector list AND the dynamic connectors
-// that get generated for persona paths.
-const COL_X = { 1: 15, 2: 50, 3: 85 }
-const ROW_Y = { 1: 22, 2: 50, 3: 78 }
-// Approximate node half-size in viewBox units (used to stop connector
-// paths just outside the node boundary).
-const NODE_RX = 11
-const NODE_RY = 13
+// Inline layout — all 9 nodes on a single horizontal row at y=50%,
+// evenly distributed across the full canvas width. The viewBox is 0..100
+// (with preserveAspectRatio="none") so 1 viewBox unit always equals 1%
+// of the canvas, regardless of how wide the canvas actually renders.
+const STEP_COUNT = STEPS.length
+const stepCenterX = (i) => ((i + 0.5) / STEP_COUNT) * 100
 
-function gridXY({ col, row }) {
-  return { x: COL_X[col], y: ROW_Y[row] }
-}
-
-// SVG paths between consecutive nodes (1→2, 2→3, …, 8→9). The canvas
-// is purely a static showcase — these are always rendered regardless
-// of which persona (if any) is selected.
-const CONNECTORS = [
-  'M 26 22 L 39 22',                 // 1 → 2
-  'M 61 22 L 74 22',                 // 2 → 3
-  'M 85 35 L 85 37',                 // 3 → 4 (short vertical)
-  'M 74 50 L 61 50',                 // 4 → 5 (right-to-left)
-  'M 39 50 L 26 50',                 // 5 → 6
-  'M 15 63 L 15 65',                 // 6 → 7 (short vertical)
-  'M 26 78 L 39 78',                 // 7 → 8
-  'M 61 78 L 74 78',                 // 8 → 9
-]
+// Static connector paths. We draw center-to-center for each adjacent
+// pair; the actual node sits on top (higher z-index) and clips the
+// path's ends, so visually only the gap between nodes shows the
+// flowing dashed wire — and there's never an awkward end-cap.
+const CONNECTORS = Array.from({ length: STEP_COUNT - 1 }, (_, i) => {
+  const fromX = stepCenterX(i)
+  const toX   = stepCenterX(i + 1)
+  return `M ${fromX} 50 L ${toX} 50`
+})
 
 export default function WorkflowDemo({ persona, onClearPersona }) {
   const [activeStep, setActiveStep] = useState(0)
@@ -163,6 +152,7 @@ export default function WorkflowDemo({ persona, onClearPersona }) {
 
   return (
     <div>
+      <div style={canvasScrollWrap}>
       <div style={canvasFrame}>
         {/* Subtle 24px grid + radial red/purple wash */}
         <div aria-hidden style={canvasBackdrop} />
@@ -219,7 +209,7 @@ export default function WorkflowDemo({ persona, onClearPersona }) {
               onClick={() => select(i)}
               style={{
                 ...nodeBtn,
-                ...nodePos(step.grid),
+                ...nodePos(i),
                 ...(isActive ? nodeBtnActive : null),
               }}
               aria-pressed={isActive}
@@ -240,6 +230,7 @@ export default function WorkflowDemo({ persona, onClearPersona }) {
             </button>
           )
         })}
+      </div>
       </div>
 
       {/* Detail panel — sits below the canvas. Two display modes:
@@ -325,27 +316,35 @@ export default function WorkflowDemo({ persona, onClearPersona }) {
 }
 
 // ─── Layout helper ────────────────────────────────────────────────────
-// Snake-layout positions in % of the canvas frame. Sourced from the
-// shared COL_X / ROW_Y maps so the connector path generator and the
-// node positioner can never drift out of sync.
-function nodePos({ col, row }) {
+// Inline positioning: every node sits on the horizontal mid-line
+// (y = 50%), x-position derived from its index so the 9 steps are
+// evenly distributed across the full canvas width.
+function nodePos(i) {
   return {
     position: 'absolute',
-    left: `${COL_X[col]}%`,
-    top:  `${ROW_Y[row]}%`,
+    left: `${stepCenterX(i)}%`,
+    top:  '50%',
     transform: 'translate(-50%, -50%)',
   }
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────
-// Canvas is intentionally compact — the snake-grid is the showcase, not
-// a stage. Aspect 13:5 keeps it short; max-width 760 + tighter row
-// spacing pulls the nodes close together so the whole pipeline reads at
-// a glance instead of dominating the page.
+// Inline single-row layout — canvas spans the full content width of
+// the section. Wrapped in a horizontal-scroll container so the canvas
+// keeps its min-width on narrow viewports (the 9 nodes still need room
+// to breathe; rather than collapse them, we let the user pan).
+const canvasScrollWrap = {
+  width: '100%',
+  overflowX: 'auto',
+  // A tiny bit of bottom padding so the soft red shadow under the
+  // canvas isn't clipped by the auto-scroll container's bounds.
+  paddingBottom: 6,
+  WebkitOverflowScrolling: 'touch',
+}
 const canvasFrame = {
   position: 'relative',
-  maxWidth: 760, margin: '0 auto',
-  aspectRatio: '13 / 5',
+  width: '100%', minWidth: 1000,
+  height: 'clamp(170px, 17vw, 220px)',
   borderRadius: 22,
   border: '1px solid var(--border)',
   background: 'var(--surface)',
@@ -371,11 +370,14 @@ const connectorSvg = {
 }
 
 const nodeBtn = {
-  width: 'clamp(118px, 16vw, 168px)',
+  // Width is a % of the canvas so it scales as the canvas does and
+  // never overruns its cell (cell width is 100/9 ≈ 11.11%; 9.5% leaves
+  // ~1.6% / ~16-19px of clear space between nodes for the connector).
+  width: '9.5%',
   background: 'var(--surface-2)',
   border: '1px solid var(--border)',
   borderRadius: 10,
-  padding: '9px 11px 11px',
+  padding: '9px 10px 11px',
   zIndex: 2,
   cursor: 'pointer',
   textAlign: 'left',
