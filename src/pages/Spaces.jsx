@@ -2099,40 +2099,10 @@ function SpaceBuilder({ space, onSave, onClose }) {
         <button className="btn-ghost" onClick={onClose}><ArrowLeft size={14} /> Spaces</button>
         <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Space name" style={{ width: 220, flex: '0 0 220px', fontWeight: 600 }} />
 
-        {/* AI workflow build chat input — always available */}
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '0 4px 0 10px' }}>
-          {nodes.length === 0 ? <Wand2 size={14} style={{ color: 'var(--red)' }} /> : <MessageSquare size={14} style={{ color: 'var(--red)' }} />}
-          <input
-            type="text"
-            placeholder={nodes.length === 0
-              ? "Describe a workflow (e.g. 'create scripts then turn them into avatar videos')"
-              : "Tell the AI what to add or change…"}
-            value={aiPrompt}
-            onChange={(e) => setAiPrompt(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') aiBuild() }}
-            disabled={aiBuilding}
-            style={{
-              flex: 1, height: 36,
-              background: 'transparent', border: 'none', outline: 'none',
-              color: 'var(--text)', fontSize: 13, fontFamily: 'inherit',
-            }}
-          />
-          <button
-            onClick={aiBuild}
-            disabled={aiBuilding || !aiPrompt.trim()}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              height: 30, padding: '0 12px', borderRadius: 7,
-              background: aiPrompt.trim() ? 'linear-gradient(135deg, var(--red), var(--red-dark))' : 'var(--surface-2)',
-              color: aiPrompt.trim() ? '#fff' : 'var(--muted)',
-              border: 'none', cursor: aiPrompt.trim() ? 'pointer' : 'not-allowed',
-              fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 12,
-            }}
-          >
-            {aiBuilding ? <span className="spinner" /> : <Send size={12} />}
-            {nodes.length === 0 ? 'Build' : 'Update'}
-          </button>
-        </div>
+        {/* AI workflow-build chat bar removed. State + aiBuild handler
+            stay in place for now — keyboard shortcut / re-introduction
+            can wire into them later without re-plumbing. */}
+        <div style={{ flex: 1 }} />
 
         <span style={{
           fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700,
