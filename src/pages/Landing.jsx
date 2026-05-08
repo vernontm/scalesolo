@@ -215,6 +215,16 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ── USE CASES ───────────────────────────────────────────────── */}
+      {/* Sits above Features by design — visitors picking a persona
+          here scroll smoothly down to the canvas section, which morphs
+          to that persona's path. */}
+      <section id="use-cases" style={section} className="fade-up">
+        <h2 style={sectionH}>Built for every kind of creator</h2>
+        <p style={sectionSub}>Click a use case to morph the workflow below. The canvas redraws to show only the nodes that run for the way you create.</p>
+        <UseCaseGrid activePersona={activePersona} onSelectPersona={handleSelectPersona} />
+      </section>
+
       {/* ── FEATURES ────────────────────────────────────────────────── */}
       <section id="features" style={section} className="fade-up">
         <h2 style={sectionH}>Automate your content in minutes</h2>
@@ -250,20 +260,11 @@ export default function Landing() {
         <h2 style={sectionH}>9 steps. One workflow. Forever.</h2>
         <p style={sectionSub}>
           {activePersona
-            ? <>Showing the path for <span style={{ color: 'var(--red)', fontWeight: 700 }}>{activePersona.label}</span>. Pick another use case below to morph the canvas.</>
+            ? <>Showing the path for <span style={{ color: 'var(--red)', fontWeight: 700 }}>{activePersona.label}</span>. Pick another use case above to morph the canvas.</>
             : <>This is the full AI Podcaster pipeline — exactly as it runs in your dashboard. Click any node to see what it does, or hit Auto-tour to walk through the whole thing.</>
           }
         </p>
         <WorkflowDemo persona={activePersona} onClearPersona={() => setActivePersona(null)} />
-      </section>
-
-      {/* ── USE CASES ───────────────────────────────────────────────── */}
-      {/* Click a persona card → scrolls up to the canvas and morphs it
-          to highlight only the steps relevant to that audience. */}
-      <section id="use-cases" style={section} className="fade-up">
-        <h2 style={sectionH}>Built for every kind of creator</h2>
-        <p style={sectionSub}>Click a use case to morph the workflow above. The relevant nodes light up, the rest fade — see exactly what runs for the way you create.</p>
-        <UseCaseGrid activePersona={activePersona} onSelectPersona={handleSelectPersona} />
       </section>
 
       {/* ── VALUE GRID ──────────────────────────────────────────────── */}

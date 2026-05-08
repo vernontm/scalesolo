@@ -104,19 +104,55 @@ const TONES = {
   neutral: { fg: '#a3a3a8', bg: 'rgba(255,255,255,0.04)', bd: 'rgba(255,255,255,0.12)' },
 }
 
-// SVG paths between consecutive nodes (1→2, 2→3, …, 8→9). viewBox is
-// 0 0 100 100; container is forced to the same aspect ratio so 1
-// viewBox unit equals 1% of width or height. Each path stops short of
-// the node so the connector visually meets the node's edge port.
+// Snake-layout grid coordinates (0–100 in viewBox / % of canvas).
+// Used both for the static connector list AND the dynamic connectors
+// that get generated for persona paths.
+const COL_X = { 1: 15, 2: 50, 3: 85 }
+const ROW_Y = { 1: 22, 2: 50, 3: 78 }
+// Approximate node half-size in viewBox units (used to stop connector
+// paths just outside the node boundary).
+const NODE_RX = 11
+const NODE_RY = 13
+
+function gridXY({ col, row }) {
+  return { x: COL_X[col], y: ROW_Y[row] }
+}
+
+// Cubic Bézier between two grid positions. Picks horizontal vs.
+// vertical exit/entry based on the dominant axis so the curve always
+// leaves and enters a sensible side of each node.
+function bezierBetween(fromGrid, toGrid) {
+  const a = gridXY(fromGrid)
+  const b = gridXY(toGrid)
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  let sX, sY, eX, eY
+  if (Math.abs(dx) >= Math.abs(dy) * 0.8 || dy === 0) {
+    // Horizontal-dominant: exit/enter via left/right edge.
+    sX = a.x + (dx >= 0 ? NODE_RX : -NODE_RX); sY = a.y
+    eX = b.x - (dx >= 0 ? NODE_RX : -NODE_RX); eY = b.y
+  } else {
+    // Vertical-dominant: exit/enter via top/bottom edge.
+    sX = a.x; sY = a.y + (dy >= 0 ? NODE_RY : -NODE_RY)
+    eX = b.x; eY = b.y - (dy >= 0 ? NODE_RY : -NODE_RY)
+  }
+  const midX = (sX + eX) / 2
+  return `M ${sX} ${sY} C ${midX} ${sY}, ${midX} ${eY}, ${eX} ${eY}`
+}
+
+// SVG paths between consecutive nodes (1→2, 2→3, …, 8→9). Used when
+// no persona is active (the full 9-step pipeline). When a persona IS
+// active, connectors are generated dynamically from the persona path
+// (so e.g. Podcasters' 2→4→5→7→8 draws four custom curves).
 const CONNECTORS = [
-  'M 27 18 L 38 18',                 // 1 → 2
-  'M 62 18 L 73 18',                 // 2 → 3
-  'M 85 28 Q 85 35 85 42',           // 3 → 4 (down)
-  'M 73 50 L 62 50',                 // 4 → 5 (right-to-left)
-  'M 38 50 L 27 50',                 // 5 → 6
-  'M 15 58 Q 15 65 15 72',           // 6 → 7 (down)
-  'M 27 82 L 38 82',                 // 7 → 8
-  'M 62 82 L 73 82',                 // 8 → 9
+  'M 26 22 L 39 22',                 // 1 → 2
+  'M 61 22 L 74 22',                 // 2 → 3
+  'M 85 35 L 85 37',                 // 3 → 4 (short vertical)
+  'M 74 50 L 61 50',                 // 4 → 5 (right-to-left)
+  'M 39 50 L 26 50',                 // 5 → 6
+  'M 15 63 L 15 65',                 // 6 → 7 (short vertical)
+  'M 26 78 L 39 78',                 // 7 → 8
+  'M 61 78 L 74 78',                 // 8 → 9
 ]
 
 export default function WorkflowDemo({ persona, onClearPersona }) {
@@ -199,40 +235,58 @@ export default function WorkflowDemo({ persona, onClearPersona }) {
             </linearGradient>
           </defs>
 
-          {CONNECTORS.map((d, i) => {
-            // Connector i wires step i → step i+1.
-            const fromStep = i
-            const toStep   = i + 1
-            const isActive = toStep === activeStep
-            // When a persona is active, dim connectors that aren't part
-            // of the persona's path (both endpoints must be in the path).
-            const onPath = !personaPath || (personaPath.includes(fromStep) && personaPath.includes(toStep))
-            return (
-              <path
-                key={i}
-                d={d}
-                stroke={isActive ? 'url(#wireGradHot)' : 'url(#wireGrad)'}
-                strokeWidth={isActive ? 0.8 : 0.5}
-                fill="none"
-                strokeDasharray="1.5 1.7"
-                strokeLinecap="round"
-                style={{
-                  animation: `flowDash ${isActive ? 0.9 : 1.4}s linear ${i * 0.15}s infinite`,
-                  filter: isActive ? 'drop-shadow(0 0 1.5px rgba(255,180,100,0.9))' : 'none',
-                  opacity: onPath ? 1 : 0.18,
-                  transition: 'opacity 320ms var(--ease)',
-                }}
-              />
-            )
-          })}
+          {/* Two rendering modes:
+              - No persona → render the static 1→2→…→9 connectors.
+              - Persona active → generate a Bézier between every pair
+                of consecutive persona steps, so Podcasters' 2→4→5→7→8
+                draws clean curves directly between only those nodes. */}
+          {personaPath
+            ? personaPath.slice(0, -1).map((fromStep, i) => {
+                const toStep = personaPath[i + 1]
+                const isActive = toStep === activeStep
+                return (
+                  <path
+                    key={`p-${fromStep}-${toStep}`}
+                    d={bezierBetween(STEPS[fromStep].grid, STEPS[toStep].grid)}
+                    stroke={isActive ? 'url(#wireGradHot)' : 'url(#wireGrad)'}
+                    strokeWidth={isActive ? 0.9 : 0.6}
+                    fill="none"
+                    strokeDasharray="1.5 1.7"
+                    strokeLinecap="round"
+                    style={{
+                      animation: `flowDash ${isActive ? 0.9 : 1.4}s linear ${i * 0.15}s infinite`,
+                      filter: isActive ? 'drop-shadow(0 0 1.5px rgba(255,180,100,0.9))' : 'none',
+                    }}
+                  />
+                )
+              })
+            : CONNECTORS.map((d, i) => {
+                const isActive = i + 1 === activeStep   // connector i feeds node i+1
+                return (
+                  <path
+                    key={i}
+                    d={d}
+                    stroke={isActive ? 'url(#wireGradHot)' : 'url(#wireGrad)'}
+                    strokeWidth={isActive ? 0.8 : 0.5}
+                    fill="none"
+                    strokeDasharray="1.5 1.7"
+                    strokeLinecap="round"
+                    style={{
+                      animation: `flowDash ${isActive ? 0.9 : 1.4}s linear ${i * 0.15}s infinite`,
+                      filter: isActive ? 'drop-shadow(0 0 1.5px rgba(255,180,100,0.9))' : 'none',
+                    }}
+                  />
+                )
+              })}
         </svg>
 
-        {/* Nodes */}
+        {/* Nodes — when a persona is active, off-path nodes are not
+            rendered at all (the canvas shows only the persona's route). */}
         {STEPS.map((step, i) => {
+          if (personaPath && !inPath(i)) return null
           const tone = TONES[step.tone] || TONES.neutral
           const isActive = i === activeStep
           const isOnPath = inPath(i)
-          const dimmed = personaPath && !isOnPath
           return (
             <button
               key={step.title}
@@ -242,10 +296,8 @@ export default function WorkflowDemo({ persona, onClearPersona }) {
                 ...nodePos(step.grid),
                 ...(isOnPath && personaPath && !isActive ? nodeBtnOnPath : null),
                 ...(isActive ? nodeBtnActive : null),
-                ...(dimmed ? nodeBtnDimmed : null),
               }}
               aria-pressed={isActive}
-              aria-disabled={dimmed}
             >
               <div style={stepNumberBadge}>{i + 1}</div>
               <div style={nodeHeader}>
@@ -321,23 +373,27 @@ export default function WorkflowDemo({ persona, onClearPersona }) {
 }
 
 // ─── Layout helper ────────────────────────────────────────────────────
+// Snake-layout positions in % of the canvas frame. Sourced from the
+// shared COL_X / ROW_Y maps so the connector path generator and the
+// node positioner can never drift out of sync.
 function nodePos({ col, row }) {
-  // Snake layout coordinates (in % of canvas frame).
-  const x = col === 1 ? 15 : col === 2 ? 50 : 85
-  const y = row === 1 ? 18 : row === 2 ? 50 : 82
   return {
     position: 'absolute',
-    left: `${x}%`,
-    top:  `${y}%`,
+    left: `${COL_X[col]}%`,
+    top:  `${ROW_Y[row]}%`,
     transform: 'translate(-50%, -50%)',
   }
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────
+// Canvas is intentionally compact — the snake-grid is the showcase, not
+// a stage. Aspect 13:5 keeps it short; max-width 760 + tighter row
+// spacing pulls the nodes close together so the whole pipeline reads at
+// a glance instead of dominating the page.
 const canvasFrame = {
   position: 'relative',
-  maxWidth: 1100, margin: '0 auto',
-  aspectRatio: '10 / 7',
+  maxWidth: 760, margin: '0 auto',
+  aspectRatio: '13 / 5',
   borderRadius: 22,
   border: '1px solid var(--border)',
   background: 'var(--surface)',
@@ -363,11 +419,11 @@ const connectorSvg = {
 }
 
 const nodeBtn = {
-  width: 'clamp(150px, 18vw, 220px)',
+  width: 'clamp(118px, 16vw, 168px)',
   background: 'var(--surface-2)',
   border: '1px solid var(--border)',
-  borderRadius: 12,
-  padding: '12px 14px 14px',
+  borderRadius: 10,
+  padding: '9px 11px 11px',
   zIndex: 2,
   cursor: 'pointer',
   textAlign: 'left',
@@ -396,10 +452,10 @@ const nodeBtnDimmed = {
   filter: 'saturate(0.55)',
 }
 const nodeHeader = {
-  display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8,
+  display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6,
 }
 const nodeIconBox = {
-  width: 22, height: 22, borderRadius: 6,
+  width: 18, height: 18, borderRadius: 5,
   display: 'grid', placeItems: 'center',
   background: 'rgba(239,68,68,0.16)',
   color: 'var(--red)',
@@ -408,34 +464,34 @@ const nodeIconBox = {
 }
 const nodeTitle = {
   fontFamily: 'var(--font-display)',
-  fontSize: 12, fontWeight: 700,
+  fontSize: 11, fontWeight: 700,
   color: 'var(--text)',
   whiteSpace: 'nowrap',
   overflow: 'hidden', textOverflow: 'ellipsis',
 }
 const nodePill = {
   marginLeft: 'auto',
-  fontSize: 9, fontFamily: 'var(--font-display)', fontWeight: 800,
+  fontSize: 8, fontFamily: 'var(--font-display)', fontWeight: 800,
   letterSpacing: '0.06em',
-  padding: '2px 6px', borderRadius: 999,
+  padding: '2px 5px', borderRadius: 999,
   border: '1px solid currentColor',
 }
 const nodePreview = {
-  fontSize: 11, color: 'var(--text-soft)', lineHeight: 1.45,
+  fontSize: 10, color: 'var(--text-soft)', lineHeight: 1.4,
   background: 'var(--bg)',
   border: '1px solid var(--border)',
-  borderRadius: 8, padding: '7px 9px',
+  borderRadius: 6, padding: '5px 7px',
   fontFamily: 'var(--font-display)',
   whiteSpace: 'nowrap',
   overflow: 'hidden', textOverflow: 'ellipsis',
 }
 const stepNumberBadge = {
-  position: 'absolute', top: -8, left: -8,
-  width: 20, height: 20, borderRadius: '50%',
+  position: 'absolute', top: -7, left: -7,
+  width: 17, height: 17, borderRadius: '50%',
   background: 'linear-gradient(135deg, var(--red), var(--red-dark))',
   color: '#fff',
   display: 'grid', placeItems: 'center',
-  fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 10,
+  fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 9,
   boxShadow: '0 4px 10px rgba(239,68,68,0.45)',
   zIndex: 1,
 }
@@ -452,12 +508,13 @@ const portLeft  = portStyle('left')
 const portRight = portStyle('right')
 
 // ── Detail panel ─────────────────────────────────────────────────────
+// Width matches the canvas so the two read as one composition.
 const panel = {
-  maxWidth: 1100, margin: '24px auto 0',
+  maxWidth: 760, margin: '20px auto 0',
   background: 'var(--surface)',
   border: '1px solid var(--border)',
   borderRadius: 16,
-  padding: '22px 26px',
+  padding: '20px 24px',
   boxShadow: 'var(--shadow-card)',
 }
 // Persona badge — sits above panelHead when a persona is morphing the canvas.
