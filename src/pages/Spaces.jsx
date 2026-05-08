@@ -23,10 +23,11 @@ import { useRef } from 'react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { useCredits, fmtCount } from '../context/CreditsContext.jsx'
+import { useSpacesRun } from '../context/SpacesRunContext.jsx'
 import { useNavigate } from 'react-router-dom'
 import { toast, confirmDialog, chooseDialog } from '../components/Toast.jsx'
 import {
-  NODE_REGISTRY, NODE_CATEGORIES, runSpace, downloadUrl, readImageItems,
+  NODE_REGISTRY, NODE_CATEGORIES, downloadUrl, readImageItems,
   AUTORUN_OPTIONS, NODE_COST_HINT,
   findUpstreamVideoUrl, findUpstreamScript, findUpstreamLogoUrl,
 } from '../lib/space-nodes.jsx'
@@ -1091,11 +1092,16 @@ function SpaceBuilder({ space, onSave, onClose }) {
       ? space.edges.map((e) => ({ ...normalizeEdgeHandles(e), type: 'scissor' }))
       : []
   )
-  const [running, setRunning] = useState(false)
-  // Live mirror so async ticks (auto-run intervals) can read current value
-  // without going through stale closure state.
+  // Run state lives in the SpacesRunProvider so navigating away from /spaces
+  // doesn't kill an in-flight workflow. The local `running` flag and abort
+  // ref now come from there; on remount we replay cached node patches via
+  // getSnapshot() so the canvas catches up.
+  const runCtx = useSpacesRun()
+  const running = runCtx.running
   const runningRef = useRef(false)
   useEffect(() => { runningRef.current = running }, [running])
+  // Local setError mirror for non-context errors (e.g. validation in run()).
+  const setRunning = () => {} // no-op shim; context owns this
   // Refresh / close warning while a run is in flight. Doesn't block SPA route
   // changes — the user-visible header banner below is what catches those.
   useEffect(() => {
@@ -1109,9 +1115,9 @@ function SpaceBuilder({ space, onSave, onClose }) {
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
   }, [running])
   const [skippedTicks, setSkippedTicks] = useState(0)
-  // Abort flag for in-flight runs. Read by long-poll generators between
-  // ticks. Reset on every new run.
-  const abortRunRef = useRef(false)
+  // Abort flag now lives on the context — local ref points at it so all
+  // existing reads of abortRunRef.current keep working.
+  const abortRunRef = runCtx.abortRef
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [avatars, setAvatars] = useState([])
@@ -1577,26 +1583,24 @@ function SpaceBuilder({ space, onSave, onClose }) {
 
   const run = async () => {
     if (running) return
-    setRunning(true); setError(null); abortRunRef.current = false
+    setError(null)
     setNodes((arr) => arr.map((n) => ({ ...n, data: { ...n.data, status: 'idle', output: null, error: null } })))
 
-    const ctx = { token: session.access_token, profileId: selectedProfileId, avatars, profiles, shouldAbort: () => abortRunRef.current }
+    const ctx = { token: session.access_token, profileId: selectedProfileId, avatars, profiles }
     const snapshot = safeClone({ nodes, edges })
     const startedAt = Date.now()
     const runId = await recordRunStart({ triggered_by: 'manual', node_count: snapshot.nodes.length })
     try {
-      const result = await runSpace({
+      const result = await runCtx.executeRun({
+        spaceId: spaceIdRef.current || '__transient__',
         ctx,
         nodes: snapshot.nodes,
         edges: snapshot.edges,
-        onNodeChange: patchNode,
       })
       if (!result.ok) {
         const msg = Object.entries(result.errors).map(([id, e]) => `${id}: ${e}`).join(' · ')
         setError(msg || 'One or more nodes failed')
       }
-      // Auto-spawn collections for terminal video_polish nodes so the
-      // freshly-rendered clip has a place to land on the canvas.
       ensureCollectionForVideoPolish()
       refreshCredits()
       const errCount = Object.keys(result.errors || {}).length
@@ -1608,8 +1612,6 @@ function SpaceBuilder({ space, onSave, onClose }) {
     } catch (e) {
       setError(e.message)
       await recordRunFinish(runId, { status: 'failed', errors: [{ msg: e.message }], duration_ms: Date.now() - startedAt })
-    } finally {
-      setRunning(false)
     }
   }
 
@@ -1711,7 +1713,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
     const subsetEdges = edges.filter((e) => want.has(e.source) && want.has(e.target))
     if (!subsetNodes.length) return
 
-    setRunning(true); setError(null); abortRunRef.current = false
+    setError(null)
     // Build the descendant set (everything downstream of the target).
     const targetType = nodes.find((n) => n.id === targetId)?.data?.type
     const isAutoTrigger = targetType === 'auto_run'
@@ -1790,7 +1792,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
     // pin, ancestors with status='idle' OR with noCache=true would
     // re-execute and the user sees the whole chain run again.
     const runOnlyTargetId = scope === 'self_only' ? targetId : null
-    const ctx = { token: session.access_token, profileId: selectedProfileId, avatars, profiles, shouldAbort: () => abortRunRef.current, runFromTargetId: targetId, forceReRun, runOnlyTargetId }
+    const ctx = { token: session.access_token, profileId: selectedProfileId, avatars, profiles, runFromTargetId: targetId, forceReRun, runOnlyTargetId }
     console.info('[runFromNode] subset', {
       scope,
       targetId,
@@ -1805,7 +1807,12 @@ function SpaceBuilder({ space, onSave, onClose }) {
     const triggerType = nodes.find((n) => n.id === targetId)?.data?.type === 'auto_run' ? 'auto_run' : 'per_node'
     const runId = await recordRunStart({ triggered_by: triggerType, node_count: snapshot.nodes.length })
     try {
-      const result = await runSpace({ ctx, nodes: snapshot.nodes, edges: snapshot.edges, onNodeChange: patchNode })
+      const result = await runCtx.executeRun({
+        spaceId: spaceIdRef.current || '__transient__',
+        ctx,
+        nodes: snapshot.nodes,
+        edges: snapshot.edges,
+      })
       if (!result.ok) {
         const msg = Object.entries(result.errors).map(([id, e]) => `${id}: ${e}`).join(' · ')
         setError(msg || 'Node run failed')
@@ -1821,17 +1828,33 @@ function SpaceBuilder({ space, onSave, onClose }) {
     } catch (e) {
       setError(e.message)
       await recordRunFinish(runId, { status: 'failed', errors: [{ msg: e.message }], duration_ms: Date.now() - startedAt })
-    } finally {
-      setRunning(false)
     }
-  }, [running, nodes, edges, session, selectedProfileId, avatars, patchNode, refreshCredits, ensureCollectionForVideoPolish])
+  }, [running, nodes, edges, session, selectedProfileId, avatars, patchNode, refreshCredits, ensureCollectionForVideoPolish, runCtx])
+
+  // Cross-route persistence: register this page's patchNode as the live
+  // sink for the current space, so the SpacesRunProvider can stream
+  // patches into ReactFlow while we're mounted. On unmount the sink is
+  // cleared but the provider keeps caching, so when we remount and load
+  // the same space we apply the cache via getSnapshot to catch up.
+  useEffect(() => {
+    const sid = spaceIdRef.current
+    if (!sid) return
+    runCtx.setSink(sid, patchNode)
+    // If there's a still-running snapshot for this space, replay it onto
+    // the freshly-loaded nodes so the canvas reflects in-flight state.
+    const snap = runCtx.getSnapshot(sid)
+    if (snap && Object.keys(snap).length) {
+      setNodes((arr) => arr.map((n) => snap[n.id] ? { ...n, data: { ...n.data, ...snap[n.id] } } : n))
+    }
+    return () => runCtx.clearSink(sid)
+  }, [runCtx, patchNode, space?.id])
 
   // Expose runFromNode + abort through globals so SpaceNode header buttons
   // can call them without prop drilling.
   useEffect(() => {
     if (typeof window === 'undefined') return
     window.__spaceRunFromNode = runFromNode
-    window.__spaceAbortRun = () => { abortRunRef.current = true }
+    window.__spaceAbortRun = () => { runCtx.stopRun() }
     // Per-node play button uses this to ask the user which scope to run.
     // Returns one of 'self_only' | 'up_to_here' | null (cancelled).
     //

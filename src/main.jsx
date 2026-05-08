@@ -7,6 +7,7 @@ import { AuthProvider } from './context/AuthContext.jsx'
 import { ProfileProvider } from './context/ProfileContext.jsx'
 import { CreditsProvider } from './context/CreditsContext.jsx'
 import { AgentProvider } from './context/AgentContext.jsx'
+import { SpacesRunProvider } from './context/SpacesRunContext.jsx'
 import './styles/global.css'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
@@ -17,7 +18,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
           <ProfileProvider>
             <CreditsProvider>
               <AgentProvider>
-                <App />
+                <SpacesRunProvider>
+                  <App />
+                </SpacesRunProvider>
               </AgentProvider>
             </CreditsProvider>
           </ProfileProvider>
