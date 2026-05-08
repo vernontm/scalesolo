@@ -132,11 +132,13 @@ No markdown, no preamble.`
     return res.status(500).json({ error: 'Failed to parse Claude response as JSON' })
   }
 
-  let updated = 0
-  for (let i = 0; i < parsed.length; i++) {
-    const r = parsed[i]
+  // Parallel PATCH instead of an await-in-loop. Each script gets a
+  // different payload (so we can't collapse into one PostgREST UPDATE),
+  // but they're independent — fan-out keeps total wall time at ~one
+  // round trip even for 50+ scripts.
+  const results = await Promise.allSettled(parsed.map((r, i) => {
     const script = scripts[r.index ?? i]
-    if (!script) continue
+    if (!script) return Promise.resolve({ ok: false })
     const patch = {
       caption: r.caption || null,
       hashtags: r.hashtags || null,
@@ -144,13 +146,11 @@ No markdown, no preamble.`
       status: 'caption_ready',
     }
     if (r.title) patch.title = r.title
-    try {
-      await supaFetch(`content_scripts?id=eq.${script.id}`, { method: 'PATCH', body: patch })
-      updated++
-    } catch (e) {
-      console.warn('caption patch failed for', script.id, e.message)
-    }
-  }
+    return supaFetch(`content_scripts?id=eq.${script.id}`, { method: 'PATCH', body: patch, prefer: 'return=minimal' })
+      .then(() => ({ ok: true }))
+      .catch((e) => { console.warn('caption patch failed for', script.id, e.message); return { ok: false } })
+  }))
+  const updated = results.filter((r) => r.status === 'fulfilled' && r.value?.ok).length
   return res.status(200).json({ updated, total: scripts.length })
 }
 
@@ -177,21 +177,24 @@ async function autoSchedule({ res, profile_id, script_ids }) {
   const candidates = await supaFetch(q)
   if (!candidates?.length) return res.status(200).json({ scheduled: 0 })
 
-  let scheduled = 0
+  // Allocate slots sequentially so the schedule stays gap-free, but
+  // execute the PATCHes in parallel — each row's payload is different
+  // (different scheduled_datetime), so we can't merge into one UPDATE.
+  const assignments = []
   for (const row of candidates) {
     const slot = findNextOpenSlot(profile, [...takenSet])
     if (!slot) break
-    try {
-      await supaFetch(`content_scripts?id=eq.${row.id}`, {
-        method: 'PATCH',
-        body: { scheduled_datetime: slot, status: 'scheduled' },
-      })
-      takenSet.add(new Date(slot).toISOString())
-      scheduled++
-    } catch (e) {
-      console.warn('auto-schedule patch failed for', row.id, e.message)
-    }
+    assignments.push({ id: row.id, slot })
+    takenSet.add(new Date(slot).toISOString())
   }
+  const results = await Promise.allSettled(assignments.map((a) =>
+    supaFetch(`content_scripts?id=eq.${a.id}`, {
+      method: 'PATCH',
+      body: { scheduled_datetime: a.slot, status: 'scheduled' },
+      prefer: 'return=minimal',
+    }).catch((e) => { console.warn('auto-schedule patch failed for', a.id, e.message); throw e })
+  ))
+  const scheduled = results.filter((r) => r.status === 'fulfilled').length
   return res.status(200).json({ scheduled, skipped: candidates.length - scheduled })
 }
 

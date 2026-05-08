@@ -1,0 +1,21 @@
+{
+  "name": "scalesolo-worker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Long-running render worker for ScaleSolo. Runs ffmpeg + sharp jobs that don't fit Vercel's 60s function ceiling. Deploy on Railway / Fly / any Node host.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@supabase/supabase-js": "^2.104.0",
+    "express": "^4.21.2",
+    "sharp": "^0.33.5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

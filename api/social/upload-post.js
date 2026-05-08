@@ -18,6 +18,7 @@
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { resolveUploadpostUser, uploadpostEnsureUserProfile } from '../_lib/uploadpost.js'
 import { findNextOpenSlot } from '../_lib/scheduling.js'
+import { NotifyKind } from '../_lib/notify.js'
 
 export const config = { maxDuration: 60 }
 
@@ -202,6 +203,13 @@ export default async function handler(req, res) {
       console.warn('schedule_post → content_scripts insert failed:', e.message)
     }
 
+    // Best-effort notification — bell pings instantly via Realtime.
+    NotifyKind.postPublished({
+      user_id: auth.user.id,
+      profile_id,
+      platforms,
+    }).catch(() => {})
+
     return res.status(200).json({
       request_id: body?.request_id || body?.id || null,
       submitted: true,
@@ -211,6 +219,18 @@ export default async function handler(req, res) {
     })
   } catch (err) {
     console.error('upload-post error:', err?.stack || err)
+    // Surface the failure as a notification too — without this the user
+    // sees a red node and no inbox trail.
+    try {
+      const auth = await requireUser(req, res)
+      if (auth?.user?.id) {
+        NotifyKind.postFailed({
+          user_id: auth.user.id,
+          profile_id: req.body?.profile_id,
+          error: String(err?.message || err).slice(0, 280),
+        }).catch(() => {})
+      }
+    } catch {}
     return res.status(err.status || 500).json({ error: String(err?.message || err) })
   }
 }

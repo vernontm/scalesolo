@@ -28,6 +28,7 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { createClient } from '@supabase/supabase-js'
+import { NotifyKind } from '../_lib/notify.js'
 import { zapcapAddVideoByUrl, zapcapCreateTask, zapcapPollTask } from '../_lib/zapcap.js'
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg'
 const ffmpegPath = ffmpegInstaller.path
@@ -53,15 +54,44 @@ const FONT_URL_MAP = {
   'Roboto Black':         'https://raw.githubusercontent.com/google/fonts/main/apache/roboto/static/Roboto-Black.ttf',
 }
 
+// Filenames inside `api/_fonts/` for each label. Drop the .ttf there
+// to bundle it with the Vercel function — kills the cold-start
+// GitHub fetch and the GitHub rate-limit risk. Missing files fall
+// back to BUNDLED_FONT_PATH (the always-present sans).
+const FONT_FILES = {
+  'Montserrat ExtraBold': 'Montserrat-ExtraBold.ttf',
+  'Poppins ExtraBold':    'Poppins-ExtraBold.ttf',
+  'Inter ExtraBold':      'Inter-ExtraBold.ttf',
+  'Bebas Neue':           'BebasNeue-Regular.ttf',
+  'Anton':                'Anton-Regular.ttf',
+  'Oswald':               'Oswald-Bold.ttf',
+  'Roboto Black':         'Roboto-Black.ttf',
+}
+
 const _fontPathCache = new Map()
 async function resolveFontPath(label) {
-  // Default / unknown / 'Sans' → bundled Roboto.
-  if (!label || label === 'Sans' || !FONT_URL_MAP[label]) return BUNDLED_FONT_PATH
+  if (!label || label === 'Sans') return BUNDLED_FONT_PATH
   if (_fontPathCache.has(label)) return _fontPathCache.get(label)
+
+  // Try bundled first. Fast path — no network, no /tmp dance.
+  const filename = FONT_FILES[label]
+  if (filename) {
+    const bundledPath = join(__dirname, '..', '_fonts', filename)
+    try {
+      await readFile(bundledPath)
+      _fontPathCache.set(label, bundledPath)
+      return bundledPath
+    } catch { /* not bundled — fall through to download */ }
+  }
+
+  // Network fallback: only used until the .ttf is dropped into _fonts/.
+  if (!FONT_URL_MAP[label]) {
+    _fontPathCache.set(label, BUNDLED_FONT_PATH)
+    return BUNDLED_FONT_PATH
+  }
   const safeName = label.replace(/[^a-zA-Z0-9]/g, '_') + '.ttf'
   const target = join(tmpdir(), 'scalesolo-fonts', safeName)
   try {
-    // Try the cache file first — survives across invocations on warm functions.
     await readFile(target)
     _fontPathCache.set(label, target)
     return target
@@ -76,7 +106,7 @@ async function resolveFontPath(label) {
     _fontPathCache.set(label, target)
     return target
   } catch (e) {
-    console.warn(`Polish: font "${label}" fetch failed (${e.message}); falling back to bundled.`)
+    console.warn(`Polish: font "${label}" not bundled and fetch failed (${e.message}); falling back to bundled sans.`)
     return BUNDLED_FONT_PATH
   }
 }
@@ -249,6 +279,60 @@ export default async function handler(req, res) {
       const pools = await supaFetch(`credit_pools?customer_id=eq.${customerId}&pool_type=eq.ai_tokens&select=balance`)
       if ((Number(pools?.[0]?.balance ?? 0)) < fee) {
         return res.status(402).json({ error: 'Insufficient AI tokens.', code: 'insufficient_credits' })
+      }
+    }
+
+    // ─── Worker passthrough ────────────────────────────────────────────────
+    // If WORKER_URL is set the heavy ffmpeg work runs on Railway / Fly /
+    // wherever the worker lives. Vercel's job is then just: auth, credit
+    // check, forward, debit. This keeps polishes off the 60s function
+    // ceiling and uses the worker's pre-bundled fonts (no cold-start
+    // GitHub fetch). ZapCap captions still happen in the proxy below
+    // since they're a pure POST → poll loop with no media-bytes work.
+    const WORKER_URL = process.env.WORKER_URL
+    const WORKER_SECRET = process.env.WORKER_SHARED_SECRET
+    if (WORKER_URL && !captions_enabled) {
+      try {
+        const wRes = await fetch(`${WORKER_URL.replace(/\/$/, '')}/jobs/polish`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(WORKER_SECRET ? { 'x-worker-secret': WORKER_SECRET } : {}),
+          },
+          body: JSON.stringify({
+            profile_id, video_url, logo_url, watermark_image_url,
+            music_url, title, title_style,
+            watermark_position, watermark_size_pct,
+            music_volume, music_fade_secs,
+          }),
+        })
+        const wBody = await wRes.json()
+        if (!wRes.ok) throw new Error(wBody.error || `Worker ${wRes.status}`)
+
+        // Debit credits after the worker confirms success.
+        if (customerId) {
+          try {
+            await supaFetch('rpc/consume_credits', {
+              method: 'POST',
+              body: {
+                p_customer_id: customerId, p_pool_type: 'ai_tokens', p_amount: fee,
+                p_action: 'consume:video-polish', p_profile_id: profile_id,
+                p_metadata: { via: 'worker', video_url, has_title: !!title, bytes: wBody.bytes },
+              },
+            })
+          } catch {}
+        }
+        NotifyKind.renderDone({
+          user_id: auth.user.id,
+          profile_id,
+          video_url: wBody.video_url,
+        }).catch(() => {})
+        return res.status(200).json({ video_url: wBody.video_url, bytes: wBody.bytes, via: 'worker' })
+      } catch (e) {
+        // Worker outage: fall through to the in-Vercel ffmpeg path so
+        // the user still gets a render. They'll see slower polishes
+        // until WORKER_URL / Railway is back.
+        console.warn('[polish] worker forward failed, falling back to in-function ffmpeg:', e.message)
       }
     }
 
@@ -479,6 +563,12 @@ export default async function handler(req, res) {
     // row for every render, polluting the Library tab. Polished URL is
     // returned to the canvas; if the user wants a library record without
     // wiring save_library, they can drag one in.
+    NotifyKind.renderDone({
+      user_id: auth.user.id,
+      profile_id,
+      video_url: pub.publicUrl,
+    }).catch(() => {})
+
     return res.status(200).json({
       video_url: pub.publicUrl,
       bytes: finalBuf.byteLength,
@@ -487,6 +577,13 @@ export default async function handler(req, res) {
     })
   } catch (err) {
     console.error('polish error:', err?.stack || err)
+    if (auth?.user?.id) {
+      NotifyKind.renderFailed({
+        user_id: auth.user.id,
+        profile_id: req.body?.profile_id,
+        error: String(err?.message || err).slice(0, 280),
+      }).catch(() => {})
+    }
     return res.status(err.status || 500).json({ error: String(err?.message || err) })
   } finally {
     if (workdir) {
