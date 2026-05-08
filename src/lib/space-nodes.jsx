@@ -3046,27 +3046,49 @@ ${String(script).slice(0, 2000)}
           return { video: { video_url: r.video_url, media_type: 'video' } }
         }
 
-        // Split the script into N chunks via Claude.
+        // Decide how many clips to render. We don't want to be stuck at
+        // image_count when the user only has 2 images and an 80-word
+        // script — that produces two long static clips and feels stale.
+        // Instead, target ~7 seconds of speaking per clip (TikTok B-roll
+        // pacing) so visuals change ~every 7s. Cycle through the
+        // available images via images[i % images.length].
+        const wordCount = String(script).split(/\s+/).filter(Boolean).length
+        const estDurationSecs = Math.max(3, Math.round(wordCount / 2.5))
+        const TARGET_CLIP_SECS = 7
+        const clipsCount = Math.min(
+          12,                                                // hard cap so credit usage stays sane
+          Math.max(images.length, Math.ceil(estDurationSecs / TARGET_CLIP_SECS))
+        )
+
+        // Split the script into clipsCount chunks via Claude.
         const sp = await fetch('/api/scripts/split', {
           method: 'POST', headers,
-          body: JSON.stringify({ script, count: images.length }),
+          body: JSON.stringify({ script, count: clipsCount }),
         })
         const spBody = await sp.json()
         if (!sp.ok) throw new Error(spBody.error || 'Script split failed')
         const chunks = Array.isArray(spBody.chunks) ? spBody.chunks : [script]
+
+        // Build the [chunk, image] assignment cycling images so a 2-image
+        // look across a 6-clip render goes: img1, img2, img1, img2, img1, img2.
+        const assignments = chunks.map((chunk, i) => ({
+          chunk,
+          image: images[i % images.length],
+          order: i,
+        }))
 
         // Submit + poll all clips in parallel — but tolerate per-clip
         // failures (Promise.allSettled). HeyGen's "missing image
         // dimensions" error sometimes hits one image while the rest
         // succeed; we want the user to keep the working clips instead
         // of losing the whole batch to a cascade fail.
-        const settled = await Promise.allSettled(images.map(async (im, i) => {
-          const r = await renderOne({ photo_url: im.image_url, scriptChunk: chunks[i] || script })
+        const settled = await Promise.allSettled(assignments.map(async (a) => {
+          const r = await renderOne({ photo_url: a.image.image_url, scriptChunk: a.chunk || script })
           return {
             video_url: r.video_url,
-            order: i,
-            image_url: im.image_url,
-            sentence: chunks[i] || '',
+            order: a.order,
+            image_url: a.image.image_url,
+            sentence: a.chunk || '',
           }
         }))
         const clips = []
@@ -3074,12 +3096,12 @@ ${String(script).slice(0, 2000)}
         for (let i = 0; i < settled.length; i++) {
           const s = settled[i]
           if (s.status === 'fulfilled') clips.push(s.value)
-          else failures.push({ image_index: i, error: s.reason?.message || String(s.reason) })
+          else failures.push({ clip_index: i, error: s.reason?.message || String(s.reason) })
         }
         // All clips failed → still throw so the cascade poison kicks in.
-        // Otherwise we ship what we have plus a list of which images failed.
+        // Otherwise we ship what we have plus a list of which clips failed.
         if (!clips.length) {
-          throw new Error(`All ${images.length} clips failed. First error: ${failures[0]?.error || 'unknown'}`)
+          throw new Error(`All ${assignments.length} clips failed. First error: ${failures[0]?.error || 'unknown'}`)
         }
         return {
           videos: clips,
@@ -3499,7 +3521,13 @@ ${String(script).slice(0, 2000)}
           video_url: videoUrl || undefined,
           photo_urls: !videoUrl && photoUrls.length ? photoUrls : undefined,
           description,
-          title: title || (script ? String(script).slice(0, 90) : undefined),
+          // YouTube REQUIRES a title. Always send something — upstream
+          // caption_gen.title → upstream script first sentence → first
+          // line of caption → final fallback "Untitled". Never undefined.
+          title: (title
+            || (script ? String(script).split(/[.!?\n]/)[0].trim().slice(0, 90) : '')
+            || (caption ? String(caption).split(/[.!?\n]/)[0].trim().slice(0, 90) : '')
+            || 'Untitled'),
           scheduling_mode: schedulingMode,
           scheduled_iso: scheduledIso,
           timezone: data.props?.timezone || undefined,

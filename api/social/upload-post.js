@@ -104,8 +104,13 @@ export default async function handler(req, res) {
     fd.append('user', effectiveUser)
     for (const p of platforms) fd.append('platform[]', p)
     if (description) fd.append('description', String(description).slice(0, 2200))
-    if (platforms.includes('tiktok') && title) {
-      fd.append('tiktok_title', String(title).slice(0, 90))
+    if (title) {
+      // Generic title for any platform that uses it (Upload-Post passes
+      // it through to YouTube where it's REQUIRED). 100-char ceiling to
+      // keep it short across platforms.
+      fd.append('title', String(title).slice(0, 100))
+      if (platforms.includes('tiktok')) fd.append('tiktok_title', String(title).slice(0, 90))
+      if (platforms.includes('youtube')) fd.append('youtube_title', String(title).slice(0, 100))
     }
     // Resolve "auto" mode: pull the brand profile's posting schedule + the
     // already-scheduled posts on it, find the next open slot. Done at submit
