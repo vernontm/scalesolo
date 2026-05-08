@@ -1,6 +1,6 @@
 // POST /api/content/generate
 // Body: { profile_id, format: 'tiktok-script'|'ig-post'|'thread'|'email-subject'|'carousel-outline'|'youtube-short',
-//         topic, count?, platforms? }
+//         topic, count?, platforms?, dry_run? }
 //
 // Generates 1..N pieces of content using Claude, persists each as a content_scripts
 // row with needs_approval flag honoring the brand's agent_aggressiveness setting:
@@ -8,6 +8,10 @@
 //   balanced   → all need approval (default safe)
 //   aggressive → auto-approved (skips the queue)
 // Debits ai_tokens proportional to total Claude usage.
+//
+// dry_run=true skips both the content_scripts insert and the content_history
+// log — used by space-graph nodes that just need a Claude response to feed
+// downstream and must NOT leave behind a draft row. Credits are still metered.
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { message } from '../_lib/anthropic.js'
@@ -41,7 +45,7 @@ export default async function handler(req, res) {
   if (!auth) return
 
   try {
-    const { profile_id, format, topic, count = 1, platforms, target_length_secs } = req.body || {}
+    const { profile_id, format, topic, count = 1, platforms, target_length_secs, dry_run } = req.body || {}
     if (!profile_id || !topic) return res.status(400).json({ error: 'profile_id + topic required' })
     if (!FORMAT_HINT[format]) return res.status(400).json({ error: `Unknown format: ${format}` })
     if (count < 1 || count > 10) return res.status(400).json({ error: 'count must be 1..10' })
@@ -166,32 +170,41 @@ ${FORMAT_HINT[format]}${lengthDirective}${avoidBlock}`
         generated_by: 'agent',
         generation_prompt: `${format}: ${topic}`,
       }
-      const insertRows = await supaFetch('content_scripts', { method: 'POST', body: row })
-      const item = Array.isArray(insertRows) ? insertRows[0] : insertRows
-      created.push(item)
+      let item
+      if (dry_run) {
+        // Return the row shape without persisting. Caller (e.g. caption_gen
+        // node) just needs the AI output and would otherwise leave a stray
+        // draft behind.
+        item = { ...row, id: null, dry_run: true }
+        created.push(item)
+      } else {
+        const insertRows = await supaFetch('content_scripts', { method: 'POST', body: row })
+        item = Array.isArray(insertRows) ? insertRows[0] : insertRows
+        created.push(item)
 
-      // Record into content_history so future generations can dedup against
-      // it. Best-effort — never fail the generation just because logging
-      // didn't work. Embed the produced script if we already have a topic
-      // embedding; reuse for cost when it's an exact match, otherwise
-      // re-embed the script body for accuracy.
-      try {
-        const scriptText = parsed.full_script || text
-        const { embedding } = await embedOne(scriptText.slice(0, 4000))
-        await supaFetch('content_history', {
-          method: 'POST',
-          prefer: 'return=minimal',
-          body: {
-            profile_id,
-            content_id: item?.id || null,
-            kind: 'script',
-            topic,
-            text: scriptText.slice(0, 8000),
-            embedding,
-            source: 'agent',
-          },
-        })
-      } catch (e) { console.warn('content_history insert failed:', e.message) }
+        // Record into content_history so future generations can dedup against
+        // it. Best-effort — never fail the generation just because logging
+        // didn't work. Embed the produced script if we already have a topic
+        // embedding; reuse for cost when it's an exact match, otherwise
+        // re-embed the script body for accuracy.
+        try {
+          const scriptText = parsed.full_script || text
+          const { embedding } = await embedOne(scriptText.slice(0, 4000))
+          await supaFetch('content_history', {
+            method: 'POST',
+            prefer: 'return=minimal',
+            body: {
+              profile_id,
+              content_id: item?.id || null,
+              kind: 'script',
+              topic,
+              text: scriptText.slice(0, 8000),
+              embedding,
+              source: 'agent',
+            },
+          })
+        } catch (e) { console.warn('content_history insert failed:', e.message) }
+      }
 
       if (resp.usage) {
         totalUsage.input += resp.usage.input_tokens || 0
@@ -211,9 +224,9 @@ ${FORMAT_HINT[format]}${lengthDirective}${avoidBlock}`
             p_amount: total,
             p_action: 'consume:content-generate',
             p_ref_table: 'content_scripts',
-            p_ref_id: created.map((c) => c.id).join(','),
+            p_ref_id: created.map((c) => c.id).filter(Boolean).join(',') || null,
             p_profile_id: profile_id,
-            p_metadata: { format, topic, count, ...totalUsage },
+            p_metadata: { format, topic, count, dry_run: !!dry_run, ...totalUsage },
           },
         })
       } catch (e) {

@@ -8,6 +8,18 @@ import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { useCredits } from '../context/CreditsContext.jsx'
 
+// Format a UTC ISO timestamp as a "YYYY-MM-DDTHH:mm" string in the browser's
+// local timezone — the format <input type="datetime-local"> expects. Pre-filling
+// with toISOString() puts UTC into a local-time input and silently shifts the
+// time on save.
+function isoToLocalDatetimeInput(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 // ── styles ─────────────────────────────────────────────────────────────────
 const tabBar = {
   display: 'flex',
@@ -168,7 +180,7 @@ function GenerateModal({ profileId, onClose, onCreated }) {
 // ── Detail modal ──────────────────────────────────────────────────────────
 function ItemDetail({ item, onClose, onUpdate }) {
   const { session } = useAuth()
-  const [scheduledAt, setScheduledAt] = useState(item.scheduled_datetime ? new Date(item.scheduled_datetime).toISOString().slice(0, 16) : '')
+  const [scheduledAt, setScheduledAt] = useState(isoToLocalDatetimeInput(item.scheduled_datetime))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 

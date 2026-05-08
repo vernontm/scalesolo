@@ -16,6 +16,7 @@ import {
   GripHorizontal, Minimize2, Maximize2, Wand2, MessageSquare, Send,
   ZoomIn, ZoomOut, Maximize, Scissors, Download, X, History, Clock,
   CheckCircle2, XCircle, Square, Settings as SettingsIcon, Copy, Building2,
+  BookOpen, ChevronLeft, ChevronRight, Lock, Globe, Bookmark,
 } from 'lucide-react'
 import { useRef } from 'react'
 // (useEffect already imported above for other effects in this file)
@@ -528,6 +529,221 @@ function RunHistoryModal({ spaceId, token, onClose }) {
   )
 }
 
+// ── New space modal ────────────────────────────────────────────────────────
+// Lets the user start from a blank canvas or clone any template they can
+// see (curated public templates + private templates they saved themselves).
+function NewSpaceModal({ profileId, token, onClose, onPicked }) {
+  const [templates, setTemplates] = useState(null)  // null = loading
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const r = await fetch('/api/spaces?action=templates', {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        const body = await r.json()
+        if (!alive) return
+        if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
+        setTemplates(body.templates || [])
+      } catch (e) { if (alive) { setError(e.message); setTemplates([]) } }
+    })()
+    return () => { alive = false }
+  }, [token])
+
+  const useTemplate = async (tpl) => {
+    if (!profileId) { setError('Pick a brand profile first.'); return }
+    setBusy(true); setError(null)
+    try {
+      const r = await fetch('/api/spaces?action=use_template', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ template_id: tpl.id, target_profile_id: profileId }),
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
+      onPicked({ kind: 'template', space: body.space, guide: body.template_guide || tpl.template_guide || null })
+    } catch (e) { setError(e.message); setBusy(false) }
+  }
+
+  const startBlank = () => onPicked({ kind: 'blank' })
+
+  const publicTemplates  = (templates || []).filter((t) => t.template_visibility === 'public')
+  const privateTemplates = (templates || []).filter((t) => t.template_visibility === 'private')
+
+  return (
+    <div className="modal-overlay" onClick={busy ? undefined : onClose}>
+      <div className="modal-card modal-card-lg" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 720 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          <Plus size={18} style={{ color: 'var(--red)' }} />
+          <h3 style={{ flex: 1, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 17 }}>New space</h3>
+          <button aria-label="Close" onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6, borderRadius: 6 }}><X size={18} /></button>
+        </div>
+        {error && <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, marginBottom: 12 }}>{error}</div>}
+
+        <div
+          role="button" tabIndex={0}
+          onClick={startBlank}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startBlank() } }}
+          style={{
+            cursor: busy ? 'wait' : 'pointer',
+            border: '1px dashed var(--border)', borderRadius: 12,
+            padding: 14, display: 'flex', alignItems: 'center', gap: 12,
+            marginBottom: 16, background: 'var(--surface)',
+          }}
+        >
+          <div style={{ width: 36, height: 36, borderRadius: 10, background: 'var(--surface-2)', display: 'grid', placeItems: 'center' }}>
+            <Boxes size={16} style={{ color: 'var(--muted)' }} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14 }}>Blank space</div>
+            <div style={{ fontSize: 12, color: 'var(--muted)' }}>Start from an empty canvas.</div>
+          </div>
+          <ChevronRight size={14} style={{ color: 'var(--muted)' }} />
+        </div>
+
+        <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>
+          Start from a template
+        </div>
+        {templates === null ? (
+          <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)' }}><span className="spinner" /></div>
+        ) : (templates.length === 0 ? (
+          <div style={{ padding: 18, color: 'var(--muted)', fontSize: 13, textAlign: 'center', border: '1px solid var(--border)', borderRadius: 10 }}>
+            No templates yet. Save any space as a template from inside the builder.
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10 }}>
+            {[...publicTemplates, ...privateTemplates].map((tpl) => (
+              <div
+                key={tpl.id}
+                role="button" tabIndex={0}
+                onClick={() => !busy && useTemplate(tpl)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); !busy && useTemplate(tpl) } }}
+                className="card"
+                style={{ cursor: busy ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 12, padding: 14 }}
+              >
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: tpl.template_visibility === 'public' ? 'rgba(239,68,68,0.10)' : 'var(--surface-2)', display: 'grid', placeItems: 'center' }}>
+                  {tpl.template_visibility === 'public' ? <Globe size={15} style={{ color: 'var(--red)' }} /> : <Lock size={15} style={{ color: 'var(--muted)' }} />}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {tpl.name}
+                    {tpl.template_visibility === 'private' && <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'var(--surface-2)', color: 'var(--muted)', fontFamily: 'inherit', textTransform: 'uppercase', letterSpacing: '0.05em' }}>private</span>}
+                  </div>
+                  {(tpl.template_summary || tpl.description) && (
+                    <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3, lineHeight: 1.4 }}>
+                      {tpl.template_summary || tpl.description}
+                    </div>
+                  )}
+                </div>
+                {Array.isArray(tpl.template_guide) && tpl.template_guide.length > 0 && (
+                  <span style={{ fontSize: 11, color: 'var(--muted)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <BookOpen size={11} /> {tpl.template_guide.length} steps
+                  </span>
+                )}
+                <ChevronRight size={14} style={{ color: 'var(--muted)' }} />
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Template guide side panel ──────────────────────────────────────────────
+// Renders the ordered guide steps next to the canvas. Clicking a step
+// highlights / pans to its node on the canvas. Mounted INSIDE <ReactFlow>
+// so it can call useReactFlow() for setCenter.
+function TemplateGuidePanel({ guide, nodes, onClose }) {
+  const [collapsed, setCollapsed] = useState(false)
+  const { setCenter } = useReactFlow()
+  const steps = Array.isArray(guide) ? guide : []
+  if (!steps.length) return null
+
+  const jump = (nodeId) => {
+    const node = (nodes || []).find((n) => n.id === nodeId)
+    if (!node) return
+    const w = node.measured?.width || node.width || 280
+    const h = node.measured?.height || node.height || 200
+    setCenter(node.position.x + w / 2, node.position.y + h / 2, { zoom: 1, duration: 600 })
+  }
+
+  if (collapsed) {
+    return (
+      <button
+        onClick={() => setCollapsed(false)}
+        title="Show workflow guide"
+        style={{
+          position: 'absolute', top: 14, right: 14, zIndex: 30,
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          padding: '8px 12px', borderRadius: 10,
+          background: 'var(--surface)', border: '1px solid var(--border)',
+          color: 'var(--text)', fontSize: 12.5, fontFamily: 'var(--font-display)', fontWeight: 600,
+          cursor: 'pointer', boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+        }}
+      >
+        <BookOpen size={13} /> Guide ({steps.length})
+      </button>
+    )
+  }
+
+  return (
+    <aside
+      style={{
+        position: 'absolute', top: 14, right: 14, bottom: 14, width: 340, zIndex: 30,
+        background: 'var(--surface)', border: '1px solid var(--border)',
+        borderRadius: 14, boxShadow: '0 12px 40px rgba(0,0,0,0.12)',
+        display: 'flex', flexDirection: 'column', overflow: 'hidden',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
+        <BookOpen size={14} style={{ color: 'var(--red)' }} />
+        <div style={{ flex: 1, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13 }}>Workflow guide</div>
+        <button onClick={() => setCollapsed(true)} title="Collapse" style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 4, borderRadius: 6 }}>
+          <ChevronRight size={14} />
+        </button>
+        {onClose && (
+          <button onClick={onClose} title="Hide guide" style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 4, borderRadius: 6 }}>
+            <X size={14} />
+          </button>
+        )}
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '8px 14px 14px' }}>
+        <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10, lineHeight: 1.5 }}>
+          Each step matches a node on the canvas. Click a step to jump to its node.
+        </div>
+        {steps.map((s, i) => (
+          <div
+            key={s.node_id || i}
+            role="button" tabIndex={0}
+            onClick={() => jump(s.node_id)}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jump(s.node_id) } }}
+            style={{
+              padding: '10px 12px', borderRadius: 10, marginBottom: 8,
+              border: '1px solid var(--border)', background: 'var(--surface-2)',
+              cursor: 'pointer',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <span style={{
+                display: 'inline-grid', placeItems: 'center',
+                width: 22, height: 22, borderRadius: 999,
+                background: 'var(--red)', color: '#fff',
+                fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700,
+              }}>{s.step ?? i + 1}</span>
+              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13 }}>{s.title || s.node_type || 'Step'}</div>
+            </div>
+            <div style={{ fontSize: 12.5, color: 'var(--text-soft)', lineHeight: 1.5 }}>{s.body}</div>
+          </div>
+        ))}
+      </div>
+    </aside>
+  )
+}
+
 function SpacesList({ spaces, onCreate, onOpen, onDelete, onHistory, onDuplicate, error }) {
   return (
     <div className="fade-up">
@@ -813,6 +1029,14 @@ function SpaceBuilder({ space, onSave, onClose }) {
   // Right-side settings drawer for nodes whose registry def declares an
   // `Editor` (currently video_polish). Holds the node id; null = closed.
   const [editingNodeId, setEditingNodeId] = useState(null)
+  // Template guide carried by this space (populated when the space was
+  // cloned from a template). Side panel renders these steps; user can hide.
+  const [templateGuide, setTemplateGuide] = useState(() => {
+    const g = space.template_guide
+    return Array.isArray(g) && g.length ? g : null
+  })
+  const [guideHidden, setGuideHidden] = useState(false)
+  const [savingAsTemplate, setSavingAsTemplate] = useState(false)
   // Connected social platforms for the active brand (refreshed when the
   // user picks a different brand). Drives which buttons in schedule_post
   // are enabled.
@@ -866,11 +1090,22 @@ function SpaceBuilder({ space, onSave, onClose }) {
     window.__spacePatchNode = (id, patch) => {
       setNodes((arr) => arr.map((n) => {
         if (n.id !== id) return n
+        // UI prop edits invalidate the cached run. Without this, runSpace's
+        // "done + has output" short-circuit reuses stale output (e.g. you
+        // change the avatar look but the renderer keeps the old look_id).
+        // We only invalidate when actual props changed — a pure rename
+        // (just __name) shouldn't re-trigger a render. Internal context
+        // injections (_ctx*) also shouldn't invalidate.
+        const hasRealPropChange = Object.keys(patch).some((k) => k !== '__name' && !k.startsWith('_ctx'))
         if (Object.prototype.hasOwnProperty.call(patch, '__name')) {
           const { __name, ...rest } = patch
-          return { ...n, data: { ...n.data, name: __name, props: { ...(n.data?.props || {}), ...rest } } }
+          const nextData = { ...n.data, name: __name, props: { ...(n.data?.props || {}), ...rest } }
+          if (hasRealPropChange) { nextData.status = 'idle'; nextData.output = null; nextData.error = null }
+          return { ...n, data: nextData }
         }
-        return { ...n, data: { ...n.data, props: { ...(n.data?.props || {}), ...patch } } }
+        const nextData = { ...n.data, props: { ...(n.data?.props || {}), ...patch } }
+        if (hasRealPropChange) { nextData.status = 'idle'; nextData.output = null; nextData.error = null }
+        return { ...n, data: nextData }
       }))
     }
     // Replace data.output (used by hover-action delete buttons on MediaItem).
@@ -1685,6 +1920,53 @@ function SpaceBuilder({ space, onSave, onClose }) {
         <button className="btn-ghost" onClick={() => setHistoryOpen(true)} title="Run history" style={{ padding: '6px 10px' }}>
           <History size={13} /> History
         </button>
+        <button
+          className="btn-ghost"
+          onClick={async () => {
+            if (!spaceIdRef.current) {
+              setError('Save the space first before turning it into a template.')
+              return
+            }
+            const tplName = window.prompt('Name this template (visible only to you):', `${name || 'Workflow'} template`)
+            if (!tplName) return
+            setSavingAsTemplate(true)
+            try {
+              const r = await fetch('/api/spaces?action=save_as_template', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+                body: JSON.stringify({
+                  source_id: spaceIdRef.current,
+                  name: tplName,
+                  summary: null,
+                  // Reuse the current guide if we have one; user can edit later.
+                  guide: templateGuide || null,
+                }),
+              })
+              const body = await r.json()
+              if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
+              toast?.success?.('Saved as template') || toast?.('Saved as template')
+            } catch (e) {
+              setError(e.message)
+            } finally {
+              setSavingAsTemplate(false)
+            }
+          }}
+          disabled={savingAsTemplate}
+          title="Save this workflow as a private template you can reuse"
+          style={{ padding: '6px 10px' }}
+        >
+          {savingAsTemplate ? <span className="spinner" /> : <Bookmark size={13} />} Save as template
+        </button>
+        {templateGuide && guideHidden && (
+          <button
+            className="btn-ghost"
+            onClick={() => setGuideHidden(false)}
+            title="Show workflow guide"
+            style={{ padding: '6px 10px' }}
+          >
+            <BookOpen size={13} /> Guide
+          </button>
+        )}
         <button className="btn-secondary" onClick={() => save()} disabled={busy} title="Force a save now">
           {busy ? <span className="spinner" /> : <Save size={13} />} Save
         </button>
@@ -1756,6 +2038,13 @@ function SpaceBuilder({ space, onSave, onClose }) {
         >
           <Background color="var(--border)" gap={20} size={1} />
           <ZoomControls />
+          {templateGuide && !guideHidden && (
+            <TemplateGuidePanel
+              guide={templateGuide}
+              nodes={nodes}
+              onClose={() => setGuideHidden(true)}
+            />
+          )}
         </ReactFlow>
 
         <FloatingPalette onAdd={(type) => addNode(type)} />
@@ -1881,7 +2170,8 @@ export default function Spaces() {
 
   useEffect(() => { refresh() }, [session, selectedProfileId])
 
-  const onCreate = () => setEditing({ id: null, name: 'Untitled space', nodes: [], edges: [] })
+  const [creatingSpace, setCreatingSpace] = useState(false)
+  const onCreate = () => setCreatingSpace(true)
 
   const onOpen = async (s) => {
     try {
@@ -1936,6 +2226,24 @@ export default function Spaces() {
             // user needs to switch profiles to see it — toast already
             // told them where it went.
             if (newSpace?.profile_id === selectedProfileId) refresh()
+          }}
+        />
+      )}
+      {creatingSpace && (
+        <NewSpaceModal
+          profileId={selectedProfileId}
+          token={session.access_token}
+          onClose={() => setCreatingSpace(false)}
+          onPicked={(picked) => {
+            setCreatingSpace(false)
+            if (picked.kind === 'blank') {
+              setEditing({ id: null, name: 'Untitled space', nodes: [], edges: [] })
+            } else {
+              // Open the freshly cloned-from-template space directly. The
+              // guide ships on the row (template_guide) so the side panel
+              // shows up automatically.
+              setEditing(picked.space)
+            }
           }}
         />
       )}

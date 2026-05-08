@@ -1198,8 +1198,18 @@ function AvatarPickerBody({ data, onPatch }) {
   const lookId = data.props?.look_id || ''
   const look = looks.find((l) => l.id === lookId) || looks[0]
   const lookImages = (look?.images || []).slice().sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
-  const mode = data.props?.mode || 'single'   // 'single' | 'randomize'
+  // Mode: 'single' | 'randomize' (across images in one look) | 'cycle_looks' (across looks per run)
+  const mode = data.props?.mode || 'single'
   const imageId = data.props?.image_id || (lookImages[0]?.id || '')
+
+  // Cycle-looks runtime state, populated by run() and persisted on the
+  // node's output. Surfaced here as "Look 3 of 5" so the user can see
+  // where the queue is.
+  const cycle = data?.output?.cycle_state
+  const cycleLookCount = Array.isArray(cycle?.queue) ? cycle.queue.length : 0
+  const cycleProgressLabel = cycle && cycleLookCount
+    ? `Look ${Math.min(cycle.cursor + 1, cycleLookCount)} of ${cycleLookCount}`
+    : null
 
   // Auto-write defaults to props as soon as data is hydrated. Otherwise the
   // picker shows "Look 1" and a thumbnail visually but the underlying props
@@ -1254,20 +1264,22 @@ function AvatarPickerBody({ data, onPatch }) {
             style={tinyInput}
             value={look?.id || ''}
             onChange={(e) => onPatch({ look_id: e.target.value, image_id: '' })}
+            disabled={mode === 'cycle_looks'}
           >
             {looks.map((l, i) => <option key={l.id} value={l.id}>{l.name || `Look ${i + 1}`} ({l.images?.length || 0})</option>)}
           </select>
         </NodeField>
       )}
 
-      {lookImages.length > 0 && (
+      {(lookImages.length > 0 || looks.length > 1) && (
         <>
           <NodeField label="Mode">
-            <div style={{ display: 'flex', gap: 4 }}>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {[
                 ['single', 'Single image'],
-                ['randomize', `Randomize across ${lookImages.length}`],
-              ].map(([k, label]) => {
+                lookImages.length > 1 && ['randomize', `Randomize ${lookImages.length} imgs`],
+                looks.length > 1 && ['cycle_looks', `Cycle ${looks.length} looks`],
+              ].filter(Boolean).map(([k, label]) => {
                 const on = mode === k
                 return (
                   <button
@@ -1316,6 +1328,12 @@ function AvatarPickerBody({ data, onPatch }) {
       {selected && lookImages.length === 0 && (
         <div style={{ marginTop: 6, fontSize: 11, color: 'var(--muted)', lineHeight: 1.4 }}>
           This avatar has no images yet. Add some on the Avatars page.
+        </div>
+      )}
+
+      {mode === 'cycle_looks' && cycleProgressLabel && (
+        <div style={{ marginTop: 6, padding: '6px 8px', borderRadius: 6, background: 'rgba(96,165,250,0.10)', border: '1px solid rgba(96,165,250,0.35)', fontSize: 11, color: '#60a5fa', lineHeight: 1.4 }}>
+          {cycleProgressLabel} — next run advances. Reshuffles after the last look.
         </div>
       )}
 
@@ -2761,6 +2779,10 @@ ${String(script).slice(0, 2000)}
           format: 'ig-post',  // generic; the prompt does the heavy lifting
           topic: prompt,
           count: 1,
+          // We just need the AI output to feed downstream; the row itself
+          // gets saved by save_library. Without dry_run we'd leave a draft
+          // titled with the raw prompt template.
+          dry_run: true,
         }),
       })
       const body = await r.json()
@@ -2951,14 +2973,82 @@ ${String(script).slice(0, 2000)}
   },
 
   avatar_picker: {
-    label: 'Avatar', description: 'Pick an avatar + a look. Mode = Single uses one specific image; Mode = Randomize uses every image in the look (Avatar render splits the script across them and stitches the clips).',
+    label: 'Avatar', description: 'Pick an avatar + a look. Mode = Single uses one specific image. Mode = Randomize uses every image in the chosen look (Avatar render splits the script across them). Mode = Cycle looks rotates through every look on the avatar — each workflow run uses a different one, then reshuffles when the cycle finishes.',
     icon: UserCircle2, category: 'inputs', color: '#60a5fa',
     inputs: [], outputs: [{ id: 'out', label: 'Out' }],
     initialProps: { avatar_id: '', look_id: '', image_id: '', mode: 'single' },
+    // Cheap node (no API calls) — and in cycle_looks mode it MUST execute
+    // every run to advance the queue. Skip the cache short-circuit.
+    noCache: true,
     Body: AvatarPickerBody,
-    run: async ({ data }) => {
+    run: async ({ data, ctx }) => {
       const { avatar_id, look_id, image_id, image_url, mode } = data.props || {}
       if (!avatar_id) throw new Error('Pick an avatar')
+
+      // ── Cycle looks: pick a different look per run, reshuffle on wrap ──
+      if (mode === 'cycle_looks') {
+        const myAvatar = (ctx?.avatars || []).find((a) => a.id === avatar_id)
+        const allLookIds = (myAvatar?.looks || []).map((l) => l.id).filter(Boolean)
+        if (allLookIds.length === 0) throw new Error('Cycle looks needs at least one look on the avatar.')
+        if (allLookIds.length === 1) {
+          // Trivial cycle — just use the only look.
+          return {
+            avatar: { avatar_id, look_id: allLookIds[0], image_id: null, image_url: null, mode: 'randomize' },
+            cycle_state: { avatar_id, queue: allLookIds, cursor: 1, pool_key: allLookIds.slice().sort().join(',') },
+          }
+        }
+
+        // Read prior queue if it matches the current avatar + look set.
+        const poolKey = allLookIds.slice().sort().join(',')
+        const prior = data?.output?.cycle_state
+        let queue, cursor
+        if (prior && prior.avatar_id === avatar_id && prior.pool_key === poolKey && Array.isArray(prior.queue) && prior.queue.length === allLookIds.length) {
+          queue = prior.queue
+          cursor = Math.max(0, Math.min(prior.cursor || 0, queue.length))
+        } else {
+          // Fresh shuffle (Fisher-Yates).
+          queue = allLookIds.slice()
+          for (let i = queue.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1))
+            ;[queue[i], queue[j]] = [queue[j], queue[i]]
+          }
+          cursor = 0
+        }
+
+        const chosenLookId = queue[cursor]
+        let nextCursor = cursor + 1
+        let nextQueue = queue
+        if (nextCursor >= queue.length) {
+          // Reshuffle for the next cycle. Avoid showing the same look twice
+          // back-to-back across the seam by re-rolling if the new queue's
+          // first id equals the just-used one.
+          let attempts = 0
+          do {
+            const reshuffled = queue.slice()
+            for (let i = reshuffled.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1))
+              ;[reshuffled[i], reshuffled[j]] = [reshuffled[j], reshuffled[i]]
+            }
+            nextQueue = reshuffled
+            attempts++
+          } while (nextQueue[0] === chosenLookId && attempts < 8 && nextQueue.length > 1)
+          nextCursor = 0
+        }
+
+        return {
+          avatar: {
+            avatar_id,
+            look_id: chosenLookId,
+            // Like randomize mode, let avatar_render fetch the look's images
+            // server-side rather than locking to a single image_id here.
+            image_id: null,
+            image_url: null,
+            mode: 'randomize',
+          },
+          cycle_state: { avatar_id, queue: nextQueue, cursor: nextCursor, pool_key: poolKey, last_used_look_id: chosenLookId },
+        }
+      }
+
       return {
         avatar: {
           avatar_id,
@@ -3852,7 +3942,7 @@ export async function runSpace({ ctx, nodes, edges, onNodeChange }) {
     // auto_run node — we want each tick to re-execute the chain even if
     // descendants still hold last-tick's outputs. Skip the cache for any
     // node in that set so def.run() actually fires.
-    const skipCache = ctx?.forceReRun && ctx.forceReRun.has?.(id)
+    const skipCache = (ctx?.forceReRun && ctx.forceReRun.has?.(id)) || def.noCache
     if (!skipCache && node.data?.status === 'done' && node.data?.output) {
       outputsById.set(id, node.data.output)
       continue
