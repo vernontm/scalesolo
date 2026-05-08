@@ -1508,7 +1508,15 @@ function SpaceBuilder({ space, onSave, onClose }) {
   //                 of descendants. Used by Auto-run ticks and the global
   //                 Run button.
   const runFromNode = useCallback(async (targetId, scope = 'full') => {
-    if (runningRef.current) return
+    if (runningRef.current) {
+      // Don't fail silently — the user just clicked play and nothing
+      // visible would happen otherwise. Toast tells them why and what
+      // to do next.
+      console.info('[runFromNode] rejected — already running', { targetId, scope })
+      toast({ kind: 'warn', message: 'Another run is already in progress. Stop it first or wait for it to finish.' })
+      return
+    }
+    console.info('[runFromNode] start', { targetId, scope })
     const want = new Set([targetId])
 
     // ALWAYS BFS up. Even in self_only mode the target needs its ancestors
@@ -1627,7 +1635,15 @@ function SpaceBuilder({ space, onSave, onClose }) {
       }
       return n
     }))
-    const forceReRun = isAutoTrigger ? new Set([...descendants].filter((id) => id !== targetId)) : null
+    // forceReRun is the auto-tick belt-and-suspenders: it forces
+    // descendants to re-execute even when their cache says 'done'. We
+    // ONLY want this for scope='full' on an auto_run target. Any other
+    // scope (self_only, up_to_here, or a manual click on a non-auto
+    // node) must NOT set it — otherwise descendants get force-run
+    // even when the user explicitly asked us not to touch them.
+    const forceReRun = (scope === 'full' && isAutoTrigger)
+      ? new Set([...descendants].filter((id) => id !== targetId))
+      : null
     // self_only mode: pin a runOnlyTargetId so runSpace forces every
     // non-target node to skip def.run() (even noCache ones like
     // avatar_picker) and use its cached output verbatim. Without this
@@ -1635,6 +1651,15 @@ function SpaceBuilder({ space, onSave, onClose }) {
     // re-execute and the user sees the whole chain run again.
     const runOnlyTargetId = scope === 'self_only' ? targetId : null
     const ctx = { token: session.access_token, profileId: selectedProfileId, avatars, profiles, shouldAbort: () => abortRunRef.current, runFromTargetId: targetId, forceReRun, runOnlyTargetId }
+    console.info('[runFromNode] subset', {
+      scope,
+      targetId,
+      target_type: targetType,
+      total_nodes_in_subset: subsetNodes.length,
+      will_actually_execute: scope === 'self_only' ? 1 : 'depends_on_cache',
+      runOnlyTargetId,
+      forceReRunCount: forceReRun?.size || 0,
+    })
     const snapshot = safeClone({ nodes: subsetNodes, edges: subsetEdges })
     const startedAt = Date.now()
     const triggerType = nodes.find((n) => n.id === targetId)?.data?.type === 'auto_run' ? 'auto_run' : 'per_node'
@@ -1669,6 +1694,11 @@ function SpaceBuilder({ space, onSave, onClose }) {
     window.__spaceAbortRun = () => { abortRunRef.current = true }
     // Per-node play button uses this to ask the user which scope to run.
     // Returns one of 'self_only' | 'up_to_here' | null (cancelled).
+    //
+    // While the dialog is open we set window.__spaceUserDialogOpen so
+    // the auto-run interval pauses — otherwise an auto tick can fire
+    // mid-prompt and steamroll the user's choice (then runFromNode's
+    // `if (running) return` swallows the per-node click silently).
     window.__spaceChooseRunScope = async (nodeId) => {
       const node = nodesRef.current.find((n) => n.id === nodeId)
       const label = node?.data?.name || NODE_REGISTRY[node?.data?.type]?.label || 'this node'
@@ -1679,7 +1709,10 @@ function SpaceBuilder({ space, onSave, onClose }) {
         return p?.data?.status === 'done' && p?.data?.output
       })
       // No parents → nothing to choose; just run.
-      if (!hasParents) return 'self_only'
+      if (!hasParents) {
+        window.__spaceUserClickAt = Date.now()
+        return 'self_only'
+      }
       const options = [
         {
           key: 'self_only',
@@ -1695,11 +1728,18 @@ function SpaceBuilder({ space, onSave, onClose }) {
           hint: 'Re-runs every upstream node, then this one. Anything downstream stays untouched.',
         },
       ]
-      return chooseDialog({
-        title: `Run ${label}`,
-        message: 'Pick the scope. Downstream nodes won\'t run either way — use the global Run button to fire the whole space.',
-        options,
-      })
+      window.__spaceUserDialogOpen = true
+      try {
+        const choice = await chooseDialog({
+          title: `Run ${label}`,
+          message: 'Pick the scope. Downstream nodes won\'t run either way — use the global Run button to fire the whole space.',
+          options,
+        })
+        if (choice) window.__spaceUserClickAt = Date.now()
+        return choice
+      } finally {
+        window.__spaceUserDialogOpen = false
+      }
     }
     return () => {
       window.__spaceRunFromNode = null
@@ -1727,16 +1767,30 @@ function SpaceBuilder({ space, onSave, onClose }) {
       const tick = async () => {
         const live = nodesRef.current.find((n) => n.id === id)
         if (!live || !live.data?.props?.active) return
-        // If a previous run is still in flight (the cadence is shorter
-        // than how long a single run takes), DROP this tick instead of
-        // counting it. Otherwise the counter advances while runFromNode
-        // gets rejected by its own `if (running) return` guard, which
-        // looks like the run "happened" without anything actually firing.
+
+        // ── Concurrency guards ─────────────────────────────────────────
+        // The user opened the per-node "this node only / up to here"
+        // chooser. Don't steamroll their intent with an auto tick — they
+        // explicitly clicked play, that wins.
+        if (window.__spaceUserDialogOpen) {
+          console.info('[auto-run] tick suppressed — user chooser open')
+          return
+        }
+        // Per-node run started in the last few seconds. Same idea: the
+        // user is actively driving, auto-cadence stands down.
+        if (window.__spaceUserClickAt && (Date.now() - window.__spaceUserClickAt) < 8000) {
+          console.info('[auto-run] tick suppressed — recent user click')
+          return
+        }
+        // A previous run is still in flight (cadence shorter than a
+        // single run). Drop the tick rather than queue it — credit
+        // burn + visual confusion outweigh the "missed" cadence.
         if (runningRef.current) {
           setSkippedTicks((n) => n + 1)
           toast({ kind: 'warn', message: 'Auto-run skipped — previous run still in progress.' })
           return
         }
+
         const used = Number(live.data.props.runs_used || 0)
         const cap  = Number(live.data.props.max_runs || 10)
         if (used >= cap) {
@@ -1744,31 +1798,43 @@ function SpaceBuilder({ space, onSave, onClose }) {
           toast({ kind: 'info', message: `Auto-run reached its cap (${cap} runs). Toggle off to reset, or bump max_runs.` })
           return
         }
-        // Increment + record before run so concurrent ticks (which we now
-        // guard against above) can't double-fire even if scheduling drifts.
         patchNode(id, { props: { ...live.data.props, runs_used: used + 1, last_run_at: new Date().toISOString() } })
         toast({ kind: 'info', message: `Auto-run firing (${used + 1} / ${cap}) — running the workflow…` })
         try {
-          await runFromNodeRef.current(id)
+          await runFromNodeRef.current(id, 'full')
         } catch (e) {
-          // eslint-disable-next-line no-console
           console.warn('auto-run tick failed:', e.message)
           toast({ kind: 'error', message: `Auto-run failed: ${e.message}` })
         }
       }
-      // Immediate tick on activation, but pushed to a microtask so React
-      // has finished applying the state change that flipped `active=true`
-      // before we read nodesRef. Otherwise the very first tick can race
-      // and read stale `active=false`.
-      firstTickTimers.push(setTimeout(tick, 50))
+
+      // Smart immediate tick: only fire if it's actually been longer
+      // than the cadence since the last tick. Without this, every page
+      // load (or every auto_run prop change — name, max_runs, etc.) was
+      // firing a fresh tick within 50ms, which steamrolled per-node
+      // clicks the user made right after opening the canvas.
+      const lastIso = trig.data.props?.last_run_at
+      const lastMs = lastIso ? new Date(lastIso).getTime() : 0
+      const dueAt = lastMs + opt.ms
+      const overdueBy = Date.now() - dueAt
+      if (overdueBy >= 0) {
+        // Genuinely overdue (last run was more than `cadence` ago) — fire
+        // soon, but give the canvas a beat to settle so users opening
+        // the page can see what's about to happen and Stop it if they
+        // want. 1500ms is long enough to read the toast, short enough
+        // that an actively scheduled cadence isn't disrupted.
+        firstTickTimers.push(setTimeout(tick, 1500))
+      } else {
+        // Not yet due — schedule the first real tick at the original
+        // cadence boundary. No "immediate" tick on mount.
+        firstTickTimers.push(setTimeout(tick, Math.max(1500, -overdueBy)))
+      }
       timers.push(setInterval(tick, opt.ms))
     }
     return () => {
       firstTickTimers.forEach((t) => clearTimeout(t))
       timers.forEach((t) => clearInterval(t))
     }
-    // We deliberately don't depend on `nodes` (would re-create the timer on
-    // every node update). Watch only the active-trigger fingerprint.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes.map((n) => n.data?.type === 'auto_run' ? `${n.id}|${n.data.props?.active ? 1 : 0}|${n.data.props?.cadence}|${n.data.props?.max_runs}` : '').join(',')])
 
