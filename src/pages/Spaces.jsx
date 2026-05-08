@@ -1605,9 +1605,10 @@ function SpaceBuilder({ space, onSave, onClose }) {
     }
 
     // Self-only sanity check: the target's inputs must already be cached.
-    // If any ancestor is missing output, fail loudly so the user knows
-    // why nothing happened (instead of running with empty inputs and
-    // surfacing a confusing "Wire X in" error).
+    // If any direct parent is missing output we can't reuse its result,
+    // so fail loudly with a friendly node name (NOT the cryptic id) and
+    // offer a one-click escape to "up to here" so the user doesn't have
+    // to re-open the chooser.
     if (scope === 'self_only') {
       const directParents = edges.filter((e) => e.target === targetId).map((e) => e.source)
       const missing = directParents.filter((pid) => {
@@ -1615,9 +1616,25 @@ function SpaceBuilder({ space, onSave, onClose }) {
         return !(p?.data?.status === 'done' && p?.data?.output)
       })
       if (missing.length) {
-        const names = missing.map((pid) => nodes.find((n) => n.id === pid)?.data?.name || pid.slice(0, 6)).join(', ')
-        setError(`Can't run just this node — upstream nodes haven't run yet: ${names}. Pick "Run up to here" instead.`)
-        return
+        const friendlyName = (pid) => {
+          const n = nodes.find((nd) => nd.id === pid)
+          if (n?.data?.name) return n.data.name
+          const def = NODE_REGISTRY[n?.data?.type]
+          return def?.label || (n?.data?.type || pid.slice(0, 6))
+        }
+        const names = missing.map(friendlyName).join(', ')
+        const targetDef = NODE_REGISTRY[nodes.find((n) => n.id === targetId)?.data?.type]
+        const targetLabel = targetDef?.label || 'this node'
+        const proceed = await confirmDialog({
+          title: `${names} hasn’t run yet`,
+          message: `Run this node only needs ${names}’s output, but it’s not cached. Want to run up to ${targetLabel} instead? That re-runs every upstream node, then ${targetLabel}.`,
+          confirmText: 'Run up to here',
+          cancelText: 'Cancel',
+        })
+        if (!proceed) return
+        // Recursive call with the broader scope. Skip the chooser; we
+        // already have the user's choice from the recovery dialog.
+        return runFromNode(targetId, 'up_to_here')
       }
     }
     const subsetNodes = nodes.filter((n) => want.has(n.id))
