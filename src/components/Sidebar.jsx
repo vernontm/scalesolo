@@ -19,12 +19,19 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 
+// Sidebar groups. `beta: true` items only show when the URL has ?beta=1
+// (or localStorage has scalesolo:beta='1'). The product is intentionally
+// scoped down to "automated content workflows": Spaces + Schedule +
+// Avatars + Brand profiles. CRM-y features (Contacts, Pipeline, Landing,
+// Email) and the standalone AI CEO are kept in the codebase but hidden
+// from the nav so the message stays sharp. Flip the flag and they're
+// all back.
 const navGroups = [
   {
     label: 'Workspace',
     items: [
       { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-      { to: '/agent',     label: 'AI CEO',    icon: Bot },
+      { to: '/agent',     label: 'AI CEO',    icon: Bot, beta: true },
     ],
   },
   {
@@ -32,17 +39,18 @@ const navGroups = [
     items: [
       { to: '/spaces',  label: 'Spaces',   icon: Boxes },
       { to: '/schedule', label: 'Schedule', icon: Sparkles },
-      { to: '/email',   label: 'Email',    icon: Mail },
       { to: '/avatars', label: 'Avatars',  icon: UserCircle2 },
-      { to: '/landing', label: 'Landing',  icon: LayoutTemplate },
+      { to: '/email',   label: 'Email',    icon: Mail, beta: true },
+      { to: '/landing', label: 'Landing',  icon: LayoutTemplate, beta: true },
     ],
   },
   {
     label: 'Grow',
+    beta: true,
     items: [
-      { to: '/contacts',  label: 'Contacts',  icon: Users },
-      { to: '/pipeline',  label: 'Pipeline',  icon: KanbanSquare },
-      { to: '/analytics', label: 'Analytics', icon: BarChart3 },
+      { to: '/contacts',  label: 'Contacts',  icon: Users, beta: true },
+      { to: '/pipeline',  label: 'Pipeline',  icon: KanbanSquare, beta: true },
+      { to: '/analytics', label: 'Analytics', icon: BarChart3, beta: true },
     ],
   },
   {
@@ -54,6 +62,25 @@ const navGroups = [
     ],
   },
 ]
+
+// Once a session, lock in the beta flag if ?beta=1 was in the URL so
+// reloading without the param keeps showing the gated nav (otherwise
+// the user has to tack ?beta=1 onto every link).
+function readBetaFlag() {
+  if (typeof window === 'undefined') return false
+  try {
+    const url = new URL(window.location.href)
+    if (url.searchParams.get('beta') === '1') {
+      window.localStorage.setItem('scalesolo:beta', '1')
+      return true
+    }
+    if (url.searchParams.get('beta') === '0') {
+      window.localStorage.removeItem('scalesolo:beta')
+      return false
+    }
+    return window.localStorage.getItem('scalesolo:beta') === '1'
+  } catch { return false }
+}
 
 const sidebarStyle = {
   position: 'fixed',
@@ -187,6 +214,15 @@ export default function Sidebar({ mobile = false, compact = false, onClose }) {
   const { user, signOut } = useAuth()
   const initials = (user?.email || 'U').slice(0, 2).toUpperCase()
   const isCompact = compact && !mobile
+  const showBeta = readBetaFlag()
+
+  // Filter out beta-only groups + items unless the flag is on. Empty
+  // groups (all items hidden) get dropped entirely so we don't render
+  // a header with nothing under it.
+  const visibleGroups = navGroups
+    .filter((g) => showBeta || !g.beta)
+    .map((g) => ({ ...g, items: g.items.filter((it) => showBeta || !it.beta) }))
+    .filter((g) => g.items.length > 0)
 
   const handleNavClick = () => {
     if (mobile && onClose) onClose()
@@ -217,7 +253,7 @@ export default function Sidebar({ mobile = false, compact = false, onClose }) {
       </div>
 
       <nav style={navStyle}>
-        {navGroups.map((group) => (
+        {visibleGroups.map((group) => (
           <div key={group.label}>
             {!isCompact && <div style={navLabelStyle}>{group.label}</div>}
             {isCompact && <div style={{ height: 8 }} />}

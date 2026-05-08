@@ -119,19 +119,20 @@ function AppShell() {
             <Route path="/spaces"    element={<Spaces />} />
             <Route path="/schedule"  element={<Content />} />
             <Route path="/content"   element={<Navigate to="/schedule" replace />} />
-            <Route path="/email"     element={<Placeholder title="Email engine" hint="Composer, sequences, deliverability. Native sending lands in Milestone 4." />} />
-            <Route path="/contacts"  element={<Contacts />} />
-            <Route path="/pipeline"  element={<Pipeline />} />
-            {/* /forms in-app management removed — landing pages cover lead capture.
-                The public /f/:slug submission route below still works for any existing
-                form URLs in the wild. */}
-            <Route path="/landing"   element={<LandingPages />} />
             <Route path="/avatars"   element={<Avatars />} />
-            <Route path="/analytics" element={<Placeholder title="Analytics" hint="Cross-platform performance with AI-narrated insights. Polished in Milestone 6." />} />
-            <Route path="/agent"     element={<Agent />} />
             <Route path="/profiles"  element={<Profiles />} />
             <Route path="/billing"   element={<Billing />} />
             <Route path="/settings"  element={<Settings />} />
+            {/* Beta-gated routes. The pages still mount when reached
+                directly (?beta=1 stickies the localStorage flag the
+                sidebar reads) so existing deep links keep working —
+                they're only hidden from the nav by default. */}
+            <Route path="/email"     element={<Placeholder title="Email engine" hint="Composer, sequences, deliverability. Native sending lands in Milestone 4." />} />
+            <Route path="/contacts"  element={<Contacts />} />
+            <Route path="/pipeline"  element={<Pipeline />} />
+            <Route path="/landing"   element={<LandingPages />} />
+            <Route path="/analytics" element={<Placeholder title="Analytics" hint="Cross-platform performance with AI-narrated insights. Polished in Milestone 6." />} />
+            <Route path="/agent"     element={<Agent />} />
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>

@@ -120,19 +120,23 @@ export default function Header({ onOpenSidebar }) {
         {meta.s && <span style={subtitleStyle}>{meta.s}</span>}
       </div>
 
-      {/* Cmd+K → opens AI CEO panel */}
-      <button
-        className="hide-on-narrow"
-        style={cmdK}
-        onClick={() => setAgentOpen(true)}
-        title="Ask the AI CEO (⌘K)"
-        onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgba(239,68,68,0.3)' }}
-        onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)' }}
-      >
-        <Bot size={14} style={{ color: 'var(--red)' }} />
-        Ask AI CEO
-        <span style={kbd}>⌘K</span>
-      </button>
+      {/* AI CEO ⌘K — beta-only. The Agent surface is gated out of the
+          sidebar to keep the focused product clear; tack ?beta=1 on the
+          URL once and it sticks via localStorage. */}
+      {(typeof window !== 'undefined' && window.localStorage?.getItem('scalesolo:beta') === '1') && (
+        <button
+          className="hide-on-narrow"
+          style={cmdK}
+          onClick={() => setAgentOpen(true)}
+          title="Ask the AI CEO (⌘K)"
+          onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgba(239,68,68,0.3)' }}
+          onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)' }}
+        >
+          <Bot size={14} style={{ color: 'var(--red)' }} />
+          Ask AI CEO
+          <span style={kbd}>⌘K</span>
+        </button>
+      )}
 
       <ProfileSwitcher />
 

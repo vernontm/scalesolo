@@ -12,14 +12,14 @@ const TIERS = [
     monthly: 49,
     annual: 39,
     profile_limit: 1,
-    blurb: 'For solopreneurs getting their first system in place.',
+    blurb: 'One brand, one workflow, hands-off content.',
     features: [
       '1 brand profile',
+      '1 active workflow (Space)',
       '100K AI tokens / month',
       '10 avatar video units / month',
-      'Email composer + sequences',
-      'Content engine + scheduler',
-      'Basic analytics',
+      'Auto-run + multi-platform scheduling',
+      'Brand-voice script + caption generation',
     ],
     accent: '#94a3b8',
   },
@@ -29,14 +29,14 @@ const TIERS = [
     monthly: 79,
     annual: 65,
     profile_limit: 2,
-    blurb: 'The everything plan most users land on.',
+    blurb: 'The everything plan for serious solo creators.',
     features: [
       '2 brand profiles',
+      'Unlimited workflows',
       '500K AI tokens / month',
       '30 avatar video units / month',
-      'Sales pipeline + forms + landing pages',
-      'AI CEO with persistent memory',
-      'Native email sending (Postmark)',
+      'Cycle-looks rotation (different outfit per run)',
+      'Workflow templates + run history',
       'Priority support',
     ],
     popular: true,
@@ -50,10 +50,11 @@ const TIERS = [
     blurb: 'Multi-brand creators and agencies of one.',
     features: [
       '5 brand profiles',
+      'Unlimited workflows per brand',
       '2M AI tokens / month',
       '100 avatar video units / month',
       'Everything in Pro',
-      'Cross-profile dashboard',
+      'Publish your workflows as templates',
       'Founder direct line (Slack)',
     ],
     accent: '#a78bfa',
@@ -312,11 +313,10 @@ export default function Pricing() {
           <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 18 }}>ScaleSolo</div>
         </div>
         <h1 style={heroTitle}>
-          Scale your brand <span className="brand-text">10× faster</span>.
+          The first content workflow that <span className="brand-text">writes in your voice</span>, on autopilot.
         </h1>
         <p style={heroSub}>
-          One AI-native operating system that replaces a stack of $300+/month tools.
-          Pick a plan. 3-day free trial, cancel anytime.
+          Train ScaleSolo on your brand once. It generates, edits, and schedules in your voice across TikTok, Instagram, YouTube, X, and LinkedIn — every day, while you sleep. Pick a plan. 3-day free trial, cancel anytime.
         </p>
 
         {/* Founding member — shown above the standard tiers for urgency */}

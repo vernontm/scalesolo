@@ -786,17 +786,138 @@ function Field({ label, required, children }) {
   )
 }
 
+// Quickstart modal — paste handle + 1-line description, Claude drafts a
+// full brand profile. Bypasses the 20-empty-fields cold-start.
+function QuickstartModal({ token, onClose, onCreated }) {
+  const [platform, setPlatform] = useState('instagram')
+  const [handle, setHandle]         = useState('')
+  const [description, setDescription] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  const submit = async () => {
+    setError(null)
+    if (description.trim().length < 10) {
+      setError('Add a sentence or two on what you post about so the draft is on-brand.')
+      return
+    }
+    setBusy(true)
+    try {
+      const r = await fetch('/api/profiles/quickstart', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ handle: handle.trim(), platform, description: description.trim() }),
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
+      onCreated(body.profile)
+    } catch (e) { setError(e.message); setBusy(false) }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={busy ? undefined : onClose}>
+      <div className="modal-card modal-card-md" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+          <Sparkles size={18} style={{ color: 'var(--red)' }} />
+          <h3 style={{ flex: 1, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 17 }}>Quickstart your brand</h3>
+        </div>
+        <p style={{ fontSize: 12.5, color: 'var(--text-soft)', lineHeight: 1.5, margin: '4px 0 16px' }}>
+          Paste your social handle and a sentence about what you post. We'll draft a brand bible, voice, audience, and core hashtags — you review and edit before saving.
+        </p>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: 'block', fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6 }}>
+            Platform
+          </label>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {[
+              ['instagram', 'Instagram'],
+              ['tiktok',    'TikTok'],
+              ['youtube',   'YouTube'],
+              ['threads',   'Threads'],
+              ['x',         'X'],
+              ['linkedin',  'LinkedIn'],
+            ].map(([k, label]) => {
+              const on = platform === k
+              return (
+                <button
+                  key={k} type="button"
+                  onClick={() => setPlatform(k)}
+                  style={{
+                    padding: '6px 12px', borderRadius: 999, fontSize: 12,
+                    border: `1px solid ${on ? 'var(--red)' : 'var(--border)'}`,
+                    background: on ? 'rgba(239,68,68,0.16)' : 'var(--surface-2)',
+                    color: on ? 'var(--red)' : 'var(--text-soft)',
+                    cursor: 'pointer', fontFamily: 'var(--font-display)', fontWeight: 700,
+                  }}
+                >{label}</button>
+              )
+            })}
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: 'block', fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6 }}>
+            Handle
+          </label>
+          <input
+            className="input"
+            placeholder="rayvaughnceo"
+            value={handle}
+            onChange={(e) => setHandle(e.target.value.replace(/^@/, ''))}
+            style={{ width: '100%' }}
+          />
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: 'block', fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6 }}>
+            What do you post about?
+          </label>
+          <textarea
+            className="input"
+            placeholder="Real-talk dating advice for women in their 20s. Bold, unapologetic, friend-giving-tough-love energy. Houston-based."
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={4}
+            style={{ width: '100%', resize: 'vertical', minHeight: 90, fontFamily: 'inherit' }}
+          />
+        </div>
+
+        {error && <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, marginBottom: 12 }}>{error}</div>}
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="btn-primary" onClick={submit} disabled={busy}>
+            {busy ? <span className="spinner" /> : <Sparkles size={13} />} {busy ? 'Drafting…' : 'Draft brand'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function Profiles() {
   const { profiles, selectedProfileId, setSelectedProfileId, refresh } = useProfile()
   const { session } = useAuth()
   const [editing, setEditing] = useState(null)
+  const [quickstart, setQuickstart] = useState(false)
 
   const startNew = () => setEditing({})
+  const startQuickstart = () => setQuickstart(true)
 
   const onSaved = async (profile) => {
     await refresh()
     setEditing(null)
     if (profile?.id) setSelectedProfileId(profile.id)
+  }
+  const onQuickstartCreated = async (profile) => {
+    setQuickstart(false)
+    await refresh()
+    if (profile?.id) {
+      setSelectedProfileId(profile.id)
+      // Drop them straight into the editor so they can review the AI draft.
+      setEditing(profile)
+    }
   }
 
   const onDelete = async (p) => {
@@ -810,8 +931,11 @@ export default function Profiles() {
 
   return (
     <div className="fade-up">
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8, gap: 8 }}>
         <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, flex: 1 }}>Brand profiles</h2>
+        <button className="btn-secondary" onClick={startQuickstart} title="Let Claude draft a brand profile from your handle + description">
+          <Sparkles size={14} /> Quickstart
+        </button>
         <button className="btn-primary" onClick={startNew}><Plus size={14} /> New profile</button>
       </div>
 
@@ -822,9 +946,12 @@ export default function Profiles() {
             Set up your first brand
           </div>
           <div style={{ fontSize: 13, marginBottom: 22, lineHeight: 1.5, maxWidth: 420, margin: '0 auto 22px' }}>
-            One brand profile = one identity ScaleSolo can scale. Create one to unlock content, email, pipeline, AI CEO, and everything else.
+            One brand profile = one identity. Quickstart lets you paste a social handle + a sentence, and Claude drafts the bible, voice, audience, and hashtags for you. Or build from scratch.
           </div>
-          <button className="btn-primary" onClick={startNew}><Plus size={15} /> Create brand profile</button>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+            <button className="btn-primary" onClick={startQuickstart}><Sparkles size={15} /> Quickstart with AI</button>
+            <button className="btn-secondary" onClick={startNew}><Plus size={15} /> Build from scratch</button>
+          </div>
         </div>
       ) : (
         <div style={grid}>
@@ -876,6 +1003,13 @@ export default function Profiles() {
       )}
 
       {editing && <ProfileEditor profile={editing} onClose={() => setEditing(null)} onSaved={onSaved} />}
+      {quickstart && (
+        <QuickstartModal
+          token={session.access_token}
+          onClose={() => setQuickstart(false)}
+          onCreated={onQuickstartCreated}
+        />
+      )}
     </div>
   )
 }
