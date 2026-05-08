@@ -2282,6 +2282,132 @@ function ZapcapTemplatePicker({ selectedId, onChange }) {
   )
 }
 
+// Inline music uploader for the polish editor's Music section. Replaces
+// the old "wire an audio_upload node in" model — users can drop an MP3
+// straight into the editor. The polish renderer auto-trims to video
+// length and fades out, so the user never has to think about clip
+// length.
+//
+// Constraints:
+//   • MP3 only. We accept .mp3 / audio/mpeg explicitly to avoid Safari
+//     rendering edge-cases with WebM and AAC-in-mp4.
+//   • 8 MB cap. A standard 192kbps MP3 fits 5+ minutes in that budget;
+//     since polish caps the rendered clip at video length anyway, this
+//     ceiling protects us against accidental "I uploaded my podcast"
+//     drops without inconveniencing legitimate music tracks.
+//   • Wired-in audio_upload node still wins as a fallback so existing
+//     spaces keep working — uploadedUrl > upstreamUrl in the renderer.
+const POLISH_MUSIC_MAX_BYTES = 8 * 1024 * 1024
+
+function PolishMusicUpload({ uploadedUrl, uploadedName, upstreamUrl, profileId, onChange }) {
+  const inpRef = useRef(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+  const effective = uploadedUrl || upstreamUrl
+  const isUploaded = !!uploadedUrl
+  const sourceLabel = isUploaded ? (uploadedName || 'Uploaded MP3')
+    : upstreamUrl ? 'From wired audio_upload node'
+    : null
+
+  const onPick = async (file) => {
+    if (!file) return
+    setErr(null)
+    // MIME / extension guard. Browsers report the type inconsistently
+    // for the same .mp3 file (audio/mpeg, audio/mp3, sometimes blank),
+    // so check both fields.
+    const looksMp3 = (file.type || '').toLowerCase().includes('mpeg')
+      || (file.type || '').toLowerCase().includes('mp3')
+      || /\.mp3$/i.test(file.name || '')
+    if (!looksMp3) {
+      setErr('MP3 only. Convert your file (Audacity / iTunes / online converter) and try again.')
+      return
+    }
+    if (file.size > POLISH_MUSIC_MAX_BYTES) {
+      setErr(`${(file.size / 1024 / 1024).toFixed(1)} MB exceeds the ${POLISH_MUSIC_MAX_BYTES / 1024 / 1024} MB limit. Trim or re-encode at a lower bitrate (192 kbps is plenty for background music).`)
+      return
+    }
+    setBusy(true)
+    try {
+      const url = await uploadAudioToBucket(file, profileId)
+      onChange(url, { name: file.name, size: file.size })
+    } catch (e) {
+      setErr(e.message)
+    } finally { setBusy(false); if (inpRef.current) inpRef.current.value = '' }
+  }
+
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div style={labelStyle}>Music track</div>
+      {effective ? (
+        <div style={{
+          display: 'flex', flexDirection: 'column', gap: 8,
+          padding: 10, borderRadius: 8,
+          background: 'var(--surface-2)', border: '1px solid var(--border)',
+        }}>
+          <audio src={effective} controls style={{ width: '100%' }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ flex: 1, minWidth: 0, fontSize: 11, color: 'var(--text-soft)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {sourceLabel}
+            </div>
+            <button
+              type="button"
+              onClick={() => inpRef.current?.click()}
+              disabled={busy}
+              style={{
+                padding: '5px 10px', borderRadius: 6, fontSize: 11,
+                background: 'var(--surface)', border: '1px solid var(--border)',
+                color: 'var(--text)', cursor: 'pointer',
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+              }}
+            >
+              {busy ? <Loader2 size={11} className="spin" /> : <Upload size={11} />}
+              Replace
+            </button>
+            {isUploaded && (
+              <button
+                type="button"
+                onClick={() => onChange(null, null)}
+                style={{
+                  padding: '5px 10px', borderRadius: 6, fontSize: 11,
+                  background: 'transparent', border: '1px solid var(--border)',
+                  color: 'var(--muted)', cursor: 'pointer',
+                }}
+              >
+                <Trash2 size={10} />
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => inpRef.current?.click()}
+          disabled={busy || !profileId}
+          style={{
+            width: '100%', padding: 16, borderRadius: 8,
+            background: 'var(--surface-2)', border: '1px dashed var(--border)',
+            color: 'var(--text)', cursor: profileId ? 'pointer' : 'not-allowed',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+            fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 12,
+          }}
+        >
+          {busy ? <Loader2 size={16} className="spin" /> : <Mic size={16} style={{ color: 'var(--red)' }} />}
+          {busy ? 'Uploading…' : 'Upload an MP3'}
+          <span style={{ fontSize: 10, color: 'var(--muted)', fontWeight: 500 }}>
+            MP3 · max {POLISH_MUSIC_MAX_BYTES / 1024 / 1024} MB · auto-trims to video length
+          </span>
+        </button>
+      )}
+      <input
+        ref={inpRef} type="file" accept="audio/mpeg,audio/mp3,.mp3"
+        onChange={(e) => onPick(e.target.files?.[0])}
+        style={{ display: 'none' }}
+      />
+      {err && <div style={{ marginTop: 6, fontSize: 11, color: 'var(--red)', lineHeight: 1.4 }}>{err}</div>}
+    </div>
+  )
+}
+
 function PolishLogoUpload({ uploadedUrl, upstreamUrl, profileId, onChange }) {
   const inpRef = useRef(null)
   const [busy, setBusy] = useState(false)
@@ -2608,11 +2734,18 @@ export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges })
         />
         {(props.music_volume ?? 0.15) > 0 && (
           <>
-            <div style={{ fontSize: 10.5, color: 'var(--muted)', marginBottom: 10, lineHeight: 1.45 }}>
-              Wire an <strong>audio_upload</strong> node into the polish input. The track ducks under the original voice automatically.
-            </div>
+            <PolishMusicUpload
+              uploadedUrl={props.music_url}
+              uploadedName={props.music_file_name}
+              upstreamUrl={upstreamMusic}
+              profileId={data?._ctxProfileId}
+              onChange={(url, meta) => setP({
+                music_url: url || null,
+                music_file_name: meta?.name || null,
+                music_size_bytes: meta?.size ?? null,
+              })}
+            />
 
-            {/* Volume preset chips — one click for the common levels. */}
             <div style={labelStyle}>Quick volume</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4, marginBottom: 12 }}>
               {[
@@ -2642,12 +2775,15 @@ export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges })
 
             <MusicMixPreview
               videoUrl={upstreamVideo}
-              musicUrl={upstreamMusic}
+              musicUrl={props.music_url || upstreamMusic}
               volume={Number(props.music_volume ?? 0.15)}
-              fadeSecs={Number(props.music_fade_secs ?? 1.5)}
+              fadeSecs={Number(props.music_fade_secs ?? 1.0)}
               onChange={(v) => setP({ music_volume: v })}
               onChangeFade={(v) => setP({ music_fade_secs: v })}
             />
+            <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 6, lineHeight: 1.45 }}>
+              The track is automatically trimmed to the video's length and faded out over the last {(props.music_fade_secs ?? 1.0).toFixed(1)}s.
+            </div>
           </>
         )}
       </PolishSection>
@@ -3855,14 +3991,24 @@ ${String(script).slice(0, 2000)}
       watermark_position: 'br',
       watermark_size_pct: 25,
       // Music
+      music_url: null,
+      music_file_name: null,
+      music_size_bytes: null,
       music_volume: 0.15,
-      music_fade_secs: 1.5,
+      // Default fade is 1s — short enough to not eat the punchline,
+      // long enough to feel intentional. User can override per node.
+      music_fade_secs: 1.0,
     },
     Body: VideoPolishBody,
     Editor: VideoPolishEditor,
     run: async ({ data, inputs, ctx }) => {
       const arr = asArr(inputs?.in)
       let logoUrl = null, musicUrl = null
+      // Inline-uploaded music (Music section in editor) wins over a
+      // wired-in audio_upload node. Most users will use the inline path
+      // — the wired path stays as a fallback for older spaces.
+      const p = data.props || {}
+      if (p.music_url) musicUrl = p.music_url
       // Also pluck a wired-in title from upstream caption_gen so it can
       // override the manually-typed prop without the user re-typing.
       let upstreamTitle = ''
@@ -3885,8 +4031,6 @@ ${String(script).slice(0, 2000)}
       // playlist fallback, and collection items[] grids.
       const videoUrl = pickFirstVideoUrl(arr)
       if (!videoUrl) throw new Error('Wire a video into "in" (avatar_render or combine_videos).')
-
-      const p = data.props || {}
 
       // Resolve the title:
       // 1. If title_mode === 'auto' → call /api/videos/auto-title to
@@ -3944,7 +4088,7 @@ ${String(script).slice(0, 2000)}
           watermark_size_pct: p.watermark_size_pct ?? 25,
           // Music
           music_volume: p.music_volume ?? 0.15,
-          music_fade_secs: p.music_fade_secs ?? 1.5,
+          music_fade_secs: p.music_fade_secs ?? 1.0,
         }),
       })
       const body = await r.json().catch(() => ({}))

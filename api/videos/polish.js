@@ -226,6 +226,26 @@ function wrapTitleLines(rawText, fontSize) {
 
 // Spawn ffmpeg with the given args, capture stderr for error reporting.
 // Resolves on exit code 0, rejects with stderr tail on anything else.
+// Probe a media file's duration in seconds. We don't bundle ffprobe
+// so we run a no-op ffmpeg invocation and parse the Duration line off
+// stderr. Used to know how long the video runs so the music can fade
+// out at exactly (videoDuration - fade) instead of guessing from
+// stream metadata that may not exist yet.
+function probeDurationSecs(filePath) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ffmpegPath, ['-i', filePath, '-hide_banner', '-f', 'null', '-'], { stdio: ['ignore', 'ignore', 'pipe'] })
+    let err = ''
+    proc.stderr.on('data', (d) => { err += d.toString('utf8') })
+    proc.on('close', () => {
+      const m = err.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/i)
+      if (!m) return reject(new Error('Could not parse video duration'))
+      const h = +m[1], min = +m[2], s = parseFloat(m[3])
+      resolve(h * 3600 + min * 60 + s)
+    })
+    proc.on('error', reject)
+  })
+}
+
 function runFFmpeg(args, timeoutMs = 270_000) {
   return new Promise((resolve, reject) => {
     const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] })
@@ -265,7 +285,7 @@ export default async function handler(req, res) {
       watermark_position = 'br',
       watermark_size_pct = 25,
       music_volume = 0.15,
-      music_fade_secs = 1.5,
+      music_fade_secs = 1.0,
     } = req.body || {}
     const ts = title_style || {}
 
@@ -439,11 +459,36 @@ export default async function handler(req, res) {
       let aLabel = '[0:a]'
       if (musicPath) {
         const vol = Math.max(0, Math.min(1, Number(music_volume)))
-        // amix with duration=first clips the music when the video ends,
-        // so we don't need a hardcoded fade-start guess. apad pads with
-        // silence if the music is shorter than the video, which keeps
-        // amix from cutting the voice short.
-        filters.push(`[${musicIdx}:a]volume=${vol},apad[mus]`)
+        const fadeSecs = Math.max(0, Math.min(10, Number(music_fade_secs ?? 1.0)))
+        // Probe the source video duration so we can:
+        //   • aloop the music to cover the full video length (most music
+        //     files are shorter than the speaker's content; without
+        //     looping, amix duration=first keeps the longest stream
+        //     trimmed but the second half of the video has silence).
+        //   • afade out cleanly at exactly (videoDuration - fadeSecs),
+        //     so the track always ends with a deliberate fade instead
+        //     of a hard cut at amix-time.
+        let videoDur = 0
+        try { videoDur = await probeDurationSecs(inPath) } catch { videoDur = 0 }
+
+        const audioChain = []
+        audioChain.push(`volume=${vol}`)
+        // Loop forever, then cap with atrim. -1 = infinite. amix's
+        // duration=first will still cut us at video length, but afade's
+        // start time needs the source to actually exist at that time.
+        if (videoDur > 0) {
+          audioChain.push(`aloop=loop=-1:size=2e+09`)
+          audioChain.push(`atrim=duration=${videoDur.toFixed(3)}`)
+        } else {
+          // Probe failed — fall back to apad so amix has something to
+          // mix even past the music's natural end.
+          audioChain.push(`apad`)
+        }
+        if (videoDur > 0 && fadeSecs > 0 && videoDur > fadeSecs) {
+          audioChain.push(`afade=t=out:st=${(videoDur - fadeSecs).toFixed(3)}:d=${fadeSecs.toFixed(3)}`)
+        }
+
+        filters.push(`[${musicIdx}:a]${audioChain.join(',')}[mus]`)
         filters.push(`${aLabel}[mus]amix=inputs=2:duration=first:dropout_transition=0[aout]`)
         aLabel = '[aout]'
       }

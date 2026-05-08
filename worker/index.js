@@ -184,6 +184,23 @@ app.post('/jobs/title-png', requireSecret, async (req, res) => {
 })
 
 // ── Polish job ────────────────────────────────────────────────────────────
+// Probe duration via no-op ffmpeg + stderr parse. Same pattern as the
+// Vercel polish.js. Used to position afade out at the right moment
+// from the music track's perspective.
+function probeDurationSecs(filePath) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ffmpegPath, ['-i', filePath, '-hide_banner', '-f', 'null', '-'], { stdio: ['ignore', 'ignore', 'pipe'] })
+    let err = ''
+    proc.stderr.on('data', (d) => { err += d.toString('utf8') })
+    proc.on('close', () => {
+      const m = err.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/i)
+      if (!m) return reject(new Error('Could not parse duration'))
+      resolve(+m[1] * 3600 + +m[2] * 60 + parseFloat(m[3]))
+    })
+    proc.on('error', reject)
+  })
+}
+
 function runFFmpeg(args, timeoutMs = 600_000) {
   return new Promise((resolve, reject) => {
     const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] })
@@ -223,7 +240,7 @@ app.post('/jobs/polish', requireSecret, async (req, res) => {
     watermark_position = 'br',
     watermark_size_pct = 25,
     music_volume = 0.15,
-    music_fade_secs = 1.5,
+    music_fade_secs = 1.0,
   } = req.body || {}
   if (!profile_id || !video_url) return res.status(400).json({ error: 'profile_id + video_url required' })
   if (!SUPABASE_URL || !SERVICE_KEY) return res.status(500).json({ error: 'Storage not configured on worker' })
@@ -295,7 +312,20 @@ app.post('/jobs/polish', requireSecret, async (req, res) => {
     let aLabel = '[0:a]'
     if (musicPath) {
       const vol = Math.max(0, Math.min(1, Number(music_volume)))
-      filters.push(`[${musicIdx}:a]volume=${vol},apad[mus]`)
+      const fadeSecs = Math.max(0, Math.min(10, Number(music_fade_secs ?? 1.0)))
+      let videoDur = 0
+      try { videoDur = await probeDurationSecs(inPath) } catch { videoDur = 0 }
+      const audioChain = [`volume=${vol}`]
+      if (videoDur > 0) {
+        audioChain.push(`aloop=loop=-1:size=2e+09`)
+        audioChain.push(`atrim=duration=${videoDur.toFixed(3)}`)
+      } else {
+        audioChain.push(`apad`)
+      }
+      if (videoDur > 0 && fadeSecs > 0 && videoDur > fadeSecs) {
+        audioChain.push(`afade=t=out:st=${(videoDur - fadeSecs).toFixed(3)}:d=${fadeSecs.toFixed(3)}`)
+      }
+      filters.push(`[${musicIdx}:a]${audioChain.join(',')}[mus]`)
       filters.push(`${aLabel}[mus]amix=inputs=2:duration=first:dropout_transition=0[aout]`)
       aLabel = '[aout]'
     }
