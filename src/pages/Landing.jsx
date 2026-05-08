@@ -3,6 +3,7 @@ import {
   Zap, ArrowRight, Check, Sparkles, Boxes, UserCircle2, Calendar,
   Layers, Wand2, RefreshCw, ShieldCheck, Quote,
 } from 'lucide-react'
+import PricingPlans from '../components/PricingPlans.jsx'
 
 // Marketing landing page for scalesolo.ai. Renders only when the visitor
 // is signed out (App.jsx routes "/" → Landing for that case). Re-skinned
@@ -11,7 +12,7 @@ import {
 // /pricing page uses, so the look-and-feel is consistent with the rest
 // of the app's dark theme. No vendor names appear in user-facing copy.
 
-const HERO_IMG   = '/landing/hero-spaces.png'   // poster while the hero video loads
+const HERO_IMG   = '/landing/hero-poster.jpg'   // first-frame still extracted from HERO_VIDEO; shows instantly while the video loads
 const HERO_VIDEO = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/scalesolo_dash.mp4'
 const FEAT_IMG_BUILD   = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/shared/workflow_landing.mp4'
 const FEAT_IMG_RUN     = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/autoscheduling_landing.png'
@@ -57,21 +58,6 @@ const testimonials = [
   { name: 'Lena R.',    role: 'Lifestyle Creator',  quote: 'I wired in my @brand mention once and the script generator never forgets. Tone is consistent across 3 months of content.' },
   { name: 'Sam D.',     role: 'B2B Marketer',       quote: 'The schedule node + Upload-Post integration replaced two of my tools. Drafts go out at 8am Tuesdays, no babysitting.' },
   { name: 'Aiyana W.',  role: 'Podcast Producer',   quote: 'Audio upload → ElevenLabs transcribe → split → render across looks. We cut 9-clip shorts from 60-second clips in under 4 minutes.' },
-]
-
-const tiers = [
-  {
-    name: 'Solo Starter', price: 49, blurb: 'One brand, hands-off content.',
-    features: ['1 brand profile', '1 active workflow', '100K AI tokens / mo', '10 avatar videos / mo', 'Multi-platform scheduling'],
-  },
-  {
-    name: 'Solo Pro', price: 79, blurb: 'The everything plan for serious creators.', popular: true,
-    features: ['2 brand profiles', 'Unlimited workflows', '500K AI tokens / mo', '30 avatar videos / mo', 'Cycle-looks rotation', 'Workflow templates'],
-  },
-  {
-    name: 'Solo Studio', price: 149, blurb: 'Multi-brand creators and tiny agencies.',
-    features: ['5 brand profiles', '2M AI tokens / mo', '100 avatar videos / mo', 'Everything in Pro', 'Publish your own templates', 'Founder Slack access'],
-  },
 ]
 
 export default function Landing() {
@@ -142,14 +128,8 @@ export default function Landing() {
               autoPlay loop muted playsInline preload="metadata"
               aria-label="ScaleSolo Spaces canvas demo"
               style={shotImg}
-              onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement.classList.add('placeholder') }}
+              onError={(e) => { e.currentTarget.style.opacity = '0' }}
             />
-            <div className="placeholder-fallback" style={shotPlaceholder}>
-              <Sparkles size={32} style={{ opacity: 0.55, marginBottom: 10 }} />
-              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14, opacity: 0.75 }}>
-                Spaces canvas — demo video
-              </div>
-            </div>
           </div>
         </div>
       </section>
@@ -181,7 +161,7 @@ export default function Landing() {
                     onError={(e) => { e.currentTarget.style.display = 'none' }}
                   />
                 ) : (
-                  <img src={f.img} alt={f.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  <img src={f.img} alt={f.title} style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center' }}
                     onError={(e) => { e.currentTarget.style.display = 'none' }}
                   />
                 )}
@@ -254,37 +234,14 @@ export default function Landing() {
       </section>
 
       {/* ── PRICING ─────────────────────────────────────────────────── */}
+      {/* Reuses the shared <PricingPlans /> component so this stays in
+          lockstep with /pricing — same founding banner, same monthly /
+          annual toggle, same tier copy. Unauthenticated subscribe clicks
+          route to /login (the signup page). */}
       <section id="pricing" style={section} className="fade-up">
         <h2 style={sectionH}>Choose what fits you</h2>
         <p style={sectionSub}>All tiers include unlimited workflows, social scheduling, and brand-voice generation. Pick by output volume.</p>
-        <div style={pricingRow}>
-          {tiers.map((t) => (
-            <div key={t.name} style={{ ...tierCard, ...(t.popular ? tierCardPopular : null) }}>
-              {t.popular && <div style={popularBadge}>Most popular</div>}
-              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 18 }}>{t.name}</div>
-              <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>{t.blurb}</div>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 18, marginBottom: 18 }}>
-                <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 36 }}>${t.price}</span>
-                <span style={{ fontSize: 13, color: 'var(--muted)' }}>/mo</span>
-              </div>
-              <button
-                onClick={goSignup}
-                className={t.popular ? 'btn-primary' : 'btn-secondary'}
-                style={{ width: '100%', justifyContent: 'center' }}
-              >
-                {t.popular ? 'Get started' : 'Choose plan'}
-              </button>
-              <div style={{ height: 1, background: 'var(--border)', margin: '20px 0' }} />
-              <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {t.features.map((f) => (
-                  <li key={f} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13, color: 'var(--text-soft)' }}>
-                    <Check size={13} style={{ color: 'var(--green, #2ecc71)', marginTop: 2, flexShrink: 0 }} /> {f}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
+        <PricingPlans />
       </section>
 
       {/* ── FINAL CTA ───────────────────────────────────────────────── */}
@@ -539,30 +496,6 @@ const testimonialAvatar = {
   background: 'linear-gradient(135deg, rgba(239,68,68,0.6), rgba(168,85,247,0.5))',
   color: '#fff', display: 'grid', placeItems: 'center',
   fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700,
-}
-
-const pricingRow = {
-  display: 'grid', gap: 18,
-  gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-  alignItems: 'stretch',
-}
-const tierCard = {
-  background: 'var(--surface)', border: '1px solid var(--border)',
-  borderRadius: 18, padding: '28px 26px',
-  display: 'flex', flexDirection: 'column',
-  position: 'relative',
-  boxShadow: 'var(--shadow-card)',
-}
-const tierCardPopular = {
-  border: '1px solid rgba(239,68,68,0.45)',
-  boxShadow: '0 18px 48px rgba(239,68,68,0.18)',
-}
-const popularBadge = {
-  position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)',
-  background: 'linear-gradient(135deg, var(--red), var(--red-dark))',
-  color: '#fff', fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700,
-  padding: '5px 12px', borderRadius: 999, letterSpacing: '0.08em', textTransform: 'uppercase',
-  boxShadow: '0 6px 16px rgba(239,68,68,0.35)',
 }
 
 const finalCta = {
