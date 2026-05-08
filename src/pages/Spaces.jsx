@@ -1237,7 +1237,29 @@ function SpaceBuilder({ space, onSave, onClose }) {
 
   const onNodesChange = useCallback((changes) => setNodes((nds) => applyNodeChanges(changes, nds)), [])
   const onEdgesChange = useCallback((changes) => setEdges((eds) => applyEdgeChanges(changes, eds)), [])
-  const onConnect = useCallback((c) => setEdges((eds) => addEdge({ ...c, type: 'scissor', markerEnd: { type: MarkerType.ArrowClosed }, animated: true, style: { stroke: 'var(--red)', strokeWidth: 1.5 } }, eds)), [])
+  const onConnect = useCallback((c) => {
+    setEdges((eds) => addEdge({ ...c, type: 'scissor', markerEnd: { type: MarkerType.ArrowClosed }, animated: true, style: { stroke: 'var(--red)', strokeWidth: 1.5 } }, eds))
+    // Auto-thread cached output: if the user just wired a cached
+    // upstream node into a FREE aggregator (Collection / Combine /
+    // save_library / brand / text / audio_upload / image_upload /
+    // avatar_picker), run the target right away so its body fills in
+    // without the user having to click play. We restrict this to free
+    // nodes so wiring into an expensive node (avatar_render, polish,
+    // schedule_post) never burns credits unprompted.
+    setTimeout(() => {
+      const liveNodes = nodesRef.current
+      const src = liveNodes.find((n) => n.id === c.source)
+      const tgt = liveNodes.find((n) => n.id === c.target)
+      if (!src || !tgt) return
+      const tgtDef = NODE_REGISTRY[tgt.data?.type]
+      if (!tgtDef?.free) return
+      const sourceCached = src.data?.status === 'done' && src.data?.output
+      if (!sourceCached) return
+      // self_only — only the freshly-connected target re-runs, every
+      // other ancestor uses its cache verbatim.
+      runFromNodeRef.current?.(c.target, 'self_only')
+    }, 80)
+  }, [])
 
   // Types that expose a "brand" input — used to auto-wire sync-to-all brand profiles.
   const BRAND_INPUT_TYPES = ['script_gen', 'caption_gen', 'image_gen']
