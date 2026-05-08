@@ -124,15 +124,83 @@ function NodeField({ label, children }) {
   )
 }
 
+// Keys that are useful to the runtime but noise to the user. NodePreview
+// hides these everywhere; node-specific bodies that need to show one of
+// them must do it themselves.
+const INTERNAL_OUTPUT_KEYS = new Set([
+  // Linkage / record ids
+  '_content_id', 'content_id', 'render_id', 'job_id', 'task_id',
+  'request_id', 'submitted', 'submit', 'queued',
+  // Raw provider ids / tokens
+  'video_id', 'heygen_video_id', 'avatar_id', 'look_id', 'image_id', 'image_url',
+  'uploadpost_request_id', 'voice_id', 'profile_id',
+  // Run-engine / cycle internals
+  'cycle_state', 'pool_key', 'tick', 'run_index', 'index', 'order',
+  'sentence', 'is_clip_set', 'partial_failures', 'cursor', 'queue',
+])
+
+function isLikelyId(value) {
+  if (typeof value !== 'string') return false
+  // Treat anything that looks like a UUID, opaque token, or long URL as an id
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) return true
+  if (/^https?:\/\//.test(value) && value.length > 80) return true
+  return false
+}
+
+// Pretty short-form summary of an arbitrary output object. Used as the
+// fallback when a node body doesn't render its own custom preview. Keeps
+// the canvas clean: no UUIDs, no signed URLs, no debug fields.
+function summarizeOutput(output) {
+  if (!output || typeof output !== 'object') return null
+  const lines = []
+  for (const [k, v] of Object.entries(output)) {
+    if (INTERNAL_OUTPUT_KEYS.has(k)) continue
+    if (k.startsWith('_')) continue
+    if (v == null || v === '') continue
+    if (typeof v === 'string') {
+      if (isLikelyId(v)) continue
+      lines.push(`${prettyLabel(k)}: ${v.length > 80 ? v.slice(0, 80) + '…' : v}`)
+    } else if (typeof v === 'number' || typeof v === 'boolean') {
+      lines.push(`${prettyLabel(k)}: ${v}`)
+    } else if (Array.isArray(v)) {
+      // "5 clips" style — never the full payload
+      lines.push(`${prettyLabel(k)}: ${v.length} ${v.length === 1 ? 'item' : 'items'}`)
+    } else if (typeof v === 'object') {
+      // Drill one level for shapes like { script_gen: { title, words } }
+      const inner = Object.entries(v)
+        .filter(([ik]) => !INTERNAL_OUTPUT_KEYS.has(ik) && !ik.startsWith('_'))
+        .filter(([, iv]) => iv != null && iv !== '' && (typeof iv === 'string' || typeof iv === 'number' || typeof iv === 'boolean'))
+        .filter(([, iv]) => typeof iv !== 'string' || !isLikelyId(iv))
+        .slice(0, 3)
+        .map(([ik, iv]) => `${prettyLabel(ik)}: ${typeof iv === 'string' && iv.length > 60 ? iv.slice(0, 60) + '…' : iv}`)
+        .join(', ')
+      if (inner) lines.push(`${prettyLabel(k)} — ${inner}`)
+    }
+  }
+  return lines.slice(0, 4).join('\n')
+}
+
+function prettyLabel(key) {
+  // image_url → Image url, full_script → Full script
+  return String(key).replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())
+}
+
 function NodePreview({ status, output, error }) {
   if (status === 'running') return <div style={{ ...previewBox, color: 'var(--amber)' }}><Loader2 size={11} className="spin" style={{ marginRight: 6, verticalAlign: '-1px' }} /> Running…</div>
   if (status === 'failed')  return <div style={{ ...previewBox, color: 'var(--red)' }}>{String(error || 'Failed')}</div>
   if (status === 'done' && output) {
-    const text = typeof output === 'string'
-      ? output
-      : output.video_url ? `→ ${output.video_url}`
-      : Object.entries(output).map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join('\n')
-    return <div style={previewBox}>{text.slice(0, 600)}{text.length > 600 ? '…' : ''}</div>
+    if (typeof output === 'string') {
+      const t = output.slice(0, 600)
+      return <div style={previewBox}>{t}{output.length > 600 ? '…' : ''}</div>
+    }
+    const summary = summarizeOutput(output)
+    // Many nodes (script_gen, avatar_render, etc.) render their own rich
+    // body when output is meaningful. If summarizeOutput returns nothing,
+    // there's nothing user-facing to show — keep the card clean.
+    if (!summary) {
+      return <div style={{ ...previewBox, color: 'var(--text-soft)' }}>Done</div>
+    }
+    return <div style={previewBox}>{summary}</div>
   }
   return null
 }
@@ -1372,7 +1440,12 @@ function AvatarPickerBody({ data, onPatch }) {
           ? 'Uses the voice set on this avatar in the Avatars page.'
           : 'No voice set yet. Open the Avatars page to assign a default voice.'}
       </div>
-      <NodePreview status={data.status} output={data.output} error={data.error} />
+      {/* Output preview is intentionally suppressed — every meaningful field
+          (avatar, look, image, mode, cycle progress) is already visible in
+          the form above. Showing the raw output JSON dumped UUIDs and
+          internal mode strings the user shouldn't see. */}
+      {data.status === 'failed' && <NodePreview status="failed" error={data.error} />}
+      {data.status === 'running' && <NodePreview status="running" />}
     </>
   )
 }
@@ -1380,10 +1453,13 @@ function AvatarPickerBody({ data, onPatch }) {
 // ─── 7. AVATAR RENDER ───────────────────────────────────────────────────────
 function AvatarRenderBody({ data }) {
   const out = data.output
+  const clipCount = Array.isArray(out?.videos) ? out.videos.length : 0
+  const partialFails = Array.isArray(out?.partial_failures) ? out.partial_failures.length : 0
   return (
     <>
       {data.status !== 'done' && data.status !== 'failed' && data.status !== 'running' &&
         <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>Connect a script + avatar input.</div>}
+
       {data.status === 'done' && out?.video_url && (
         <>
           <MediaItem url={out.video_url} type="video" from={data.name || 'video'} aspectRatio="9/16" />
@@ -1399,7 +1475,35 @@ function AvatarRenderBody({ data }) {
           ><Download size={11} /> Download video</button>
         </>
       )}
-      <NodePreview status={data.status} output={out?.video_url ? null : out} error={data.error} />
+
+      {/* Multi-clip render (randomize / cycle): show the clip count and a
+          tiny grid of thumbnails. Hides URLs and HeyGen ids — clicking a
+          thumb opens the fullscreen preview via the shared MediaItem. */}
+      {data.status === 'done' && !out?.video_url && clipCount > 0 && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, fontSize: 12, color: 'var(--text)' }}>
+            <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700 }}>
+              {clipCount} {clipCount === 1 ? 'clip' : 'clips'} ready
+            </span>
+            {partialFails > 0 && (
+              <span title="Some clips failed during this render — see HeyGen logs." style={{ fontSize: 10.5, color: 'var(--amber)' }}>
+                {partialFails} skipped
+              </span>
+            )}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4 }}>
+            {out.videos.slice(0, 6).map((v, i) => (
+              <MediaItem key={i} url={v.video_url} type="video" from={`clip ${i + 1}`} aspectRatio="9/16" />
+            ))}
+          </div>
+        </>
+      )}
+
+      {data.status === 'failed' && <NodePreview status="failed" error={data.error} />}
+      {data.status === 'running' && <NodePreview status="running" />}
+      {data.status === 'done' && !out?.video_url && clipCount === 0 && (
+        <div style={{ ...previewBox, color: 'var(--text-soft)' }}>Done</div>
+      )}
     </>
   )
 }
@@ -2402,18 +2506,25 @@ function SchedulePostBody({ data, onPatch }) {
         Wire a video (or images) plus an optional caption / hashtags / script.
       </div>
       {out?.request_id && (
-        <div style={{ ...previewBox, marginTop: 8 }}>
-          Submitted ✓
-          {out.scheduled_iso && (
-            <div style={{ marginTop: 2 }}>
-              <span style={{ color: 'var(--muted)' }}>at </span>
-              <strong>{new Date(out.scheduled_iso).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</strong>
-            </div>
-          )}
-          <div style={{ color: 'var(--muted)', fontSize: 10 }}>id: {String(out.request_id).slice(0, 18)}…</div>
+        <div style={{ ...previewBox, marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ display: 'inline-grid', placeItems: 'center', width: 18, height: 18, borderRadius: 999, background: 'rgba(46,204,113,0.18)', color: '#2ecc71', fontSize: 11, fontWeight: 700 }}>✓</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 12 }}>Submitted</div>
+            {out.scheduled_iso && (
+              <div style={{ marginTop: 1, fontSize: 11, color: 'var(--text-soft)' }}>
+                {new Date(out.scheduled_iso).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+              </div>
+            )}
+            {Array.isArray(out.platforms) && out.platforms.length > 0 && (
+              <div style={{ marginTop: 2, fontSize: 10.5, color: 'var(--muted)' }}>
+                to {out.platforms.join(', ')}
+              </div>
+            )}
+          </div>
         </div>
       )}
-      <NodePreview status={data.status} output={out?.request_id ? null : out} error={data.error} />
+      {data.status === 'failed' && <NodePreview status="failed" error={data.error} />}
+      {data.status === 'running' && <NodePreview status="running" />}
     </>
   )
 }
