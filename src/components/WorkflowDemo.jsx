@@ -118,32 +118,9 @@ function gridXY({ col, row }) {
   return { x: COL_X[col], y: ROW_Y[row] }
 }
 
-// Cubic Bézier between two grid positions. Picks horizontal vs.
-// vertical exit/entry based on the dominant axis so the curve always
-// leaves and enters a sensible side of each node.
-function bezierBetween(fromGrid, toGrid) {
-  const a = gridXY(fromGrid)
-  const b = gridXY(toGrid)
-  const dx = b.x - a.x
-  const dy = b.y - a.y
-  let sX, sY, eX, eY
-  if (Math.abs(dx) >= Math.abs(dy) * 0.8 || dy === 0) {
-    // Horizontal-dominant: exit/enter via left/right edge.
-    sX = a.x + (dx >= 0 ? NODE_RX : -NODE_RX); sY = a.y
-    eX = b.x - (dx >= 0 ? NODE_RX : -NODE_RX); eY = b.y
-  } else {
-    // Vertical-dominant: exit/enter via top/bottom edge.
-    sX = a.x; sY = a.y + (dy >= 0 ? NODE_RY : -NODE_RY)
-    eX = b.x; eY = b.y - (dy >= 0 ? NODE_RY : -NODE_RY)
-  }
-  const midX = (sX + eX) / 2
-  return `M ${sX} ${sY} C ${midX} ${sY}, ${midX} ${eY}, ${eX} ${eY}`
-}
-
-// SVG paths between consecutive nodes (1→2, 2→3, …, 8→9). Used when
-// no persona is active (the full 9-step pipeline). When a persona IS
-// active, connectors are generated dynamically from the persona path
-// (so e.g. Podcasters' 2→4→5→7→8 draws four custom curves).
+// SVG paths between consecutive nodes (1→2, 2→3, …, 8→9). The canvas
+// is purely a static showcase — these are always rendered regardless
+// of which persona (if any) is selected.
 const CONNECTORS = [
   'M 26 22 L 39 22',                 // 1 → 2
   'M 61 22 L 74 22',                 // 2 → 3
@@ -159,55 +136,30 @@ export default function WorkflowDemo({ persona, onClearPersona }) {
   const [activeStep, setActiveStep] = useState(0)
   const [autoTour, setAutoTour]     = useState(false)
 
-  // Sorted ascending list of step indices the active persona cares about
-  // (e.g. Podcasters → [2,4,5,7,8]). Empty/undefined when no persona.
-  const personaPath = persona?.steps?.length
-    ? [...persona.steps].sort((a, b) => a - b)
-    : null
-  const inPath = (i) => !personaPath || personaPath.includes(i)
-
-  // Whenever the persona changes, snap to its first relevant step and
-  // auto-start the tour so the visitor sees the path play out.
-  useEffect(() => {
-    if (personaPath) {
-      setActiveStep(personaPath[0])
-      setAutoTour(true)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [persona?.key])
-
-  // Auto-tour: tick the active step every 4.5s. When a persona is
-  // active, cycle ONLY through that persona's steps (looping back to
-  // the first relevant step at the end).
+  // The canvas is intentionally static — all 9 nodes are always
+  // visible regardless of which persona (if any) is selected. The
+  // `persona` prop only changes what's rendered in the info panel
+  // below, where a persona-description callout fades in on top of
+  // the per-step copy. Auto-tour and Prev/Next always cover the
+  // full 9-step pipeline.
   useEffect(() => {
     if (!autoTour) return
     const id = setInterval(() => {
-      setActiveStep((s) => {
-        if (personaPath) {
-          const next = personaPath.find((idx) => idx > s)
-          return next !== undefined ? next : personaPath[0]
-        }
-        return (s + 1) % STEPS.length
-      })
+      setActiveStep((s) => (s + 1) % STEPS.length)
     }, 4500)
     return () => clearInterval(id)
-  }, [autoTour, personaPath])
+  }, [autoTour])
 
-  // Pause auto-tour on any explicit click. When a persona is active,
-  // wrap prev/next around the persona's steps; otherwise around all 9.
   const select = (i) => { setActiveStep(i); setAutoTour(false) }
-  const stepUniverse = personaPath || STEPS.map((_, i) => i)
-  const stepIndex = stepUniverse.indexOf(activeStep)
-  const prev = () => {
-    const safeIdx = stepIndex >= 0 ? stepIndex : 0
-    select(stepUniverse[(safeIdx - 1 + stepUniverse.length) % stepUniverse.length])
-  }
-  const next = () => {
-    const safeIdx = stepIndex >= 0 ? stepIndex : -1
-    select(stepUniverse[(safeIdx + 1) % stepUniverse.length])
-  }
+  const prev   = ()  => select((activeStep - 1 + STEPS.length) % STEPS.length)
+  const next   = ()  => select((activeStep + 1) % STEPS.length)
 
   const active = STEPS[activeStep]
+  // Sorted persona path used purely for the "key steps" pill row in
+  // the panel callout. The canvas itself doesn't read this.
+  const personaPath = persona?.steps?.length
+    ? [...persona.steps].sort((a, b) => a - b)
+    : null
 
   return (
     <div>
@@ -235,58 +187,32 @@ export default function WorkflowDemo({ persona, onClearPersona }) {
             </linearGradient>
           </defs>
 
-          {/* Two rendering modes:
-              - No persona → render the static 1→2→…→9 connectors.
-              - Persona active → generate a Bézier between every pair
-                of consecutive persona steps, so Podcasters' 2→4→5→7→8
-                draws clean curves directly between only those nodes. */}
-          {personaPath
-            ? personaPath.slice(0, -1).map((fromStep, i) => {
-                const toStep = personaPath[i + 1]
-                const isActive = toStep === activeStep
-                return (
-                  <path
-                    key={`p-${fromStep}-${toStep}`}
-                    d={bezierBetween(STEPS[fromStep].grid, STEPS[toStep].grid)}
-                    stroke={isActive ? 'url(#wireGradHot)' : 'url(#wireGrad)'}
-                    strokeWidth={isActive ? 0.9 : 0.6}
-                    fill="none"
-                    strokeDasharray="1.5 1.7"
-                    strokeLinecap="round"
-                    style={{
-                      animation: `flowDash ${isActive ? 0.9 : 1.4}s linear ${i * 0.15}s infinite`,
-                      filter: isActive ? 'drop-shadow(0 0 1.5px rgba(255,180,100,0.9))' : 'none',
-                    }}
-                  />
-                )
-              })
-            : CONNECTORS.map((d, i) => {
-                const isActive = i + 1 === activeStep   // connector i feeds node i+1
-                return (
-                  <path
-                    key={i}
-                    d={d}
-                    stroke={isActive ? 'url(#wireGradHot)' : 'url(#wireGrad)'}
-                    strokeWidth={isActive ? 0.8 : 0.5}
-                    fill="none"
-                    strokeDasharray="1.5 1.7"
-                    strokeLinecap="round"
-                    style={{
-                      animation: `flowDash ${isActive ? 0.9 : 1.4}s linear ${i * 0.15}s infinite`,
-                      filter: isActive ? 'drop-shadow(0 0 1.5px rgba(255,180,100,0.9))' : 'none',
-                    }}
-                  />
-                )
-              })}
+          {CONNECTORS.map((d, i) => {
+            const isActive = i + 1 === activeStep   // connector i feeds node i+1
+            return (
+              <path
+                key={i}
+                d={d}
+                stroke={isActive ? 'url(#wireGradHot)' : 'url(#wireGrad)'}
+                strokeWidth={isActive ? 0.8 : 0.5}
+                fill="none"
+                strokeDasharray="1.5 1.7"
+                strokeLinecap="round"
+                style={{
+                  animation: `flowDash ${isActive ? 0.9 : 1.4}s linear ${i * 0.15}s infinite`,
+                  filter: isActive ? 'drop-shadow(0 0 1.5px rgba(255,180,100,0.9))' : 'none',
+                }}
+              />
+            )
+          })}
         </svg>
 
-        {/* Nodes — when a persona is active, off-path nodes are not
-            rendered at all (the canvas shows only the persona's route). */}
+        {/* Nodes — all 9 always rendered. The canvas is purely a
+            visual showcase; persona selection only affects the panel
+            below, not what's drawn here. */}
         {STEPS.map((step, i) => {
-          if (personaPath && !inPath(i)) return null
           const tone = TONES[step.tone] || TONES.neutral
           const isActive = i === activeStep
-          const isOnPath = inPath(i)
           return (
             <button
               key={step.title}
@@ -294,7 +220,6 @@ export default function WorkflowDemo({ persona, onClearPersona }) {
               style={{
                 ...nodeBtn,
                 ...nodePos(step.grid),
-                ...(isOnPath && personaPath && !isActive ? nodeBtnOnPath : null),
                 ...(isActive ? nodeBtnActive : null),
               }}
               aria-pressed={isActive}
@@ -317,23 +242,50 @@ export default function WorkflowDemo({ persona, onClearPersona }) {
         })}
       </div>
 
-      {/* Detail panel — sits below the canvas */}
+      {/* Detail panel — sits below the canvas. Two display modes:
+          - Persona selected: a "What this means for <persona>"
+            description block fades in at the top, including the persona
+            body copy and a row of pills calling out the steps that
+            matter most for them. The per-step section below stays
+            visible so the visitor can still click around the canvas.
+          - Default: just the per-step block. */}
       <div style={panel}>
         {persona && (
-          <div style={personaBadgeRow}>
-            <span style={personaBadge}>
-              <span style={personaBadgeDot} />
-              Showing path for <strong style={{ marginLeft: 4 }}>{persona.label}</strong>
-              <span style={personaBadgeMeta}>· {personaPath.length} of {STEPS.length} steps</span>
-            </span>
-            <button
-              onClick={onClearPersona}
-              className="btn-ghost"
-              aria-label="Show all steps"
-              style={{ padding: '6px 10px', fontSize: 11.5 }}
-            >
-              <X size={12} /> Show all steps
-            </button>
+          <div style={personaBlock}>
+            <div style={personaBlockHead}>
+              <div style={personaBlockIcon}>
+                <persona.icon size={18} strokeWidth={2.2} />
+              </div>
+              <div>
+                <div style={personaBlockEyebrow}>What this looks like</div>
+                <div style={personaBlockTitle}>{persona.label}</div>
+              </div>
+              <button
+                onClick={onClearPersona}
+                className="btn-ghost"
+                aria-label="Clear persona"
+                style={{ marginLeft: 'auto', padding: '6px 10px', fontSize: 11.5 }}
+              >
+                <X size={12} /> Clear
+              </button>
+            </div>
+            <p style={personaBlockBody}>{persona.body}</p>
+            {personaPath?.length > 0 && (
+              <div style={personaBlockPills}>
+                <span style={personaBlockPillLabel}>Key steps for you:</span>
+                {personaPath.map((idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => select(idx)}
+                    style={personaBlockPill}
+                    title={`Jump to ${STEPS[idx].title}`}
+                  >
+                    <span style={personaBlockPillNumber}>{idx + 1}</span>
+                    {STEPS[idx].title}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
         <div style={panelHead}>
@@ -438,19 +390,6 @@ const nodeBtnActive = {
   boxShadow: '0 0 0 1px rgba(239,68,68,0.35), 0 12px 32px rgba(239,68,68,0.30), 0 0 40px rgba(239,68,68,0.18)',
   transform: 'translate(-50%, -50%) scale(1.04)',
 }
-// On-path-but-not-active: subtle constant glow so the persona's full
-// route is visible even when only one step is "selected". Keeps the
-// transform identical to the base so the node doesn't shift.
-const nodeBtnOnPath = {
-  borderColor: 'rgba(239,68,68,0.40)',
-  background: 'linear-gradient(180deg, rgba(239,68,68,0.06), var(--surface-2) 80%)',
-  boxShadow: '0 0 0 1px rgba(239,68,68,0.18), 0 8px 24px rgba(239,68,68,0.16)',
-}
-// Dimmed: not part of the persona's path. Faded but still readable.
-const nodeBtnDimmed = {
-  opacity: 0.32,
-  filter: 'saturate(0.55)',
-}
 const nodeHeader = {
   display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6,
 }
@@ -517,28 +456,69 @@ const panel = {
   padding: '20px 24px',
   boxShadow: 'var(--shadow-card)',
 }
-// Persona badge — sits above panelHead when a persona is morphing the canvas.
-const personaBadgeRow = {
-  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-  gap: 12, flexWrap: 'wrap', marginBottom: 14,
-  paddingBottom: 14, borderBottom: '1px solid var(--border)',
+// Persona description block — fades in above the per-step section
+// when a use-case card is clicked. It explains what the workflow
+// means for that audience and offers clickable "key step" pills that
+// jump the active step on the canvas without otherwise changing it.
+const personaBlock = {
+  marginBottom: 18, paddingBottom: 18,
+  borderBottom: '1px solid var(--border)',
+  background: 'linear-gradient(180deg, rgba(239,68,68,0.06), transparent 100%)',
+  borderRadius: 12,
+  padding: '14px 14px 16px',
+  border: '1px solid rgba(239,68,68,0.22)',
+  animation: 'fadeIn 0.35s var(--ease)',
 }
-const personaBadge = {
-  display: 'inline-flex', alignItems: 'center', gap: 8,
-  padding: '7px 13px', borderRadius: 999,
-  background: 'rgba(239,68,68,0.12)',
-  border: '1px solid rgba(239,68,68,0.35)',
-  fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 12,
-  color: 'var(--text)',
+const personaBlockHead = {
+  display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10,
 }
-const personaBadgeDot = {
-  width: 8, height: 8, borderRadius: '50%',
-  background: 'var(--red)',
-  boxShadow: '0 0 8px rgba(239,68,68,0.7)',
-  animation: 'pulseGlow 1.8s var(--ease) infinite',
+const personaBlockIcon = {
+  width: 36, height: 36, borderRadius: 10,
+  display: 'grid', placeItems: 'center',
+  background: 'linear-gradient(135deg, var(--red), var(--red-dark))',
+  color: '#fff',
+  boxShadow: '0 6px 16px rgba(239,68,68,0.32)',
+  flexShrink: 0,
 }
-const personaBadgeMeta = {
-  marginLeft: 6, color: 'var(--muted)', fontWeight: 500,
+const personaBlockEyebrow = {
+  fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 10,
+  letterSpacing: '0.10em', textTransform: 'uppercase',
+  color: 'var(--red)',
+}
+const personaBlockTitle = {
+  fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 17,
+  color: 'var(--text)', letterSpacing: '-0.01em',
+  marginTop: 2,
+}
+const personaBlockBody = {
+  fontSize: 13.5, lineHeight: 1.6, color: 'var(--text-soft)',
+  margin: '0 0 12px',
+}
+const personaBlockPills = {
+  display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+}
+const personaBlockPillLabel = {
+  fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 11,
+  color: 'var(--muted)',
+  letterSpacing: '0.02em',
+  marginRight: 4,
+}
+const personaBlockPill = {
+  display: 'inline-flex', alignItems: 'center', gap: 6,
+  padding: '5px 9px 5px 5px', borderRadius: 999,
+  background: 'var(--surface-2)',
+  border: '1px solid var(--border)',
+  cursor: 'pointer',
+  fontFamily: 'inherit', color: 'var(--text)',
+  fontSize: 11.5, fontWeight: 600,
+  transition: 'border-color 180ms var(--ease), background 180ms var(--ease)',
+}
+const personaBlockPillNumber = {
+  width: 16, height: 16, borderRadius: '50%',
+  background: 'linear-gradient(135deg, var(--red), var(--red-dark))',
+  color: '#fff',
+  display: 'grid', placeItems: 'center',
+  fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 9,
 }
 
 const panelHead = { display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 8 }

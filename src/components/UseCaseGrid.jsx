@@ -80,7 +80,7 @@ export default function UseCaseGrid({ activePersona, onSelectPersona }) {
             <div style={cardHeadline}>{p.label}</div>
             <p style={cardBody}>{p.body}</p>
             <div style={{ ...cardCta, color: isActive ? 'var(--red)' : 'var(--text-soft)' }}>
-              {isActive ? 'Showing on canvas above' : 'See workflow'}
+              {isActive ? 'Description shown below' : 'See workflow'}
               <ArrowRight size={13} />
             </div>
           </button>

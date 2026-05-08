@@ -223,7 +223,7 @@ export default function Landing() {
           canvas) so they read as one block. */}
       <section id="use-cases" style={{ ...section, paddingBottom: 24 }} className="fade-up">
         <h2 style={sectionH}>Built for every kind of creator</h2>
-        <p style={sectionSub}>Click a use case to morph the workflow below. The canvas redraws to show only the nodes that run for the way you create.</p>
+        <p style={sectionSub}>Click a use case to see how the workflow below applies to your kind of work — the canvas stays put, the description block under it tells you exactly what runs for you.</p>
         <UseCaseGrid activePersona={activePersona} onSelectPersona={handleSelectPersona} />
       </section>
 
@@ -231,7 +231,7 @@ export default function Landing() {
         <h2 style={sectionH}>9 steps. One workflow. Forever.</h2>
         <p style={sectionSub}>
           {activePersona
-            ? <>Showing the path for <span style={{ color: 'var(--red)', fontWeight: 700 }}>{activePersona.label}</span>. Pick another use case above to morph the canvas.</>
+            ? <>Reading this for <span style={{ color: 'var(--red)', fontWeight: 700 }}>{activePersona.label}</span>. Click any node for its details, or pick another use case above.</>
             : <>This is the full AI Podcaster pipeline — exactly as it runs in your dashboard. Click any node to see what it does, or hit Auto-tour to walk through the whole thing.</>
           }
         </p>
