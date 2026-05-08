@@ -1511,15 +1511,17 @@ function SpaceBuilder({ space, onSave, onClose }) {
     if (runningRef.current) return
     const want = new Set([targetId])
 
-    // BFS up — ancestors. Always included unless scope='self_only'.
-    if (scope !== 'self_only') {
-      const upQueue = [targetId]
-      while (upQueue.length) {
-        const id = upQueue.shift()
-        for (const e of edges) {
-          if (e.target === id && !want.has(e.source)) {
-            want.add(e.source); upQueue.push(e.source)
-          }
+    // ALWAYS BFS up. Even in self_only mode the target needs its ancestors
+    // in the subset — runSpace reads inputs from outputsById, which only
+    // gets populated for nodes that are actually iterated over. Ancestors
+    // sit there as cache hits (their cached output flows through to the
+    // target) and never re-execute.
+    const upQueue = [targetId]
+    while (upQueue.length) {
+      const id = upQueue.shift()
+      for (const e of edges) {
+        if (e.target === id && !want.has(e.source)) {
+          want.add(e.source); upQueue.push(e.source)
         }
       }
     }
@@ -1586,30 +1588,43 @@ function SpaceBuilder({ space, onSave, onClose }) {
       }
     }
 
-    // Reset rules:
-    //  • The target is always reset so it actually re-runs.
-    //  • Manual per-node runs leave descendants cached (saves credits on
-    //    "re-run combine_videos but not avatar render" type retries).
-    //  • Auto_run triggers do NOT pre-clear descendant outputs anymore —
-    //    instead we pass a forceReRun set in ctx so runSpace knows to
-    //    skip the cached-done short-circuit for those nodes. Their old
-    //    outputs stay visible on the canvas while a tick is in flight,
-    //    only getting overwritten when each node completes its new run.
-    //    This means a mid-tick page refresh shows the previous run's
-    //    results instead of a blank chain.
+    // Reset rules per scope:
+    //
+    //  self_only    — ONLY the target resets. Ancestors stay exactly as
+    //                 they are; if cached, runSpace short-circuits them
+    //                 and only the target re-executes. (Pre-flight check
+    //                 above already errored if any direct parent isn't
+    //                 cached, so we never reach here with garbage.)
+    //
+    //  up_to_here   — Target + every ancestor reset. The user explicitly
+    //                 asked to refresh the upstream chain.
+    //
+    //  full / auto  — Target reset. Cached ancestors stay cached (saves
+    //                 credits on "re-run combine_videos but not avatar
+    //                 render" retries). Auto_run triggers leave
+    //                 descendants' state alone since runSpace's
+    //                 forceReRun set forces them to re-execute anyway,
+    //                 keeping the previous tick's output visible until
+    //                 the new one lands.
     setNodes((arr) => arr.map((n) => {
       if (!want.has(n.id)) return n
       if (n.id === targetId) {
         return { ...n, data: { ...n.data, status: 'idle', output: null, error: null } }
       }
-      // Sibling sources / non-auto runs use the old cache logic.
+      if (scope === 'self_only') {
+        // Ancestor — leave it alone. Cache flows through to target.
+        return n
+      }
+      if (scope === 'up_to_here') {
+        // Wipe every ancestor so they re-execute fresh.
+        return { ...n, data: { ...n.data, status: 'idle', output: null, error: null } }
+      }
+      // 'full' and auto_run path use the old logic.
       if (!isAutoTrigger) {
         const isCached = n.data?.status === 'done' && n.data?.output
         if (isCached) return n
         return { ...n, data: { ...n.data, status: 'idle', output: null, error: null } }
       }
-      // Auto_run: leave descendant state alone — runSpace will overwrite
-      // each node's output when its fresh run completes.
       return n
     }))
     const forceReRun = isAutoTrigger ? new Set([...descendants].filter((id) => id !== targetId)) : null
