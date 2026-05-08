@@ -14,7 +14,7 @@ import {
   Type, Wand2, Captions, UserCircle2, Save, Image as ImageIcon,
   ListChecks, FileVideo, Upload, Loader2, Maximize2, ArrowUpRight,
   Download, Trash2, Building2, Repeat, Play, Pause, Combine as CombineIcon,
-  Mic, Sparkles, Send,
+  Mic, Sparkles, Send, Copy,
 } from 'lucide-react'
 import { supabase } from './supabase.js'
 import MusicMixPreview from '../components/MusicMixPreview.jsx'
@@ -669,26 +669,46 @@ function CaptionGenBody({ data, onPatch }) {
 function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = [], namedImages = [] }) {
   const ref = useRef(null)
   const [suggest, setSuggest] = useState({ open: false, prefix: '', start: -1 })
+  // Snapshot of the textarea selection captured on mousedown of any chip
+  // button. Browsers blur the textarea on mousedown of an outside element,
+  // and after blur some return selectionEnd as 0 OR as the text length —
+  // either way `prompt.slice(end)` yields garbage and the click-to-insert
+  // path eats characters. Reading from this ref instead of ta.selectionEnd
+  // makes the insertion robust regardless of focus state.
+  const lastSelRef = useRef({ start: 0, end: 0 })
+  const captureSelection = () => {
+    const ta = ref.current
+    if (!ta) return
+    lastSelRef.current = { start: ta.selectionStart || 0, end: ta.selectionEnd || 0 }
+  }
   // Strip every non-token char (anything besides letters, digits, _, -) so
   // brands like "VernonTech & Media" produce a clean "@VernonTechMedia"
   // tag the parser can match end-to-end.
   const tagFor = (name) => `@${(name || '').replace(/[^A-Za-z0-9_-]/g, '')}`
-  const prompt = value || ''
 
   function insertTag(name) {
     const tag = tagFor(name)
     const ta = ref.current
-    if (!ta) { onChange(`${prompt} ${tag}`.trim()); return }
-    const start = suggest.start >= 0 ? suggest.start : ta.selectionStart
-    const end = ta.selectionEnd
-    const before = prompt.slice(0, start)
-    const after = prompt.slice(end)
-    const next = `${before}${tag}${after.startsWith(' ') ? '' : ' '}${after}`
+    // Source of truth for current text is the live textarea, NOT the closure
+    // value — otherwise a fast typist + click can land an insert against
+    // a stale prompt and silently chop characters.
+    const current = ta?.value ?? value ?? ''
+    if (!ta) { onChange(`${current} ${tag}`.trim()); return }
+    const sel = lastSelRef.current
+    const start = suggest.start >= 0 ? suggest.start : sel.start
+    // end is whichever is greater — covers both the "user had a real
+    // selection" case and the "@-suggest, end was at caret" case.
+    const end = Math.max(sel.end, start)
+    const before = current.slice(0, start)
+    const after = current.slice(end)
+    const needsTrailingSpace = after.length === 0 ? false : !after.startsWith(' ')
+    const next = `${before}${tag}${needsTrailingSpace ? ' ' : ''}${after}`
     onChange(next)
     setSuggest({ open: false, prefix: '', start: -1 })
     requestAnimationFrame(() => {
-      const pos = (before + tag + (after.startsWith(' ') ? '' : ' ')).length
+      const pos = (before + tag + (needsTrailingSpace ? ' ' : '')).length
       try { ta.focus(); ta.setSelectionRange(pos, pos) } catch {}
+      lastSelRef.current = { start: pos, end: pos }
     })
   }
 
@@ -736,7 +756,18 @@ function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
           <span style={{ fontSize: 9.5, color: 'var(--muted)', fontFamily: 'var(--font-display)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', alignSelf: 'center' }}>tag:</span>
           {filtered.map((it) => (
-            <button key={it.key} type="button" className="nodrag" onClick={(e) => { e.stopPropagation(); insertTag(it.name) }} title={`Insert ${tagFor(it.name)}`} style={chipStyle(it.kind)}>
+            <button
+              key={it.key}
+              type="button"
+              className="nodrag"
+              // mousedown.preventDefault keeps the textarea focused so its
+              // selectionStart / selectionEnd remain valid when click fires.
+              // Without this the chip click clobbers `after` and eats text.
+              onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); captureSelection() }}
+              onClick={(e) => { e.stopPropagation(); insertTag(it.name) }}
+              title={`Insert ${tagFor(it.name)}`}
+              style={chipStyle(it.kind)}
+            >
               {tagFor(it.name)}
             </button>
           ))}
@@ -765,6 +796,7 @@ function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = 
         minHeight={minHeight}
         onChange={onTextareaChange}
         onBlur={() => setTimeout(() => setSuggest((s) => ({ ...s, open: false })), 150)}
+        onSelect={captureSelection}
         brands={brands}
         namedImages={namedImages}
       />
@@ -784,7 +816,7 @@ function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = 
               // mousedown.preventDefault keeps the textarea focused so the
               // selection range stays valid when insertTag reads it. The
               // actual insert fires on click for reliability.
-              onMouseDown={(e) => { e.preventDefault(); e.stopPropagation() }}
+              onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); captureSelection() }}
               onClick={(e) => { e.stopPropagation(); insertTag(it.name) }}
               style={{
                 width: '100%', textAlign: 'left',
@@ -815,7 +847,7 @@ function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = 
 // itself stays plain text (transparent fill, visible caret) and the backdrop
 // sits behind it pixel-aligned. Both share font/padding/border so wrapping
 // and spacing match exactly.
-function PromptHighlightField({ textareaRef, value, placeholder, minHeight, onChange, onBlur, brands, namedImages }) {
+function PromptHighlightField({ textareaRef, value, placeholder, minHeight, onChange, onBlur, onSelect, brands, namedImages }) {
   const backdropRef = useRef(null)
   const brandSet = new Set((brands || []).map((b) => (b.name || '').toLowerCase().replace(/[^a-z0-9_-]/g, '')))
   const imageSet = new Set((namedImages || []).map((im) => (im.name || '').toLowerCase().replace(/[^a-z0-9_-]/g, '')))
@@ -837,6 +869,9 @@ function PromptHighlightField({ textareaRef, value, placeholder, minHeight, onCh
   }
   if (cursor < (value || '').length) segments.push({ k: key++, kind: 'text', text: value.slice(cursor) })
 
+  // Lock down EVERY typography knob so the backdrop and textarea produce
+  // pixel-identical glyph layout. If any of these diverge between the two
+  // layers, the caret/selection drifts away from the visible text.
   const sharedTextStyle = {
     minHeight,
     width: '100%',
@@ -844,12 +879,30 @@ function PromptHighlightField({ textareaRef, value, placeholder, minHeight, onCh
     padding: '7px 9px',
     border: '1px solid var(--border)',
     borderRadius: 6,
-    fontFamily: 'inherit',
+    fontFamily: 'var(--font-body, system-ui, -apple-system, sans-serif)',
     fontSize: 12,
+    fontWeight: 400,
+    fontStyle: 'normal',
+    fontStretch: 'normal',
+    fontVariantNumeric: 'normal',
+    fontFeatureSettings: 'normal',
+    fontKerning: 'auto',
+    letterSpacing: 'normal',
+    wordSpacing: 'normal',
+    textIndent: 0,
+    textTransform: 'none',
     lineHeight: 1.45,
+    tabSize: 4,
     whiteSpace: 'pre-wrap',
     wordWrap: 'break-word',
-    overflow: 'auto',
+    overflowWrap: 'break-word',
+    // Reserve scrollbar gutter on both layers — without this the textarea
+    // grows a scrollbar when content overflows, narrows its inner width,
+    // and rewraps differently from the backdrop. Stable gutter pre-pads
+    // both layers so wrap points stay identical.
+    scrollbarGutter: 'stable',
+    overflowY: 'auto',
+    overflowX: 'hidden',
   }
   const colorFor = (kind) => kind === 'brand' ? '#f472b6' : kind === 'image' ? '#c4b5fd' : 'inherit'
   const bgFor = (kind) => kind === 'brand' ? 'rgba(236,72,153,0.18)' : kind === 'image' ? 'rgba(168,85,247,0.18)' : 'transparent'
@@ -905,6 +958,9 @@ function PromptHighlightField({ textareaRef, value, placeholder, minHeight, onCh
         value={value}
         onChange={onChange}
         onBlur={onBlur}
+        onSelect={onSelect}
+        onKeyUp={onSelect}
+        onClick={onSelect}
         onScroll={(e) => { if (backdropRef.current) backdropRef.current.scrollTop = e.target.scrollTop }}
       />
     </div>
