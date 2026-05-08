@@ -1,8 +1,113 @@
 import { useEffect, useState } from 'react'
-import { CreditCard, ExternalLink, Sparkles, Crown, Receipt } from 'lucide-react'
+import { CreditCard, ExternalLink, Sparkles, Crown, Receipt, ArrowUpRight, ArrowDownRight, Check } from 'lucide-react'
 import { supabase } from '../lib/supabase.js'
 import { useCredits, fmtCount, POOL_META } from '../context/CreditsContext.jsx'
 import CreditsPanel from '../components/CreditsPanel.jsx'
+import { confirmDialog, toast } from '../components/Toast.jsx'
+
+// Tiers shown in the "Change plan" grid. We deliberately skip
+// 'founding' here — its lifetime lock means we don't expose a swap
+// button (the change-plan endpoint refuses to touch a founding row,
+// and the user can still cancel from the Stripe portal).
+const PLAN_ORDER = ['solo_starter', 'solo_pro', 'solo_studio']
+function tierIndex(t) { return PLAN_ORDER.indexOf(t) }
+
+function ChangePlanCard({ tierKey, tierDef, currentTier, currentCycle, cycle, busy, onPick }) {
+  const isCurrent = tierKey === currentTier && cycle === currentCycle
+  const direction = (() => {
+    if (isCurrent) return 'current'
+    if (currentTier && PLAN_ORDER.includes(currentTier)) {
+      const a = tierIndex(tierKey), b = tierIndex(currentTier)
+      if (a > b) return 'upgrade'
+      if (a < b) return 'downgrade'
+      // Same tier, different cycle — treat annual as an "upgrade" (cheaper effective rate).
+      return cycle === 'annual' ? 'upgrade' : 'downgrade'
+    }
+    return 'upgrade'
+  })()
+  const price = cycle === 'annual'
+    ? (tierDef.annual_usd ? Math.round(tierDef.annual_usd / 12) : null)
+    : tierDef.monthly_usd
+  const totalLine = cycle === 'annual' && tierDef.annual_usd
+    ? `$${tierDef.annual_usd}/year — billed annually`
+    : 'Billed monthly'
+
+  const cardStyle = {
+    position: 'relative',
+    background: isCurrent ? 'linear-gradient(135deg, rgba(46,204,113,0.10), rgba(46,204,113,0.02))' : 'var(--surface)',
+    border: `1px solid ${isCurrent ? 'rgba(46,204,113,0.40)' : 'var(--border)'}`,
+    borderRadius: 14,
+    padding: 18,
+    display: 'flex', flexDirection: 'column', gap: 10,
+  }
+
+  return (
+    <div style={cardStyle}>
+      {isCurrent && (
+        <span style={{ position: 'absolute', top: 10, right: 12, fontSize: 10, fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#2ecc71' }}>
+          Current
+        </span>
+      )}
+      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16 }}>{tierDef.name}</div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+        <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 28, letterSpacing: '-0.02em' }}>
+          ${price ?? '—'}
+        </span>
+        <span style={{ color: 'var(--muted)', fontSize: 12 }}>/ mo</span>
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>{totalLine}</div>
+      <ul style={{ margin: '4px 0 0', padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 5 }}>
+        {tierDef.profile_limit && (
+          <li style={featureRow}><Check size={11} strokeWidth={3} style={checkIcon} /> {tierDef.profile_limit} brand profile{tierDef.profile_limit > 1 ? 's' : ''}</li>
+        )}
+        {tierDef.credits?.ai_tokens != null && (
+          <li style={featureRow}><Check size={11} strokeWidth={3} style={checkIcon} /> {fmtCount(tierDef.credits.ai_tokens)} AI tokens / mo</li>
+        )}
+        {tierDef.credits?.video_units != null && (
+          <li style={featureRow}><Check size={11} strokeWidth={3} style={checkIcon} /> {fmtCount(tierDef.credits.video_units)} avatar video units / mo</li>
+        )}
+      </ul>
+      <button
+        onClick={() => !isCurrent && onPick(tierKey, cycle, direction)}
+        disabled={isCurrent || busy}
+        style={{
+          marginTop: 'auto',
+          padding: '9px 12px', borderRadius: 8,
+          border: 'none', cursor: isCurrent ? 'default' : 'pointer',
+          fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 12.5,
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+          background: isCurrent
+            ? 'rgba(46,204,113,0.18)'
+            : direction === 'upgrade'
+              ? 'linear-gradient(135deg, var(--red), var(--red-dark))'
+              : 'var(--surface-2)',
+          color: isCurrent ? '#2ecc71' : direction === 'upgrade' ? '#fff' : 'var(--text)',
+          border: direction === 'downgrade' && !isCurrent ? '1px solid var(--border)' : 'none',
+          opacity: busy ? 0.6 : 1,
+        }}
+      >
+        {isCurrent ? <>Current plan</> :
+         direction === 'upgrade' ? <><ArrowUpRight size={13} /> Upgrade</> :
+         <><ArrowDownRight size={13} /> Downgrade</>}
+      </button>
+    </div>
+  )
+}
+
+const featureRow = { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--text-soft)' }
+const checkIcon = { color: '#2ecc71', flexShrink: 0 }
+
+const cycleToggleWrap = {
+  display: 'inline-flex', padding: 3, borderRadius: 999,
+  background: 'var(--surface-2)', border: '1px solid var(--border)', gap: 2,
+}
+const cycleBtn = (active) => ({
+  padding: '5px 12px', borderRadius: 999, fontSize: 11.5,
+  background: active ? 'var(--surface)' : 'transparent',
+  color: active ? 'var(--text)' : 'var(--muted)',
+  border: 'none', cursor: 'pointer',
+  fontFamily: 'var(--font-display)', fontWeight: 700,
+})
 
 const sectionTitle = {
   fontFamily: 'var(--font-display)',
@@ -109,6 +214,50 @@ export default function Billing() {
     }
   }
 
+  // Change-plan flow. Confirms with the user, hits /api/stripe-change-plan,
+  // then refetches /api/billing so the "Current plan" tile reflects the
+  // swap. Stripe handles proration on its end (always_invoice mode in the
+  // server endpoint), so the user pays the diff or gets a credit
+  // automatically.
+  const [planCycle, setPlanCycle] = useState('monthly')
+  const [planBusy, setPlanBusy] = useState(false)
+
+  const submitPlanChange = async (tier, cycle, direction) => {
+    const tierName = data?.catalog?.[tier]?.name || tier
+    const verb = direction === 'upgrade' ? 'Upgrade' : 'Downgrade'
+    const message = direction === 'upgrade'
+      ? `You'll be charged the prorated difference now and start getting the ${tierName} credit allotment immediately. Continue?`
+      : `Your subscription drops to ${tierName} at the next billing cycle. You'll get a credit for unused time on your current plan. Continue?`
+    const ok = await confirmDialog({
+      title: `${verb} to ${tierName}?`,
+      message,
+      confirmText: verb,
+    })
+    if (!ok) return
+    setPlanBusy(true); setError(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const r = await fetch('/api/stripe-change-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token}` },
+        body: JSON.stringify({ tier, billing_cycle: cycle }),
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body.error || `Plan change failed (${r.status})`)
+      // Refetch the billing snapshot so the "Current plan" pill flips.
+      const re = await fetch('/api/billing', { headers: { Authorization: `Bearer ${session?.access_token}` } })
+      const reBody = await re.json()
+      if (re.ok) setData(reBody)
+      toast({ message: `Plan updated to ${tierName}.`, kind: 'success' })
+      refreshCredits()
+    } catch (e) {
+      setError(e.message)
+      toast({ message: e.message, kind: 'error' })
+    } finally {
+      setPlanBusy(false)
+    }
+  }
+
   if (loading) {
     return <div className="fade-up"><div className="card-flat" style={{ padding: 40, textAlign: 'center' }}><div className="spinner" style={{ margin: '0 auto' }} /></div></div>
   }
@@ -168,6 +317,44 @@ export default function Billing() {
           </div>
         )}
       </div>
+
+      {/* Change plan — only show when there's an active non-founding sub.
+          Founding members keep their lifetime lock and use the portal
+          for any cancel/swap; new users land on /pricing first. */}
+      {sub && sub.tier !== 'founding' && (
+        <div className="card-flat" style={{ marginBottom: 18 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+            <div style={{ ...sectionTitle, marginBottom: 0, flex: 1 }}>Change plan</div>
+            <div style={cycleToggleWrap}>
+              <button onClick={() => setPlanCycle('monthly')} style={cycleBtn(planCycle === 'monthly')}>Monthly</button>
+              <button onClick={() => setPlanCycle('annual')}  style={cycleBtn(planCycle === 'annual')}>
+                Annual <span style={{ fontSize: 10, opacity: 0.85 }}>save 20%</span>
+              </button>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+            {PLAN_ORDER.map((k) => {
+              const def = catalog[k]
+              if (!def) return null
+              return (
+                <ChangePlanCard
+                  key={k}
+                  tierKey={k}
+                  tierDef={def}
+                  currentTier={sub.tier}
+                  currentCycle={sub.billing_cycle || 'monthly'}
+                  cycle={planCycle}
+                  busy={planBusy}
+                  onPick={submitPlanChange}
+                />
+              )
+            })}
+          </div>
+          <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--muted)', lineHeight: 1.5 }}>
+            Upgrades charge the prorated difference today. Downgrades take effect at your next billing cycle and credit unused time. Need to cancel? Use the Stripe portal below.
+          </div>
+        </div>
+      )}
 
       <div className="card-flat" style={{ marginBottom: 18 }}>
         <div style={sectionTitle}>Credit balances</div>

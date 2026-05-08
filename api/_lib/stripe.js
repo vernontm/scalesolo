@@ -84,5 +84,6 @@ export async function verifyWebhookSignature(rawBody, signatureHeader, secret) {
 export const createCheckoutSession    = (body, opts) => call('POST', '/checkout/sessions',    body, opts)
 export const createBillingPortalSession = (body)     => call('POST', '/billing_portal/sessions', body)
 export const retrieveSubscription     = (id)         => call('GET',  `/subscriptions/${id}`)
+export const updateSubscription       = (id, body, opts) => call('POST', `/subscriptions/${id}`, body, opts)
 export const retrieveCustomer         = (id)         => call('GET',  `/customers/${id}`)
 export const createCustomer           = (body, opts) => call('POST', '/customers',             body, opts)
