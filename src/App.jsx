@@ -19,6 +19,7 @@ import Avatars from './pages/Avatars.jsx'
 import LandingPages from './pages/LandingPages.jsx'
 import LandingPublic from './pages/LandingPublic.jsx'
 import Spaces from './pages/Spaces.jsx'
+import Library from './pages/Library.jsx'
 import FormPublic from './pages/FormPublic.jsx'
 import GlobalAgent from './components/GlobalAgent.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
@@ -120,6 +121,7 @@ function AppShell() {
             <Route path="/schedule"  element={<Content />} />
             <Route path="/content"   element={<Navigate to="/schedule" replace />} />
             <Route path="/avatars"   element={<Avatars />} />
+            <Route path="/library"   element={<Library />} />
             <Route path="/profiles"  element={<Profiles />} />
             <Route path="/billing"   element={<Billing />} />
             <Route path="/settings"  element={<Settings />} />
