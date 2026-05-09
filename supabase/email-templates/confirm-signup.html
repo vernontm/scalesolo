@@ -1,0 +1,52 @@
+{# ScaleSolo · Confirm signup
+   Paste this into Supabase → Authentication → Emails → Templates → "Confirm signup".
+   Subject suggestion: Confirm your ScaleSolo account
+   Variables Supabase substitutes:
+     {{ .ConfirmationURL }}   full link the user clicks to verify
+     {{ .Email }}             address that's being confirmed
+     {{ .SiteURL }}           configured Site URL (https://scalesolo.ai)
+#}
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ScaleSolo</title>
+</head>
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
+<div style="display:none;font-size:1px;color:#fefefe;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">Confirm your ScaleSolo account to start launching faceless brands on autopilot.</div>
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f4f4f5;padding:36px 16px;">
+  <tr><td align="center">
+    <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,0.04);">
+      <tr><td style="padding:30px 36px 22px;border-bottom:1px solid #f0f0f3;">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+          <tr>
+            <td style="vertical-align:middle;padding-right:12px;">
+              <img src="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2236%22%20height%3D%2236%22%20viewBox%3D%220%200%2036%2036%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22g%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23ef4444%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23b91c1c%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20x%3D%220%22%20y%3D%220%22%20width%3D%2236%22%20height%3D%2236%22%20rx%3D%229%22%20fill%3D%22url(%23g)%22%2F%3E%3Cpolygon%20points%3D%2220%208%2012%2019%2018%2019%2016%2028%2024%2017%2018%2017%2020%208%22%20fill%3D%22%23ffffff%22%2F%3E%3C%2Fsvg%3E" width="36" height="36" alt="ScaleSolo" style="display:block;border-radius:9px;">
+            </td>
+            <td style="vertical-align:middle;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-weight:800;font-size:18px;color:#0c0c0d;letter-spacing:-0.01em;">
+              ScaleSolo
+            </td>
+          </tr>
+        </table>
+      </td></tr>
+      <tr><td style="padding:30px 36px 8px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1c1c1e;font-size:15px;line-height:1.6;">
+        <h1 style="margin:0 0 14px;font-weight:800;font-size:22px;color:#0c0c0d;letter-spacing:-0.01em;">Confirm your account.</h1>
+        <p style="margin:0 0 12px;">Welcome to ScaleSolo. Click the button below to confirm <strong>{{ .Email }}</strong> and finish setting up your workspace.</p>
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:18px 0 8px;">
+          <tr><td style="border-radius:10px;background:linear-gradient(135deg,#ef4444 0%,#b91c1c 100%);">
+            <a href="{{ .ConfirmationURL }}" style="display:inline-block;padding:13px 26px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-weight:700;font-size:14px;color:#ffffff;text-decoration:none;border-radius:10px;">Confirm my account</a>
+          </td></tr>
+        </table>
+        <p style="margin:18px 0 0;color:#74747a;font-size:13px;">Or paste this link into your browser:<br><a href="{{ .ConfirmationURL }}" style="color:#ef4444;text-decoration:none;word-break:break-all;">{{ .ConfirmationURL }}</a></p>
+        <p style="margin:18px 0 0;color:#74747a;font-size:13px;">Didn't sign up? You can safely ignore this email.</p>
+      </td></tr>
+      <tr><td style="padding:18px 36px 30px;border-top:1px solid #f0f0f3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#74747a;font-size:12px;line-height:1.5;">
+        Questions? Reply to this email and we'll get back to you.<br>
+        <a href="https://scalesolo.ai" style="color:#ef4444;text-decoration:none;">scalesolo.ai</a>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>

@@ -2,8 +2,28 @@
 // Node Functions on Vercel auto-parse req.body, breaking signature verification.
 
 import { TIERS, tierForPriceId, billingCycleForPriceId, profileLimitForTier } from './_lib/billing.js'
+import { sendEmailSafe } from './_lib/email.js'
+import {
+  purchaseEmail,
+  upgradeEmail,
+  downgradeEmail,
+  cancelEmail,
+  paymentFailedEmail,
+} from './_lib/email-templates.js'
 
 export const config = { runtime: 'edge' }
+
+// Tier ordering for upgrade/downgrade detection. Higher = more access.
+// `founding` sits at solo_pro level since it grants pro-equivalent
+// limits at a discount; treat lateral moves as not-an-upgrade.
+const TIER_RANK = {
+  solo_starter: 1,
+  founding:     2,
+  solo_pro:     2,
+  solo_studio:  3,
+}
+const tierRank = (t) => TIER_RANK[t] || 0
+const tierLabel = (t) => TIERS[t]?.name || t || 'plan'
 
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
@@ -81,12 +101,45 @@ async function findCustomerRowByStripeId(stripeCustomerId) {
   return rows?.[0] || null
 }
 
-async function upsertSubscription(sub) {
+// Resolve the email we should notify. Prefer the canonical email on
+// auth.users; fall back to billing_customers.email (the value Stripe
+// gave us at checkout) which is normally the same anyway.
+async function emailForCustomer(customerRow) {
+  if (!customerRow) return null
+  if (customerRow.user_id) {
+    try {
+      const auth = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${customerRow.user_id}`, {
+        headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` },
+      })
+      if (auth.ok) {
+        const u = await auth.json()
+        if (u?.email) return u.email
+      }
+    } catch {}
+  }
+  return customerRow.email || null
+}
+
+// Look up the prior subscription row for this Stripe subscription so we
+// can diff tier / cancel-state and choose the right email.
+async function priorSub(stripeSubId) {
+  const rows = await supa(
+    `billing_subscriptions?stripe_subscription_id=eq.${encodeURIComponent(stripeSubId)}&select=tier,billing_cycle,status,cancel_at_period_end&limit=1`
+  )
+  return rows?.[0] || null
+}
+
+async function upsertSubscription(sub, eventType) {
   const customerRow = await findCustomerRowByStripeId(sub.customer)
   if (!customerRow) return
   const priceId = sub.items?.data?.[0]?.price?.id
   const tier = tierForPriceId(priceId) || sub.metadata?.tier || 'solo_starter'
   const cycle = billingCycleForPriceId(priceId)
+  // Snapshot the prior state BEFORE writing so we can diff and pick
+  // the right transactional email below.
+  const before = await priorSub(sub.id)
+  const periodEnd = sub.current_period_end ? new Date(sub.current_period_end * 1000).toISOString() : null
+
   const row = {
     customer_id: customerRow.id,
     stripe_subscription_id: sub.id,
@@ -96,7 +149,7 @@ async function upsertSubscription(sub) {
     status: sub.status,
     trial_end: sub.trial_end ? new Date(sub.trial_end * 1000).toISOString() : null,
     current_period_start: sub.current_period_start ? new Date(sub.current_period_start * 1000).toISOString() : null,
-    current_period_end:   sub.current_period_end   ? new Date(sub.current_period_end   * 1000).toISOString() : null,
+    current_period_end:   periodEnd,
     cancel_at_period_end: !!sub.cancel_at_period_end,
     canceled_at: sub.canceled_at ? new Date(sub.canceled_at * 1000).toISOString() : null,
     profile_limit: profileLimitForTier(tier),
@@ -107,6 +160,16 @@ async function upsertSubscription(sub) {
   } else {
     await supa('billing_subscriptions', { method: 'POST', body: row })
   }
+
+  // Pick the right email to send. Order matters — only one email per
+  // event. Skip silently if status is incomplete/past_due transient.
+  await sendLifecycleEmail({
+    eventType,
+    customerRow,
+    before,
+    after: { tier, billing_cycle: cycle, status: sub.status, cancel_at_period_end: !!sub.cancel_at_period_end, period_end: periodEnd },
+    priceAmount: sub.items?.data?.[0]?.price?.unit_amount,
+  })
 
   // M2: keep monthly_grant amounts in sync with the current tier (for the cron).
   const credits = TIERS[tier]?.credits || { ai_tokens: 0, video_units: 0, voice_minutes: 0 }
@@ -167,6 +230,104 @@ async function onSubscriptionDeleted(sub) {
     body: { status: 'canceled', canceled_at: new Date().toISOString() },
     prefer: 'return=minimal',
   })
+  // Final cancellation notice. customer.subscription.deleted fires when
+  // the subscription is actually terminated (either at period end or
+  // immediately if Stripe was told to cancel-now). The "scheduled to
+  // cancel" notice already went out on the subscription.updated event
+  // when cancel_at_period_end flipped to true.
+  try {
+    const customerRow = await findCustomerRowByStripeId(sub.customer)
+    const to = await emailForCustomer(customerRow)
+    if (to) {
+      const tier = tierForPriceId(sub.items?.data?.[0]?.price?.id) || sub.metadata?.tier
+      const periodEndIso = sub.current_period_end ? new Date(sub.current_period_end * 1000).toISOString() : null
+      const immediate = !sub.current_period_end || (sub.canceled_at && (Math.abs(sub.canceled_at - sub.current_period_end) < 60))
+      const { subject, html, text } = cancelEmail({ tierName: tierLabel(tier), periodEndIso, immediate })
+      await sendEmailSafe({ to, subject, html, text })
+    }
+  } catch {}
+}
+
+// Decide which lifecycle email (if any) to send based on the diff
+// between the prior subscription row and the new state. Returns
+// nothing — fire-and-forget. Errors are swallowed by sendEmailSafe.
+async function sendLifecycleEmail({ eventType, customerRow, before, after, priceAmount }) {
+  // Don't email on transient incomplete states.
+  if (after.status === 'incomplete' || after.status === 'incomplete_expired') return
+
+  const to = await emailForCustomer(customerRow)
+  if (!to) return
+
+  // First-time activation: no prior row OR prior status was
+  // 'incomplete'/null and now we're active or trialing. Either way the
+  // user just bought.
+  const wasFirstActive = !before || (before.status !== 'active' && before.status !== 'trialing')
+  if (wasFirstActive && (after.status === 'active' || after.status === 'trialing')) {
+    const { subject, html, text } = purchaseEmail({
+      tierName: tierLabel(after.tier),
+      amountCents: priceAmount,
+      billingCycle: after.billing_cycle,
+      email: to,
+    })
+    await sendEmailSafe({ to, subject, html, text })
+    return
+  }
+
+  // Cancel-at-period-end just toggled true → scheduled cancellation.
+  if (before && !before.cancel_at_period_end && after.cancel_at_period_end) {
+    const { subject, html, text } = cancelEmail({
+      tierName: tierLabel(after.tier),
+      periodEndIso: after.period_end,
+      immediate: false,
+    })
+    await sendEmailSafe({ to, subject, html, text })
+    return
+  }
+
+  // Tier moved up / down (price change). Don't fire on lateral changes
+  // (e.g. solo_pro monthly → solo_pro annual is a billing-cycle swap,
+  // not an upgrade).
+  if (before && before.tier !== after.tier) {
+    const oldRank = tierRank(before.tier)
+    const newRank = tierRank(after.tier)
+    if (newRank > oldRank) {
+      const { subject, html, text } = upgradeEmail({
+        tierName: tierLabel(after.tier),
+        previousTierName: tierLabel(before.tier),
+        amountCents: priceAmount,
+        billingCycle: after.billing_cycle,
+      })
+      await sendEmailSafe({ to, subject, html, text })
+    } else if (newRank < oldRank) {
+      const { subject, html, text } = downgradeEmail({
+        tierName: tierLabel(after.tier),
+        previousTierName: tierLabel(before.tier),
+        periodEndIso: after.period_end,
+      })
+      await sendEmailSafe({ to, subject, html, text })
+    }
+    return
+  }
+  // Otherwise: no email (billing-cycle swap, status sync, period
+  // rollover via invoice.payment_succeeded, etc. all silent).
+}
+
+// Payment failure path — separate from the upsert flow because the
+// invoice.payment_failed event carries the failure detail. The
+// subscription row gets updated by the existing routeEvent path; this
+// handler only sends the user-facing notice.
+async function onPaymentFailed(invoice) {
+  try {
+    const customerRow = await findCustomerRowByStripeId(invoice.customer)
+    const to = await emailForCustomer(customerRow)
+    if (!to) return
+    const tier = (await priorSub(invoice.subscription))?.tier
+    const { subject, html, text } = paymentFailedEmail({
+      tierName: tierLabel(tier),
+      amountCents: invoice.amount_due,
+    })
+    await sendEmailSafe({ to, subject, html, text })
+  } catch {}
 }
 
 async function routeEvent(event) {
@@ -178,15 +339,22 @@ async function routeEvent(event) {
     case 'customer.subscription.created':
     case 'customer.subscription.updated':
     case 'customer.subscription.trial_will_end':
-      return upsertSubscription(event.data.object)
+      return upsertSubscription(event.data.object, event.type)
     case 'customer.subscription.deleted':
       return onSubscriptionDeleted(event.data.object)
     case 'invoice.payment_succeeded':
     case 'invoice.payment_failed': {
-      const subId = event.data.object.subscription
+      const invoice = event.data.object
+      const subId = invoice.subscription
       if (subId) {
         const sub = await stripeGet(`/subscriptions/${subId}`)
-        return upsertSubscription(sub)
+        await upsertSubscription(sub, event.type)
+      }
+      // Also send a payment-failure notice on a failed invoice — gives
+      // the user a chance to update their card before Stripe's retries
+      // run out and the subscription cancels.
+      if (event.type === 'invoice.payment_failed') {
+        await onPaymentFailed(invoice)
       }
       return
     }
