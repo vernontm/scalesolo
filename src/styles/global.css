@@ -462,6 +462,37 @@ a:focus-visible {
 }
 .feat-body { font-size: 13.5px; color: var(--text-soft); line-height: 1.5; }
 
+/* ── Landing nav hamburger ───────────────────────────────────────────── */
+.nav-burger {
+  display: none;
+  width: 40px; height: 40px;
+  align-items: center; justify-content: center;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+  margin-left: auto;
+  transition: background .15s var(--ease), border-color .15s var(--ease);
+}
+.nav-burger:hover { background: rgba(239, 68, 68, 0.10); border-color: rgba(239, 68, 68, 0.45); }
+.nav-mobile-panel {
+  display: flex; flex-direction: column; gap: 14px;
+  padding: 16px 24px 22px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  animation: navPanelIn 0.18s var(--ease);
+}
+.nav-mobile-panel a { font-size: 15px; padding: 6px 0; }
+.nav-mobile-ctas { display: flex; flex-direction: column; gap: 8px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.06); }
+.nav-mobile-ctas .btn-ghost,
+.nav-mobile-ctas .btn-primary { width: 100%; justify-content: center; padding: 12px 16px; }
+@keyframes navPanelIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 700px) {
+  .nav-burger { display: inline-flex; }
+}
+
 /* ── Founding banner: center contents on mobile ──────────────────────── */
 @media (max-width: 700px) {
   .founding-banner {

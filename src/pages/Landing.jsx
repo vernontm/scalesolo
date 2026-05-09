@@ -4,7 +4,7 @@ import {
   Zap, ArrowRight, Check, Sparkles, Boxes, UserCircle2, Calendar,
   Layers, Wand2, RefreshCw, ShieldCheck, Quote, Play,
   Instagram, Youtube, Twitter, Linkedin, Music2, Captions as CaptionsIcon,
-  Mic2, ShoppingBag, GraduationCap, Newspaper,
+  Mic2, ShoppingBag, GraduationCap, Newspaper, Menu, X,
 } from 'lucide-react'
 import PricingPlans from '../components/PricingPlans.jsx'
 import WorkflowDemo from '../components/WorkflowDemo.jsx'
@@ -87,6 +87,8 @@ export default function Landing() {
   // (b) hand the persona down to <WorkflowDemo /> which dims the
   // non-relevant nodes and starts an auto-tour of just that path.
   const [activePersona, setActivePersona] = useState(null)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const closeMenu = () => setMenuOpen(false)
   const canvasRef = useRef(null)
   const handleSelectPersona = (p) => {
     // Toggle off if the same card is clicked twice.
@@ -136,11 +138,33 @@ export default function Landing() {
             <a href="#pricing" style={navLink}>Pricing</a>
             <a href="/blog" style={navLink}>Blog</a>
           </nav>
-          <div style={navCta}>
+          <div style={navCta} className="hide-on-narrow">
             <button onClick={goSignup} className="btn-ghost" style={{ fontSize: 13 }}>Sign in</button>
             <button onClick={goSignup} className="btn-primary">Start free <ArrowRight size={13} /></button>
           </div>
+          <button
+            type="button"
+            className="nav-burger mobile-only"
+            aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((v) => !v)}
+          >
+            {menuOpen ? <X size={20} /> : <Menu size={20} />}
+          </button>
         </div>
+        {menuOpen && (
+          <div className="nav-mobile-panel">
+            <a href="#features"  style={navLink} onClick={closeMenu}>Features</a>
+            <a href="#use-cases" style={navLink} onClick={closeMenu}>Use cases</a>
+            <a href="#faq"       style={navLink} onClick={closeMenu}>FAQ</a>
+            <a href="#pricing"   style={navLink} onClick={closeMenu}>Pricing</a>
+            <a href="/blog"      style={navLink} onClick={closeMenu}>Blog</a>
+            <div className="nav-mobile-ctas">
+              <button onClick={() => { closeMenu(); goSignup() }} className="btn-ghost" style={{ fontSize: 13 }}>Sign in</button>
+              <button onClick={() => { closeMenu(); goSignup() }} className="btn-primary">Start free <ArrowRight size={13} /></button>
+            </div>
+          </div>
+        )}
       </header>
 
       {/* ── HERO ────────────────────────────────────────────────────── */}
