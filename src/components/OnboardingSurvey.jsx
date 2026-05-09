@@ -19,7 +19,7 @@ import {
   Briefcase, Sparkles, ShoppingBag, Megaphone, Cpu, Wrench, MoreHorizontal,
   Clock, VideoOff, DollarSign, MessageCircle, TrendingUp, Layers,
   Mail, UserCircle2, Mic, Image as ImageIcon, Bot, Check,
-  ChevronLeft, ChevronRight, Loader2, Zap,
+  ChevronLeft, ChevronRight, Loader2, Zap, X,
 } from 'lucide-react'
 
 const STEPS = [
@@ -121,7 +121,11 @@ const STEPS = [
   },
 ]
 
-export default function OnboardingSurvey({ token, onComplete }) {
+// onSkip: when provided, renders a close (×) button in the top corner.
+// We pass it from Dashboard when the user opened the survey via
+// /dashboard?survey=true (i.e. they're not blocked by first-run logic
+// and might just want to peek). When null, the survey is blocking.
+export default function OnboardingSurvey({ token, onComplete, onSkip = null }) {
   const [stepIdx, setStepIdx] = useState(0)
   const [answers, setAnswers] = useState({ features: [], currentTools: [] })
   const [busy, setBusy] = useState(false)
@@ -208,6 +212,17 @@ export default function OnboardingSurvey({ token, onComplete }) {
               Step {stepIdx + 1} of {STEPS.length}
             </div>
           </div>
+          {onSkip && (
+            <button
+              type="button" onClick={onSkip}
+              aria-label="Close survey"
+              title="Close (you can re-open from /dashboard?survey=true anytime)"
+              style={{
+                background: 'transparent', border: 'none', color: 'var(--muted)',
+                cursor: 'pointer', padding: 6, borderRadius: 6,
+              }}
+            ><X size={16} /></button>
+          )}
         </div>
 
         {/* Title */}

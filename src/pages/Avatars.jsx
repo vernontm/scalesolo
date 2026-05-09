@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Plus, Upload, X, UserCircle2, Sparkles, Video, AlertCircle, CheckCircle2,
   RefreshCw, Trash2, Wand2, Image as ImageIcon, ArrowLeft, Play, ChevronRight,
+  Mic, Library, Volume2, Loader2, Check, Search,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
@@ -479,6 +480,7 @@ function LookFolder({ look, index, onAddImages, onDeleteImage, onRename, busy })
 
 function AvatarDetail({ avatar, models, onBack, onChange }) {
   const { session } = useAuth()
+  const { selectedProfileId } = useProfile()
   const fileRef = useRef(null)
   const [renderOpen, setRenderOpen] = useState(false)
   const [renders, setRenders] = useState([])
@@ -704,17 +706,12 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
           <div style={{ marginBottom: 14, display: 'none' }}>
           </div>
 
-          <div style={{ marginBottom: 14 }}>
-            <label className="label">Default voice ID</label>
-            <input
-              className="input"
-              defaultValue={avatar.elevenlabs_voice_id || ''}
-              placeholder="ElevenLabs voice ID"
-              onBlur={(e) => {
-                if (e.target.value !== (avatar.elevenlabs_voice_id || '')) updateAvatar({ elevenlabs_voice_id: e.target.value })
-              }}
-            />
-          </div>
+          <AvatarVoiceSection
+            avatar={avatar}
+            session={session}
+            profileId={selectedProfileId}
+            onChange={(voiceId) => updateAvatar({ elevenlabs_voice_id: voiceId || null })}
+          />
 
           <button className="btn-ghost" style={{ color: 'var(--red)', width: '100%', justifyContent: 'center' }} onClick={deleteAvatar}>
             <Trash2 size={13} /> Delete avatar
@@ -723,6 +720,460 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
       </div>
 
       {renderOpen && <RenderComposer avatar={avatar} models={models} onClose={() => setRenderOpen(false)} onSubmitted={refreshRenders} />}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Voice section — drops into the AvatarDetail right-rail. Surfaces the
+// current voice + a "Choose voice" button that opens a modal with three
+// tabs (Library / My voices / Clone new) and a paste-an-id fallback.
+// All three converge on PATCHing avatars.elevenlabs_voice_id via the
+// `onChange` callback the parent passes in.
+function AvatarVoiceSection({ avatar, session, profileId, onChange }) {
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [previewing, setPreviewing] = useState(false)
+  const audioRef = useRef(null)
+
+  const previewCurrent = async () => {
+    if (!avatar.elevenlabs_voice_id || !session?.access_token) return
+    setPreviewing(true)
+    try {
+      const r = await fetch('/api/voices/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ voice_id: avatar.elevenlabs_voice_id, profile_id: profileId }),
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body.error || 'Preview failed')
+      const a = audioRef.current || new Audio()
+      audioRef.current = a
+      a.src = body.audio_url
+      a.onended = () => setPreviewing(false)
+      a.onerror = () => setPreviewing(false)
+      await a.play()
+    } catch (e) {
+      toast?.error?.(e.message) || alert(e.message)
+      setPreviewing(false)
+    }
+  }
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
+        <label className="label" style={{ flex: 1, marginBottom: 0 }}>Voice</label>
+        {avatar.elevenlabs_voice_id && (
+          <button
+            type="button" onClick={previewCurrent} disabled={previewing}
+            title="Preview current voice"
+            style={{
+              background: 'transparent', border: 'none', color: 'var(--muted)',
+              cursor: previewing ? 'wait' : 'pointer', padding: 4, borderRadius: 4,
+            }}
+          >
+            {previewing ? <Loader2 size={12} className="spin" /> : <Volume2 size={12} />}
+          </button>
+        )}
+      </div>
+      <div style={{
+        padding: '10px 12px', background: 'var(--surface-2)',
+        border: '1px solid var(--border)', borderRadius: 8,
+        fontSize: 12, color: 'var(--text)',
+      }}>
+        {avatar.elevenlabs_voice_id ? (
+          <>
+            <div style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-soft)' }}>
+              {avatar.elevenlabs_voice_id}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
+              Used as the default voice for renders.
+            </div>
+          </>
+        ) : (
+          <div style={{ color: 'var(--muted)' }}>No voice assigned. HeyGen's default TTS is used.</div>
+        )}
+      </div>
+      <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+        <button
+          type="button" className="btn-secondary"
+          onClick={() => setPickerOpen(true)}
+          style={{ flex: 1, justifyContent: 'center', fontSize: 12, padding: '7px 10px' }}
+        >
+          <Library size={12} /> Choose voice
+        </button>
+        {avatar.elevenlabs_voice_id && (
+          <button
+            type="button" className="btn-ghost"
+            onClick={() => onChange(null)}
+            style={{ fontSize: 12, padding: '7px 10px' }}
+            title="Remove this voice"
+          >
+            <X size={12} />
+          </button>
+        )}
+      </div>
+
+      {pickerOpen && (
+        <VoicePickerModal
+          session={session}
+          profileId={profileId}
+          currentVoiceId={avatar.elevenlabs_voice_id}
+          onPick={(voiceId) => { onChange(voiceId); setPickerOpen(false) }}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+// Modal: Library / My voices / Clone new / Paste ID. Lazy-loads the
+// /api/voices/library list on mount; the clone tab uploads a sample to
+// landing-media first then POSTs the public URL to /api/voices/create.
+function VoicePickerModal({ session, profileId, currentVoiceId, onPick, onClose }) {
+  const [tab, setTab] = useState('library')   // 'library' | 'mine' | 'clone' | 'paste'
+  const [shared, setShared] = useState(null)   // null = loading
+  const [cloned, setCloned] = useState(null)
+  const [error, setError] = useState(null)
+  const [q, setQ] = useState('')
+  const [previewingId, setPreviewingId] = useState(null)
+  const audioRef = useRef(null)
+
+  const refresh = async () => {
+    if (!session?.access_token) return
+    setError(null); setShared(null); setCloned(null)
+    try {
+      const r = await fetch('/api/voices/library', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body.error || 'Failed to load voices')
+      setShared(body.shared || [])
+      setCloned(body.cloned || [])
+    } catch (e) {
+      setError(e.message)
+      setShared([]); setCloned([])
+    }
+  }
+  useEffect(() => { refresh() /* eslint-disable-next-line */ }, [session?.access_token])
+
+  const playPreview = async (voice) => {
+    if (previewingId === voice.voice_id) {
+      try { audioRef.current?.pause() } catch {}
+      setPreviewingId(null)
+      return
+    }
+    setPreviewingId(voice.voice_id)
+    try {
+      // Prefer the static preview_url ElevenLabs ships for premade voices —
+      // free + faster than calling our TTS endpoint.
+      let url = voice.preview_url
+      if (!url) {
+        const r = await fetch('/api/voices/preview', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ voice_id: voice.voice_id, profile_id: profileId }),
+        })
+        const body = await r.json()
+        if (!r.ok) throw new Error(body.error || 'Preview failed')
+        url = body.audio_url
+      }
+      const a = audioRef.current || new Audio()
+      audioRef.current = a
+      a.src = url
+      a.onended = () => setPreviewingId(null)
+      a.onerror = () => setPreviewingId(null)
+      await a.play()
+    } catch (e) {
+      toast?.error?.(e.message) || alert(e.message)
+      setPreviewingId(null)
+    }
+  }
+
+  // Stop any preview when the modal closes.
+  useEffect(() => () => { try { audioRef.current?.pause() } catch {} }, [])
+
+  const filterList = (list) => {
+    if (!list) return list
+    const term = q.trim().toLowerCase()
+    if (!term) return list
+    return list.filter((v) => (v.name || '').toLowerCase().includes(term) || (v.description || '').toLowerCase().includes(term))
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 620, padding: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '14px 18px', borderBottom: '1px solid var(--border)' }}>
+          <Library size={16} style={{ color: 'var(--red)' }} />
+          <h3 style={{ flex: 1, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16, margin: 0 }}>Choose a voice</h3>
+          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Tabs */}
+        <div style={{ display: 'flex', gap: 4, padding: '10px 18px 0' }}>
+          {[
+            { id: 'library', label: 'Library', icon: Library },
+            { id: 'mine',    label: `My voices${cloned ? ` (${cloned.length})` : ''}`, icon: UserCircle2 },
+            { id: 'clone',   label: 'Clone new', icon: Mic },
+            { id: 'paste',   label: 'Paste ID',  icon: Search },
+          ].map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              style={{
+                padding: '7px 12px', borderRadius: 8, fontSize: 12.5,
+                fontFamily: 'var(--font-display)', fontWeight: 600,
+                background: tab === t.id ? 'linear-gradient(135deg, var(--red), var(--red-dark))' : 'transparent',
+                color: tab === t.id ? '#fff' : 'var(--text-soft)',
+                border: tab === t.id ? 'none' : '1px solid var(--border)',
+                cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5,
+              }}
+            ><t.icon size={11} /> {t.label}</button>
+          ))}
+        </div>
+
+        {/* Search bar (library + mine tabs only) */}
+        {(tab === 'library' || tab === 'mine') && (
+          <div style={{ padding: '10px 18px 0' }}>
+            <div style={{ position: 'relative' }}>
+              <Search size={12} style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
+              <input
+                value={q} onChange={(e) => setQ(e.target.value)}
+                placeholder="Search voices..."
+                style={{
+                  width: '100%', padding: '7px 10px 7px 28px', fontSize: 12.5,
+                  background: 'var(--surface-2)', border: '1px solid var(--border)',
+                  borderRadius: 8, color: 'var(--text)', outline: 'none',
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        {error && <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, margin: '12px 18px 0' }}>{error}</div>}
+
+        <div style={{ padding: '12px 18px 18px', maxHeight: '60vh', overflowY: 'auto' }}>
+          {tab === 'library' && (
+            shared === null ? <div style={{ padding: 24, textAlign: 'center' }}><Loader2 size={18} className="spin" /></div> :
+            <VoiceList list={filterList(shared)} currentVoiceId={currentVoiceId} previewingId={previewingId} onPreview={playPreview} onPick={onPick} />
+          )}
+          {tab === 'mine' && (
+            cloned === null ? <div style={{ padding: 24, textAlign: 'center' }}><Loader2 size={18} className="spin" /></div> :
+            cloned.length === 0
+              ? <div style={{ padding: 18, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
+                  No cloned voices yet. Use the "Clone new" tab to record one from a sample.
+                </div>
+              : <VoiceList list={filterList(cloned)} currentVoiceId={currentVoiceId} previewingId={previewingId} onPreview={playPreview} onPick={onPick} />
+          )}
+          {tab === 'clone' && (
+            <CloneVoiceForm
+              session={session}
+              profileId={profileId}
+              onCloned={(voiceId) => { onPick(voiceId); refresh() }}
+            />
+          )}
+          {tab === 'paste' && (
+            <PasteVoiceIdForm onPick={onPick} />
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function VoiceList({ list, currentVoiceId, previewingId, onPreview, onPick }) {
+  if (!list?.length) return <div style={{ padding: 18, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>No voices match.</div>
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {list.map((v) => {
+        const active = v.voice_id === currentVoiceId
+        return (
+          <div key={v.voice_id} style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            padding: '10px 12px', borderRadius: 10,
+            background: active ? 'rgba(46,204,113,0.08)' : 'var(--surface-2)',
+            border: `1px solid ${active ? 'rgba(46,204,113,0.4)' : 'var(--border)'}`,
+          }}>
+            <button
+              type="button" onClick={() => onPreview(v)}
+              title={previewingId === v.voice_id ? 'Stop' : 'Preview'}
+              style={{
+                width: 30, height: 30, borderRadius: '50%',
+                background: 'var(--surface)', border: '1px solid var(--border)',
+                color: 'var(--text)', cursor: 'pointer',
+                display: 'grid', placeItems: 'center', flexShrink: 0,
+              }}
+            >
+              {previewingId === v.voice_id ? <Loader2 size={12} className="spin" /> : <Play size={11} fill="currentColor" />}
+            </button>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13.5 }}>{v.name}</div>
+                {active && <span style={{
+                  fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999,
+                  background: 'rgba(46,204,113,0.16)', color: '#2ecc71',
+                }}>Current</span>}
+                {v.labels?.gender && <span style={pillStyle}>{v.labels.gender}</span>}
+                {v.labels?.accent && <span style={pillStyle}>{v.labels.accent}</span>}
+                {v.labels?.use_case && <span style={pillStyle}>{v.labels.use_case}</span>}
+              </div>
+              {v.description && (
+                <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {v.description}
+                </div>
+              )}
+            </div>
+            {!active && (
+              <button
+                type="button" className="btn-secondary"
+                onClick={() => onPick(v.voice_id)}
+                style={{ fontSize: 11.5, padding: '6px 10px' }}
+              >
+                <Check size={11} /> Use
+              </button>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+const pillStyle = {
+  fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 999,
+  background: 'var(--surface)', color: 'var(--text-soft)', border: '1px solid var(--border)',
+  textTransform: 'capitalize',
+}
+
+function CloneVoiceForm({ session, profileId, onCloned }) {
+  const [file, setFile] = useState(null)
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  const inpRef = useRef(null)
+
+  const submit = async (e) => {
+    e.preventDefault()
+    if (!file || !name.trim()) {
+      setError('Pick an audio sample and give it a name.'); return
+    }
+    if (!session?.access_token || !profileId) {
+      setError('Sign in and pick a brand profile first.'); return
+    }
+    setBusy(true); setError(null)
+    try {
+      // Upload the sample to Supabase storage so /api/voices/create
+      // can fetch it server-side. landing-media is already public.
+      const ext = (file.name.split('.').pop() || 'mp3').toLowerCase()
+      const path = `${profileId}/voice-samples/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+      const { error: upErr } = await supabase.storage.from('landing-media').upload(path, file, {
+        contentType: file.type || 'audio/mpeg', upsert: false,
+      })
+      if (upErr) throw new Error(`Upload failed: ${upErr.message}`)
+      const { data } = supabase.storage.from('landing-media').getPublicUrl(path)
+      const sampleUrl = data.publicUrl
+
+      const r = await fetch('/api/voices/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({
+          profile_id: profileId,
+          name: name.trim(),
+          description: description.trim() || undefined,
+          sample_url: sampleUrl,
+        }),
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
+      toast?.success?.(`Voice "${name.trim()}" cloned.`)
+      onCloned?.(body.voice_id)
+    } catch (err) {
+      setError(err.message); setBusy(false)
+    }
+  }
+
+  return (
+    <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ fontSize: 12.5, color: 'var(--text-soft)', lineHeight: 1.5 }}>
+        Upload 30s–2min of clean speech. ElevenLabs Instant Voice Cloning will
+        produce a custom voice that you can use immediately. ≥1 min of audio,
+        single speaker, low background noise gives the best results.
+      </div>
+      <input
+        ref={inpRef}
+        type="file"
+        accept="audio/mpeg,audio/wav,audio/mp4,audio/m4a,audio/x-m4a,audio/ogg,.mp3,.wav,.m4a,.ogg"
+        onChange={(e) => setFile(e.target.files?.[0] || null)}
+        hidden
+      />
+      <button
+        type="button" onClick={() => inpRef.current?.click()}
+        style={{
+          padding: 14, borderRadius: 10,
+          background: 'var(--surface-2)', border: '1px dashed var(--border)',
+          cursor: 'pointer', textAlign: 'center', fontSize: 13, color: 'var(--text-soft)',
+          fontFamily: 'inherit',
+        }}
+      >
+        {file ? (
+          <>
+            <Mic size={16} style={{ color: 'var(--red)', marginBottom: 6 }} />
+            <div style={{ color: 'var(--text)', fontWeight: 600 }}>{file.name}</div>
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{(file.size / (1024 * 1024)).toFixed(1)} MB · click to replace</div>
+          </>
+        ) : (
+          <>
+            <Mic size={16} style={{ color: 'var(--muted)', marginBottom: 6 }} />
+            <div>Drop or pick an audio sample</div>
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>MP3 / WAV / M4A · max 25MB</div>
+          </>
+        )}
+      </button>
+      <div>
+        <label className="label">Voice name</label>
+        <input
+          className="input" value={name} onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Ray (founder voice)"
+        />
+      </div>
+      <div>
+        <label className="label">Description (optional)</label>
+        <input
+          className="input" value={description} onChange={(e) => setDescription(e.target.value)}
+          placeholder="Tone, accent, style notes — helps you remember which voice this is."
+        />
+      </div>
+      {error && <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '8px 12px', borderRadius: 8, fontSize: 12.5 }}>{error}</div>}
+      <button type="submit" className="btn-primary" disabled={busy} style={{ justifyContent: 'center' }}>
+        {busy ? <Loader2 size={13} className="spin" /> : <Mic size={13} />}
+        {busy ? 'Cloning…' : 'Clone voice'}
+      </button>
+    </form>
+  )
+}
+
+function PasteVoiceIdForm({ onPick }) {
+  const [voiceId, setVoiceId] = useState('')
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ fontSize: 12.5, color: 'var(--text-soft)', lineHeight: 1.5 }}>
+        Paste an ElevenLabs voice ID — e.g. one you've cloned in your own
+        ElevenLabs dashboard. Voice IDs are 20-char alphanumeric strings.
+      </div>
+      <input
+        className="input" value={voiceId}
+        onChange={(e) => setVoiceId(e.target.value.trim())}
+        placeholder="21m00Tcm4TlvDq8ikWAM"
+      />
+      <button
+        type="button" className="btn-primary"
+        disabled={!voiceId} onClick={() => onPick(voiceId)}
+        style={{ justifyContent: 'center' }}
+      >
+        <Check size={13} /> Use this voice
+      </button>
     </div>
   )
 }

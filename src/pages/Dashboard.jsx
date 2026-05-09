@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Sparkles, Zap, ClipboardCheck, ArrowRight, Boxes, Calendar, BookOpen, CheckCircle2, Circle } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
@@ -151,11 +151,18 @@ export default function Dashboard() {
   const [shippedThisMonth, setShippedThisMonth] = useState(null)
   // Onboarding survey: 'unknown' until we've checked, then 'show' or
   // 'hide'. Blocks the dashboard with a full-screen popup until the
-  // 6 questions are answered. Skipped if the user already finished.
-  const [onboardingState, setOnboardingState] = useState('unknown')
+  // 6 questions are answered. Skipped if the user already finished —
+  // unless they hit /dashboard?survey=true (or ?survey=1), which forces
+  // it to re-show so an admin / user who wants to update answers can
+  // see the popup again. The query param strips itself after the
+  // survey closes so refreshes don't keep retriggering.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const surveyForced = searchParams.get('survey') === 'true' || searchParams.get('survey') === '1'
+  const [onboardingState, setOnboardingState] = useState(surveyForced ? 'show' : 'unknown')
 
   useEffect(() => {
     if (!session) return
+    if (surveyForced) { setOnboardingState('show'); return }
     let cancelled = false
     fetch('/api/me/onboarding', {
       headers: { Authorization: `Bearer ${session.access_token}` },
@@ -167,7 +174,17 @@ export default function Dashboard() {
       })
       .catch(() => { if (!cancelled) setOnboardingState('hide') })
     return () => { cancelled = true }
-  }, [session])
+  }, [session, surveyForced])
+
+  const closeOnboarding = () => {
+    setOnboardingState('hide')
+    if (surveyForced) {
+      // Strip ?survey from the URL so a refresh doesn't reopen it.
+      const next = new URLSearchParams(searchParams)
+      next.delete('survey')
+      setSearchParams(next, { replace: true })
+    }
+  }
 
   // "Shipped" = content_scripts rows with status='posted' (auto or
   // manual) inside the current calendar month. Single GET, no expensive
@@ -214,7 +231,8 @@ export default function Dashboard() {
       {onboardingState === 'show' && session?.access_token && (
         <OnboardingSurvey
           token={session.access_token}
-          onComplete={() => setOnboardingState('hide')}
+          onComplete={closeOnboarding}
+          onSkip={surveyForced ? closeOnboarding : null}
         />
       )}
       <section style={heroStyle}>
