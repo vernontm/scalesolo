@@ -173,7 +173,25 @@ export async function supaFetch(path, options = {}) {
   return data
 }
 
+// UUID v4 / v1 / v5 — all 36-char canonical with hyphens. Refuses
+// anything else so a hostile string in profileId can't slip extra
+// PostgREST query params via &-injection (e.g. `id&select=*`).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export function isUuid(s) {
+  return typeof s === 'string' && UUID_RE.test(s)
+}
+
 export async function assertProfileAccess(userId, profileId) {
+  // Validate both ids — auth.user.id is always a UUID; profileId comes
+  // from req.body / req.query and could be anything if a caller forgot
+  // to validate. PostgREST tolerates non-UUIDs and 400s, but a
+  // malicious string with `&` could attempt query-param injection.
+  if (!isUuid(userId) || !isUuid(profileId)) {
+    const err = new Error('Invalid id format')
+    err.status = 400
+    throw err
+  }
   const rows = await supaFetch(
     `profile_access?user_id=eq.${userId}&profile_id=eq.${profileId}&select=role`
   )

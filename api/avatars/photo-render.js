@@ -122,13 +122,19 @@ export default async function handler(req, res) {
     // HeyGen accepts the avatar create call instantly but image dimension
     // extraction happens behind the scenes. Submitting /v3/videos too fast
     // returns "Talking photo X has missing image dimensions". Wait, then
-    // retry up to 6 times on warmup-race errors (was 3) — in practice it
-    // can take up to ~30s for a fresh upload to be ready.
-    await new Promise((r) => setTimeout(r, 5000))
+    // retry up to 6 times on warmup-race errors — in practice it can
+    // take up to ~30s for a fresh upload to be ready.
+    //
+    // Each delay gets ±30% jitter so 100 simultaneous renders don't all
+    // hit HeyGen on the same wall-clock millisecond and trigger a 429
+    // cascade. Without jitter, every concurrent caller's retry queue
+    // is identical and HeyGen's rate limiter drops them all.
+    const jitter = (ms) => Math.round(ms * (0.7 + Math.random() * 0.6))
+    await new Promise((r) => setTimeout(r, jitter(5000)))
 
     let videoId
     let lastErr = null
-    const RETRY_DELAYS_MS = [8000, 8000, 10000, 10000, 12000]   // total ~50s warmup window
+    const RETRY_BASE_MS = [8000, 8000, 10000, 10000, 12000]   // total ~50s warmup window
     for (let attempt = 0; attempt < 6; attempt++) {
       try {
         const vr = await generateVideoV3({
@@ -146,8 +152,8 @@ export default async function handler(req, res) {
         const msg = String(e?.message || '')
         // Only retry on the dimension-warmup race; bail on other errors.
         if (!/missing image dimensions|not ready/i.test(msg)) break
-        const delay = RETRY_DELAYS_MS[attempt] ?? 12000
-        await new Promise((r) => setTimeout(r, delay))
+        const base = RETRY_BASE_MS[attempt] ?? 12000
+        await new Promise((r) => setTimeout(r, jitter(base)))
       }
     }
     if (!videoId) {

@@ -160,25 +160,41 @@ ${(profile.brand_bible || '(none)').slice(0, 2000)}
 ## Format
 ${FORMAT_HINT[format]}${lengthDirective}${avoidBlock}`
 
-    const created = []
     let totalUsage = { input: 0, output: 0 }
 
-    for (let i = 0; i < count; i++) {
+    // Fan out the Claude calls in parallel — each variation is
+    // independent. Sequential `for await` was 30-60s wall time at
+    // count=10 because we waited for each response before starting
+    // the next; this drops total time to roughly the slowest call.
+    // Anthropic's per-account concurrency limit is the only ceiling.
+    const claudePromises = Array.from({ length: count }, (_, i) => {
       const userPrompt = count === 1
         ? `Topic: ${topic}`
         : `Topic: ${topic}\nThis is variation ${i + 1} of ${count} — make it distinct from the others.`
-
-      const resp = await message({
+      return message({
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }],
         max_tokens: 1500,
+      }).then((resp) => {
+        if (resp?.usage) {
+          totalUsage.input  += resp.usage.input_tokens  || 0
+          totalUsage.output += resp.usage.output_tokens || 0
+        }
+        const text = resp?.content?.[0]?.text || ''
+        const json = text.match(/\{[\s\S]*\}/)?.[0]
+        let parsed = {}
+        if (json) { try { parsed = JSON.parse(json) } catch { parsed = { full_script: text } } }
+        else parsed = { full_script: text }
+        return { parsed, text }
       })
-      const text = resp?.content?.[0]?.text || ''
-      const json = text.match(/\{[\s\S]*\}/)?.[0]
-      let parsed = {}
-      if (json) { try { parsed = JSON.parse(json) } catch { parsed = { full_script: text } } }
-      else parsed = { full_script: text }
+    })
+    const claudeResults = await Promise.all(claudePromises)
 
+    // Persist + log to content_history sequentially. The DB inserts are
+    // cheap and embedding throughput on small text is fine; doing them
+    // in order also produces a deterministic `created` ordering.
+    const created = []
+    for (const { parsed, text } of claudeResults) {
       const row = {
         profile_id,
         title: parsed.title || `${format} — ${topic}`.slice(0, 80),
@@ -200,21 +216,12 @@ ${FORMAT_HINT[format]}${lengthDirective}${avoidBlock}`
       }
       let item
       if (dry_run) {
-        // Return the row shape without persisting. Caller (e.g. caption_gen
-        // node) just needs the AI output and would otherwise leave a stray
-        // draft behind.
         item = { ...row, id: null, dry_run: true }
         created.push(item)
       } else {
         const insertRows = await supaFetch('content_scripts', { method: 'POST', body: row })
         item = Array.isArray(insertRows) ? insertRows[0] : insertRows
         created.push(item)
-
-        // Record into content_history so future generations can dedup against
-        // it. Best-effort — never fail the generation just because logging
-        // didn't work. Embed the produced script if we already have a topic
-        // embedding; reuse for cost when it's an exact match, otherwise
-        // re-embed the script body for accuracy.
         try {
           const scriptText = parsed.full_script || text
           const { embedding } = await embedOne(scriptText.slice(0, 4000))
@@ -232,11 +239,6 @@ ${FORMAT_HINT[format]}${lengthDirective}${avoidBlock}`
             },
           })
         } catch (e) { console.warn('content_history insert failed:', e.message) }
-      }
-
-      if (resp.usage) {
-        totalUsage.input += resp.usage.input_tokens || 0
-        totalUsage.output += resp.usage.output_tokens || 0
       }
     }
 

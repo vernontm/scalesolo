@@ -12,12 +12,41 @@ import { synthesizeToPublicUrl, resolveByoApiKey } from '../_lib/elevenlabs.js'
 const DEFAULT_PREVIEW_TEXT =
   "Hi, I'm your ScaleSolo avatar voice. This is a quick preview of how I sound."
 
+// Per-user rate limit. Without it, a malicious authenticated user
+// could script TTS calls against our shared ELEVENLABS_API_KEY (which
+// is metered and costs us real money) at hundreds of requests / sec.
+// 30 / minute matches the rough budget of a human exploring the
+// picker — preview every voice in the library + retry a few times —
+// without leaving room for scripted abuse.
+const PREVIEW_LIMIT = 30
+const PREVIEW_WINDOW_MS = 60_000
+const _userBucket = new Map()
+
+function previewRateLimitOk(userId) {
+  if (!userId) return false
+  const now = Date.now()
+  const cur = _userBucket.get(userId)
+  if (!cur || cur.resetAt < now) {
+    _userBucket.set(userId, { count: 1, resetAt: now + PREVIEW_WINDOW_MS })
+    if (_userBucket.size > 5000) {
+      for (const [k, v] of _userBucket) if (v.resetAt < now) _userBucket.delete(k)
+    }
+    return true
+  }
+  cur.count += 1
+  return cur.count <= PREVIEW_LIMIT
+}
+
 export default async function handler(req, res) {
   setCors(req, res)
   if (req.method === 'OPTIONS') return res.status(204).end()
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
   const auth = await requireUser(req, res)
   if (!auth) return
+
+  if (!previewRateLimitOk(auth.user.id)) {
+    return res.status(429).json({ error: 'Too many previews. Try again in a minute.' })
+  }
 
   try {
     const { voice_id, profile_id, text, byok } = req.body || {}

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase.js'
 import { useAuth } from './AuthContext.jsx'
 import { useProfile } from './ProfileContext.jsx'
@@ -202,14 +202,23 @@ export function AgentProvider({ children }) {
     return (await r.json()).fact
   }, [session, selectedProfileId])
 
+  // Memoize the context value so consumers only re-render when their
+  // specific dependencies actually change. The big win is `streamingText`
+  // updating on every SSE token during a streaming response — without
+  // useMemo, every component reading useAgent() (including non-panel
+  // ones that just use `open` / `setOpen`) re-rendered on every token.
+  // Now only the actual panel that reads `streamingText` re-renders.
+  const value = useMemo(() => ({
+    conversations, activeId, setActiveId,
+    messages, streamingText, streaming, error,
+    send, startNewConversation, deleteConversation,
+    refreshList, pinFact,
+    open, setOpen,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [conversations, activeId, messages, streamingText, streaming, error, open])
+
   return (
-    <AgentContext.Provider value={{
-      conversations, activeId, setActiveId,
-      messages, streamingText, streaming, error,
-      send, startNewConversation, deleteConversation,
-      refreshList, pinFact,
-      open, setOpen,
-    }}>
+    <AgentContext.Provider value={value}>
       {children}
     </AgentContext.Provider>
   )

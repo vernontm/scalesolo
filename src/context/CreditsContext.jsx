@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase.js'
 import { useAuth } from './AuthContext.jsx'
 
@@ -60,11 +60,13 @@ export function CreditsProvider({ children }) {
     }
   }, [refresh])
 
-  return (
-    <CreditsContext.Provider value={{ pools, topupCatalog, loading, error, refresh }}>
-      {children}
-    </CreditsContext.Provider>
+  // Memoize so the topup-success poll (which calls refresh 4×) doesn't
+  // recreate the context value object 4× and re-render every consumer.
+  const value = useMemo(
+    () => ({ pools, topupCatalog, loading, error, refresh }),
+    [pools, topupCatalog, loading, error, refresh],
   )
+  return <CreditsContext.Provider value={value}>{children}</CreditsContext.Provider>
 }
 
 export function useCredits() {

@@ -19,11 +19,13 @@
   "functions": {
     "api/videos/combine.js": {
       "includeFiles": "node_modules/@ffmpeg/core/**",
-      "maxDuration": 300
+      "maxDuration": 300,
+      "memory": 3008
     },
     "api/videos/polish.js": {
       "includeFiles": "{node_modules/@ffmpeg-installer/**,api/_fonts/**}",
-      "maxDuration": 300
+      "maxDuration": 300,
+      "memory": 3008
     },
     "api/social/upload-post.js": {
       "maxDuration": 60

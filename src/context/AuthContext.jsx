@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { identifySentryUser } from '../lib/sentry.js'
 
@@ -114,7 +114,13 @@ export function AuthProvider({ children }) {
 
   const signOut = () => supabase.auth.signOut()
 
-  const value = {
+  // Memoize the context value so consumers only re-render when one of
+  // these specific fields actually changes. The signIn / signUp /
+  // signOut closures are recreated on every render but they're stable
+  // shape and only invoked on user action — capturing them once via
+  // useMemo prevents a referential identity shuffle from invalidating
+  // every consumer of useAuth() on unrelated state changes.
+  const value = useMemo(() => ({
     session,
     user: session?.user ?? null,
     loading,
@@ -123,7 +129,8 @@ export function AuthProvider({ children }) {
     signInWithGoogle,
     signUp,
     signOut,
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [session, loading, isAdmin])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
