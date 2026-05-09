@@ -185,7 +185,9 @@ export default function Landing() {
       {/* ── TREND + STATS ───────────────────────────────────────────── */}
       <section style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
         <div className="trend-copy">
-          <h2 style={sectionH}>The faceless brand wave is already here.</h2>
+          <h2 style={{ ...sectionH, fontSize: 'clamp(22px, 3vw, 36px)', whiteSpace: 'nowrap' }} className="trend-h2">
+            The <span className="brand-text">faceless brand wave</span> is already here.
+          </h2>
           <p style={sectionSub}>
             AI-native creators are launching channels at a pace that wasn't possible 18 months ago.
             UGC, faceless reels, and AI-narrated shorts now drive a huge share of every algorithm.

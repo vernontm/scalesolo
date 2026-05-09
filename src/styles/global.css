@@ -474,7 +474,7 @@ a:focus-visible {
 }
 .stat-cell {
   position: relative;
-  padding: 38px 28px 32px;
+  padding: 38px 18px 32px;
   text-align: center;
 }
 .stat-cell + .stat-cell {
@@ -483,9 +483,10 @@ a:focus-visible {
 .stat-number {
   font-family: var(--font-display);
   font-weight: 800;
-  font-size: clamp(38px, 5vw, 64px);
+  font-size: clamp(30px, 4.2vw, 56px);
   line-height: 1;
   letter-spacing: -0.03em;
+  white-space: nowrap;
   background: linear-gradient(135deg, #ff6b88 0%, #ef4444 35%, #f97316 70%, #fbbf24 100%);
   -webkit-background-clip: text; background-clip: text;
   color: transparent;
