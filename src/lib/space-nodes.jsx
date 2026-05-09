@@ -14,7 +14,7 @@ import {
   Type, Wand2, Captions, UserCircle2, Save, Image as ImageIcon,
   ListChecks, FileVideo, Upload, Loader2, Maximize2, ArrowUpRight,
   Download, Trash2, Building2, Repeat, Play, Pause, Combine as CombineIcon,
-  Mic, Sparkles, Send, Copy,
+  Mic, Sparkles, Send, Copy, X,
 } from 'lucide-react'
 import { supabase } from './supabase.js'
 import MusicMixPreview from '../components/MusicMixPreview.jsx'
@@ -714,9 +714,65 @@ function CaptionGenBody({ data, onPatch }) {
 //   props.minHeight     css number (default 60)
 //   props.brands        [{ id, name }] from data._ctxProfiles
 //   props.namedImages   [{ url, name }] from data._ctxNamedImages
-function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = [], namedImages = [] }) {
+// Bigger modal version of the prompt editor for long prompts. Reuses
+// MentionPrompt under the hood so chip autocomplete and @-resolution
+// behave exactly the same. Closes on Escape, click-outside, or the
+// X button. Value flows back to the parent through the same onChange.
+function ExpandedPromptModal({ value, placeholder, brands, namedImages, onChange, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return (
+    <div
+      className="modal-overlay"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
+      onWheelCapture={(e) => e.stopPropagation()}
+    >
+      <div
+        className="modal-card modal-card-xl"
+        style={{ display: 'flex', flexDirection: 'column', maxHeight: '85vh', padding: 18 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14 }}>Prompt editor</div>
+          <span style={{ fontSize: 11, color: 'var(--muted)' }}>Type @ to tag a brand profile or reference image.</span>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              marginLeft: 'auto',
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              width: 28, height: 28, borderRadius: 6,
+              background: 'transparent', border: '1px solid var(--border)',
+              color: 'var(--text-soft)', cursor: 'pointer', padding: 0,
+            }}
+          >
+            <X size={14} />
+          </button>
+        </div>
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+          <MentionPrompt
+            value={value}
+            onChange={onChange}
+            placeholder={placeholder}
+            minHeight={420}
+            brands={brands}
+            namedImages={namedImages}
+            expandable={false}
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = [], namedImages = [], expandable = true }) {
   const ref = useRef(null)
   const [suggest, setSuggest] = useState({ open: false, prefix: '', start: -1 })
+  const [expanded, setExpanded] = useState(false)
   // Snapshot of the textarea selection captured on mousedown of any chip
   // button. Browsers blur the textarea on mousedown of an outside element,
   // and after blur some return selectionEnd as 0 OR as the text length —
@@ -861,18 +917,61 @@ function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = 
           ))}
         </div>
       )}
-      <PromptHighlightField
-        key="ss-mention-input"
-        textareaRef={ref}
-        value={promptStr}
-        placeholder={placeholder}
-        minHeight={minHeight}
-        onChange={onTextareaChange}
-        onBlur={() => setTimeout(() => setSuggest((s) => ({ ...s, open: false })), 150)}
-        onSelect={captureSelection}
-        brands={brands}
-        namedImages={namedImages}
-      />
+      <div style={{ position: 'relative' }}>
+        <PromptHighlightField
+          key="ss-mention-input"
+          textareaRef={ref}
+          value={promptStr}
+          placeholder={placeholder}
+          minHeight={minHeight}
+          onChange={onTextareaChange}
+          onBlur={() => setTimeout(() => setSuggest((s) => ({ ...s, open: false })), 150)}
+          onSelect={captureSelection}
+          brands={brands}
+          namedImages={namedImages}
+        />
+        {expandable && (
+          <button
+            type="button"
+            className="nodrag"
+            title="Expand prompt editor"
+            aria-label="Expand prompt editor"
+            onClick={(e) => { e.stopPropagation(); setExpanded(true) }}
+            style={{
+              position: 'absolute', top: 4, right: 6,
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              width: 22, height: 22, borderRadius: 5,
+              background: 'rgba(0,0,0,0.45)',
+              border: '1px solid var(--border)',
+              color: 'var(--text-soft)',
+              cursor: 'pointer', padding: 0,
+              transition: 'background .12s var(--ease), color .12s var(--ease), border-color .12s var(--ease)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = 'rgba(239,68,68,0.18)'
+              e.currentTarget.style.borderColor = 'rgba(239,68,68,0.5)'
+              e.currentTarget.style.color = 'var(--text)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'rgba(0,0,0,0.45)'
+              e.currentTarget.style.borderColor = 'var(--border)'
+              e.currentTarget.style.color = 'var(--text-soft)'
+            }}
+          >
+            <Maximize2 size={11} />
+          </button>
+        )}
+      </div>
+      {expanded && (
+        <ExpandedPromptModal
+          value={promptStr}
+          placeholder={placeholder}
+          brands={brands}
+          namedImages={namedImages}
+          onChange={onChange}
+          onClose={() => setExpanded(false)}
+        />
+      )}
       {suggest.open && filtered.length > 0 && (
         <div key="ss-mention-popover" className="nodrag" style={{
           position: 'absolute', left: 0, right: 0, top: '100%',
