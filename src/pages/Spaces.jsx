@@ -1769,8 +1769,18 @@ function SpaceBuilder({ space, onSave, onClose }) {
         if (isCached) return n
         return { ...n, data: { ...n.data, status: 'idle', output: null, error: null } }
       }
-      // 'full' and auto_run path use the old logic.
+      // 'full' scope. Descendants of the target MUST be reset so they
+      // re-execute against the target's new output (otherwise their
+      // status='done' cache short-circuits in runSpace and stale
+      // outputs flow forward — this was breaking image_gen → Collection
+      // updates). Ancestors keep their cache so we don't burn credits
+      // re-running upstream nodes the user didn't ask to refresh.
       if (!isAutoTrigger) {
+        const isDescendant = descendants.has(n.id) && n.id !== targetId
+        if (isDescendant) {
+          return { ...n, data: { ...n.data, status: 'idle', output: null, error: null } }
+        }
+        // Ancestor (or target — already handled above): keep cached.
         const isCached = n.data?.status === 'done' && n.data?.output
         if (isCached) return n
         return { ...n, data: { ...n.data, status: 'idle', output: null, error: null } }

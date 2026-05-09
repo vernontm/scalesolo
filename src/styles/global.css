@@ -411,19 +411,12 @@ a:focus-visible {
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  /* Colored fill: red→orange brand gradient. The two masks below carve
-     it into a dot grid AND fade the edges, so only dot-shaped slivers
-     of the gradient are ever visible, fading out at the edges. */
-  background: linear-gradient(135deg, #ef4444 0%, #f97316 60%, #fbbf24 100%);
-  -webkit-mask:
-    radial-gradient(circle, #000 1px, transparent 1.4px) 0 0 / 22px 22px,
-    radial-gradient(ellipse 70% 65% at center, #000 0%, rgba(0,0,0,0.55) 55%, transparent 90%) 0 0 / 100% 100%;
-  -webkit-mask-composite: source-in;
-          mask:
-    radial-gradient(circle, #000 1px, transparent 1.4px) 0 0 / 22px 22px,
-    radial-gradient(ellipse 70% 65% at center, #000 0%, rgba(0,0,0,0.55) 55%, transparent 90%) 0 0 / 100% 100%;
-          mask-composite: intersect;
-  opacity: 0.35;
+  background-image: radial-gradient(circle, rgba(255,255,255,0.07) 1px, transparent 1.4px);
+  background-size: 22px 22px;
+  background-position: 0 0;
+  -webkit-mask-image: radial-gradient(ellipse 70% 65% at center, #000 0%, rgba(0,0,0,0.55) 55%, rgba(0,0,0,0) 90%);
+          mask-image: radial-gradient(ellipse 70% 65% at center, #000 0%, rgba(0,0,0,0.55) 55%, rgba(0,0,0,0) 90%);
+  opacity: 0.9;
 }
 .space-builder-overlay > * { position: relative; z-index: 1; }
 
