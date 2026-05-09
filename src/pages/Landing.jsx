@@ -312,13 +312,19 @@ export default function Landing() {
           Most faceless brands run on a Frankenstein bundle of seven AI tools, seven logins, and seven monthly bills. ScaleSolo collapses all of it into one workflow that writes, films, captions, scores, and posts on its own.
         </p>
         <div className="kill-grid">
-          <KillCard Icon={PenLine}      name="AI script writer"        cost="$30/mo" delay={0} />
-          <KillCard Icon={Mic2}          name="Voice cloning"            cost="$22/mo" delay={1} />
-          <KillCard Icon={UserCircle2}   name="AI avatar studio"         cost="$60/mo" delay={2} />
-          <KillCard Icon={CaptionsIcon}  name="Captions and titles"      cost="$20/mo" delay={3} />
-          <KillCard Icon={Film}          name="Video editor"             cost="$25/mo" delay={4} />
-          <KillCard Icon={Music2}        name="Music and SFX"            cost="$15/mo" delay={5} />
-          <KillCard Icon={Calendar}      name="Multi-platform scheduler" cost="$30/mo" delay={6} />
+          <div className="kill-track">
+            {[0, 1].map((set) => (
+              <div className="kill-set" key={set} aria-hidden={set === 1}>
+                <KillCard Icon={PenLine}     name="AI script writer"        cost="$30/mo" delay={0} />
+                <KillCard Icon={Mic2}         name="Voice cloning"            cost="$22/mo" delay={1} />
+                <KillCard Icon={UserCircle2}  name="AI avatar studio"         cost="$60/mo" delay={2} />
+                <KillCard Icon={CaptionsIcon} name="Captions and titles"      cost="$20/mo" delay={3} />
+                <KillCard Icon={Film}         name="Video editor"             cost="$25/mo" delay={4} />
+                <KillCard Icon={Music2}       name="Music and SFX"            cost="$15/mo" delay={5} />
+                <KillCard Icon={Calendar}     name="Multi-platform scheduler" cost="$30/mo" delay={6} />
+              </div>
+            ))}
+          </div>
         </div>
         <div className="kill-total-wrap">
           <div className="kill-total">
@@ -632,6 +638,7 @@ const page = {
   minHeight: '100vh',
   fontFamily: 'var(--font-body, system-ui, sans-serif)',
   position: 'relative',
+  overflowX: 'clip',
 }
 
 const particleField = {
@@ -667,7 +674,7 @@ const hero = {
 }
 const heroGrid = {
   display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(min(420px, 100%), 1fr))',
   gap: 56,
   alignItems: 'center',
 }
