@@ -45,6 +45,84 @@ const headerCell = {
   position: 'sticky', top: 0, zIndex: 1,
 }
 
+// Per-row platform picker. Each row gets its own set of platforms so a
+// single Publish Selected click can fan out different rows to different
+// targets. The full set is intentionally small — only platforms Upload-
+// Post supports — and matches the schedule_post node's PLATFORMS list.
+const ROW_PLATFORMS = [
+  { id: 'tiktok',    label: 'TikTok',    kinds: ['video'] },
+  { id: 'instagram', label: 'Instagram', kinds: ['image', 'video'] },
+  { id: 'youtube',   label: 'YouTube',   kinds: ['video'] },
+  { id: 'facebook',  label: 'Facebook',  kinds: ['image', 'video'] },
+  { id: 'linkedin',  label: 'LinkedIn',  kinds: ['image', 'video'] },
+  { id: 'threads',   label: 'Threads',   kinds: ['image', 'video'] },
+  { id: 'x',         label: 'X',         kinds: ['image', 'video'] },
+]
+
+function PlatformsCell({ value, mediaType, onSave }) {
+  const cur = Array.isArray(value) ? value : []
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [open])
+  const toggle = (id) => {
+    const next = cur.includes(id) ? cur.filter((p) => p !== id) : [...cur, id]
+    onSave(next)
+  }
+  const visible = ROW_PLATFORMS.filter((p) => !mediaType || p.kinds.includes(mediaType))
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          width: '100%', padding: '6px 8px', borderRadius: 6,
+          border: '1px solid var(--border)', background: 'var(--surface-2)',
+          color: 'var(--text-soft)', fontSize: 11.5, cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4,
+        }}
+        title="Pick which platforms this row publishes to"
+      >
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {cur.length === 0 ? <span style={{ color: 'var(--muted)' }}>Pick platforms</span> : cur.join(', ')}
+        </span>
+        <ChevronDown size={11} />
+      </button>
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 30,
+          minWidth: 180, padding: 6, borderRadius: 8,
+          background: 'var(--surface)', border: '1px solid var(--border)',
+          boxShadow: '0 6px 20px rgba(0,0,0,0.18)',
+        }}>
+          {visible.map((p) => {
+            const on = cur.includes(p.id)
+            return (
+              <button
+                key={p.id} type="button"
+                onClick={() => toggle(p.id)}
+                style={{
+                  width: '100%', padding: '6px 8px', borderRadius: 6, border: 'none',
+                  background: on ? 'rgba(239,68,68,0.16)' : 'transparent',
+                  color: on ? 'var(--text)' : 'var(--text-soft)',
+                  fontSize: 12, textAlign: 'left', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 6,
+                }}
+              >
+                {on ? <Check size={11} /> : <span style={{ width: 11 }} />} {p.label}
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 const STATUS_TABS = [
   { id: 'queued',    label: 'Queued Posts',  filter: (s) => ['draft', 'caption_ready', 'scheduled'].includes(s.status) },
   { id: 'error',     label: 'Error',         filter: (s) => s.status === 'failed' },
@@ -532,6 +610,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                 <th style={{ ...headerCell, minWidth: 200 }}>Caption</th>
                 <th style={{ ...headerCell, minWidth: 160 }}>Hashtags</th>
                 <th style={{ ...headerCell, minWidth: 160 }}>1st Comment</th>
+                <th style={{ ...headerCell, width: 160 }}>Platforms</th>
                 <th style={{ ...headerCell, width: 140 }}>Scheduled</th>
                 <th style={{ ...headerCell, width: 120 }}>Status</th>
                 <th style={{ ...headerCell, width: 80 }}>Actions</th>
@@ -539,9 +618,9 @@ export default function BulkUploadView({ profileId, token, onChange }) {
             </thead>
             <tbody>
               {scripts === null ? (
-                <tr><td colSpan={10} style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}><Loader2 size={18} className="spin" /></td></tr>
+                <tr><td colSpan={11} style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}><Loader2 size={18} className="spin" /></td></tr>
               ) : visible.length === 0 ? (
-                <tr><td colSpan={10} style={{ padding: 60, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
+                <tr><td colSpan={11} style={{ padding: 60, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
                   {tab === 'queued' && 'No queued posts. Drop media above to start.'}
                   {tab === 'error' && 'No failed posts.'}
                   {tab === 'delivered' && 'Nothing delivered yet.'}
@@ -606,6 +685,13 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                     </td>
                     <td style={{ padding: 4, verticalAlign: 'top' }}>
                       <EditableCell value={r.first_comment} placeholder="First comment" onSave={(v) => patchScript(r.id, { first_comment: v })} />
+                    </td>
+                    <td style={{ padding: 4, verticalAlign: 'top' }}>
+                      <PlatformsCell
+                        value={r.platforms}
+                        mediaType={r.media_type}
+                        onSave={(next) => patchScript(r.id, { platforms: next })}
+                      />
                     </td>
                     <td style={{ padding: 8, verticalAlign: 'top', fontSize: 11.5, color: 'var(--text-soft)' }}>
                       <input
