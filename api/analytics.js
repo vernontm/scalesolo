@@ -115,25 +115,86 @@ async function computeSummary(profileId, win) {
     series.push({ week: k, posts: buckets[k] || 0 })
   }
 
-  // Best-effort: Upload-Post profile stats (top-level account summary).
-  // Failures are silent — we still return the volume summary.
+  // Upload-Post engagement metrics. Three endpoints in play:
+  //   1. /api/analytics/{username}?platforms=… — account-level summaries.
+  //   2. /api/uploadposts/total-impressions/{username}?period=… — single
+  //      dedup'd impressions number across all platforms.
+  //   3. /api/uploadposts/post-analytics/{request_id} — per-post engagement.
+  // Each is best-effort; failures fall through silently.
   let uploadpost_stats = null
+  let total_impressions = null
+  let recent_post_metrics = null
   try {
     const username = await resolveUploadpostUser(profileId)
-    // The Upload-Post API exposes per-platform analytics under
-    // /api/uploadposts/{platform}/analytics?profile=... Skip silently if
-    // anything errors; not every plan/account has analytics enabled.
     const platforms = Object.keys(platformCounts)
-    const fetched = {}
-    await Promise.all(platforms.map(async (p) => {
+
+    // (1) Account-level platform analytics — single call across every
+    // platform the brand actually publishes to.
+    if (platforms.length) {
       try {
-        const path = `/api/uploadposts/analytics/${encodeURIComponent(p)}?profile=${encodeURIComponent(username)}&days=${days}`
+        const path = `/api/analytics/${encodeURIComponent(username)}?platforms=${encodeURIComponent(platforms.join(','))}`
         const data = await uploadpost(path)
-        fetched[p] = data || null
-      } catch {}
-    }))
-    if (Object.keys(fetched).length) uploadpost_stats = fetched
-  } catch {}
+        if (data && typeof data === 'object') uploadpost_stats = data
+      } catch (e) {
+        console.warn('uploadpost /api/analytics failed:', e?.message)
+      }
+    }
+
+    // (2) Aggregate impressions for the matching window. Map our window
+    // to Upload-Post's `period` param (closest equivalent).
+    try {
+      const period = win === '7d' ? 'last_week' : win === '30d' ? 'last_month' : 'last_3months'
+      const path = `/api/uploadposts/total-impressions/${encodeURIComponent(username)}?period=${period}`
+      const data = await uploadpost(path)
+      if (data?.success || data?.total_impressions != null) {
+        total_impressions = {
+          total: Number(data.total_impressions) || 0,
+          per_platform: data.per_platform || {},
+          per_day: data.per_day || {},
+        }
+      }
+    } catch (e) {
+      console.warn('uploadpost total-impressions failed:', e?.message)
+    }
+
+    // (3) Per-post metrics for the most recent ~20 published posts that
+    // have a request_id on file. Capped + parallel; one failure doesn't
+    // poison the rest.
+    const withReq = rows.filter((r) => r.uploadpost_request_id).slice(0, 20)
+    if (withReq.length) {
+      const fetched = {}
+      await Promise.all(withReq.map(async (r) => {
+        try {
+          const data = await uploadpost(`/api/uploadposts/post-analytics/${encodeURIComponent(r.uploadpost_request_id)}`)
+          if (data?.success && data?.platforms) {
+            // Flatten to a per-script summary of total likes/views/etc.
+            const totals = { views: 0, likes: 0, comments: 0, shares: 0, saves: 0 }
+            for (const platformData of Object.values(data.platforms)) {
+              const m = platformData?.post_metrics || {}
+              for (const k of Object.keys(totals)) {
+                const v = Number(m[k] ?? m[`${k}_count`] ?? 0) || 0
+                totals[k] += v
+              }
+            }
+            fetched[r.id] = totals
+          }
+        } catch {}
+      }))
+      if (Object.keys(fetched).length) recent_post_metrics = fetched
+    }
+  } catch (e) {
+    console.warn('uploadpost analytics block failed:', e?.message)
+  }
+
+  // Roll per-post metrics into headline totals so the dashboard cards
+  // have something to show even before the user drills into a post.
+  let totals = null
+  if (recent_post_metrics) {
+    totals = { views: 0, likes: 0, comments: 0, shares: 0, saves: 0 }
+    for (const m of Object.values(recent_post_metrics)) {
+      for (const k of Object.keys(totals)) totals[k] += (Number(m[k]) || 0)
+    }
+  }
 
   return {
     window: win,
@@ -148,8 +209,11 @@ async function computeSummary(profileId, win) {
       platforms: r.platforms || [],
       media_type: r.media_type,
       created_at: r.created_at,
+      metrics: recent_post_metrics?.[r.id] || null,
     })),
     uploadpost_stats,
+    total_impressions,
+    engagement_totals: totals,
   }
 }
 

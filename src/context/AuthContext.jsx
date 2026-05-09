@@ -42,11 +42,18 @@ export function AuthProvider({ children }) {
       refreshAdminFlag(newSession?.user?.id)
       // Affiliate attribution: if the visitor arrived via ?ref=… on the
       // landing page, attribute the freshly-signed-in user to that
-      // affiliate. The endpoint is idempotent (refuses to overwrite an
-      // existing attribution) so calling on every SIGNED_IN is safe.
+      // affiliate. Read from localStorage first; fall back to the
+      // scalesolo_ref cookie (which Landing.jsx mirrors so the attribution
+      // survives a localStorage wipe — private mode, "clear site data",
+      // etc.). Endpoint is idempotent.
       try {
         if (newSession?.access_token) {
-          const ref = localStorage.getItem('scalesolo.ref')
+          let ref = null
+          try { ref = localStorage.getItem('scalesolo.ref') } catch {}
+          if (!ref) {
+            const m = document.cookie.match(/(?:^|;\s*)scalesolo_ref=([^;]+)/)
+            if (m) ref = decodeURIComponent(m[1])
+          }
           if (ref) {
             fetch('/api/affiliate/attribute', {
               method: 'POST',
@@ -54,7 +61,12 @@ export function AuthProvider({ children }) {
               body: JSON.stringify({ code: ref }),
             })
               .then((r) => r.json().catch(() => ({})))
-              .then((b) => { if (b?.attributed || b?.error) localStorage.removeItem('scalesolo.ref') })
+              .then((b) => {
+                if (b?.attributed || b?.error) {
+                  try { localStorage.removeItem('scalesolo.ref') } catch {}
+                  document.cookie = 'scalesolo_ref=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/'
+                }
+              })
               .catch(() => {})
           }
         }

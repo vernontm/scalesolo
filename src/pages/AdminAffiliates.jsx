@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Sparkles, RefreshCw, Loader2, CheckCircle2, XCircle, Pause, ArrowUp, DollarSign, X } from 'lucide-react'
+import { Sparkles, RefreshCw, Loader2, CheckCircle2, XCircle, Pause, ArrowUp, DollarSign, X, CalendarCheck } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { toast } from '../components/Toast.jsx'
 
@@ -91,6 +91,25 @@ export default function AdminAffiliates() {
             Approve applications, promote tier, and record payouts. PayPal transfers are sent manually.
           </div>
         </div>
+        <button
+          onClick={async () => {
+            if (!window.confirm('Close month: approve every pending commission older than 30 days?')) return
+            try {
+              const r = await authedFetch('/api/admin/affiliates-close', { method: 'POST' })
+              const b = await r.json()
+              if (!r.ok) throw new Error(b.error || 'Failed')
+              toast?.success?.(`Approved ${b.approved} commission${b.approved === 1 ? '' : 's'}`) || alert(`Approved ${b.approved}`)
+              refresh()
+            } catch (e) { toast?.error?.(e.message) || alert(e.message) }
+          }}
+          style={{
+            padding: '7px 12px', borderRadius: 8, border: '1px solid var(--border)',
+            background: 'var(--surface-2)', color: 'var(--text-soft)',
+            display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5,
+            cursor: 'pointer',
+          }}
+          title="Approve every pending commission older than 30 days (refund window)"
+        ><CalendarCheck size={13} /> Close month</button>
         <button onClick={refresh} disabled={loading} style={{
           padding: '7px 12px', borderRadius: 8, border: '1px solid var(--border)',
           background: 'var(--surface-2)', color: 'var(--text-soft)',

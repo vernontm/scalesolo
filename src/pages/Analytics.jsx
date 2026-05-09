@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { BarChart3, RefreshCw, Loader2, Music2, Instagram, Youtube, Twitter, Linkedin, AtSign, Facebook } from 'lucide-react'
+import { BarChart3, RefreshCw, Loader2, Music2, Instagram, Youtube, Twitter, Linkedin, AtSign, Facebook, Eye, Heart, MessageCircle, Share2, Users } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 
@@ -14,6 +14,13 @@ const WINDOWS = [
   { id: '30d', label: 'Last 30 days' },
   { id: '90d', label: 'Last 90 days' },
 ]
+
+function fmtNum(n) {
+  const v = Number(n) || 0
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`
+  if (v >= 1_000)     return `${(v / 1_000).toFixed(1)}K`
+  return new Intl.NumberFormat().format(v)
+}
 
 const PLATFORM_META = {
   tiktok:    { label: 'TikTok',    color: '#fe2c55', Icon: Music2 },
@@ -111,12 +118,66 @@ export default function Analytics() {
 
       {data && (
         <>
+          {/* Engagement totals — pulled from Upload-Post per-post + */}
+          {/* impressions endpoints. Renders only when those return data. */}
+          {(data.engagement_totals || data.total_impressions) && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 12 }}>
+              {data.total_impressions && (
+                <Stat label="Impressions" value={fmtNum(data.total_impressions.total)} icon={Users} accent />
+              )}
+              {data.engagement_totals && (
+                <>
+                  <Stat label="Views"    value={fmtNum(data.engagement_totals.views)}    icon={Eye} />
+                  <Stat label="Likes"    value={fmtNum(data.engagement_totals.likes)}    icon={Heart} />
+                  <Stat label="Comments" value={fmtNum(data.engagement_totals.comments)} icon={MessageCircle} />
+                  <Stat label="Shares"   value={fmtNum(data.engagement_totals.shares)}   icon={Share2} />
+                </>
+              )}
+            </div>
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 18 }}>
             <Stat label="Posts published" value={data.total_posts} accent />
             {Object.entries(data.platform_counts || {}).slice(0, 4).map(([p, n]) => (
               <Stat key={p} label={PLATFORM_META[p]?.label || p} value={n} icon={PLATFORM_META[p]?.Icon} color={PLATFORM_META[p]?.color} />
             ))}
           </div>
+
+          {/* Account-level platform breakdown (followers / reach / views) */}
+          {data.uploadpost_stats && (
+            <div className="card-flat" style={{ marginBottom: 18, padding: 18 }}>
+              <div style={sectionLabel}>Account analytics</div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+                  <thead>
+                    <tr>
+                      <th style={th}>Platform</th>
+                      <th style={th}>Followers</th>
+                      <th style={th}>Reach</th>
+                      <th style={th}>Views</th>
+                      <th style={th}>Likes</th>
+                      <th style={th}>Comments</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(data.uploadpost_stats).map(([p, s]) => {
+                      if (!s || typeof s !== 'object') return null
+                      const meta = PLATFORM_META[p] || { label: p, color: 'var(--muted)' }
+                      return (
+                        <tr key={p} style={{ borderBottom: '1px solid var(--border)' }}>
+                          <td style={td}><span style={{ color: meta.color, fontWeight: 700 }}>{meta.label}</span></td>
+                          <td style={td}>{fmtNum(s.followers)}</td>
+                          <td style={td}>{fmtNum(s.reach)}</td>
+                          <td style={td}>{fmtNum(s.views)}</td>
+                          <td style={td}>{fmtNum(s.likes)}</td>
+                          <td style={td}>{fmtNum(s.comments)}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* Weekly trend bars */}
           <div className="card-flat" style={{ marginBottom: 18, padding: 18 }}>
@@ -185,6 +246,7 @@ export default function Analytics() {
                       <th style={th}>Title</th>
                       <th style={th}>Platforms</th>
                       <th style={th}>Type</th>
+                      <th style={th}>Performance</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -208,6 +270,18 @@ export default function Analytics() {
                           </div>
                         </td>
                         <td style={td}>{p.media_type}</td>
+                        <td style={td}>
+                          {p.metrics ? (
+                            <div style={{ display: 'flex', gap: 10, fontSize: 11.5, color: 'var(--text-soft)' }}>
+                              <span title="Views"><Eye size={11} style={{ verticalAlign: '-1px', marginRight: 3 }} />{fmtNum(p.metrics.views)}</span>
+                              <span title="Likes"><Heart size={11} style={{ verticalAlign: '-1px', marginRight: 3 }} />{fmtNum(p.metrics.likes)}</span>
+                              <span title="Comments"><MessageCircle size={11} style={{ verticalAlign: '-1px', marginRight: 3 }} />{fmtNum(p.metrics.comments)}</span>
+                              <span title="Shares"><Share2 size={11} style={{ verticalAlign: '-1px', marginRight: 3 }} />{fmtNum(p.metrics.shares)}</span>
+                            </div>
+                          ) : (
+                            <span style={{ color: 'var(--muted)' }}>—</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

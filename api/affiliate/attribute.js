@@ -15,7 +15,15 @@ export default async function handler(req, res) {
   if (!auth) return
 
   try {
-    const code = (req.body?.code || '').toString().trim().toLowerCase().slice(0, 64)
+    // Prefer the explicit body code (the SPA sends one out of localStorage),
+    // fall back to the scalesolo_ref cookie that Landing.jsx sets at click
+    // time so attribution survives a localStorage wipe.
+    let code = (req.body?.code || '').toString().trim().toLowerCase().slice(0, 64)
+    if (!code) {
+      const cookieHeader = req.headers?.cookie || ''
+      const m = cookieHeader.match(/(?:^|;\s*)scalesolo_ref=([^;]+)/)
+      if (m) code = decodeURIComponent(m[1]).toLowerCase().slice(0, 64)
+    }
     if (!code) return res.status(400).json({ error: 'code required' })
 
     // Already attributed? Tell the client so it can stop retrying.

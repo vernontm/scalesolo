@@ -171,6 +171,34 @@ async function recordAffiliateCommission(invoice) {
   }
 }
 
+// Refund clawback. Looks up any commission tied to the invoice the
+// refunded charge paid, and flips it to status='clawed_back' so we
+// don't pay out on it. Does nothing if the commission was already paid
+// (we don't reverse paid payouts here — that's a manual call).
+async function clawbackAffiliateCommission(charge) {
+  if (!charge) return
+  const invoiceId = charge.invoice
+  if (!invoiceId) return
+  // Only meaningful when something was actually refunded.
+  const refundedCents = Number(charge.amount_refunded) || 0
+  if (refundedCents <= 0) return
+
+  const rows = await supa(
+    `affiliate_commissions?stripe_invoice_id=eq.${encodeURIComponent(invoiceId)}&select=id,status`
+  ).catch(() => [])
+  const c = rows?.[0]
+  if (!c) return
+  // Already paid out → leave alone (admin handles reversals manually).
+  if (c.status === 'paid') return
+  if (c.status === 'clawed_back') return
+
+  await supa(`affiliate_commissions?id=eq.${c.id}`, {
+    method: 'PATCH',
+    body: { status: 'clawed_back' },
+    prefer: 'return=minimal',
+  }).catch(() => {})
+}
+
 // Resolve the email we should notify. Prefer the canonical email on
 // auth.users; fall back to billing_customers.email (the value Stripe
 // gave us at checkout) which is normally the same anyway.
@@ -412,6 +440,16 @@ async function routeEvent(event) {
       return upsertSubscription(event.data.object, event.type)
     case 'customer.subscription.deleted':
       return onSubscriptionDeleted(event.data.object)
+    case 'charge.refunded':
+    case 'charge.refund.updated': {
+      // Pull the invoice id (when present) and clawback any commission
+      // we previously logged for it. Refund-on-non-invoice payments
+      // (one-off topups) are a no-op here since topups don't earn commission.
+      try { await clawbackAffiliateCommission(event.data.object) } catch (e) {
+        console.warn('affiliate clawback failed:', e?.message || e)
+      }
+      return
+    }
     case 'invoice.payment_succeeded':
     case 'invoice.payment_failed': {
       const invoice = event.data.object

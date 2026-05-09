@@ -82,15 +82,22 @@ export default function Landing() {
   const nav = useNavigate()
   const goSignup = () => nav('/login')
 
-  // Capture affiliate ref code from ?ref=… and stash in localStorage so
-  // it survives the round-trip to email-confirmation. Auth context
-  // attributes it to the user post-signup.
+  // Capture affiliate ref code from ?ref=… and stash in BOTH localStorage
+  // and a 30-day first-party cookie. Cookies survive a localStorage wipe
+  // (private browsing close, "clear site data"), and the SPA still uses
+  // localStorage as the primary read path so we don't ship a request just
+  // to get the cookie. Auth context attributes whichever one is present
+  // post-signup.
   useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search)
       const ref = params.get('ref')
       if (ref && /^[a-z0-9_-]{2,64}$/i.test(ref)) {
-        localStorage.setItem('scalesolo.ref', ref.toLowerCase())
+        const code = ref.toLowerCase()
+        localStorage.setItem('scalesolo.ref', code)
+        // 30 days; SameSite=Lax so it survives the email-confirm round trip.
+        const expires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toUTCString()
+        document.cookie = `scalesolo_ref=${encodeURIComponent(code)}; expires=${expires}; path=/; SameSite=Lax`
       }
     } catch {}
   }, [])
