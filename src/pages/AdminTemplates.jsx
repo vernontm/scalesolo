@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { LayoutGrid, Plus, Pencil, Trash2, Globe, Lock, X, Loader2, ArrowUpRight, Save, Sparkles, RefreshCw } from 'lucide-react'
+import { LayoutGrid, Plus, Pencil, Trash2, Globe, Lock, X, Loader2, ArrowUpRight, Save, Sparkles, RefreshCw, ArrowUp, ArrowDown, ListChecks } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { supabase } from '../lib/supabase'
 
@@ -190,9 +190,31 @@ function EditDrawer({ template, onClose, onSaved }) {
   const [sortOrder, setSortOrder] = useState(template.template_sort_order ?? 100)
   const [planGate, setPlanGate] = useState(Array.isArray(template.template_plan_gate) ? [...template.template_plan_gate] : [])
   const [category, setCategory] = useState(template.template_category || '')
+  const [steps, setSteps] = useState(Array.isArray(template.template_guide) ? template.template_guide : [])
   const [busy, setBusy] = useState(false)
   const [genBusy, setGenBusy] = useState(false)
+  const [stepsBusy, setStepsBusy] = useState(false)
   const [err, setErr] = useState(null)
+  // Available nodes from the template payload — used as a dropdown so each
+  // step can optionally link to the canvas node it explains.
+  const nodeOptions = Array.isArray(template.nodes)
+    ? template.nodes.map((n) => ({
+        id: n.id,
+        label: n?.data?.name || n?.data?.type || n.id?.slice(0, 8),
+        type: n?.data?.type,
+      }))
+    : []
+
+  const updateStep = (idx, patch) => setSteps((arr) => arr.map((s, i) => i === idx ? { ...s, ...patch } : s))
+  const addStep = () => setSteps((arr) => [...arr, { step: arr.length + 1, title: '', body: '', node_id: null, node_type: null }])
+  const removeStep = (idx) => setSteps((arr) => arr.filter((_, i) => i !== idx).map((s, i) => ({ ...s, step: i + 1 })))
+  const moveStep = (idx, delta) => setSteps((arr) => {
+    const next = [...arr]
+    const j = idx + delta
+    if (j < 0 || j >= next.length) return arr
+    ;[next[idx], next[j]] = [next[j], next[idx]]
+    return next.map((s, i) => ({ ...s, step: i + 1 }))
+  })
 
   function toggleTier(tier) {
     setPlanGate((arr) => arr.includes(tier) ? arr.filter((x) => x !== tier) : [...arr, tier])
@@ -201,6 +223,17 @@ function EditDrawer({ template, onClose, onSaved }) {
   async function save() {
     setBusy(true); setErr(null)
     try {
+      // Strip empty steps so we don't ship blank rows. A step is real
+      // when it has a title or body.
+      const cleanSteps = steps
+        .filter((s) => (s.title && s.title.trim()) || (s.body && s.body.trim()))
+        .map((s, i) => ({
+          step: i + 1,
+          title: (s.title || '').trim(),
+          body: (s.body || '').trim(),
+          node_id: s.node_id || null,
+          node_type: s.node_type || null,
+        }))
       const r = await authedFetch(`/api/admin/templates?id=${encodeURIComponent(template.id)}`, {
         method: 'PATCH',
         body: JSON.stringify({
@@ -210,6 +243,7 @@ function EditDrawer({ template, onClose, onSaved }) {
           plan_gate: planGate,
           sort_order: Number(sortOrder),
           category: category.trim() || null,
+          guide: cleanSteps.length ? cleanSteps : null,
         }),
       })
       const body = await r.json()
@@ -219,6 +253,24 @@ function EditDrawer({ template, onClose, onSaved }) {
       setErr(e.message)
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function autoSteps() {
+    setStepsBusy(true); setErr(null)
+    try {
+      const r = await authedFetch(`/api/admin/templates-steps?id=${encodeURIComponent(template.id)}`, {
+        method: 'POST',
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body?.error || `Generate failed (${r.status})`)
+      if (Array.isArray(body.steps) && body.steps.length) {
+        setSteps(body.steps.map((s, i) => ({ ...s, step: i + 1 })))
+      }
+    } catch (e) {
+      setErr(e.message)
+    } finally {
+      setStepsBusy(false)
     }
   }
 
@@ -293,6 +345,96 @@ function EditDrawer({ template, onClose, onSaved }) {
           </div>
           <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
             If any tier is selected, only users on that tier (or higher) can clone the template. Selecting none = free for everyone.
+          </div>
+        </Field>
+
+        <Field label="Setup steps (shown in the side panel when a user opens this template)">
+          <div style={{ marginBottom: 8 }}>
+            <button
+              type="button"
+              onClick={autoSteps}
+              disabled={stepsBusy}
+              style={{
+                ...iconBtnStyle,
+                background: 'rgba(168,85,247,0.10)',
+                borderColor: 'rgba(168,85,247,0.4)',
+                color: '#c4b5fd',
+              }}
+              title="Read the workflow's nodes and write a step-by-step setup guide"
+            >
+              {stepsBusy ? <Loader2 size={12} className="spin" /> : <ListChecks size={12} />} Auto-generate steps
+            </button>
+          </div>
+          {steps.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--muted)', padding: '8px 0' }}>
+              No steps yet. Click "Auto-generate steps" or "Add step" to start.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {steps.map((s, i) => (
+                <div key={i} style={{
+                  background: 'var(--surface-2)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 10,
+                  padding: 10,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                    <span style={{
+                      display: 'inline-grid', placeItems: 'center',
+                      width: 20, height: 20, borderRadius: 999,
+                      background: 'var(--red)', color: '#fff',
+                      fontSize: 10, fontFamily: 'var(--font-display)', fontWeight: 700,
+                    }}>{i + 1}</span>
+                    <div style={{ flex: 1 }} />
+                    <button type="button" onClick={() => moveStep(i, -1)} disabled={i === 0} style={{ ...iconOnlyBtn, opacity: i === 0 ? 0.4 : 1 }} title="Move up"><ArrowUp size={11} /></button>
+                    <button type="button" onClick={() => moveStep(i, +1)} disabled={i === steps.length - 1} style={{ ...iconOnlyBtn, opacity: i === steps.length - 1 ? 0.4 : 1 }} title="Move down"><ArrowDown size={11} /></button>
+                    <button type="button" onClick={() => removeStep(i)} style={{ ...iconOnlyBtn, color: 'var(--red)', borderColor: 'rgba(239,68,68,0.4)' }} title="Delete step"><Trash2 size={11} /></button>
+                  </div>
+                  <input
+                    className="input"
+                    placeholder="Step title (e.g. Pick your avatar)"
+                    value={s.title || ''}
+                    onChange={(e) => updateStep(i, { title: e.target.value })}
+                    maxLength={120}
+                    style={{ marginBottom: 6 }}
+                  />
+                  <textarea
+                    className="input"
+                    placeholder="What the user needs to do here. Keep it 1-3 sentences."
+                    value={s.body || ''}
+                    onChange={(e) => updateStep(i, { body: e.target.value })}
+                    rows={2}
+                    maxLength={600}
+                    style={{ marginBottom: 6, fontFamily: 'inherit' }}
+                  />
+                  {nodeOptions.length > 0 && (
+                    <select
+                      className="input"
+                      value={s.node_id || ''}
+                      onChange={(e) => {
+                        const id = e.target.value || null
+                        const found = nodeOptions.find((n) => n.id === id)
+                        updateStep(i, { node_id: id, node_type: found?.type || null })
+                      }}
+                      style={{ fontSize: 12 }}
+                    >
+                      <option value="">No linked node (just an instruction)</option>
+                      {nodeOptions.map((n) => (
+                        <option key={n.id} value={n.id}>
+                          {n.label}{n.type && n.label !== n.type ? ` · ${n.type}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <button type="button" onClick={addStep} className="btn-ghost" style={{ marginTop: 8, padding: '6px 12px', fontSize: 12 }}>
+            <Plus size={12} /> Add step
+          </button>
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6, lineHeight: 1.5 }}>
+            Steps appear in the side guide panel when a user opens this template. Linking a step to a node lets users click the step to jump to that node on the canvas.
           </div>
         </Field>
 
