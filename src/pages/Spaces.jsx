@@ -563,25 +563,46 @@ function NewSpaceModal({ profileId, token, onClose, onPicked }) {
   const [templates, setTemplates] = useState(null)  // null = loading
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  const [userTier, setUserTier] = useState(null)
+  const [upsellTpl, setUpsellTpl] = useState(null)
+  const navigate = useNavigate()
 
   useEffect(() => {
     let alive = true
     ;(async () => {
       try {
-        const r = await fetch('/api/spaces?action=templates', {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        const body = await r.json()
+        const [tplR, billR] = await Promise.all([
+          fetch('/api/spaces?action=templates',  { headers: { Authorization: `Bearer ${token}` } }),
+          fetch('/api/billing',                  { headers: { Authorization: `Bearer ${token}` } }),
+        ])
+        const tplBody = await tplR.json()
+        const billBody = await billR.json().catch(() => ({}))
         if (!alive) return
-        if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
-        setTemplates(body.templates || [])
+        if (!tplR.ok) throw new Error(tplBody.error || `Failed (${tplR.status})`)
+        setTemplates(tplBody.templates || [])
+        // Active subscription tier drives plan-gate enforcement on the
+        // user-facing template picker. /api/billing returns the most-
+        // recent subscription for the current user. Anything that isn't
+        // active/trialing/past_due → null (free / no plan).
+        const sub = billBody?.subscription
+        const tier = sub && ['active', 'trialing', 'past_due'].includes(sub.status) ? sub.tier : null
+        setUserTier(tier || null)
       } catch (e) { if (alive) { setError(e.message); setTemplates([]) } }
     })()
     return () => { alive = false }
   }, [token])
 
+  // Returns true when the user's current tier allows cloning this
+  // template. Empty/null gate = free for everyone.
+  const isGated = (tpl) => {
+    const gate = Array.isArray(tpl.template_plan_gate) ? tpl.template_plan_gate.filter(Boolean) : []
+    if (gate.length === 0) return false
+    return !userTier || !gate.includes(userTier)
+  }
+
   const useTemplate = async (tpl) => {
     if (!profileId) { setError('Pick a brand profile first.'); return }
+    if (isGated(tpl)) { setUpsellTpl(tpl); return }
     setBusy(true); setError(null)
     try {
       const r = await fetch('/api/spaces?action=use_template', {
@@ -590,6 +611,11 @@ function NewSpaceModal({ profileId, token, onClose, onPicked }) {
         body: JSON.stringify({ template_id: tpl.id, target_profile_id: profileId }),
       })
       const body = await r.json()
+      if (r.status === 402 && body?.code === 'plan_gate') {
+        setUpsellTpl({ ...tpl, _required: body.required_tiers || [] })
+        setBusy(false)
+        return
+      }
       if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
       onPicked({ kind: 'template', space: body.space, guide: body.template_guide || tpl.template_guide || null })
     } catch (e) { setError(e.message); setBusy(false) }
@@ -597,8 +623,15 @@ function NewSpaceModal({ profileId, token, onClose, onPicked }) {
 
   const startBlank = () => onPicked({ kind: 'blank' })
 
-  const publicTemplates  = (templates || []).filter((t) => t.template_visibility === 'public')
-  const privateTemplates = (templates || []).filter((t) => t.template_visibility === 'private')
+  // Sort by admin-set sort_order (ascending), then most-recently-updated.
+  const tplSort = (a, b) => {
+    const sa = Number.isFinite(a.template_sort_order) ? a.template_sort_order : 100
+    const sb = Number.isFinite(b.template_sort_order) ? b.template_sort_order : 100
+    if (sa !== sb) return sa - sb
+    return new Date(b.updated_at || 0) - new Date(a.updated_at || 0)
+  }
+  const publicTemplates  = (templates || []).filter((t) => t.template_visibility === 'public').sort(tplSort)
+  const privateTemplates = (templates || []).filter((t) => t.template_visibility === 'private').sort(tplSort)
 
   return (
     <div className="modal-overlay" onClick={busy ? undefined : onClose}>
@@ -651,20 +684,44 @@ function NewSpaceModal({ profileId, token, onClose, onPicked }) {
                   <group.icon size={11} /> {group.label} <span style={{ opacity: 0.7 }}>({group.list.length})</span>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
-                  {group.list.map((tpl) => (
+                  {group.list.map((tpl) => {
+                    const gated = isGated(tpl)
+                    const gateTiers = Array.isArray(tpl.template_plan_gate) ? tpl.template_plan_gate.filter(Boolean) : []
+                    return (
                     <div
                       key={tpl.id}
                       role="button" tabIndex={0}
                       onClick={() => !busy && useTemplate(tpl)}
                       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); !busy && useTemplate(tpl) } }}
                       className="card"
-                      style={{ cursor: busy ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 12, padding: 14 }}
+                      style={{
+                        cursor: busy ? 'wait' : 'pointer',
+                        display: 'flex', alignItems: 'center', gap: 12, padding: 14,
+                        opacity: gated ? 0.78 : 1,
+                      }}
                     >
                       <div style={{ width: 36, height: 36, borderRadius: 10, background: tpl.template_visibility === 'public' ? 'rgba(239,68,68,0.10)' : 'var(--surface-2)', display: 'grid', placeItems: 'center' }}>
-                        {tpl.template_visibility === 'public' ? <Globe size={15} style={{ color: 'var(--red)' }} /> : <Lock size={15} style={{ color: 'var(--muted)' }} />}
+                        {gated
+                          ? <Lock size={15} style={{ color: 'var(--amber)' }} />
+                          : tpl.template_visibility === 'public'
+                            ? <Globe size={15} style={{ color: 'var(--red)' }} />
+                            : <Lock size={15} style={{ color: 'var(--muted)' }} />}
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14 }}>{tpl.name}</div>
+                        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+                          {tpl.name}
+                          {gated && (
+                            <span style={{
+                              fontSize: 9.5, fontWeight: 700, letterSpacing: '0.08em',
+                              padding: '2px 7px', borderRadius: 999,
+                              background: 'rgba(245,158,11,0.18)', color: 'var(--amber)',
+                              border: '1px solid rgba(245,158,11,0.4)',
+                              textTransform: 'uppercase',
+                            }}>
+                              {gateTiers.length === 1 ? gateTiers[0].replace('solo_', '').replace('_', ' ') : 'paid'}
+                            </span>
+                          )}
+                        </div>
                         {(tpl.template_summary || tpl.description) && (
                           <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3, lineHeight: 1.4 }}>
                             {tpl.template_summary || tpl.description}
@@ -678,13 +735,48 @@ function NewSpaceModal({ profileId, token, onClose, onPicked }) {
                       )}
                       <ChevronRight size={14} style={{ color: 'var(--muted)' }} />
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
             ))}
           </div>
         ))}
       </div>
+
+      {upsellTpl && (
+        <div
+          className="modal-overlay"
+          onClick={() => setUpsellTpl(null)}
+          style={{ zIndex: 110 }}
+        >
+          <div className="modal-card modal-card-md" onClick={(e) => e.stopPropagation()} style={{ padding: 22 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+              <Lock size={16} style={{ color: 'var(--amber)' }} />
+              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15 }}>Template requires an upgrade</div>
+              <button onClick={() => setUpsellTpl(null)} style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}>
+                <X size={16} />
+              </button>
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text-soft)', lineHeight: 1.55, marginBottom: 14 }}>
+              <strong style={{ color: 'var(--text)' }}>{upsellTpl.name}</strong> is available on:{' '}
+              {(Array.isArray(upsellTpl.template_plan_gate) ? upsellTpl.template_plan_gate : [])
+                .map((t) => t.replace('solo_', 'Solo ').replace(/^./, (c) => c.toUpperCase()))
+                .join(', ')}.
+              Upgrade your plan to clone this template into your workspace, or pick a free template instead.
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn-ghost" onClick={() => setUpsellTpl(null)}>Maybe later</button>
+              <button
+                className="btn-primary"
+                onClick={() => { setUpsellTpl(null); onClose?.(); navigate('/billing') }}
+              >
+                See plans
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

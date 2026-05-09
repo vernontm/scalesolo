@@ -114,6 +114,38 @@ export default async function handler(req, res) {
         if (tpl.template_visibility === 'private' && tpl.created_by !== auth.user.id) {
           return res.status(404).json({ error: 'Template not found' })
         }
+
+        // Plan-gate check: if template has a non-empty plan_gate array,
+        // user's active subscription tier must be in it. Empty/null gate
+        // = free for everyone. Admins can bypass for testing.
+        const gate = Array.isArray(tpl.template_plan_gate) ? tpl.template_plan_gate.filter(Boolean) : []
+        if (gate.length > 0) {
+          // Resolve user's current active tier via billing_subscriptions.
+          const cust = await supaFetch(`billing_customers?user_id=eq.${auth.user.id}&select=id`)
+          const customerId = cust?.[0]?.id
+          let activeTier = null
+          if (customerId) {
+            const subs = await supaFetch(
+              `billing_subscriptions?customer_id=eq.${customerId}&status=in.(active,trialing,past_due)&order=created_at.desc&limit=1&select=tier`
+            )
+            activeTier = subs?.[0]?.tier || null
+          }
+          // Admin override — admins can clone any template for testing.
+          let isAdminUser = false
+          try {
+            const profRows = await supaFetch(`user_profiles?id=eq.${auth.user.id}&select=is_admin`)
+            isAdminUser = !!profRows?.[0]?.is_admin
+          } catch {}
+          if (!isAdminUser && (!activeTier || !gate.includes(activeTier))) {
+            return res.status(402).json({
+              error: 'This template is on a higher plan. Upgrade to use it.',
+              code: 'plan_gate',
+              required_tiers: gate,
+              user_tier: activeTier,
+            })
+          }
+        }
+
         await assertProfileAccess(auth.user.id, targetProfileId)
 
         const cleanedNodes = scrubNodes(tpl.nodes, { crossProfile: true, isFromTemplate: true })
