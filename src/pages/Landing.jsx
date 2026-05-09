@@ -243,6 +243,14 @@ export default function Landing() {
       {/* ── VIDEO FINISHING SHOWCASE ────────────────────────────────── */}
       <section style={section} className="fade-up">
         <div className="showcase-grid">
+          <div className="showcase-img-wrap">
+            <img
+              src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/captions_landing.png"
+              alt="ScaleSolo video finishing: captions, titles, overlays, music, and watermarks"
+              className="showcase-img"
+              onError={(e) => { e.currentTarget.style.opacity = '0' }}
+            />
+          </div>
           <div className="showcase-copy">
             <div className="feat-eyebrow">Video finishing</div>
             <h2 className="showcase-title">Render-ready videos. Zero editor.</h2>
@@ -258,28 +266,12 @@ export default function Landing() {
               <li><Check size={14} /> Brand watermarks locked in so nothing ships off-brand</li>
             </ul>
           </div>
-          <div className="showcase-img-wrap">
-            <img
-              src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/captions_landing.png"
-              alt="ScaleSolo video finishing: captions, titles, overlays, music, and watermarks"
-              className="showcase-img"
-              onError={(e) => { e.currentTarget.style.opacity = '0' }}
-            />
-          </div>
         </div>
       </section>
 
       {/* ── SCHEDULE-POST FEATURE SHOWCASE ──────────────────────────── */}
       <section style={section} className="fade-up">
         <div className="showcase-grid">
-          <div className="showcase-img-wrap">
-            <img
-              src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/schedule_post.png"
-              alt="ScaleSolo schedule-post feature"
-              className="showcase-img"
-              onError={(e) => { e.currentTarget.style.opacity = '0' }}
-            />
-          </div>
           <div className="showcase-copy">
             <div className="feat-eyebrow">Fully autonomous</div>
             <h2 className="showcase-title">Set it once. Build a brand on autopilot.</h2>
@@ -295,6 +287,14 @@ export default function Landing() {
               <li><Check size={14} /> Native publishing to TikTok, IG, YouTube, X, LinkedIn, Threads, FB</li>
               <li><Check size={14} /> Run brands at scale with every brand on its own autopilot</li>
             </ul>
+          </div>
+          <div className="showcase-img-wrap">
+            <img
+              src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/schedule_post.png"
+              alt="ScaleSolo schedule-post feature"
+              className="showcase-img"
+              onError={(e) => { e.currentTarget.style.opacity = '0' }}
+            />
           </div>
         </div>
       </section>
