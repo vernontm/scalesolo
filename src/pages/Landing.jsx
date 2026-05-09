@@ -64,7 +64,7 @@ const features = [
 const valueGrid = [
   { icon: Layers,      title: 'Brand-voice scripts',  body: 'Our AI reads your brand bible + recent posts, drafts ideas in your voice, and dedupes against the last 12+ takes.' },
   { icon: Wand2,       title: 'Title + captions in one call', body: 'Per-platform titles, captions, and hashtags. Schedule node picks the right variant per destination automatically.' },
-  { icon: RefreshCw,   title: 'Auto-run forever',     body: 'Pick a cadence — every hour, every day, every week — and the workflow runs without you.' },
+  { icon: RefreshCw,   title: 'Auto-run forever',     body: 'Pick a cadence , every hour, every day, every week , and the workflow runs without you.' },
   { icon: ShieldCheck, title: 'You own the assets',   body: 'Every render lands in your library. Download originals, repost anywhere, no vendor lock-in.' },
 ]
 
@@ -100,7 +100,7 @@ export default function Landing() {
   // Lock the public landing to the dark brand palette regardless of any
   // light theme an app user may have persisted. The CSS-var overrides
   // on the page wrapper (see `page` style) take care of everything
-  // *inside* the landing — this effect only forces body background +
+  // *inside* the landing , this effect only forces body background +
   // color-scheme dark while mounted so iOS Safari's rubber-band scroll
   // doesn't flash white on overscroll.
   useEffect(() => {
@@ -118,7 +118,7 @@ export default function Landing() {
 
   return (
     <div style={page}>
-      {/* Floating particle field — sits behind everything, decorative only */}
+      {/* Floating particle field , sits behind everything, decorative only */}
       <ParticleField />
 
       {/* ── NAV ─────────────────────────────────────────────────────── */}
@@ -140,7 +140,7 @@ export default function Landing() {
 
       {/* ── HERO ────────────────────────────────────────────────────── */}
       <section style={hero} className="hero-section">
-        {/* Rising-flame glow stack — 4 layers, two animations
+        {/* Rising-flame glow stack , 4 layers, two animations
             so the bloom breathes AND drifts sideways slightly. */}
         <div aria-hidden style={{ ...heroFlameOuter, animation: 'auroraPulse 6.5s var(--ease) infinite, auroraDrift 11s var(--ease) infinite' }} />
         <div aria-hidden style={{ ...heroFlameMid,   animation: 'auroraPulse 5.5s var(--ease) infinite' }} />
@@ -153,7 +153,7 @@ export default function Landing() {
               Set up once.<br /><span className="brand-text">Post forever.</span>
             </h1>
             <p style={{ ...heroSub, margin: '0 0 32px', textAlign: 'left' }} className="fade-up">
-              Drop a topic. Pick a proven workflow. Walk away with finished posts — written, rendered, and scheduled to every platform.
+              Drop a topic. Pick a proven workflow. Walk away with finished posts, written, rendered, and scheduled to every platform.
             </p>
             <div style={{ ...heroCtas, justifyContent: 'flex-start' }} className="fade-up hero-ctas">
               <button onClick={goSignup} className="btn-primary" style={ctaSizing}>
@@ -187,7 +187,7 @@ export default function Landing() {
           <div className="showcase-img-wrap">
             <img
               src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/brand_profile.png"
-              alt="ScaleSolo brand profile — voice, training, and performance insights"
+              alt="ScaleSolo brand profile, voice, training, and performance insights"
               className="showcase-img"
               onError={(e) => { e.currentTarget.style.opacity = '0' }}
             />
@@ -197,7 +197,7 @@ export default function Landing() {
             <h2 className="showcase-title">The first platform that actually sounds like you.</h2>
             <p className="showcase-body">
               Bring your own voice or build it here. Paste in the brand-voice profile you already
-              use with ChatGPT, Claude, or Gemini — or fill out our guided brief — and ScaleSolo
+              use with ChatGPT, Claude, or Gemini, or fill out our guided brief, and ScaleSolo
               uses it to write every caption, script, and hook so the output stays seamless and
               authentic to you.
             </p>
@@ -205,7 +205,7 @@ export default function Landing() {
               <li><Check size={14} /> Import your voice from any AI tool, or build it on ScaleSolo</li>
               <li><Check size={14} /> Studies your past scripts, hooks, and top-performing posts</li>
               <li><Check size={14} /> Learns what lands and what flops to sharpen every run</li>
-              <li><Check size={14} /> Run multiple brands side-by-side — no cross-contamination</li>
+              <li><Check size={14} /> Run multiple brands side-by-side with no cross-contamination</li>
             </ul>
           </div>
         </div>
@@ -218,7 +218,7 @@ export default function Landing() {
             <div className="feat-eyebrow">Realistic avatars</div>
             <h2 className="showcase-title">A studio cast for every brand.</h2>
             <p className="showcase-body">
-              Train photorealistic AI avatars for any brand on the platform — founders, spokespeople,
+              Train photorealistic AI avatars for any brand on the platform: founders, spokespeople,
               creators, internal teams. Build a roster of on-brand presenters with consistent looks,
               wardrobes, and delivery, ready to ship video at the volume modern social demands.
             </p>
@@ -256,15 +256,15 @@ export default function Landing() {
             <h2 className="showcase-title">Set it once. Build a brand on autopilot.</h2>
             <p className="showcase-body">
               ScaleSolo is the first platform where the workflow itself does the work. Wire it up
-              once — voice, avatar, cadence, platforms — and content gets generated, rendered, and
-              posted automatically, on schedule, forever. No daily check-ins. No queue refilling.
+              once with your voice, avatar, cadence, and platforms, then content gets generated,
+              rendered, and posted automatically, on schedule, forever. No daily check-ins. No queue refilling.
               No human in the loop.
             </p>
             <ul className="showcase-list">
-              <li><Check size={14} /> Hands-off after setup — no daily content management</li>
+              <li><Check size={14} /> Hands-off after setup with no daily content management</li>
               <li><Check size={14} /> Auto-generates and ships posts on your set cadence</li>
               <li><Check size={14} /> Native publishing to TikTok, IG, YouTube, X, LinkedIn, Threads, FB</li>
-              <li><Check size={14} /> Run brands at scale — every brand on its own autopilot</li>
+              <li><Check size={14} /> Run brands at scale with every brand on its own autopilot</li>
             </ul>
           </div>
         </div>
@@ -277,7 +277,7 @@ export default function Landing() {
       <div className="feat-section">
       <section id="features" style={{ ...section, paddingTop: 20, paddingBottom: 100 }} className="fade-up">
         <h2 style={sectionH}>Everything you need to ship daily</h2>
-        <p style={sectionSub}>One workspace for the whole content engine — write, render, schedule, ship.</p>
+        <p style={sectionSub}>One workspace for the whole content engine: write, render, schedule, ship.</p>
         <div className="feat-grid">
           <FeatureCard num="1" eyebrow="Realistic avatars" title="Faceless video on autopilot." body="Train an AI avatar from one selfie. Cycle outfits across runs so every render ships looking fresh.">
             <AvatarMock />
@@ -357,7 +357,7 @@ function TemplateCard({ title, blurb, tags }) {
   )
 }
 
-// Decorative particle field — pure CSS dots with randomized animation
+// Decorative particle field , pure CSS dots with randomized animation
 // delays. Sits behind everything; not interactive.
 function ParticleField() {
   // Pre-shuffled positions so SSR + first paint match.
@@ -392,7 +392,7 @@ function ParticleField() {
   )
 }
 
-// (CanvasMock removed — replaced by <WorkflowDemo /> from
+// (CanvasMock removed , replaced by <WorkflowDemo /> from
 // src/components/WorkflowDemo.jsx, an interactive 9-node walkthrough
 // of the AI Podcaster pipeline.)
 
