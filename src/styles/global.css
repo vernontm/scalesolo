@@ -501,6 +501,7 @@ a:focus-visible {
 
 @media (max-width: 860px) {
   .showcase-grid { gap: 24px; }
+  .showcase-img-wrap { order: -1; }
   .showcase-title { text-align: center; }
   .showcase-body  { text-align: center; margin-left: auto; margin-right: auto; }
   .showcase-copy .feat-eyebrow { text-align: center; }
