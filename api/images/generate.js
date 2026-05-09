@@ -21,9 +21,11 @@ async function enhancePrompt(rawPrompt) {
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 600,
       system:
-        'You rewrite short user prompts into vivid image-generation prompts. Output ONLY the rewritten prompt — no preamble, no quotes. ' +
+        'You rewrite short user prompts into vivid image-generation prompts. Output ONLY the rewritten prompt, no preamble, no quotes. ' +
         'Preserve every concrete detail the user gave (subject, brand, palette, references). Add: composition, camera angle, lighting, mood, ' +
-        'background detail, render style. If a "BRAND IDENTITY DIRECTIVE" block is present, keep it verbatim at the top and only enhance the body.',
+        'background detail, render style. ' +
+        'If a "BRAND IDENTITY DIRECTIVE" or "REFERENCE DIRECTIVE" block is present, keep it verbatim at the top (do not paraphrase, reformat, or remove any line) and only enhance the body that follows the "---" separator. ' +
+        'Never strip out instructions about not copying watermarks, signatures, or text overlays from references.',
       messages: [{ role: 'user', content: rawPrompt }],
     })
     const text = (out?.content || []).map((c) => c?.text || '').join('').trim()

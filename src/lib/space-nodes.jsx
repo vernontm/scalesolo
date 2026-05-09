@@ -3918,11 +3918,38 @@ ${String(script).slice(0, 2000)}
       // Strip @-mentions from the prompt before sending to KIE — image
       // models don't parse them and the raw "@image1" text confuses
       // Gemini-based providers. We've already pulled the matching URLs
-      // into `refs`, so replace each token with a neutral phrase.
+      // into `refs`, so rewrite each token to the labeled reference and
+      // capture the ordered set of labels for the directive block below.
+      const refLabels = []  // labels in the order they appear in the prompt
       prompt = prompt.replace(/@(?:"([^"]+)"|([A-Za-z0-9_-]+))/g, (_, q, b) => {
         const name = (q || b || '').trim()
-        return name ? `the reference image "${name}"` : 'the reference image'
+        if (name && !refLabels.includes(name)) refLabels.push(name)
+        return name ? `reference "${name}"` : 'the reference image'
       })
+
+      // When references are present, prepend a structured REFERENCE
+      // DIRECTIVE block. Image models (Nano Banana, GPT image, etc.)
+      // treat the refs array as a flat conditioning set, so without an
+      // explicit directive they tend to (a) blend identities across
+      // refs and (b) replicate any text/watermarks/signatures baked
+      // into the source images. The directive binds each labeled ref
+      // to its role and bans watermark leakage. The api enhance step
+      // is told to preserve this block verbatim.
+      if (refs.length) {
+        const lines = ['REFERENCE DIRECTIVE']
+        if (refLabels.length) {
+          lines.push('Labeled reference images (resolve any "reference \\"X\\"" mention to the matching label):')
+          refLabels.forEach((label, i) => lines.push(`  ${i + 1}. "${label}"`))
+        } else {
+          lines.push(`Reference images provided (in order): ${refs.length}.`)
+        }
+        lines.push('')
+        lines.push('Rules:')
+        lines.push('• When the prompt says "use [attribute] from reference \\"X\\"", pull ONLY that attribute from that reference. Do not pull other attributes from it.')
+        lines.push('• Person identity (face, skin tone, hair, body shape, build) is locked to whichever reference the prompt names for it. Do not blend identities across references.')
+        lines.push('• Do NOT reproduce watermarks, signatures, logos, captions, or any text overlays that appear in any reference image. The output must be clean, with no copied branding from the references unless the prompt explicitly asks for it.')
+        prompt = `${lines.join('\n')}\n\n---\n\n${prompt}`
+      }
 
       const profileForCall = brand?.profile_id || ctx.profileId
       const submitR = await fetch('/api/images/generate', {
