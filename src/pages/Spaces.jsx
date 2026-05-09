@@ -325,7 +325,7 @@ function SpaceNode({ id, data, selected }) {
 // can actually edit. We just need "did anything user-meaningful change".
 function propsHashShort(p) {
   if (!p || typeof p !== 'object') return ''
-  const skip = new Set(['_ctxAvatars', '_ctxPublicAvatars', '_ctxProfiles', '_ctxNamedImages', '_ctxCostPerRun', '_ctxProfileId', '_ctxSyncedPlatforms', '_ctxDetectedKind', '_ctxUpstreamVideoUrl', '_ctxUpstreamScript', '_ctxUpstreamLogoUrl', '_ctxConnectedPlatforms', '_ctxBrandSchedule', '_ctxBrandCTA', '_ctxIncomingDescriptionLength'])
+  const skip = new Set(['_ctxAvatars', '_ctxPublicAvatars', '_ctxProfiles', '_ctxNamedImages', '_ctxCostPerRun', '_ctxProfileId', '_ctxSyncedPlatforms', '_ctxDetectedKind', '_ctxUpstreamVideoUrl', '_ctxUpstreamScript', '_ctxUpstreamLogoUrl', '_ctxConnectedPlatforms', '_ctxBrandSchedule', '_ctxBrandCTA', '_ctxIncomingDescriptionLength', '_ctxIsTrialing'])
   const parts = []
   for (const k of Object.keys(p).sort()) {
     if (skip.has(k)) continue
@@ -1416,6 +1416,10 @@ function SpaceBuilder({ space, onSave, onClose }) {
   // user picks a different brand). Drives which buttons in schedule_post
   // are enabled.
   const [connectedSocialPlatforms, setConnectedSocialPlatforms] = useState([])
+  // Subscription state — drives the "free trial lock" overlay on
+  // avatar_render and schedule_post. Trialing users get the full UI
+  // but the run is blocked until they upgrade (we offer 20% off).
+  const [subscriptionStatus, setSubscriptionStatus] = useState(null)  // 'trialing' | 'active' | 'past_due' | null
 
   // Ref mirrors of nodes/edges so global helpers don't read stale closures.
   const nodesRef = useRef(nodes)
@@ -1478,6 +1482,15 @@ function SpaceBuilder({ space, onSave, onClose }) {
       })
       .catch(() => setConnectedSocialPlatforms([]))
   }, [session, selectedProfileId])
+
+  // Pull current subscription status — used by the trial-lock overlay.
+  useEffect(() => {
+    if (!session) return
+    fetch('/api/billing', { headers: { Authorization: `Bearer ${session.access_token}` } })
+      .then((r) => r.json())
+      .then((b) => setSubscriptionStatus(b?.subscription?.status || null))
+      .catch(() => setSubscriptionStatus(null))
+  }, [session])
 
   // Wire the global helpers used by node bodies (cheap escape hatch that
   // beats threading state through every ReactFlow component).
@@ -2359,6 +2372,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
     () => nodes.map((n) => {
       const t = n.data?.type
       if (t === 'avatar_picker') return { ...n, data: { ...n.data, _ctxAvatars: avatars, _ctxPublicAvatars: publicAvatars } }
+      if (t === 'avatar_render') return { ...n, data: { ...n.data, _ctxIsTrialing: subscriptionStatus === 'trialing' } }
       if (t === 'brand_profile') return { ...n, data: { ...n.data, _ctxProfiles: profiles } }
       if (t === 'image_upload')  return { ...n, data: { ...n.data, _ctxProfileId: selectedProfileId } }
       if (t === 'captions') {
@@ -2419,6 +2433,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
           } : null,
           _ctxBrandCTA: activeProfile?.brand_cta || '',
           _ctxIncomingDescriptionLength: descLen,
+          _ctxIsTrialing: subscriptionStatus === 'trialing',
         } }
       }
       if (t === 'save_library') {
@@ -2501,7 +2516,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
       }
       return n
     }),
-    [nodes, edges, avatars, profiles, publicAvatars, selectedProfileId, connectedSocialPlatforms]
+    [nodes, edges, avatars, profiles, publicAvatars, selectedProfileId, connectedSocialPlatforms, subscriptionStatus]
   )
 
   // Lock body scroll while the builder is mounted (it uses position:fixed).

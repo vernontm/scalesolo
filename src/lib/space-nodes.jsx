@@ -14,7 +14,7 @@ import {
   Type, Wand2, Captions, UserCircle2, Save, Image as ImageIcon,
   ListChecks, FileVideo, Upload, Loader2, Maximize2, ArrowUpRight,
   Download, Trash2, Building2, Repeat, Play, Pause, Combine as CombineIcon,
-  Mic, Sparkles, Send, Copy, X,
+  Mic, Sparkles, Send, Copy, X, Lock,
 } from 'lucide-react'
 import { supabase } from './supabase.js'
 import MusicMixPreview from '../components/MusicMixPreview.jsx'
@@ -2070,12 +2070,54 @@ function AvatarPickerBody({ data, onPatch }) {
 }
 
 // ─── 7. AVATAR RENDER ───────────────────────────────────────────────────────
+// Free-trial lock notice. Rendered above the body when _ctxIsTrialing is
+// true so users see why an avatar render or schedule_post can't fire yet,
+// plus a 20%-off CTA that takes them to /billing with the upsell preselected.
+function TrialLockNotice({ feature, savingsPct = 20 }) {
+  return (
+    <div
+      onClick={(e) => { e.stopPropagation() }}
+      style={{
+        marginBottom: 8,
+        padding: '10px 12px',
+        borderRadius: 8,
+        border: '1px solid rgba(245,158,11,0.45)',
+        background: 'linear-gradient(135deg, rgba(245,158,11,0.14), rgba(239,68,68,0.10))',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <Lock size={12} style={{ color: '#fbbf24' }} />
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 11.5, fontWeight: 700, color: '#fbbf24' }}>
+          Locked during free trial
+        </div>
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--text-soft)', lineHeight: 1.5, marginBottom: 6 }}>
+        {feature} is a paid feature. Upgrade now and we'll knock <strong>{savingsPct}% off</strong> your first month.
+      </div>
+      <a
+        href={`/billing?upsell=trial-unlock&promo=TRIAL${savingsPct}`}
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          padding: '5px 10px', borderRadius: 6,
+          background: 'linear-gradient(135deg, var(--red), var(--red-dark))',
+          color: '#fff', textDecoration: 'none',
+          fontFamily: 'var(--font-display)', fontSize: 11.5, fontWeight: 700,
+        }}
+      >
+        <Sparkles size={11} /> Unlock with {savingsPct}% off
+      </a>
+    </div>
+  )
+}
+
 function AvatarRenderBody({ data }) {
   const out = data.output
   const clipCount = Array.isArray(out?.videos) ? out.videos.length : 0
   const partialFails = Array.isArray(out?.partial_failures) ? out.partial_failures.length : 0
   return (
     <>
+      {data._ctxIsTrialing && <TrialLockNotice feature="Avatar video render" />}
       {data.status !== 'done' && data.status !== 'failed' && data.status !== 'running' &&
         <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>Connect a script + avatar input.</div>}
 
@@ -3466,6 +3508,7 @@ function SchedulePostBody({ data, onPatch }) {
 
   return (
     <>
+      {data._ctxIsTrialing && <TrialLockNotice feature="Schedule / publish post" />}
       <div style={{ fontSize: 10.5, color: 'var(--muted)', marginBottom: 8, lineHeight: 1.4 }}>
         Posts via the connected social accounts on this brand profile.
         {' '}
@@ -4439,7 +4482,10 @@ ${String(script).slice(0, 2000)}
     outputs: [{ id: 'out', label: 'Out' }],
     initialProps: {},
     Body: AvatarRenderBody,
-    run: async ({ inputs, ctx, reportProgress }) => {
+    run: async ({ data, inputs, ctx, reportProgress }) => {
+      if (data?._ctxIsTrialing) {
+        throw new Error('Avatar video render is locked during free trial. Upgrade for 20% off your first month → /billing')
+      }
       const incoming = inputs?.in
       const avatar = pickAvatarConfig(incoming)
       if (!avatar?.avatar_id) throw new Error('Connect an Avatar picker')
@@ -4948,6 +4994,9 @@ ${String(script).slice(0, 2000)}
     },
     Body: SchedulePostBody,
     run: async ({ data, inputs, ctx }) => {
+      if (data?._ctxIsTrialing) {
+        throw new Error('Scheduling / publishing is locked during free trial. Upgrade for 20% off your first month → /billing')
+      }
       const arr = asArr(inputs?.in)
       let caption = ''
       let hashtags = ''
