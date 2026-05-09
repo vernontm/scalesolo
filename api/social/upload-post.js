@@ -314,6 +314,13 @@ export default async function handler(req, res) {
       // box. Caller can override with an explicit first_comment field.
       if (!firstComment && hashtags) firstComment = hashtags
 
+      // Upload-Post returns the request_id on success — pull it out of
+      // the response body now so we can persist it on the row. Without
+      // this, scheduled-but-not-yet-fired posts have no way for us to
+      // look up their delivery status (the status endpoint is keyed
+      // entirely on request_id).
+      const uploadpostRequestId = body?.request_id || body?.id || null
+
       const payload = {
         profile_id,
         title: titleStr,
@@ -327,6 +334,7 @@ export default async function handler(req, res) {
         platforms,
         status,
         scheduled_datetime: resolvedScheduledIso || null,
+        uploadpost_request_id: uploadpostRequestId,
         generated_by: 'schedule_post',
       }
       if (existing?.id) {

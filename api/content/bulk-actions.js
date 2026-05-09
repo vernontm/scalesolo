@@ -338,11 +338,12 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
         results.push({ id: r.id, ok: false, error: body?.error || `Upload-Post ${upRes.status}` })
         continue
       }
+      const requestId = body?.request_id || body?.id || null
       await supaFetch(`content_scripts?id=eq.${r.id}`, {
         method: 'PATCH',
-        body: { status: 'posted' },
+        body: { status: 'posted', uploadpost_request_id: requestId },
       })
-      results.push({ id: r.id, ok: true, request_id: body?.request_id || body?.id || null })
+      results.push({ id: r.id, ok: true, request_id: requestId })
     } catch (e) {
       results.push({ id: r.id, ok: false, error: e.message })
     }
