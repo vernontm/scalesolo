@@ -158,7 +158,7 @@ export default function Landing() {
               Launch your faceless brand in minutes.<br /><span className="brand-text">Run it on autopilot.</span>
             </h1>
             <p style={{ ...heroSub, margin: '0 0 32px', textAlign: 'left' }} className="fade-up">
-              ScaleSolo is the first AI platform that builds a faceless brand for you and runs it on autopilot. Pick a workflow, plug in your voice and avatar, and ScaleSolo writes, films, and ships content to every platform on its own. No camera. No editor. No daily grind.
+              The first AI platform that builds a faceless brand for you and runs it on autopilot. No camera. No editor. No daily grind.
             </p>
             <div style={{ ...heroCtas, justifyContent: 'flex-start' }} className="fade-up hero-ctas">
               <button onClick={goSignup} className="btn-primary" style={ctaSizing}>
@@ -194,9 +194,8 @@ export default function Landing() {
           </h2>
           <p style={sectionSub}>
             AI-native creators are launching channels at a pace that wasn't possible 18 months ago.
-            UGC, faceless reels, and AI-narrated shorts now drive a huge share of every algorithm.
-            The bottleneck used to be filming, editing, and posting. ScaleSolo deletes all three so
-            you can launch as fast as you can think and let your brand compound while you sleep.
+            ScaleSolo deletes the filming, editing, and posting bottleneck so your brand compounds
+            while you sleep.
           </p>
         </div>
         <div className="stats-grid">
@@ -405,6 +404,40 @@ export default function Landing() {
       </section>
       </div>
 
+      {/* ── FAQ ─────────────────────────────────────────────────────── */}
+      <section id="faq" style={section} className="fade-up">
+        <h2 style={sectionH}>Questions, <span className="brand-text">answered</span>.</h2>
+        <p style={sectionSub}>
+          Everything new founders ask before launching their first faceless brand.
+        </p>
+        <div className="faq-list">
+          <FaqItem q="Do I have to show my face?">
+            Never. ScaleSolo is built for faceless brands. Your AI avatar speaks for you, and you can run an entire brand without ever turning on a camera.
+          </FaqItem>
+          <FaqItem q="How long does setup take?">
+            About 5 minutes. Pick a workflow, plug in your voice and avatar, and ScaleSolo handles writing, rendering, captioning, and scheduling automatically from there.
+          </FaqItem>
+          <FaqItem q="What platforms can it post to?">
+            Native publishing to TikTok, Instagram, YouTube, X, LinkedIn, Threads, Facebook, and more. 9+ platforms total, no third-party scheduler tax.
+          </FaqItem>
+          <FaqItem q="Can I run more than one brand?">
+            Yes. Brand profiles isolate each brand's voice, avatar, cadence, and platforms so nothing cross-pollinates. Run as many as your plan allows, all on autopilot.
+          </FaqItem>
+          <FaqItem q="Will the AI actually sound like me?">
+            That's the entire point. Import the brand-voice profile you already use with ChatGPT, Claude, or Gemini, or build it on ScaleSolo. The platform learns from your past scripts and top-performing posts so output stays seamless and authentic.
+          </FaqItem>
+          <FaqItem q="Do I need video editing skills?">
+            None. Captions, titles, overlays, music, and watermarks get baked into every render automatically. Pick the look once per brand, ScaleSolo delivers a finished video on every run.
+          </FaqItem>
+          <FaqItem q="Do I own the videos and assets?">
+            Every render lands in your library. Originals are yours to download, repost, or repurpose. No vendor lock-in.
+          </FaqItem>
+          <FaqItem q="Is there a free trial?">
+            Yes. Start free with no credit card. Cancel anytime, keep everything you generated.
+          </FaqItem>
+        </div>
+      </section>
+
       {/* ── PRICING ─────────────────────────────────────────────────── */}
       <section id="pricing" style={{ ...section, position: 'relative' }} className="fade-up">
         <div aria-hidden style={{ ...sectionAura, top: '40%', left: '50%', transform: 'translate(-50%, -50%)', width: 720, height: 480, opacity: 0.55 }} />
@@ -446,8 +479,6 @@ export default function Landing() {
             <div className="ss-footer-col">
               <div className="ss-footer-col-title">Resources</div>
               <a href="#faq"     className="ss-footer-link">FAQ</a>
-              <a href="/help"    className="ss-footer-link">Help docs</a>
-              <a href="/changelog" className="ss-footer-link">Changelog</a>
               <a href="mailto:hi@scalesolo.ai" className="ss-footer-link">Contact</a>
             </div>
 
@@ -455,8 +486,6 @@ export default function Landing() {
               <div className="ss-footer-col-title">Legal</div>
               <a href="/privacy" className="ss-footer-link">Privacy</a>
               <a href="/terms"   className="ss-footer-link">Terms</a>
-              <a href="/cookies" className="ss-footer-link">Cookies</a>
-              <a href="/acceptable-use" className="ss-footer-link">Acceptable use</a>
             </div>
           </div>
 
@@ -749,6 +778,18 @@ function HeroShot({ src }) {
 }
 
 // ── Feature cards (with CSS-animated dash mocks) ────────────────────
+function FaqItem({ q, children }) {
+  return (
+    <details className="faq-item">
+      <summary className="faq-q">
+        <span>{q}</span>
+        <span aria-hidden className="faq-chev">+</span>
+      </summary>
+      <div className="faq-a">{children}</div>
+    </details>
+  )
+}
+
 function Stat({ number, label }) {
   return (
     <div className="stat-cell">

@@ -462,6 +462,55 @@ a:focus-visible {
 }
 .feat-body { font-size: 13.5px; color: var(--text-soft); line-height: 1.5; }
 
+/* ── FAQ accordion ──────────────────────────────────────────────────── */
+.faq-list {
+  display: flex; flex-direction: column; gap: 10px;
+  max-width: 820px; margin: 28px auto 0;
+}
+.faq-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  transition: border-color .2s var(--ease), background .2s var(--ease);
+}
+.faq-item[open] {
+  border-color: rgba(239, 68, 68, 0.45);
+  background: linear-gradient(180deg, rgba(239,68,68,0.04), var(--surface) 60%);
+}
+.faq-q {
+  list-style: none;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 18px 22px;
+  font-family: var(--font-display);
+  font-weight: 700; font-size: 15.5px;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.faq-q::-webkit-details-marker { display: none; }
+.faq-chev {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.30);
+  color: var(--red);
+  font-size: 18px; font-weight: 600; line-height: 1;
+  flex-shrink: 0;
+  transition: transform .25s var(--ease), background .25s var(--ease);
+}
+.faq-item[open] .faq-chev { transform: rotate(45deg); background: rgba(239, 68, 68, 0.22); }
+.faq-a {
+  padding: 0 22px 20px;
+  font-size: 14px; color: var(--text-soft);
+  line-height: 1.6;
+}
+@media (max-width: 860px) {
+  .faq-q { padding: 16px 18px; font-size: 14.5px; }
+  .faq-a { padding: 0 18px 16px; font-size: 13.5px; }
+}
+
 /* ── Landing footer ─────────────────────────────────────────────────── */
 .ss-footer {
   position: relative;
@@ -701,9 +750,20 @@ a:focus-visible {
 @media (max-width: 860px) {
   .showcase-grid { gap: 24px; }
   .showcase-img-wrap { order: -1; }
-  .showcase-title { text-align: center; }
-  .showcase-body  { text-align: center; margin-left: auto; margin-right: auto; }
+  .showcase-title { text-align: center; padding: 0 4px; }
+  .showcase-body  { text-align: center; margin-left: auto; margin-right: auto; padding: 0 4px; }
   .showcase-copy .feat-eyebrow { text-align: center; }
+  .showcase-list { padding: 0 4px; }
+}
+
+/* Mobile margin polish: more breathing room around section titles and
+   inside the footer columns so text doesn't hug the edges. */
+@media (max-width: 600px) {
+  .ss-footer-inner { padding-left: 22px !important; padding-right: 22px !important; }
+  .trend-copy      { padding: 0 6px; }
+  .feat-grid,
+  .usecase-grid,
+  .faq-list        { padding: 0 4px; }
 }
 
 /* Angled gradient separator above the features section */
