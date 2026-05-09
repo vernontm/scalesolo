@@ -185,7 +185,7 @@ export default function Landing() {
       <div aria-hidden className="feat-separator" />
 
       {/* ── FEATURES ────────────────────────────────────────────────── */}
-      <section id="features" style={section} className="fade-up">
+      <section id="features" style={{ ...section, paddingTop: 20 }} className="fade-up">
         <h2 style={sectionH}>Everything you need to ship daily</h2>
         <p style={sectionSub}>One workspace for the whole content engine — write, render, schedule, ship.</p>
         <div className="feat-grid">
@@ -362,7 +362,7 @@ const navCta = { display: 'flex', alignItems: 'center', gap: 10 }
 // ── Hero ────────────────────────────────────────────────────────────
 const hero = {
   position: 'relative',
-  maxWidth: 1180, margin: '0 auto', padding: '110px 24px 40px',
+  maxWidth: 1180, margin: '0 auto', padding: '110px 24px 20px',
   zIndex: 1,
   isolation: 'isolate',
 }
