@@ -129,8 +129,12 @@ export default function Landing() {
             <div style={brandIcon}><Zap size={14} fill="#fff" stroke="none" /></div>
             <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 16 }}>ScaleSolo</span>
           </div>
-          <nav style={navLinks}>
+          <nav style={navLinks} className="hide-on-narrow">
+            <a href="#features" style={navLink}>Features</a>
+            <a href="#use-cases" style={navLink}>Use cases</a>
+            <a href="#faq" style={navLink}>FAQ</a>
             <a href="#pricing" style={navLink}>Pricing</a>
+            <a href="/blog" style={navLink}>Blog</a>
           </nav>
           <div style={navCta}>
             <button onClick={goSignup} className="btn-ghost" style={{ fontSize: 13 }}>Sign in</button>
@@ -204,7 +208,7 @@ export default function Landing() {
       </section>
 
       {/* ── USE CASES ───────────────────────────────────────────────── */}
-      <section style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
+      <section id="use-cases" style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
         <h2 style={sectionH}>What kind of <span className="brand-text">faceless brand</span> will you launch?</h2>
         <p style={sectionSub}>
           ScaleSolo runs them all the same way. Pick a workflow, set your cadence, walk away.
@@ -410,34 +414,64 @@ export default function Landing() {
       </section>
 
       {/* ── FOOTER ──────────────────────────────────────────────────── */}
-      <footer style={footer}>
-        <div style={footerInner}>
-          <div style={brand}>
-            <div style={brandIcon}><Zap size={14} fill="#fff" stroke="none" /></div>
-            <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 16 }}>ScaleSolo</span>
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--muted)', maxWidth: 360, lineHeight: 1.5 }}>
-            Automated content workflows for solo creators. Write in your voice, film with your avatar, post on autopilot.
-          </div>
-          <div style={footerLinks}>
-            <div>
-              <div style={footerColTitle}>Product</div>
-              <a href="#features" style={footerLink}>Features</a>
-              <a href="#canvas" style={footerLink}>How it works</a>
-              <a href="#use-cases" style={footerLink}>Use cases</a>
-              <a href="#templates" style={footerLink}>Templates</a>
-              <a href="#pricing" style={footerLink}>Pricing</a>
+      <footer className="ss-footer">
+        <div aria-hidden className="ss-footer-glow" />
+        <div className="ss-footer-inner">
+          <div className="ss-footer-grid">
+            <div className="ss-footer-brand-col">
+              <div style={brand}>
+                <div style={brandIcon}><Zap size={14} fill="#fff" stroke="none" /></div>
+                <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 16 }}>ScaleSolo</span>
+              </div>
+              <p className="ss-footer-tagline">
+                The first AI platform that builds a faceless brand for you and runs it on autopilot.
+              </p>
+              <div className="ss-footer-socials">
+                <a href="https://x.com" aria-label="X" className="ss-social"><Twitter size={16} /></a>
+                <a href="https://instagram.com" aria-label="Instagram" className="ss-social"><Instagram size={16} /></a>
+                <a href="https://youtube.com" aria-label="YouTube" className="ss-social"><Youtube size={16} /></a>
+                <a href="https://tiktok.com" aria-label="TikTok" className="ss-social"><Music2 size={16} /></a>
+                <a href="https://linkedin.com" aria-label="LinkedIn" className="ss-social"><Linkedin size={16} /></a>
+              </div>
             </div>
-            <div>
-              <div style={footerColTitle}>Company</div>
-              <a href="mailto:hi@scalesolo.ai" style={footerLink}>Contact</a>
-              <a href="/privacy" style={footerLink}>Privacy</a>
-              <a href="/terms" style={footerLink}>Terms</a>
+
+            <div className="ss-footer-col">
+              <div className="ss-footer-col-title">Product</div>
+              <a href="#features"  className="ss-footer-link">Features</a>
+              <a href="#use-cases" className="ss-footer-link">Use cases</a>
+              <a href="#pricing"   className="ss-footer-link">Pricing</a>
+              <a href="/blog"      className="ss-footer-link">Blog</a>
+            </div>
+
+            <div className="ss-footer-col">
+              <div className="ss-footer-col-title">Resources</div>
+              <a href="#faq"     className="ss-footer-link">FAQ</a>
+              <a href="/help"    className="ss-footer-link">Help docs</a>
+              <a href="/changelog" className="ss-footer-link">Changelog</a>
+              <a href="mailto:hi@scalesolo.ai" className="ss-footer-link">Contact</a>
+            </div>
+
+            <div className="ss-footer-col">
+              <div className="ss-footer-col-title">Legal</div>
+              <a href="/privacy" className="ss-footer-link">Privacy</a>
+              <a href="/terms"   className="ss-footer-link">Terms</a>
+              <a href="/cookies" className="ss-footer-link">Cookies</a>
+              <a href="/acceptable-use" className="ss-footer-link">Acceptable use</a>
             </div>
           </div>
-        </div>
-        <div style={{ textAlign: 'center', fontSize: 11, color: 'var(--muted)', padding: '20px 0', borderTop: '1px solid var(--border)' }}>
-          © {new Date().getFullYear()} ScaleSolo. Built for creators who'd rather create than post.
+
+          <div aria-hidden className="ss-footer-wordmark">scalesolo</div>
+
+          <div className="ss-footer-bottom">
+            <div className="ss-footer-copyright">© {new Date().getFullYear()} ScaleSolo. Built for founders who'd rather build than post.</div>
+            <div className="ss-footer-bottom-links">
+              <a href="/privacy" className="ss-footer-link-sm">Privacy</a>
+              <span className="ss-dot" />
+              <a href="/terms" className="ss-footer-link-sm">Terms</a>
+              <span className="ss-dot" />
+              <a href="/status" className="ss-footer-link-sm">Status</a>
+            </div>
+          </div>
         </div>
       </footer>
     </div>
