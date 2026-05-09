@@ -19,39 +19,47 @@ import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/su
 import { createClient } from '@supabase/supabase-js'
 import { createFFmpeg } from '@ffmpeg/ffmpeg'
 import { readFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 
 // Allow up to 5 minutes for big stitches. Hobby plan caps at 60s; if you
 // hit that, upgrade to Pro or pre-flight reject huge clip counts.
 export const config = { maxDuration: 300 }
 
+// Cache the FFmpeg instance + the in-flight load promise so two
+// simultaneous cold-start calls don't both monkey-patch globalThis.fetch
+// (the loader writes globalThis.fetch during load() — without
+// single-flight, the second caller's `savedFetch` capture races and
+// permanently swallows real HTTPS calls until restore).
 let _ffmpegInstance = null
+let _ffmpegLoadPromise = null
+
 async function getFFmpeg() {
   if (_ffmpegInstance && _ffmpegInstance.isLoaded()) return _ffmpegInstance
-  // In Node, @ffmpeg/ffmpeg 0.10.x resolves the core via `require('@ffmpeg/core')`
-  // — passing a URL corePath would break that. We installed @ffmpeg/core@0.10.0
-  // as a dep so the default resolution just works.
-  const ff = createFFmpeg({ log: false })
-
-  // Emscripten's WASM loader calls globalThis.fetch(<absolute path>) on Node,
-  // and Node 20's undici fetch rejects bare paths with "Failed to parse URL".
-  // Wrap fetch so absolute paths get served from disk; fall back to the real
-  // fetch for everything else. Restore after load.
-  const savedFetch = globalThis.fetch
-  globalThis.fetch = async (input, init) => {
-    const url = typeof input === 'string' ? input : (input?.url || String(input))
-    if (url.startsWith('/') || /^[A-Za-z]:[\\/]/.test(url)) {
-      const buf = await readFile(url)
-      return new Response(buf, { status: 200, headers: { 'Content-Type': 'application/wasm' } })
+  if (_ffmpegLoadPromise) return _ffmpegLoadPromise
+  _ffmpegLoadPromise = (async () => {
+    const ff = createFFmpeg({ log: false })
+    const savedFetch = globalThis.fetch
+    globalThis.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : (input?.url || String(input))
+      if (url.startsWith('/') || /^[A-Za-z]:[\\/]/.test(url)) {
+        const buf = await readFile(url)
+        return new Response(buf, { status: 200, headers: { 'Content-Type': 'application/wasm' } })
+      }
+      return savedFetch(input, init)
     }
-    return savedFetch(input, init)
-  }
+    try {
+      await ff.load()
+    } finally {
+      globalThis.fetch = savedFetch
+    }
+    _ffmpegInstance = ff
+    return ff
+  })()
   try {
-    await ff.load()
+    return await _ffmpegLoadPromise
   } finally {
-    globalThis.fetch = savedFetch
+    _ffmpegLoadPromise = null
   }
-  _ffmpegInstance = ff
-  return ff
 }
 
 async function fetchToBytes(url) {
@@ -92,60 +100,77 @@ export default async function handler(req, res) {
 
     const ffmpeg = await getFFmpeg()
 
-    // 1. Download each clip into ffmpeg's in-memory FS.
-    for (let i = 0; i < video_urls.length; i++) {
-      const bytes = await fetchToBytes(video_urls[i])
-      ffmpeg.FS('writeFile', `clip_${i}.mp4`, bytes)
-    }
-
-    // 2. Try the fast path first: concat demuxer + stream copy. HeyGen's
-    //    output is consistent enough that this works for the typical case
-    //    and avoids the multi-minute re-encode.
-    const listText = video_urls.map((_, i) => `file 'clip_${i}.mp4'`).join('\n') + '\n'
-    ffmpeg.FS('writeFile', 'list.txt', new TextEncoder().encode(listText))
+    // FFmpeg-wasm has ONE in-memory filesystem per instance, and we
+    // share that instance across invocations on the same warm Lambda
+    // for cold-start perf. To keep two concurrent renders from
+    // clobbering each other's clip / list / output files, every FS path
+    // is prefixed with a per-request UUID. Cleanup unlinks on success
+    // and on error.
+    const ns = randomUUID().slice(0, 8)
+    const clipName = (i) => `${ns}-clip_${i}.mp4`
+    const listName = `${ns}-list.txt`
+    const outName  = `${ns}-out.mp4`
+    const inputsCreated = []
 
     let outBytes = null
     try {
-      await ffmpeg.run(
-        '-f', 'concat', '-safe', '0',
-        '-i', 'list.txt',
-        '-c', 'copy',
-        '-movflags', '+faststart',
-        'out.mp4',
-      )
-      outBytes = ffmpeg.FS('readFile', 'out.mp4')
-    } catch (e) {
-      // Fast path failed (codec / timestamp mismatch). Fall through to
-      // re-encode with filter_complex so mismatched clips still stitch.
-      try { ffmpeg.FS('unlink', 'out.mp4') } catch {}
-    }
-
-    if (!outBytes || !outBytes.byteLength) {
-      const inputs = []
-      let filter = ''
+      // 1. Download each clip into ffmpeg's in-memory FS.
       for (let i = 0; i < video_urls.length; i++) {
-        inputs.push('-i', `clip_${i}.mp4`)
-        filter += `[${i}:v:0][${i}:a:0?]`
+        const bytes = await fetchToBytes(video_urls[i])
+        ffmpeg.FS('writeFile', clipName(i), bytes)
+        inputsCreated.push(clipName(i))
       }
-      filter += `concat=n=${video_urls.length}:v=1:a=1[v][a]`
-      await ffmpeg.run(
-        ...inputs,
-        '-filter_complex', filter,
-        '-map', '[v]', '-map', '[a]?',
-        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
-        '-c:a', 'aac', '-b:a', '128k',
-        '-movflags', '+faststart',
-        'out.mp4',
-      )
-      outBytes = ffmpeg.FS('readFile', 'out.mp4')
-    }
 
-    // Free the input files so a warm container doesn't accumulate them.
-    for (let i = 0; i < video_urls.length; i++) {
-      try { ffmpeg.FS('unlink', `clip_${i}.mp4`) } catch {}
+      // 2. Try the fast path first: concat demuxer + stream copy. HeyGen's
+      //    output is consistent enough that this works for the typical case
+      //    and avoids the multi-minute re-encode.
+      const listText = video_urls.map((_, i) => `file '${clipName(i)}'`).join('\n') + '\n'
+      ffmpeg.FS('writeFile', listName, new TextEncoder().encode(listText))
+
+      try {
+        await ffmpeg.run(
+          '-f', 'concat', '-safe', '0',
+          '-i', listName,
+          '-c', 'copy',
+          '-movflags', '+faststart',
+          outName,
+        )
+        outBytes = ffmpeg.FS('readFile', outName)
+      } catch (e) {
+        // Fast path failed (codec / timestamp mismatch). Fall through to
+        // re-encode with filter_complex so mismatched clips still stitch.
+        try { ffmpeg.FS('unlink', outName) } catch {}
+      }
+
+      if (!outBytes || !outBytes.byteLength) {
+        const inputs = []
+        let filter = ''
+        for (let i = 0; i < video_urls.length; i++) {
+          inputs.push('-i', clipName(i))
+          filter += `[${i}:v:0][${i}:a:0?]`
+        }
+        filter += `concat=n=${video_urls.length}:v=1:a=1[v][a]`
+        await ffmpeg.run(
+          ...inputs,
+          '-filter_complex', filter,
+          '-map', '[v]', '-map', '[a]?',
+          '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
+          '-c:a', 'aac', '-b:a', '128k',
+          '-movflags', '+faststart',
+          outName,
+        )
+        outBytes = ffmpeg.FS('readFile', outName)
+      }
+    } finally {
+      // Cleanup every FS path we touched so a warm container doesn't
+      // accumulate them. `try` per file because some may not exist
+      // (e.g. mid-fastpath error before listName was written).
+      for (const f of inputsCreated) {
+        try { ffmpeg.FS('unlink', f) } catch {}
+      }
+      try { ffmpeg.FS('unlink', listName) } catch {}
+      try { ffmpeg.FS('unlink', outName)  } catch {}
     }
-    try { ffmpeg.FS('unlink', 'list.txt') } catch {}
-    try { ffmpeg.FS('unlink', 'out.mp4') } catch {}
 
     // 3. Upload via service role.
     const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
@@ -160,8 +185,16 @@ export default async function handler(req, res) {
     const video_url = pub.publicUrl
 
     if (customerId) {
+      // consume_credits is atomic on the DB side (FOR UPDATE → check →
+      // update inside one plpgsql function). It still CAN fail on a
+      // tight race where two concurrent requests both pass the
+      // pre-check and only one wins the row lock — at that point the
+      // render is already done + uploaded. Don't swallow: log loudly
+      // and tag the row so it can be reconciled later. We deliberately
+      // do NOT delete the upload (the user already sees the result and
+      // shouldn't lose work over a race we can fix in support).
       try {
-        await supaFetch('rpc/consume_credits', {
+        const result = await supaFetch('rpc/consume_credits', {
           method: 'POST',
           body: {
             p_customer_id: customerId,
@@ -172,7 +205,17 @@ export default async function handler(req, res) {
             p_metadata: { clips: video_urls.length, bytes: outBytes.byteLength },
           },
         })
-      } catch {}
+        // RPC returns { success, error_code, ... } — check the shape.
+        if (result && typeof result === 'object' && result.success === false) {
+          console.error('combine-videos: consume_credits returned failure', {
+            customerId, fee, error_code: result.error_code, profile_id,
+          })
+        }
+      } catch (e) {
+        console.error('combine-videos: consume_credits threw', {
+          customerId, fee, profile_id, message: e?.message,
+        })
+      }
     }
 
     return res.status(200).json({ video_url, bytes: outBytes.byteLength, clips: video_urls.length })

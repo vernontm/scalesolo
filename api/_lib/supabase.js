@@ -77,17 +77,50 @@ export async function requireUser(req, res) {
   return { user, token }
 }
 
+// Per-warm-container cache for is_admin lookups. Saves a DB roundtrip
+// on every /api/admin/* request when the same user makes back-to-back
+// admin calls (loading the admin dashboard fans out 3-5 queries).
+// 60-second TTL keeps the window short enough that an admin demoted
+// in the dashboard loses access within a minute, without hammering
+// user_profiles for every request.
+const _adminCache = new Map()
+const ADMIN_CACHE_TTL_MS = 60_000
+
+function readAdminCache(userId) {
+  const hit = _adminCache.get(userId)
+  if (!hit) return undefined
+  if (hit.expires < Date.now()) { _adminCache.delete(userId); return undefined }
+  return hit.value
+}
+function writeAdminCache(userId, value) {
+  _adminCache.set(userId, { value, expires: Date.now() + ADMIN_CACHE_TTL_MS })
+  // Bound the cache so a long-running container can't grow it without
+  // bound. ~500 distinct admins between cleanups is plenty.
+  if (_adminCache.size > 500) {
+    const now = Date.now()
+    for (const [k, v] of _adminCache) if (v.expires < now) _adminCache.delete(k)
+  }
+}
+
 // Admin gate. Resolves the auth user, then checks the user_profiles
 // row's is_admin flag via the service-role REST call (bypasses RLS so
 // the API can verify admin status regardless of who's reading).
 // Returns { user, token } on success, or null after writing the
-// 401/403 response.
+// 401/403 response. Result is cached per container for 60s.
 export async function requireAdmin(req, res) {
   const auth = await requireUser(req, res)
   if (!auth) return null
+  const cached = readAdminCache(auth.user.id)
+  if (cached === true) return auth
+  if (cached === false) {
+    res.status(403).json({ error: 'Forbidden: admin only' })
+    return null
+  }
   try {
     const rows = await supaFetch(`user_profiles?id=eq.${auth.user.id}&select=is_admin`)
-    if (!rows?.[0]?.is_admin) {
+    const isAdmin = !!rows?.[0]?.is_admin
+    writeAdminCache(auth.user.id, isAdmin)
+    if (!isAdmin) {
       res.status(403).json({ error: 'Forbidden: admin only' })
       return null
     }

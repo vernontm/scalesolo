@@ -330,10 +330,12 @@ export default async function handler(req, res) {
         const wBody = await wRes.json()
         if (!wRes.ok) throw new Error(wBody.error || `Worker ${wRes.status}`)
 
-        // Debit credits after the worker confirms success.
+        // Debit credits after the worker confirms success. Atomic on
+        // the DB side; we still surface failures so a tight race that
+        // gifts a render shows up in logs instead of silently.
         if (customerId) {
           try {
-            await supaFetch('rpc/consume_credits', {
+            const result = await supaFetch('rpc/consume_credits', {
               method: 'POST',
               body: {
                 p_customer_id: customerId, p_pool_type: 'ai_tokens', p_amount: fee,
@@ -341,7 +343,16 @@ export default async function handler(req, res) {
                 p_metadata: { via: 'worker', video_url, has_title: !!title, bytes: wBody.bytes },
               },
             })
-          } catch {}
+            if (result && typeof result === 'object' && result.success === false) {
+              console.error('video-polish (worker): consume_credits returned failure', {
+                customerId, fee, error_code: result.error_code, profile_id,
+              })
+            }
+          } catch (e) {
+            console.error('video-polish (worker): consume_credits threw', {
+              customerId, fee, profile_id, message: e?.message,
+            })
+          }
         }
         NotifyKind.renderDone({
           user_id: auth.user.id,
@@ -595,7 +606,7 @@ export default async function handler(req, res) {
 
     if (customerId) {
       try {
-        await supaFetch('rpc/consume_credits', {
+        const result = await supaFetch('rpc/consume_credits', {
           method: 'POST',
           body: {
             p_customer_id: customerId, p_pool_type: 'ai_tokens', p_amount: fee,
@@ -606,7 +617,16 @@ export default async function handler(req, res) {
             },
           },
         })
-      } catch {}
+        if (result && typeof result === 'object' && result.success === false) {
+          console.error('video-polish: consume_credits returned failure', {
+            customerId, fee, error_code: result.error_code, profile_id,
+          })
+        }
+      } catch (e) {
+        console.error('video-polish: consume_credits threw', {
+          customerId, fee, profile_id, message: e?.message,
+        })
+      }
     }
 
     // Don't auto-insert a "Polished video" content_scripts row here. The

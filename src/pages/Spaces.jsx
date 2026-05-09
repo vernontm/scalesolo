@@ -1815,7 +1815,24 @@ function SpaceBuilder({ space, onSave, onClose }) {
     return { ...n, data: cleaned }
   })
 
+  // Autosave race control: every save() bumps a generation counter and
+  // captures the current AbortController. If a newer save fires while
+  // an older one is still in-flight, the older one is aborted (so it
+  // can't land out-of-order on the server). The response handler also
+  // checks its captured gen against the live one and bails if stale —
+  // belt-and-braces in case AbortController support is patchy.
+  const saveGenRef = useRef(0)
+  const saveAbortRef = useRef(null)
   const save = async ({ silent = false } = {}) => {
+    // Cancel any in-flight save before starting a new one so requests
+    // can't reach the server out of order.
+    if (saveAbortRef.current) {
+      try { saveAbortRef.current.abort() } catch {}
+    }
+    const myGen = ++saveGenRef.current
+    const ac = new AbortController()
+    saveAbortRef.current = ac
+
     if (!silent) { setBusy(true); setError(null) }
     setAutoStatus('saving')
     try {
@@ -1825,7 +1842,11 @@ function SpaceBuilder({ space, onSave, onClose }) {
         method: id ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
         body: JSON.stringify({ id, profile_id: selectedProfileId, name, nodes: cleanNodes, edges }),
+        signal: ac.signal,
       })
+      // If a newer save started between dispatch and response, drop
+      // this one's effects on the floor.
+      if (myGen !== saveGenRef.current) return
       const body = await r.json()
       if (!r.ok) throw new Error(body.error || 'Save failed')
       if (body.space?.id) spaceIdRef.current = body.space.id
@@ -1833,10 +1854,16 @@ function SpaceBuilder({ space, onSave, onClose }) {
       setTimeout(() => setAutoStatus((s) => s === 'saved' ? 'idle' : s), 1500)
       if (!silent) onSave(body.space)
     } catch (e) {
+      // AbortError from a superseded save isn't a real error.
+      if (e?.name === 'AbortError') return
+      if (myGen !== saveGenRef.current) return
       setAutoStatus('error')
       if (!silent) setError(e.message)
       else console.warn('autosave failed:', e.message)
-    } finally { if (!silent) setBusy(false) }
+    } finally {
+      if (!silent && myGen === saveGenRef.current) setBusy(false)
+      if (saveAbortRef.current === ac) saveAbortRef.current = null
+    }
   }
 
   // Autosave: debounce 1.2s after any change to name/nodes/edges, then PATCH.

@@ -1,35 +1,54 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { Zap } from 'lucide-react'
 import Sidebar from './components/Sidebar.jsx'
 import Header from './components/Header.jsx'
+// Eager: routes that the user is likely to land on immediately
+// (auth + dashboard) or that are tiny stand-alones. Everything else
+// loads on demand to keep the initial JS bundle lean.
 import Login from './pages/Login.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Placeholder from './pages/Placeholder.jsx'
-import Settings from './pages/Settings.jsx'
-import Affiliate from './pages/Affiliate.jsx'
-import Analytics from './pages/Analytics.jsx'
-import Pricing from './pages/Pricing.jsx'
-import Billing from './pages/Billing.jsx'
-import Agent from './pages/Agent.jsx'
-import Pipeline from './pages/Pipeline.jsx'
-import Forms from './pages/Forms.jsx'
-import Contacts from './pages/Contacts.jsx'
-import Profiles from './pages/Profiles.jsx'
-import Content from './pages/Content.jsx'
-import Avatars from './pages/Avatars.jsx'
-import LandingPages from './pages/LandingPages.jsx'
-import LandingPublic from './pages/LandingPublic.jsx'
-import Spaces from './pages/Spaces.jsx'
-import Library from './pages/Library.jsx'
 import Landing from './pages/Landing.jsx'
-import Admin from './pages/Admin.jsx'
+import Pricing from './pages/Pricing.jsx'
+import LandingPublic from './pages/LandingPublic.jsx'
 import AuthCallback from './pages/AuthCallback.jsx'
 import FormPublic from './pages/FormPublic.jsx'
+
+// Lazy: heavy or rarely-visited app routes. Spaces alone is ~250KB
+// (ReactFlow + node registry); admin pages are admin-only; Analytics +
+// LandingPages aren't on the hot path for a freshly-signed-in user.
+const Settings      = lazy(() => import('./pages/Settings.jsx'))
+const Affiliate     = lazy(() => import('./pages/Affiliate.jsx'))
+const Analytics     = lazy(() => import('./pages/Analytics.jsx'))
+const Billing       = lazy(() => import('./pages/Billing.jsx'))
+const Agent         = lazy(() => import('./pages/Agent.jsx'))
+const Pipeline      = lazy(() => import('./pages/Pipeline.jsx'))
+const Forms         = lazy(() => import('./pages/Forms.jsx'))
+const Contacts      = lazy(() => import('./pages/Contacts.jsx'))
+const Profiles      = lazy(() => import('./pages/Profiles.jsx'))
+const Content       = lazy(() => import('./pages/Content.jsx'))
+const Avatars       = lazy(() => import('./pages/Avatars.jsx'))
+const LandingPages  = lazy(() => import('./pages/LandingPages.jsx'))
+const Spaces        = lazy(() => import('./pages/Spaces.jsx'))
+const Library       = lazy(() => import('./pages/Library.jsx'))
+const Admin         = lazy(() => import('./pages/Admin.jsx'))
+
 import GlobalAgent from './components/GlobalAgent.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import ToastHost from './components/Toast.jsx'
 import { useAuth } from './context/AuthContext.jsx'
+
+// Tiny fallback shown while a lazy route's chunk is fetching. Subtle
+// enough that users don't notice on warm caches; visible enough on a
+// cold load to confirm something's happening.
+function RouteFallback() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 80, color: 'var(--muted)' }}>
+      <span className="spinner" />
+    </div>
+  )
+}
 
 const layoutStyle = { display: 'flex', minHeight: '100vh' }
 // Desktop reserves the sidebar gutter; mobile (<900px) is overridden in
@@ -120,6 +139,7 @@ function AppShell() {
       <div style={dynamicMain} className="app-main">
         <Header onOpenSidebar={() => setMobileOpen(true)} />
         <main style={contentStyle}>
+          <Suspense fallback={<RouteFallback />}>
           <Routes>
             <Route path="/auth/callback" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
@@ -149,6 +169,7 @@ function AppShell() {
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
+          </Suspense>
         </main>
       </div>
       <GlobalAgent />
