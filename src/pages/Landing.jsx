@@ -211,7 +211,7 @@ export default function Landing() {
         <div className="showcase-grid">
           <div className="showcase-img-wrap">
             <img
-              src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/avatar_workflow.png"
+              src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/avatar_landing.png"
               alt="Avatar and look creation in ScaleSolo"
               className="showcase-img"
               onError={(e) => { e.currentTarget.style.opacity = '0' }}
