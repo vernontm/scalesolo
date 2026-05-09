@@ -206,6 +206,35 @@ export default function Landing() {
       </section>
       </div>
 
+      {/* ── AVATAR WORKFLOW SHOWCASE ────────────────────────────────── */}
+      <section style={section} className="fade-up">
+        <div className="showcase-grid">
+          <div className="showcase-img-wrap">
+            <img
+              src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/avatar_workflow.png"
+              alt="Avatar and look creation in ScaleSolo"
+              className="showcase-img"
+              onError={(e) => { e.currentTarget.style.opacity = '0' }}
+            />
+          </div>
+          <div className="showcase-copy">
+            <div className="feat-eyebrow">Avatars & looks</div>
+            <h2 className="showcase-title">Train an AI you. Cycle the looks.</h2>
+            <p className="showcase-body">
+              Upload one selfie. ScaleSolo trains a realistic avatar that looks, talks, and moves like you.
+              Build a wardrobe of looks — gym-fit, studio, beach, suit — and cycle them across renders so
+              every video ships looking fresh, even when you don't.
+            </p>
+            <ul className="showcase-list">
+              <li><Check size={14} /> Photorealistic avatars from a single selfie</li>
+              <li><Check size={14} /> Save unlimited looks and wardrobes per brand</li>
+              <li><Check size={14} /> Auto-rotate looks across runs so feeds stay varied</li>
+              <li><Check size={14} /> Drop straight into any Spaces workflow</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
       {/* ── SCHEDULE-POST FEATURE SHOWCASE ──────────────────────────── */}
       <section style={section} className="fade-up">
         <div className="showcase-grid">
