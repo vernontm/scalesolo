@@ -93,6 +93,10 @@ export function MediaItem({ url, type = 'image', from = '', onDelete, aspectRati
         // Preview button in the hover overlay to open the fullscreen
         // player with sound. disablePictureInPicture + the inline play
         // suppress every native control browsers might surface.
+        // display:block kills the user-agent inline-block baseline
+        // whitespace that browsers leave to the right of <video>
+        // elements (read as "small white space" by users since the
+        // wrapper's surface-2 grey reads white against the darker page).
         <video
           src={url}
           autoPlay
@@ -102,10 +106,10 @@ export function MediaItem({ url, type = 'image', from = '', onDelete, aspectRati
           preload="metadata"
           disablePictureInPicture
           controlsList="nodownload nofullscreen noremoteplayback"
-          style={{ width: '100%', height: '100%', objectFit: fit, background: '#000', pointerEvents: 'none' }}
+          style={{ display: 'block', width: '100%', height: '100%', objectFit: fit, background: '#000', verticalAlign: 'top', pointerEvents: 'none' }}
         />
       ) : (
-        <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: fit, display: 'block' }} />
+        <img src={url} alt="" style={{ display: 'block', width: '100%', height: '100%', objectFit: fit, verticalAlign: 'top' }} />
       )}
       {hover && (
         <div
