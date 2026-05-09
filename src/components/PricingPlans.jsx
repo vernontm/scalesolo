@@ -133,12 +133,12 @@ export default function PricingPlans() {
   return (
     <>
       {/* ── Founding member banner ───────────────────────────────── */}
-      <div style={foundingBanner} className="fade-up">
-        <div style={foundingTopBadge}>Limited — first 100 only</div>
+      <div style={foundingBanner} className="fade-up founding-banner">
+        <div style={foundingTopBadge}>Limited, first 100 only</div>
         <div style={foundingMeta}>
           <div style={foundingIcon}><Crown size={20} strokeWidth={2.4} /></div>
           <div>
-            <div style={foundingTitle}>{FOUNDING.name} — ${FOUNDING.monthly}/mo lifetime lock</div>
+            <div style={foundingTitle}>{FOUNDING.name}, ${FOUNDING.monthly}/mo lifetime lock</div>
             <div style={foundingSub}>{FOUNDING.blurb}</div>
           </div>
         </div>

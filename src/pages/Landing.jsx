@@ -186,26 +186,6 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── TREND + STATS ───────────────────────────────────────────── */}
-      <section style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
-        <div className="trend-copy">
-          <h2 style={{ ...sectionH, fontSize: 'clamp(22px, 3vw, 36px)', whiteSpace: 'nowrap' }} className="trend-h2">
-            The <span className="brand-text">faceless brand wave</span> is already here.
-          </h2>
-          <p style={sectionSub}>
-            AI-native creators are launching channels at a pace that wasn't possible 18 months ago.
-            ScaleSolo deletes the filming, editing, and posting bottleneck so your brand compounds
-            while you sleep.
-          </p>
-        </div>
-        <div className="stats-grid">
-          <Stat number="$250B+" label={<>Creator economy<br />size by 2027</>} />
-          <Stat number="10x"     label={<>Your monthly<br />content output</>} />
-          <Stat number="30+ hrs" label={<>Saved per brand,<br />every single week</>} />
-          <Stat number="9+"      label={<>Platforms publishing<br />on full autopilot</>} />
-        </div>
-      </section>
-
       {/* ── USE CASES ───────────────────────────────────────────────── */}
       <section id="use-cases" style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
         <h2 style={sectionH}>What kind of <span className="brand-text">faceless brand</span> will you launch?</h2>
@@ -258,6 +238,30 @@ export default function Landing() {
               'Posts to all 9+ platforms automatically',
             ]}
           />
+        </div>
+      </section>
+
+      {/* ── TOOLS REPLACED ──────────────────────────────────────────── */}
+      <section style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
+        <h2 style={sectionH}>Seven tools. <span className="brand-text">One platform.</span></h2>
+        <p style={sectionSub}>
+          Stop duct-taping six subscriptions together. ScaleSolo is the full faceless brand stack
+          in one place, built so a solo founder can launch and scale without an ops team.
+        </p>
+        <div className="replaces-grid">
+          <div className="replaces-chip"><div className="replaces-chip-name">AI script writer</div><div className="replaces-chip-cost">~$30/mo</div></div>
+          <div className="replaces-chip"><div className="replaces-chip-name">Voice cloning</div><div className="replaces-chip-cost">~$22/mo</div></div>
+          <div className="replaces-chip"><div className="replaces-chip-name">AI avatar studio</div><div className="replaces-chip-cost">~$60/mo</div></div>
+          <div className="replaces-chip"><div className="replaces-chip-name">Captions &amp; titles</div><div className="replaces-chip-cost">~$20/mo</div></div>
+          <div className="replaces-chip"><div className="replaces-chip-name">Video editor</div><div className="replaces-chip-cost">~$25/mo</div></div>
+          <div className="replaces-chip"><div className="replaces-chip-name">Music &amp; SFX library</div><div className="replaces-chip-cost">~$15/mo</div></div>
+          <div className="replaces-chip"><div className="replaces-chip-name">Multi-platform scheduler</div><div className="replaces-chip-cost">~$30/mo</div></div>
+        </div>
+        <div style={{ textAlign: 'center' }}>
+          <div className="replaces-savings">
+            <span className="replaces-savings-num">$200+</span>
+            <span className="replaces-savings-label">in monthly subscriptions, replaced by one ScaleSolo plan.</span>
+          </div>
         </div>
       </section>
 

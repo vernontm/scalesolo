@@ -462,6 +462,67 @@ a:focus-visible {
 }
 .feat-body { font-size: 13.5px; color: var(--text-soft); line-height: 1.5; }
 
+/* ── Founding banner: center contents on mobile ──────────────────────── */
+@media (max-width: 700px) {
+  .founding-banner {
+    flex-direction: column !important;
+    text-align: center !important;
+    align-items: center !important;
+    padding: 32px 22px 24px !important;
+  }
+  .founding-banner > div { justify-content: center; align-items: center; }
+  .founding-banner ul     { margin: 0 !important; min-width: 0 !important; align-items: center; }
+  .founding-banner ul li  { justify-content: center; }
+  .founding-banner > div:last-child { align-items: center !important; width: 100%; }
+}
+
+/* ── Stack-replaced section ──────────────────────────────────────────── */
+.replaces-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin: 28px 0 24px;
+}
+.replaces-chip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 4px;
+  transition: border-color .2s var(--ease);
+}
+.replaces-chip:hover { border-color: rgba(239,68,68,0.4); }
+.replaces-chip-name {
+  font-family: var(--font-display);
+  font-weight: 700; font-size: 13.5px;
+  color: var(--text-soft);
+  text-decoration: line-through;
+  text-decoration-color: rgba(239,68,68,0.6);
+  text-decoration-thickness: 1.5px;
+}
+.replaces-chip-cost {
+  font-size: 11.5px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+.replaces-savings {
+  display: inline-flex; align-items: center; gap: 12px;
+  margin-top: 6px;
+  padding: 14px 22px;
+  background: linear-gradient(135deg, rgba(239,68,68,0.18), rgba(249,115,22,0.10));
+  border: 1px solid rgba(239,68,68,0.45);
+  border-radius: 14px;
+  box-shadow: 0 12px 32px rgba(239,68,68,0.14);
+}
+.replaces-savings-num {
+  font-family: var(--font-display);
+  font-weight: 800; font-size: 26px; line-height: 1;
+  background: linear-gradient(135deg, #ff6b88 0%, #ef4444 35%, #f97316 70%, #fbbf24 100%);
+  -webkit-background-clip: text; background-clip: text;
+  color: transparent;
+}
+.replaces-savings-label { font-size: 13px; color: var(--text-soft); }
+
 /* ── FAQ accordion ──────────────────────────────────────────────────── */
 .faq-list {
   display: flex; flex-direction: column; gap: 10px;
