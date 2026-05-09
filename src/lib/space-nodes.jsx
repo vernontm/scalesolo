@@ -5237,25 +5237,29 @@ export async function runSpace({ ctx, nodes, edges, onNodeChange }) {
     //   cycle_looks queue advances on every full run). Ignored when
     //   runOnlyTargetId is set, see above.
     if (ctx?.runOnlyTargetId && id !== ctx.runOnlyTargetId) {
-      // Non-target in self_only mode. Two paths:
-      //   • Has cached output → use it verbatim. Same as before.
+      // Non-target in self_only mode. Three paths now:
+      //   • In ctx.forceReRun → ALWAYS re-execute. This is how free
+      //     descendants of the target (Collection, Combine, etc.) refresh
+      //     against the target's new output without the user having to
+      //     pick a different scope. Without this, Collection short-
+      //     circuits to its stale cache and never picks up new images.
+      //   • Has cached output → use it verbatim. Cache flows through
+      //     ancestors to the target as before.
       //   • No cached output BUT def.free === true → auto-run it. Free
       //     nodes (collection, combine, picker, brand_profile, text /
       //     audio / image_upload) are pure aggregators / projectors with
-      //     no API cost. Re-running them is safe and threads the cached
-      //     ancestors through to the target. Without this, a stale
-      //     intermediate (e.g. Collection in 'failed' state) would
-      //     swallow a perfectly good upstream chain and force the user
-      //     to re-render expensive nodes manually.
+      //     no API cost.
       //   • No cached output AND not free → skip silently. The target
       //     will fail its own input check; that's the honest outcome.
-      if (node.data?.output != null) {
+      const inForceReRun = ctx?.forceReRun?.has?.(id)
+      if (inForceReRun) {
+        // Fall through to def.run() — inputObj is already built from
+        // outputsById, so the target's fresh output is available.
+      } else if (node.data?.output != null) {
         outputsById.set(id, node.data.output)
         continue
-      }
-      if (def.free) {
-        // Fall through to run def.run() below — the inputObj built from
-        // outputsById already contains every cached ancestor's output.
+      } else if (def.free) {
+        // Fall through to run def.run() below.
       } else {
         continue
       }

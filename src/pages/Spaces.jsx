@@ -1676,6 +1676,32 @@ function SpaceBuilder({ space, onSave, onClose }) {
       }
     }
 
+    // Auto-thread FREE descendants (Collection, Combine, anything marked
+    // def.free) into the run subset regardless of scope, so a Run-this-
+    // node-only / up-to-here click on a generator still updates the
+    // collections wired downstream. Expensive descendants (avatar render,
+    // image gen, etc.) stay out — the per-node dialog message promises
+    // exactly this behavior. We track these IDs in `freeDescendants` so
+    // we can also force them to skip their stale cache below.
+    const freeDescendants = new Set()
+    {
+      const q = [targetId]
+      const seen = new Set([targetId])
+      while (q.length) {
+        const id = q.shift()
+        for (const e of edges) {
+          if (e.source !== id || seen.has(e.target)) continue
+          const child = nodes.find((n) => n.id === e.target)
+          const childDef = NODE_REGISTRY[child?.data?.type]
+          if (!childDef?.free) continue
+          seen.add(e.target)
+          freeDescendants.add(e.target)
+          want.add(e.target)
+          q.push(e.target)
+        }
+      }
+    }
+
     // Self-only sanity check: the target's inputs must already be cached.
     // If any direct parent is missing output we can't reuse its result,
     // so fail loudly with a friendly node name (NOT the cryptic id) and
@@ -1753,6 +1779,12 @@ function SpaceBuilder({ space, onSave, onClose }) {
       if (n.id === targetId) {
         return { ...n, data: { ...n.data, status: 'idle', output: null, error: null } }
       }
+      // Free descendants auto-threaded into the subset MUST refresh so
+      // they pick up the target's new output instead of short-circuiting
+      // on their stale 'done' cache (this was the Collection bug).
+      if (freeDescendants.has(n.id)) {
+        return { ...n, data: { ...n.data, status: 'idle', output: null, error: null } }
+      }
       if (scope === 'self_only') {
         // Ancestor — leave it alone. Cache flows through to target.
         return n
@@ -1793,9 +1825,15 @@ function SpaceBuilder({ space, onSave, onClose }) {
     // scope (self_only, up_to_here, or a manual click on a non-auto
     // node) must NOT set it — otherwise descendants get force-run
     // even when the user explicitly asked us not to touch them.
-    const forceReRun = (scope === 'full' && isAutoTrigger)
-      ? new Set([...descendants].filter((id) => id !== targetId))
-      : null
+    // forceReRun: nodes that MUST re-execute even when their cache says
+    // 'done'. Two sources: (1) auto_run ticks force the full descendant
+    // set; (2) free descendants auto-threaded into the subset (Collection
+    // etc.) always force-rerun so they pick up the target's new output.
+    const forceReRun = new Set()
+    if (scope === 'full' && isAutoTrigger) {
+      for (const id of descendants) if (id !== targetId) forceReRun.add(id)
+    }
+    for (const id of freeDescendants) forceReRun.add(id)
     // self_only mode: pin a runOnlyTargetId so runSpace forces every
     // non-target node to skip def.run() (even noCache ones like
     // avatar_picker) and use its cached output verbatim. Without this
