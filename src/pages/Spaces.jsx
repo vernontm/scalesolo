@@ -1365,7 +1365,15 @@ function SpaceBuilder({ space, onSave, onClose }) {
       // this node when nothing material upstream changed. Pure renames
       // (just __name) and internal context injections (_ctx*) don't
       // invalidate at all.
-      const hasRealPropChange = Object.keys(patch).some((k) => k !== '__name' && !k.startsWith('_ctx'))
+      // edited_* props are user UI overrides on AI-generated output (e.g.
+      // edited_caption on caption_gen). They MUST NOT invalidate the
+      // node's cache — clearing `output` mid-edit makes the editor itself
+      // disappear (the body only renders when hasOutput is truthy), which
+      // showed up to users as "the node resets when I press backspace".
+      // _ctx* are render-time context injected by the parent; same rule.
+      const hasRealPropChange = Object.keys(patch).some((k) =>
+        k !== '__name' && !k.startsWith('_ctx') && !k.startsWith('edited_')
+      )
       setNodes((arr) => arr.map((n) => {
         if (n.id !== id) return n
         if (Object.prototype.hasOwnProperty.call(patch, '__name')) {
@@ -2439,43 +2447,10 @@ function SpaceBuilder({ space, onSave, onClose }) {
         <button className="btn-ghost" onClick={() => setHistoryOpen(true)} title="Run history" style={{ padding: '6px 10px' }}>
           <History size={13} /> History
         </button>
-        <button
-          className="btn-ghost"
-          onClick={async () => {
-            if (!spaceIdRef.current) {
-              setError('Save the space first before turning it into a template.')
-              return
-            }
-            const tplName = window.prompt('Name this template (visible only to you):', `${name || 'Workflow'} template`)
-            if (!tplName) return
-            setSavingAsTemplate(true)
-            try {
-              const r = await fetch('/api/spaces?action=save_as_template', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-                body: JSON.stringify({
-                  source_id: spaceIdRef.current,
-                  name: tplName,
-                  summary: null,
-                  // Reuse the current guide if we have one; user can edit later.
-                  guide: templateGuide || null,
-                }),
-              })
-              const body = await r.json()
-              if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
-              toast?.success?.('Saved as template') || toast?.('Saved as template')
-            } catch (e) {
-              setError(e.message)
-            } finally {
-              setSavingAsTemplate(false)
-            }
-          }}
-          disabled={savingAsTemplate}
-          title="Save this workflow as a private template you can reuse"
-          style={{ padding: '6px 10px' }}
-        >
-          {savingAsTemplate ? <span className="spinner" /> : <Bookmark size={13} />} Save as template
-        </button>
+        {/* Private "Save as template" removed — admins use "Save as public
+            template" (below) to feed the global gallery, and regular users
+            don't need a separate private template surface (their saved
+            spaces already live in their gallery). */}
         {isAdmin && (
           <button
             className="btn-ghost"

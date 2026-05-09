@@ -148,7 +148,10 @@ export default async function handler(req, res) {
     }
     if (platforms.includes('facebook')) {
       // FB's "title" is post caption; "description" is the long body.
-      fd.append('facebook_title', trim(fullCaption || cleanTitle, 5000))
+      // Title field has a hard 255-char limit (FB's API rejects past that —
+      // saw "Facebook title is too long (767 characters)" in production).
+      // Description has no real cap; we use the full caption there.
+      fd.append('facebook_title', trim(fullCaption || cleanTitle, 255))
       fd.append('facebook_description', trim(fullCaption || cleanTitle, 5000))
     }
     if (platforms.includes('youtube')) {

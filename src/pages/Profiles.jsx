@@ -694,27 +694,9 @@ function PostingScheduleEditor({ timezone, onTimezoneChange, synced, onSyncedCha
         </select>
       </Field>
 
-      <Field label="Synced platforms (only these will show in save_library)">
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {PLATFORM_OPTIONS.map((p) => {
-            const on = synced.includes(p)
-            return (
-              <button
-                key={p}
-                type="button"
-                onClick={() => togglePlatform(p)}
-                style={{
-                  fontSize: 11.5, padding: '5px 11px', borderRadius: 999, cursor: 'pointer',
-                  border: `1px solid ${on ? '#2ecc71' : 'var(--border)'}`,
-                  background: on ? 'rgba(46,204,113,0.16)' : 'var(--surface-2)',
-                  color: on ? '#2ecc71' : 'var(--text-soft)',
-                  fontFamily: 'var(--font-display)', fontWeight: 700,
-                }}
-              >{p}</button>
-            )
-          })}
-        </div>
-      </Field>
+      {/* "Synced platforms" picker removed — platforms now derive from
+          which social accounts the user has actually connected via
+          Upload-Post, so a separate picker is redundant. */}
 
       <Field label="Quick frequency presets">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
