@@ -7,6 +7,7 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { generateVideoV2, generateVideoV3, MODELS, videoUnitsForModel, listLooksForGroup } from '../_lib/heygen.js'
+import { synthesizeToPublicUrl, looksLikeElevenLabsVoiceId } from '../_lib/elevenlabs.js'
 
 function estimateDurationSecs(script) {
   const words = (script || '').trim().split(/\s+/).filter(Boolean).length
@@ -114,38 +115,66 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Avatar has no HeyGen ID (training may have failed). Re-create the avatar.' })
     }
 
-    // Voice resolution priority:
-    //   1. explicit voice_id from the request body (legacy / power users)
-    //   2. avatar's stored ElevenLabs voice (custom avatars set theirs on
-    //      the Avatars page)
-    //   3. HeyGen's default voice for the public avatar
-    const resolvedVoice = voice_id || avatar.elevenlabs_voice_id || publicDefaultVoice || ''
-    // Only required for text-driven renders. Audio-driven renders bypass TTS.
-    if (!resolvedVoice && !audio_url) {
-      return res.status(400).json({
-        error: isPublic
-          ? 'No default voice on this HeyGen avatar. Try a different one, set a voice manually, or wire in an audio file.'
-          : 'No default voice set. Open the Avatars page and assign a voice, or wire an audio file into Avatar render.',
-      })
+    // Voice resolution. Two distinct paths:
+    //
+    //   • ElevenLabs path: when avatar.elevenlabs_voice_id is set (or the
+    //     caller explicitly passed an ElevenLabs-shaped voice_id), synthesize
+    //     the script via ElevenLabs first, upload to storage, and pass the
+    //     resulting URL to HeyGen as audio_url. HeyGen then lip-syncs to our
+    //     audio instead of running its own TTS — its TTS endpoint rejects
+    //     ElevenLabs voice IDs with a 400 "Voice not found".
+    //
+    //   • HeyGen-native path: voice_id from the request body (or the public
+    //     avatar's default_voice_id) goes directly to HeyGen for TTS.
+    //
+    // audio_url in the request body always wins (already-synthesized audio
+    // pipes straight through, no TTS layer).
+    let resolvedAudioUrl = audio_url || null
+    let heygenVoiceId = ''
+
+    const explicitElevenLabs = voice_id && looksLikeElevenLabsVoiceId(voice_id)
+    const elevenLabsVoice = avatar.elevenlabs_voice_id || (explicitElevenLabs ? voice_id : null)
+
+    if (!resolvedAudioUrl && elevenLabsVoice && script) {
+      try {
+        resolvedAudioUrl = await synthesizeToPublicUrl(elevenLabsVoice, script, avatar.profile_id)
+      } catch (e) {
+        return res.status(502).json({
+          error: `ElevenLabs TTS failed: ${e.message}. Check ELEVENLABS_API_KEY and that voice "${elevenLabsVoice}" exists in your ElevenLabs account.`,
+        })
+      }
+    } else if (!resolvedAudioUrl) {
+      // No ElevenLabs voice set — fall back to HeyGen TTS via voice_id.
+      // The body-supplied voice_id wins iff it isn't an ElevenLabs ID
+      // (which we already handled above).
+      heygenVoiceId = (!explicitElevenLabs ? voice_id : '') || publicDefaultVoice || ''
+      if (!heygenVoiceId) {
+        return res.status(400).json({
+          error: isPublic
+            ? 'No default voice on this HeyGen avatar. Try a different one, set an ElevenLabs voice on the avatar, or wire in an audio file.'
+            : 'No voice set on this avatar. Open the Avatars page and add an ElevenLabs voice, or wire an audio file into Avatar render.',
+        })
+      }
     }
 
-    // Dispatch by engine
+    // Dispatch by engine. When we have audio_url (either supplied or
+    // synthesized from ElevenLabs), HeyGen ignores voice_id entirely.
     let heygenVideoId
     try {
       if (modelDef.engine === 'v2_legacy') {
         const resp = await generateVideoV2({
           talkingPhotoId: avatarIdForApi,
-          voiceId: resolvedVoice,
+          voiceId: heygenVoiceId,
           script,
-          audioUrl: audio_url,
+          audioUrl: resolvedAudioUrl,
         })
         heygenVideoId = resp?.data?.video_id || resp?.video_id
       } else {
         const resp = await generateVideoV3({
           avatarId: avatarIdForApi,
-          voiceId: resolvedVoice,
+          voiceId: heygenVoiceId,
           script,
-          audioUrl: audio_url,
+          audioUrl: resolvedAudioUrl,
           modelKey,
         })
         heygenVideoId = resp?.data?.video_id || resp?.video_id || resp?.id
@@ -178,7 +207,11 @@ export default async function handler(req, res) {
       sentences: [],
       status: 'generating_clips',
       model_version: modelKey,
-      voice_id: resolvedVoice,
+      // Persist whichever voice path was actually used so the renders
+      // table reflects reality. ElevenLabs path → blank heygen voice +
+      // audio_url stored on the row would be ideal; for now we record
+      // the ElevenLabs voice id since that's the source of truth.
+      voice_id: heygenVoiceId || elevenLabsVoice || '',
       heygen_video_id: heygenVideoId,
       video_units_charged: unitsToCharge,
       duration_secs: durationSecs,

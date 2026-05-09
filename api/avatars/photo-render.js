@@ -9,6 +9,7 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { createPhotoAvatarV3, generateVideoV3, MODELS, videoUnitsForModel } from '../_lib/heygen.js'
+import { synthesizeToPublicUrl, looksLikeElevenLabsVoiceId } from '../_lib/elevenlabs.js'
 
 function estimateDurationSecs(script) {
   const words = (script || '').trim().split(/\s+/).filter(Boolean).length
@@ -53,19 +54,41 @@ export default async function handler(req, res) {
       }
     }
 
-    // Resolve voice when we're in script mode (audio mode bypasses TTS).
-    let resolvedVoice = voice_id || ''
-    if (!resolvedVoice && !audio_url && avatar_id) {
-      // Voice lives on the avatar row, not the profile row. Look it up.
-      try {
-        const aRows = await supaFetch(`avatars?id=eq.${avatar_id}&select=elevenlabs_voice_id`)
-        resolvedVoice = aRows?.[0]?.elevenlabs_voice_id || ''
-      } catch {}
-    }
-    if (!resolvedVoice && !audio_url) {
-      return res.status(400).json({
-        error: 'No voice set. Open the Avatars page and add a default voice id, or wire an audio file in.',
-      })
+    // Voice resolution. Same two-path logic as /api/avatars/render:
+    //   • ElevenLabs path: synthesize TTS → upload → pass URL as audio_url.
+    //   • HeyGen-native: send voice_id directly to HeyGen TTS.
+    // audio_url in the request body always wins.
+    let resolvedAudioUrl = audio_url || null
+    let heygenVoiceId = ''
+    let elevenLabsVoice = null
+
+    if (!resolvedAudioUrl) {
+      const explicitElevenLabs = voice_id && looksLikeElevenLabsVoiceId(voice_id)
+      if (avatar_id) {
+        try {
+          const aRows = await supaFetch(`avatars?id=eq.${avatar_id}&select=elevenlabs_voice_id`)
+          elevenLabsVoice = aRows?.[0]?.elevenlabs_voice_id || null
+        } catch {}
+      }
+      if (!elevenLabsVoice && explicitElevenLabs) elevenLabsVoice = voice_id
+
+      if (elevenLabsVoice && script) {
+        try {
+          resolvedAudioUrl = await synthesizeToPublicUrl(elevenLabsVoice, script, profile_id)
+        } catch (e) {
+          return res.status(502).json({
+            error: `ElevenLabs TTS failed: ${e.message}. Check ELEVENLABS_API_KEY and that voice "${elevenLabsVoice}" exists in your ElevenLabs account.`,
+          })
+        }
+      } else {
+        // Fall back to HeyGen TTS via voice_id (only if it isn't ElevenLabs-shaped).
+        heygenVoiceId = (!explicitElevenLabs ? voice_id : '') || ''
+        if (!heygenVoiceId) {
+          return res.status(400).json({
+            error: 'No voice set. Open the Avatars page and add an ElevenLabs voice, or wire an audio file in.',
+          })
+        }
+      }
     }
 
     // Step 1: create photo avatar from URL
@@ -92,9 +115,9 @@ export default async function handler(req, res) {
       try {
         const vr = await generateVideoV3({
           avatarId: heygenAvatarId,
-          voiceId: resolvedVoice,
+          voiceId: heygenVoiceId,
           script,
-          audioUrl: audio_url,
+          audioUrl: resolvedAudioUrl,
           modelKey,
         })
         videoId = vr?.data?.video_id || vr?.video_id || vr?.id
@@ -132,7 +155,7 @@ export default async function handler(req, res) {
           sentences: [],
           status: 'generating_clips',
           model_version: modelKey,
-          voice_id: resolvedVoice || null,
+          voice_id: heygenVoiceId || elevenLabsVoice || null,
           heygen_video_id: videoId,
           video_units_charged: unitsToCharge,
           duration_secs: durationSecs,
