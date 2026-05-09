@@ -64,7 +64,27 @@ export default async function handler(req, res) {
       const updates = {}
       for (const [k, v] of Object.entries(req.body || {})) if (ALLOWED.has(k)) updates[k] = v
       const updated = await supaFetch(`space_runs?id=eq.${id}`, { method: 'PATCH', body: updates })
-      return res.status(200).json({ run: Array.isArray(updated) ? updated[0] : updated })
+      const updatedRow = Array.isArray(updated) ? updated[0] : updated
+      // Fire run.done when the client transitions a run to status='done'.
+      // Best-effort — failure to insert a notification never blocks the PATCH.
+      if (updates.status === 'done') {
+        try {
+          const space_id = updatedRow?.space_id
+          let space_name = null
+          if (space_id) {
+            const sRows = await supaFetch(`spaces?id=eq.${space_id}&select=name`)
+            space_name = sRows?.[0]?.name || null
+          }
+          const { NotifyKind } = await import('../_lib/notify.js')
+          NotifyKind.runDone({
+            user_id: auth.user.id,
+            profile_id,
+            space_id,
+            space_name,
+          }).catch(() => {})
+        } catch {}
+      }
+      return res.status(200).json({ run: updatedRow })
     }
 
     if (req.method === 'DELETE') {

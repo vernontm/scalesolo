@@ -344,11 +344,25 @@ export default async function handler(req, res) {
     }
 
     // Best-effort notification — bell pings instantly via Realtime.
-    NotifyKind.postPublished({
-      user_id: auth.user.id,
-      profile_id,
-      platforms,
-    }).catch(() => {})
+    // Distinguish scheduled-for-later vs published-now so the user gets
+    // a "queued" ping when they actually queue, and a separate "live"
+    // ping later when the scheduler fires it.
+    const isFuture = resolvedScheduledIso && new Date(resolvedScheduledIso).getTime() > Date.now() + 5000
+    if (isFuture) {
+      NotifyKind.postScheduled({
+        user_id: auth.user.id,
+        profile_id,
+        platforms,
+        scheduled_for: resolvedScheduledIso,
+        title: savedItem?.title || null,
+      }).catch(() => {})
+    } else {
+      NotifyKind.postPublished({
+        user_id: auth.user.id,
+        profile_id,
+        platforms,
+      }).catch(() => {})
+    }
 
     return res.status(200).json({
       request_id: body?.request_id || body?.id || null,

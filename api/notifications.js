@@ -19,6 +19,26 @@ export default async function handler(req, res) {
   if (!auth) return
 
   try {
+    if (req.method === 'GET' && req.query.action === 'prefs') {
+      const rows = await supaFetch(`user_profiles?id=eq.${auth.user.id}&select=notification_prefs`)
+      return res.status(200).json({ prefs: rows?.[0]?.notification_prefs || {} })
+    }
+
+    if (req.method === 'PUT' && req.query.action === 'prefs') {
+      const incoming = req.body && typeof req.body === 'object' ? req.body : {}
+      // Only persist boolean flags. Anything else is silently dropped.
+      const next = {}
+      for (const [k, v] of Object.entries(incoming)) {
+        if (typeof v === 'boolean') next[k] = v
+      }
+      await supaFetch(`user_profiles?id=eq.${auth.user.id}`, {
+        method: 'PATCH',
+        body: { notification_prefs: next },
+        prefer: 'return=minimal',
+      })
+      return res.status(200).json({ prefs: next })
+    }
+
     if (req.method === 'GET') {
       const filters = [`user_id=eq.${auth.user.id}`]
       if (req.query.unread === '1') filters.push('read_at=is.null')
