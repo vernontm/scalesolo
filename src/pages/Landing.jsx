@@ -564,9 +564,26 @@ function FeatureCard({ num, eyebrow, title, body, children }) {
 function AvatarMock() {
   return (
     <div className="mock-avatar">
-      <div className="frame"><div className="play" /></div>
-      <div className="frame stripes" />
-      <div className="frame"><div className="play" /></div>
+      <div className="phone">
+        <span className="rec-dot" />
+        <span className="rec-label">REC</span>
+        <div className="aura" />
+        <div className="halo" />
+        <div className="face">
+          <div className="face-inner" />
+        </div>
+        <div className="scan" />
+        <span className="spark s1" />
+        <span className="spark s2" />
+        <span className="spark s3" />
+        <span className="spark s4" />
+        <div className="outfit-track">
+          <span className="chip c1" />
+          <span className="chip c2" />
+          <span className="chip c3" />
+          <span className="chip c4" />
+        </div>
+      </div>
     </div>
   )
 }
