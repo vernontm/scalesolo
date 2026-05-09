@@ -252,18 +252,19 @@ export default function Landing() {
             />
           </div>
           <div className="showcase-copy">
-            <div className="feat-eyebrow">One-click scheduling</div>
-            <h2 className="showcase-title">Queue a week in 60 seconds.</h2>
+            <div className="feat-eyebrow">Fully autonomous</div>
+            <h2 className="showcase-title">Set it once. Build a brand on autopilot.</h2>
             <p className="showcase-body">
-              Drop your script, pick the slot, and ScaleSolo handles the rest — caption, hashtags,
-              first-comment, watermark, and platform-specific formatting. Then it ships at the time
-              your audience is actually online.
+              ScaleSolo is the first platform where the workflow itself does the work. Wire it up
+              once — voice, avatar, cadence, platforms — and content gets generated, rendered, and
+              posted automatically, on schedule, forever. No daily check-ins. No queue refilling.
+              No human in the loop.
             </p>
             <ul className="showcase-list">
+              <li><Check size={14} /> Hands-off after setup — no daily content management</li>
+              <li><Check size={14} /> Auto-generates and ships posts on your set cadence</li>
               <li><Check size={14} /> Native publishing to TikTok, IG, YouTube, X, LinkedIn, Threads, FB</li>
-              <li><Check size={14} /> Per-platform captions, hashtags, and first-comment</li>
-              <li><Check size={14} /> Auto-finds the next open slot on your posting schedule</li>
-              <li><Check size={14} /> Recycle high-performers on a cadence you control</li>
+              <li><Check size={14} /> Run brands at scale — every brand on its own autopilot</li>
             </ul>
           </div>
         </div>
