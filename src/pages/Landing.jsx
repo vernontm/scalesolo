@@ -4,6 +4,7 @@ import {
   Zap, ArrowRight, Check, Sparkles, Boxes, UserCircle2, Calendar,
   Layers, Wand2, RefreshCw, ShieldCheck, Quote, Play,
   Instagram, Youtube, Twitter, Linkedin, Music2, Captions as CaptionsIcon,
+  Mic2, ShoppingBag, GraduationCap, Newspaper,
 } from 'lucide-react'
 import PricingPlans from '../components/PricingPlans.jsx'
 import WorkflowDemo from '../components/WorkflowDemo.jsx'
@@ -150,10 +151,10 @@ export default function Landing() {
         <div style={heroGrid} className="hero-grid">
           <div style={heroCopy} className="hero-copy">
             <h1 style={{ ...heroH1, textAlign: 'left' }} className="fade-up">
-              Set up once.<br /><span className="brand-text">Post forever.</span>
+              Launch your faceless brand.<br /><span className="brand-text">Run it on autopilot.</span>
             </h1>
             <p style={{ ...heroSub, margin: '0 0 32px', textAlign: 'left' }} className="fade-up">
-              Drop a topic. Pick a proven workflow. Walk away with finished posts, written, rendered, and scheduled to every platform.
+              ScaleSolo is the first AI platform that builds a faceless brand for you and runs it forever. Pick a workflow, plug in your voice and avatar, and ScaleSolo writes, films, and ships content to every platform on its own. No camera. No editor. No daily grind.
             </p>
             <div style={{ ...heroCtas, justifyContent: 'flex-start' }} className="fade-up hero-ctas">
               <button onClick={goSignup} className="btn-primary" style={ctaSizing}>
@@ -178,6 +179,61 @@ export default function Landing() {
               <HeroShot src={HERO_IMAGE} />
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* ── USE CASES ───────────────────────────────────────────────── */}
+      <section style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
+        <h2 style={sectionH}>What kind of faceless brand will you launch?</h2>
+        <p style={sectionSub}>
+          ScaleSolo runs them all the same way. Pick a workflow, set your cadence, walk away.
+          Here are a few of the brands solo founders are building right now.
+        </p>
+        <div className="usecase-grid">
+          <UseCaseCard
+            Icon={Mic2}
+            tag="AI podcast"
+            title="A daily podcast that posts itself."
+            body="Turn one idea a week into a podcast that ships every weekday. Your AI voice narrates the script, ScaleSolo cuts shorts from each episode, and the whole feed publishes on its own."
+            steps={[
+              'Voice clone narrates the full episode',
+              'Auto-cuts 9 shorts from every long-form',
+              'Posts to YouTube, Spotify, TikTok, IG',
+            ]}
+          />
+          <UseCaseCard
+            Icon={ShoppingBag}
+            tag="Product brand"
+            title="Promote a product without filming."
+            body="Run a faceless e-commerce or SaaS brand with daily demo videos, hooks, and CTAs. Your AI avatar shows the product, ScaleSolo writes the angles, and ads ship at scale."
+            steps={[
+              'AI avatar demos features in 30s reels',
+              'Hooks and CTAs auto-generated per platform',
+              'Ships to TikTok Shop, IG Reels, YouTube Shorts',
+            ]}
+          />
+          <UseCaseCard
+            Icon={GraduationCap}
+            tag="Niche education"
+            title="Build authority while you sleep."
+            body="Pick a niche, drop your perspective, and ScaleSolo turns it into daily explainers in your tone of voice. Fitness, finance, mindset, dev, you name it."
+            steps={[
+              'Pulls topics from your backlog or trends',
+              'Avatar delivers in your brand voice',
+              'Hooks and CTAs tailored per platform',
+            ]}
+          />
+          <UseCaseCard
+            Icon={Newspaper}
+            tag="News & curation"
+            title="Be the go-to source in your niche."
+            body="Aggregate, summarize, and rewrite the news in your brand voice. ScaleSolo turns daily updates into a 60-second video and posts before your competitors are awake."
+            steps={[
+              'AI scans and summarizes the day',
+              'Renders a daily 60s recap with captions',
+              'Posts to all 9+ platforms automatically',
+            ]}
+          />
         </div>
       </section>
 
@@ -226,7 +282,7 @@ export default function Landing() {
               <li><Check size={14} /> Production-grade avatars trained from a single reference</li>
               <li><Check size={14} /> Roster multiple presenters per brand for any campaign</li>
               <li><Check size={14} /> Locked wardrobes and styling so every render stays on-brand</li>
-              <li><Check size={14} /> Drop straight into any Spaces workflow</li>
+              <li><Check size={14} /> Plugs straight into your autopilot workflow</li>
             </ul>
           </div>
           <div className="showcase-img-wrap">
@@ -314,7 +370,7 @@ export default function Landing() {
           <FeatureCard num="2" eyebrow="Brand profiles" title="One workspace, many brands." body="Each brand keeps its own voice, cadence, platforms, and avatar. Switch profiles, never cross-pollinate.">
             <BrandProfilesMock />
           </FeatureCard>
-          <FeatureCard num="3" eyebrow="Spaces" title="Drag, drop, run forever." body="A visual canvas to wire script → render → schedule. Set it up once, hit run, walk away.">
+          <FeatureCard num="3" eyebrow="Workflow builder" title="Drag, drop, run forever." body="A visual canvas that connects script, render, and schedule. Set it up once, hit run, walk away.">
             <SpacesMock />
           </FeatureCard>
           <FeatureCard num="4" eyebrow="Schedule" title="Consistency on autopilot." body="Pick the cadence. ScaleSolo finds the next open slot per platform and ships on time, every time.">
@@ -638,6 +694,22 @@ function HeroShot({ src }) {
 }
 
 // ── Feature cards (with CSS-animated dash mocks) ────────────────────
+function UseCaseCard({ Icon, tag, title, body, steps }) {
+  return (
+    <div className="usecase-card lift">
+      <div className="usecase-icon"><Icon size={22} strokeWidth={2.2} /></div>
+      <div className="usecase-tag">{tag}</div>
+      <div className="usecase-title">{title}</div>
+      <p className="usecase-body">{body}</p>
+      <ul className="usecase-steps">
+        {steps.map((s) => (
+          <li key={s}><Check size={12} /> {s}</li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function FeatureCard({ num, eyebrow, title, body, children }) {
   return (
     <div className="feat-card lift">
