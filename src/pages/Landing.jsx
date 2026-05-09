@@ -4,7 +4,7 @@ import {
   Zap, ArrowRight, Check, Sparkles, Boxes, UserCircle2, Calendar,
   Layers, Wand2, RefreshCw, ShieldCheck, Quote, Play,
   Instagram, Youtube, Twitter, Linkedin, Music2, Captions as CaptionsIcon,
-  Mic2, ShoppingBag, GraduationCap, Newspaper, Menu, X,
+  Mic2, ShoppingBag, GraduationCap, Newspaper, Menu, X, PenLine, Film,
 } from 'lucide-react'
 import PricingPlans from '../components/PricingPlans.jsx'
 import WorkflowDemo from '../components/WorkflowDemo.jsx'
@@ -277,24 +277,26 @@ export default function Landing() {
 
       {/* ── TOOLS REPLACED ──────────────────────────────────────────── */}
       <section style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
-        <h2 style={sectionH}>Seven tools. <span className="brand-text">One platform.</span></h2>
+        <h2 style={sectionH}>Your whole stack, <span className="brand-text">in one engine.</span></h2>
         <p style={sectionSub}>
-          Stop duct-taping six subscriptions together. ScaleSolo is the full faceless brand stack
-          in one place, built so a solo founder can launch and scale without an ops team.
+          Most faceless brands run on a Frankenstein bundle of seven AI tools, seven logins, and seven monthly bills. ScaleSolo collapses all of it into one workflow that writes, films, captions, scores, and ships on its own.
         </p>
-        <div className="replaces-grid">
-          <div className="replaces-chip"><div className="replaces-chip-name">AI script writer</div><div className="replaces-chip-cost">~$30/mo</div></div>
-          <div className="replaces-chip"><div className="replaces-chip-name">Voice cloning</div><div className="replaces-chip-cost">~$22/mo</div></div>
-          <div className="replaces-chip"><div className="replaces-chip-name">AI avatar studio</div><div className="replaces-chip-cost">~$60/mo</div></div>
-          <div className="replaces-chip"><div className="replaces-chip-name">Captions &amp; titles</div><div className="replaces-chip-cost">~$20/mo</div></div>
-          <div className="replaces-chip"><div className="replaces-chip-name">Video editor</div><div className="replaces-chip-cost">~$25/mo</div></div>
-          <div className="replaces-chip"><div className="replaces-chip-name">Music &amp; SFX library</div><div className="replaces-chip-cost">~$15/mo</div></div>
-          <div className="replaces-chip"><div className="replaces-chip-name">Multi-platform scheduler</div><div className="replaces-chip-cost">~$30/mo</div></div>
+        <div className="kill-grid">
+          <KillCard Icon={PenLine}      name="AI script writer"        cost="$30/mo" delay={0} />
+          <KillCard Icon={Mic2}          name="Voice cloning"            cost="$22/mo" delay={1} />
+          <KillCard Icon={UserCircle2}   name="AI avatar studio"         cost="$60/mo" delay={2} />
+          <KillCard Icon={CaptionsIcon}  name="Captions and titles"      cost="$20/mo" delay={3} />
+          <KillCard Icon={Film}          name="Video editor"             cost="$25/mo" delay={4} />
+          <KillCard Icon={Music2}        name="Music and SFX"            cost="$15/mo" delay={5} />
+          <KillCard Icon={Calendar}      name="Multi-platform scheduler" cost="$30/mo" delay={6} />
         </div>
-        <div style={{ textAlign: 'center' }}>
-          <div className="replaces-savings">
-            <span className="replaces-savings-num">$200+</span>
-            <span className="replaces-savings-label">in monthly subscriptions, replaced by one ScaleSolo plan.</span>
+        <div className="kill-total-wrap">
+          <div className="kill-total">
+            <div className="kill-total-num">$200+</div>
+            <div className="kill-total-label">
+              in monthly subscriptions, gone.<br />
+              <span className="kill-total-sub">Run the whole pipeline on one ScaleSolo plan.</span>
+            </div>
           </div>
         </div>
       </section>
@@ -442,6 +444,14 @@ export default function Landing() {
       </section>
       </div>
 
+      {/* ── PRICING ─────────────────────────────────────────────────── */}
+      <section id="pricing" style={{ ...section, position: 'relative' }} className="fade-up">
+        <div aria-hidden style={{ ...sectionAura, top: '40%', left: '50%', transform: 'translate(-50%, -50%)', width: 720, height: 480, opacity: 0.55 }} />
+        <h2 style={sectionH}>Choose what fits you</h2>
+        <p style={sectionSub}>All tiers include unlimited workflows, social scheduling, and brand-voice generation. Pick by output volume.</p>
+        <PricingPlans />
+      </section>
+
       {/* ── FAQ ─────────────────────────────────────────────────────── */}
       <section id="faq" style={section} className="fade-up">
         <h2 style={sectionH}>Questions, <span className="brand-text">answered</span>.</h2>
@@ -474,14 +484,6 @@ export default function Landing() {
             Yes. Start free with no credit card. Cancel anytime, keep everything you generated.
           </FaqItem>
         </div>
-      </section>
-
-      {/* ── PRICING ─────────────────────────────────────────────────── */}
-      <section id="pricing" style={{ ...section, position: 'relative' }} className="fade-up">
-        <div aria-hidden style={{ ...sectionAura, top: '40%', left: '50%', transform: 'translate(-50%, -50%)', width: 720, height: 480, opacity: 0.55 }} />
-        <h2 style={sectionH}>Choose what fits you</h2>
-        <p style={sectionSub}>All tiers include unlimited workflows, social scheduling, and brand-voice generation. Pick by output volume.</p>
-        <PricingPlans />
       </section>
 
       {/* ── FOOTER ──────────────────────────────────────────────────── */}
@@ -816,6 +818,20 @@ function HeroShot({ src }) {
 }
 
 // ── Feature cards (with CSS-animated dash mocks) ────────────────────
+function KillCard({ Icon, name, cost, delay = 0 }) {
+  return (
+    <div className="kill-card lift" style={{ animationDelay: `${delay * 80}ms` }}>
+      <div className="kill-card-glow" aria-hidden />
+      <div className="kill-card-icon"><Icon size={18} strokeWidth={2.2} /></div>
+      <div className="kill-card-name">{name}</div>
+      <div className="kill-card-row">
+        <span className="kill-card-cost">{cost}</span>
+        <span className="kill-card-stamp">REPLACED</span>
+      </div>
+    </div>
+  )
+}
+
 function FaqItem({ q, children }) {
   return (
     <details className="faq-item">
