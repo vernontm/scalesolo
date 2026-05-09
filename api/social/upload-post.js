@@ -114,12 +114,22 @@ export default async function handler(req, res) {
     for (const p of platforms) fd.append('platform[]', p)
     if (description) fd.append('description', String(description).slice(0, 2200))
     if (title) {
-      // Generic title for any platform that uses it (Upload-Post passes
-      // it through to YouTube where it's REQUIRED). 100-char ceiling to
-      // keep it short across platforms.
+      // Generic title — used by YouTube's title field (it's REQUIRED there)
+      // and for any other platform that surfaces a separate title. 100-char
+      // ceiling keeps it short across platforms.
       fd.append('title', String(title).slice(0, 100))
-      if (platforms.includes('tiktok')) fd.append('tiktok_title', String(title).slice(0, 90))
       if (platforms.includes('youtube')) fd.append('youtube_title', String(title).slice(0, 100))
+    }
+    // TikTok: Upload-Post's `tiktok_title` is what TikTok actually shows as
+    // the post's CAPTION (TikTok's API calls the caption field "title").
+    // If we only send the short generic title here, the hashtags in
+    // `description` never reach TikTok and the post lands with no tags.
+    // Fix: ship the full description (caption + hashtags) as tiktok_title
+    // so TikTok gets the same caption+hashtags as every other platform.
+    // 2200 cap matches TikTok's caption limit.
+    if (platforms.includes('tiktok')) {
+      const tiktokCaption = String(description || title || '').slice(0, 2200)
+      if (tiktokCaption) fd.append('tiktok_title', tiktokCaption)
     }
     // Resolve "auto" mode: pull the brand profile's posting schedule + the
     // already-scheduled posts on it, find the next open slot. Done at submit
