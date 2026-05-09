@@ -382,6 +382,43 @@ function fileToDataUrl(file) {
   })
 }
 
+// Downscale a raster image to a JPEG data URL with max edge `maxEdge`,
+// keeping aspect ratio. Skips files already small enough (< ~1.2MB) so
+// we don't lose quality on tiny inputs. The 4.5MB Vercel body limit +
+// base64 inflation (~33%) means we want the encoded payload under ~3MB,
+// which works out to roughly a 1280px edge at JPEG q=0.85 for typical
+// phone photos.
+async function downscaleToDataUrl(file, { maxEdge = 1280, quality = 0.85 } = {}) {
+  // Tiny files pass through unchanged so we don't recompress already-small assets.
+  if (file.size && file.size < 1.2 * 1024 * 1024) return fileToDataUrl(file)
+
+  const dataUrl = await fileToDataUrl(file)
+  const img = await new Promise((res, rej) => {
+    const i = new Image()
+    i.onload = () => res(i)
+    i.onerror = () => rej(new Error('Could not decode image for resizing'))
+    i.src = dataUrl
+  })
+  const w = img.naturalWidth || 0
+  const h = img.naturalHeight || 0
+  if (!w || !h) return dataUrl
+  if (Math.max(w, h) <= maxEdge) return dataUrl
+
+  const scale = maxEdge / Math.max(w, h)
+  const nw = Math.round(w * scale)
+  const nh = Math.round(h * scale)
+  const c = document.createElement('canvas')
+  c.width = nw; c.height = nh
+  const ctx = c.getContext('2d')
+  ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = 'high'
+  // White background for transparent PNGs since we're encoding to JPEG.
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, nw, nh)
+  ctx.drawImage(img, 0, 0, nw, nh)
+  return c.toDataURL('image/jpeg', quality)
+}
+
 // Rasterize an SVG to a PNG data URL. KIE's image models reject SVG.
 async function svgToPngDataUrl(file) {
   const src = await fileToDataUrl(file)
@@ -401,8 +438,11 @@ async function svgToPngDataUrl(file) {
 
 async function uploadImageToBucket(file, profileId) {
   const isSvg = file.type === 'image/svg+xml' || /\.svg$/i.test(file.name || '')
-  const dataUrl = isSvg ? await svgToPngDataUrl(file) : await fileToDataUrl(file)
-  const fileName = isSvg ? (file.name || 'image').replace(/\.svg$/i, '') + '.png' : (file.name || `image-${Date.now()}.png`)
+  const dataUrl = isSvg ? await svgToPngDataUrl(file) : await downscaleToDataUrl(file)
+  // After downscaling we always emit JPEG, so normalize the filename to .jpg
+  // (KIE keys the upload by extension for content-type sniffing).
+  const baseName = (file.name || `image-${Date.now()}`).replace(/\.[^.]+$/, '')
+  const fileName = isSvg ? baseName + '.png' : baseName + '.jpg'
   const session = (await supabase.auth.getSession()).data.session
   const r = await fetch('/api/images/upload-reference', {
     method: 'POST',
