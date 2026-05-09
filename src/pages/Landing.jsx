@@ -184,21 +184,6 @@ export default function Landing() {
       {/* ── BRAND PROFILE SHOWCASE ──────────────────────────────────── */}
       <section style={section} className="fade-up">
         <div className="showcase-grid">
-          <div className="showcase-copy">
-            <div className="feat-eyebrow">Brand profiles</div>
-            <h2 className="showcase-title">The first platform that actually sounds like you.</h2>
-            <p className="showcase-body">
-              ScaleSolo doesn't generate generic AI slop. Every brand profile studies your past
-              scripts, hooks, and posts — what landed, what flopped, the words you'd never say —
-              so every caption it writes reads like you on a good day, not a bot on any day.
-            </p>
-            <ul className="showcase-list">
-              <li><Check size={14} /> Trained on your scripts, hooks, and brand vocabulary</li>
-              <li><Check size={14} /> Studies your top-performing posts to spot what converts</li>
-              <li><Check size={14} /> Filters out off-brand phrases automatically</li>
-              <li><Check size={14} /> Run multiple brands side-by-side without cross-contamination</li>
-            </ul>
-          </div>
           <div className="showcase-img-wrap">
             <img
               src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/brand_profile.png"
@@ -207,12 +192,43 @@ export default function Landing() {
               onError={(e) => { e.currentTarget.style.opacity = '0' }}
             />
           </div>
+          <div className="showcase-copy">
+            <div className="feat-eyebrow">Brand profiles</div>
+            <h2 className="showcase-title">The first platform that actually sounds like you.</h2>
+            <p className="showcase-body">
+              Bring your own voice or build it here. Paste in the brand-voice profile you already
+              use with ChatGPT, Claude, or Gemini — or fill out our guided brief — and ScaleSolo
+              uses it to write every caption, script, and hook so the output stays seamless and
+              authentic to you.
+            </p>
+            <ul className="showcase-list">
+              <li><Check size={14} /> Import your voice from any AI tool, or build it on ScaleSolo</li>
+              <li><Check size={14} /> Studies your past scripts, hooks, and top-performing posts</li>
+              <li><Check size={14} /> Learns what lands and what flops to sharpen every run</li>
+              <li><Check size={14} /> Run multiple brands side-by-side — no cross-contamination</li>
+            </ul>
+          </div>
         </div>
       </section>
 
       {/* ── AVATAR WORKFLOW SHOWCASE ────────────────────────────────── */}
       <section style={section} className="fade-up">
         <div className="showcase-grid">
+          <div className="showcase-copy">
+            <div className="feat-eyebrow">Realistic avatars</div>
+            <h2 className="showcase-title">A studio cast for every brand.</h2>
+            <p className="showcase-body">
+              Train photorealistic AI avatars for any brand on the platform — founders, spokespeople,
+              creators, internal teams. Build a roster of on-brand presenters with consistent looks,
+              wardrobes, and delivery, ready to ship video at the volume modern social demands.
+            </p>
+            <ul className="showcase-list">
+              <li><Check size={14} /> Production-grade avatars trained from a single reference</li>
+              <li><Check size={14} /> Roster multiple presenters per brand for any campaign</li>
+              <li><Check size={14} /> Locked wardrobes and styling so every render stays on-brand</li>
+              <li><Check size={14} /> Drop straight into any Spaces workflow</li>
+            </ul>
+          </div>
           <div className="showcase-img-wrap">
             <img
               src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/avatar_landing.png"
@@ -221,27 +237,20 @@ export default function Landing() {
               onError={(e) => { e.currentTarget.style.opacity = '0' }}
             />
           </div>
-          <div className="showcase-copy">
-            <div className="feat-eyebrow">Avatars & looks</div>
-            <h2 className="showcase-title">Train an AI you. Cycle the looks.</h2>
-            <p className="showcase-body">
-              Upload one selfie. ScaleSolo trains a realistic avatar that looks, talks, and moves like you.
-              Build a wardrobe of looks — gym-fit, studio, beach, suit — and cycle them across renders so
-              every video ships looking fresh, even when you don't.
-            </p>
-            <ul className="showcase-list">
-              <li><Check size={14} /> Photorealistic avatars from a single selfie</li>
-              <li><Check size={14} /> Save unlimited looks and wardrobes per brand</li>
-              <li><Check size={14} /> Auto-rotate looks across runs so feeds stay varied</li>
-              <li><Check size={14} /> Drop straight into any Spaces workflow</li>
-            </ul>
-          </div>
         </div>
       </section>
 
       {/* ── SCHEDULE-POST FEATURE SHOWCASE ──────────────────────────── */}
       <section style={section} className="fade-up">
         <div className="showcase-grid">
+          <div className="showcase-img-wrap">
+            <img
+              src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/schedule_post.png"
+              alt="ScaleSolo schedule-post feature"
+              className="showcase-img"
+              onError={(e) => { e.currentTarget.style.opacity = '0' }}
+            />
+          </div>
           <div className="showcase-copy">
             <div className="feat-eyebrow">One-click scheduling</div>
             <h2 className="showcase-title">Queue a week in 60 seconds.</h2>
@@ -256,14 +265,6 @@ export default function Landing() {
               <li><Check size={14} /> Auto-finds the next open slot on your posting schedule</li>
               <li><Check size={14} /> Recycle high-performers on a cadence you control</li>
             </ul>
-          </div>
-          <div className="showcase-img-wrap">
-            <img
-              src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/schedule_post.png"
-              alt="ScaleSolo schedule-post feature"
-              className="showcase-img"
-              onError={(e) => { e.currentTarget.style.opacity = '0' }}
-            />
           </div>
         </div>
       </section>
