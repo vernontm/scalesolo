@@ -182,6 +182,25 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ── TREND + STATS ───────────────────────────────────────────── */}
+      <section style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
+        <div className="trend-copy">
+          <h2 style={sectionH}>The faceless brand wave is already here.</h2>
+          <p style={sectionSub}>
+            AI-native creators are launching channels at a pace that wasn't possible 18 months ago.
+            UGC, faceless reels, and AI-narrated shorts now drive a huge share of every algorithm.
+            The bottleneck used to be filming, editing, and posting. ScaleSolo deletes all three so
+            you can launch as fast as you can think and let your brand compound while you sleep.
+          </p>
+        </div>
+        <div className="stats-grid">
+          <Stat number="$250B+" label={<>Creator economy<br />size by 2027</>} />
+          <Stat number="10x"     label={<>Your monthly<br />content output</>} />
+          <Stat number="30+ hrs" label={<>Saved per brand,<br />every single week</>} />
+          <Stat number="9+"      label={<>Platforms publishing<br />on full autopilot</>} />
+        </div>
+      </section>
+
       {/* ── USE CASES ───────────────────────────────────────────────── */}
       <section style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
         <h2 style={sectionH}>What kind of faceless brand will you launch?</h2>
@@ -694,6 +713,15 @@ function HeroShot({ src }) {
 }
 
 // ── Feature cards (with CSS-animated dash mocks) ────────────────────
+function Stat({ number, label }) {
+  return (
+    <div className="stat-cell">
+      <div className="stat-number">{number}</div>
+      <div className="stat-label">{label}</div>
+    </div>
+  )
+}
+
 function UseCaseCard({ Icon, tag, title, body, steps }) {
   return (
     <div className="usecase-card lift">
