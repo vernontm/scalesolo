@@ -129,10 +129,6 @@ export default function Landing() {
             <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 16 }}>ScaleSolo</span>
           </div>
           <nav style={navLinks}>
-            <a href="#features" style={navLink}>Features</a>
-            <a href="#canvas" style={navLink}>How it works</a>
-            <a href="#use-cases" style={navLink}>Use cases</a>
-            <a href="#testimonials" style={navLink}>Loved by</a>
             <a href="#pricing" style={navLink}>Pricing</a>
           </nav>
           <div style={navCta}>
@@ -154,7 +150,7 @@ export default function Landing() {
         <div style={heroGrid} className="hero-grid">
           <div style={heroCopy} className="hero-copy">
             <div className="fade-up" style={{ animationDelay: '40ms' }}>
-              <div style={{ ...eyebrowWrap, justifyContent: 'flex-start' }}>
+              <div style={{ ...eyebrowWrap, justifyContent: 'flex-start' }} className="eyebrow-wrap">
                 <span style={eyebrow}>
                   <Sparkles size={11} strokeWidth={2.5} /> 9 steps to a content engine that never stops
                 </span>
@@ -166,7 +162,7 @@ export default function Landing() {
             <p style={{ ...heroSub, margin: '0 0 32px', textAlign: 'left' }} className="fade-up">
               ScaleSolo writes posts in your voice, films them with your AI avatar, and ships them to TikTok, Instagram, YouTube, X, and LinkedIn — on the cadence you set, without you ever opening the app again.
             </p>
-            <div style={{ ...heroCtas, justifyContent: 'flex-start' }} className="fade-up">
+            <div style={{ ...heroCtas, justifyContent: 'flex-start' }} className="fade-up hero-ctas">
               <button onClick={goSignup} className="btn-primary" style={ctaSizing}>
                 Start free <ArrowRight size={14} />
               </button>
@@ -174,7 +170,7 @@ export default function Landing() {
                 <Play size={13} fill="currentColor" /> See how it works
               </a>
             </div>
-            <div style={{ ...trustPills, justifyContent: 'flex-start', marginBottom: 0 }} className="fade-up">
+            <div style={{ ...trustPills, justifyContent: 'flex-start', marginBottom: 0 }} className="fade-up hero-pills">
               <span style={pill}><Check size={11} /> No credit card required</span>
               <span style={pill}><Check size={11} /> 5-min setup</span>
               <span style={pill}><Check size={11} /> Cancel anytime</span>
@@ -192,153 +188,12 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── PLATFORM TRUST STRIP ────────────────────────────────────── */}
-      <section style={trustSection}>
-        <div style={trustEyebrow}>
-          Posts where your audience already is
-        </div>
-        <div style={logoRow}>
-          {trustLogos.map(({ name, Icon, tint }) => (
-            <div key={name} style={{ ...logoChip, color: tint, borderColor: `${tint}33` }}>
-              <Icon size={16} strokeWidth={2.2} />
-              <span style={{ color: 'var(--text-soft)' }}>{name}</span>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* ── USE CASES + WORKFLOW WALKTHROUGH ────────────────────────── */}
-      {/* Use cases header sits immediately above the canvas it morphs,
-          so "Click a use case to morph the workflow below" is literal —
-          the canvas is right there. The two sections share a tighter
-          vertical rhythm (top padding only on use-cases, bottom only on
-          canvas) so they read as one block. */}
-      <section id="use-cases" style={{ ...section, paddingBottom: 24 }} className="fade-up">
-        <h2 style={sectionH}>Built for every kind of creator</h2>
-        <p style={sectionSub}>Click a use case to see how the workflow below applies to your kind of work — the canvas stays put, the description block under it tells you exactly what runs for you.</p>
-        <UseCaseGrid activePersona={activePersona} onSelectPersona={handleSelectPersona} />
-      </section>
-
-      <section id="canvas" ref={canvasRef} style={{ ...section, paddingTop: 32 }} className="fade-up">
-        <h2 style={sectionH}>9 steps. One workflow. Forever.</h2>
-        <p style={sectionSub}>
-          {activePersona
-            ? <>Reading this for <span style={{ color: 'var(--red)', fontWeight: 700 }}>{activePersona.label}</span>. Click any node for its details, or pick another use case above.</>
-            : <>This is the full AI Podcaster pipeline — exactly as it runs in your dashboard. Click any node to see what it does, or hit Auto-tour to walk through the whole thing.</>
-          }
-        </p>
-        <WorkflowDemo persona={activePersona} onClearPersona={() => setActivePersona(null)} />
-      </section>
-
-      {/* ── FEATURES ────────────────────────────────────────────────── */}
-      <section id="features" style={section} className="fade-up">
-        <h2 style={sectionH}>Automate your content in minutes</h2>
-        <p style={sectionSub}>Everything you need to publish daily — without writing a script, hitting record, or opening an editor.</p>
-        <div style={featuresGrid}>
-          {features.map((f) => (
-            <div key={f.title} style={featureCard} className="lift">
-              <div style={featureCardImg}>
-                {/\.(mp4|webm|mov)(\?|$)/i.test(f.img) ? (
-                  <video src={f.img} autoPlay loop muted playsInline preload="metadata"
-                    aria-label={f.title}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                    onError={(e) => { e.currentTarget.style.display = 'none' }}
-                  />
-                ) : (
-                  <img src={f.img} alt={f.title} style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center' }}
-                    onError={(e) => { e.currentTarget.style.display = 'none' }}
-                  />
-                )}
-              </div>
-              <div style={{ padding: '20px 22px' }}>
-                <f.icon size={18} style={{ color: 'var(--red)', marginBottom: 10 }} />
-                <div style={featureTitle}>{f.title}</div>
-                <div style={featureBody}>{f.body}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* ── VALUE GRID ──────────────────────────────────────────────── */}
-      <section style={section} className="fade-up">
-        <h2 style={sectionH}>Built for solo creators who refuse to babysit content</h2>
-        <div style={valueGridStyle}>
-          {valueGrid.map((v) => (
-            <div key={v.title} style={valueCard} className="lift">
-              <v.icon size={20} style={{ color: 'var(--red)', marginBottom: 12 }} />
-              <div style={featureTitle}>{v.title}</div>
-              <div style={featureBody}>{v.body}</div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* ── TEMPLATES ───────────────────────────────────────────────── */}
-      <section id="templates" style={section} className="fade-up">
-        <h2 style={sectionH}>Start faster with pre-built workflows</h2>
-        <p style={sectionSub}>Clone a template, point it at your brand, hit Auto Run.</p>
-        <div style={templatesRow}>
-          <TemplateCard
-            title="AI Podcaster"
-            blurb="Script → avatar render → finish video → schedule. The flagship hands-off pipeline."
-            tags={['Auto-run', 'Cycle looks', 'Multi-platform']}
-          />
-          <TemplateCard
-            title="Lead-magnet shorts"
-            blurb="Write a hook for tomorrow's lead magnet. Caption it, watermark it, post it everywhere."
-            tags={['B2B', 'Daily cadence']}
-          />
-          <TemplateCard
-            title="Audio-first reels"
-            blurb="Drop a 60-second voice memo. ScaleSolo transcribes, slices, renders 9 clips, stitches, ships."
-            tags={['Audio upload', 'Auto-title']}
-          />
-        </div>
-      </section>
-
-      {/* ── TESTIMONIALS ────────────────────────────────────────────── */}
-      <section id="testimonials" style={{ ...section, position: 'relative' }} className="fade-up">
-        {/* Soft scattered red glows behind the testimonial grid */}
-        <div aria-hidden style={{ ...sectionAura, top: '15%', left: '10%' }} />
-        <div aria-hidden style={{ ...sectionAura, bottom: '10%', right: '12%', width: 360, height: 360 }} />
-        <h2 style={sectionH}>Loved by creators who refuse to be on a content treadmill</h2>
-        <div style={testimonialGrid}>
-          {testimonials.map((t) => (
-            <div key={t.name} style={testimonialCard} className="lift">
-              <div style={quoteBadge}><Quote size={11} strokeWidth={2.5} /></div>
-              <div style={testimonialQuote}>{t.quote}</div>
-              <div style={testimonialName}>
-                <div style={testimonialAvatar}>{t.name.split(' ').map((s) => s[0]).join('').slice(0, 2)}</div>
-                <div>
-                  <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13 }}>{t.name}</div>
-                  <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>{t.role}</div>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
       {/* ── PRICING ─────────────────────────────────────────────────── */}
       <section id="pricing" style={{ ...section, position: 'relative' }} className="fade-up">
         <div aria-hidden style={{ ...sectionAura, top: '40%', left: '50%', transform: 'translate(-50%, -50%)', width: 720, height: 480, opacity: 0.55 }} />
         <h2 style={sectionH}>Choose what fits you</h2>
         <p style={sectionSub}>All tiers include unlimited workflows, social scheduling, and brand-voice generation. Pick by output volume.</p>
         <PricingPlans />
-      </section>
-
-      {/* ── FINAL CTA ───────────────────────────────────────────────── */}
-      <section style={finalCta}>
-        <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 'clamp(28px, 4vw, 44px)', margin: 0, marginBottom: 12, color: 'var(--text)', letterSpacing: '-0.02em' }}>
-          Stop writing the same caption every Monday.
-        </h2>
-        <p style={{ fontSize: 16, color: 'var(--text-soft)', maxWidth: 520, margin: '0 auto 28px' }}>
-          Wire up one workflow. Let it run. Spend the rest of your week building the thing you actually want to build.
-        </p>
-        <button onClick={goSignup} className="btn-primary" style={{ ...ctaSizing, padding: '14px 26px', fontSize: 15 }}>
-          Start free <ArrowRight size={15} />
-        </button>
       </section>
 
       {/* ── FOOTER ──────────────────────────────────────────────────── */}

@@ -417,9 +417,13 @@ a:focus-visible {
 @media (max-width: 860px) {
   .hero-section { padding: 80px 16px 56px !important; }
   .hero-grid    { gap: 24px !important; }
-  .hero-shot    { order: -1; }
-  .hero-copy h1 { font-size: clamp(36px, 9vw, 56px) !important; }
-  .hero-copy p  { font-size: 15px !important; max-width: 100% !important; }
+  .hero-shot    { order: -1; max-width: 75%; margin-left: auto !important; margin-right: auto !important; }
+  .hero-copy    { text-align: center !important; }
+  .hero-copy h1 { font-size: clamp(36px, 9vw, 56px) !important; text-align: center !important; }
+  .hero-copy p  { font-size: 15px !important; max-width: 100% !important; text-align: center !important; margin-left: auto !important; margin-right: auto !important; }
+  .hero-copy .eyebrow-wrap,
+  .hero-copy .hero-ctas,
+  .hero-copy .hero-pills { justify-content: center !important; }
 }
 
 /* Spaces zoom controls (bottom-left). Custom-styled to match the app and
