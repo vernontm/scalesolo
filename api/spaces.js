@@ -57,11 +57,14 @@ export default async function handler(req, res) {
       // ── List templates visible to caller ──
       if (req.query.action === 'templates') {
         // Public templates: anyone. Private: only those created by the caller.
-        // PostgREST `or=` syntax does the union in one round trip.
+        // PostgREST `or=` syntax does the union in one round trip. Order by
+        // admin-set sort_order first (lower = pinned higher) then most-
+        // recently-updated. Plan-gate is included so the client can show
+        // a lock badge on tiers the user doesn't have.
         const filter =
           `or=(template_visibility.eq.public,and(template_visibility.eq.private,created_by.eq.${auth.user.id}))`
         const rows = await supaFetch(
-          `spaces?is_template=eq.true&${filter}&order=template_visibility.asc,updated_at.desc&select=id,name,description,template_summary,template_visibility,template_guide,nodes,edges,created_by,updated_at`
+          `spaces?is_template=eq.true&${filter}&order=template_sort_order.asc,template_visibility.asc,updated_at.desc&select=id,name,description,template_summary,template_visibility,template_guide,template_plan_gate,template_sort_order,nodes,edges,created_by,updated_at`
         )
         return res.status(200).json({ templates: rows || [] })
       }

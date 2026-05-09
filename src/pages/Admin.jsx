@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { Link, Routes, Route, useNavigate } from 'react-router-dom'
 import { ShieldCheck, LayoutGrid, ArrowRight } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
+import AdminTemplates from './AdminTemplates.jsx'
 
 // Admin home + nested admin routes. The Sidebar only shows the link to
 // admins, but we also gate at the route level so a non-admin who guesses
@@ -52,33 +53,12 @@ function AdminHome() {
   )
 }
 
-function TemplatesStub() {
-  return (
-    <div style={page}>
-      <div style={hero}>
-        <div style={heroIcon}><LayoutGrid size={20} /></div>
-        <div>
-          <div style={heroTitle}>Space templates</div>
-          <div style={heroSub}>Coming next: list, create, edit, gate by plan.</div>
-        </div>
-      </div>
-      <div style={{ ...card, cursor: 'default', maxWidth: 640 }}>
-        <div style={cardTitle}>Phase 2 in progress</div>
-        <div style={cardBody}>
-          The DB schema and CRUD UI are next. This page is the landing for the
-          template list and editor.
-        </div>
-      </div>
-    </div>
-  )
-}
-
 export default function Admin() {
   return (
     <AdminGate>
       <Routes>
         <Route path="/" element={<AdminHome />} />
-        <Route path="/templates" element={<TemplatesStub />} />
+        <Route path="/templates" element={<AdminTemplates />} />
       </Routes>
     </AdminGate>
   )
