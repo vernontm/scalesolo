@@ -1780,10 +1780,15 @@ function SpaceBuilder({ space, onSave, onClose }) {
         return { ...n, data: { ...n.data, status: 'idle', output: null, error: null } }
       }
       // Free descendants auto-threaded into the subset MUST refresh so
-      // they pick up the target's new output instead of short-circuiting
-      // on their stale 'done' cache (this was the Collection bug).
+      // they pick up the target's new output, but we PRESERVE their
+      // output so accumulator nodes (Collection, etc.) can read their
+      // prior items from data.output and merge new incoming items into
+      // them. The runOnlyTargetId branch in runSpace short-circuits to
+      // cached output unless forceReRun has this id — and we add free
+      // descendants to forceReRun in this same setup, so def.run() will
+      // be called with the prior items still available.
       if (freeDescendants.has(n.id)) {
-        return { ...n, data: { ...n.data, status: 'idle', output: null, error: null } }
+        return { ...n, data: { ...n.data, status: 'idle', error: null } }
       }
       if (scope === 'self_only') {
         // Ancestor — leave it alone. Cache flows through to target.

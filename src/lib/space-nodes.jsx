@@ -62,6 +62,32 @@ export function MediaItem({ url, type = 'image', from = '', onDelete, aspectRati
       onMouseLeave={() => setHover(false)}
       style={{ position: 'relative', width: '100%', aspectRatio, borderRadius: rounded, overflow: 'hidden', background: 'var(--surface-2)' }}
     >
+      {/* Persistent expand affordance, always visible in the corner so the
+          preview action is discoverable on touch devices and small tiles
+          (Collection thumbnails) where the bottom hover overlay is easy to
+          miss. Other actions (add-to-canvas, download, delete) still live
+          in the bottom hover overlay. */}
+      <button
+        type="button"
+        title="Preview"
+        aria-label="Preview"
+        className="nodrag"
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); window.__spaceOpenPreview?.({ url, type }) }}
+        style={{
+          position: 'absolute', top: 6, right: 6, zIndex: 6,
+          width: 22, height: 22, borderRadius: 5,
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(0,0,0,0.6)', color: '#fff',
+          border: '1px solid rgba(255,255,255,0.18)', padding: 0, cursor: 'pointer',
+          backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)',
+          transition: 'background .12s var(--ease), border-color .12s var(--ease)',
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(239,68,68,0.55)'; e.currentTarget.style.borderColor = 'rgba(239,68,68,0.8)' }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.6)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.18)' }}
+      >
+        <Maximize2 size={11} />
+      </button>
       {type === 'video' ? (
         // GIF-style preview: auto-loop, muted, no controls. Click the
         // Preview button in the hover overlay to open the fullscreen
@@ -4115,52 +4141,81 @@ ${String(script).slice(0, 2000)}
       }
 
       const profileForCall = brand?.profile_id || ctx.profileId
-      const submitR = await fetch('/api/images/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
-        body: JSON.stringify({
-          profile_id: profileForCall,
-          prompt,
-          model: data.props?.model || 'nano-banana',
-          count: data.props?.count || 1,
-          aspect: data.props?.aspect || '1:1',
-          quality: data.props?.quality || '2K',
-          reference_urls: refs.length ? refs : undefined,
-          enhance_prompt: data.props?.enhance_prompt ?? true,
-        }),
-      })
-      const submit = await submitR.json()
-      if (!submitR.ok) throw new Error(submit.error || `Failed (${submitR.status})`)
-      const taskId = submit.taskId
-      if (!taskId) throw new Error('No taskId returned')
+      const requestedCount = Math.max(1, Math.min(8, Number(data.props?.count) || 1))
 
-      // Client-side poll up to 12 minutes (Nano Banana Pro can take 6-9
-      // minutes on heavy queues). Each call is short enough for Vercel.
-      const start = Date.now()
-      let consecutiveErrors = 0
-      while (Date.now() - start < 720_000) {
-        if (ctx.shouldAbort?.()) throw new Error('Stopped')
-        await new Promise((r) => setTimeout(r, 4000))
-        try {
-          const sR = await fetch(`/api/images/status?taskId=${encodeURIComponent(taskId)}&profile_id=${encodeURIComponent(profileForCall)}`, {
-            headers: { Authorization: `Bearer ${ctx.token}` },
-          })
-          const s = await sR.json()
-          if (!sR.ok) {
+      // Single submit + poll. KIE's `num_images` field is unreliable across
+      // model families (Nano Banana Pro routinely returns 1 image even with
+      // num_images=4), so we run N parallel tasks of count=1 instead. Each
+      // submission gets its own taskId and pollable status.
+      const submitOne = async () => {
+        const submitR = await fetch('/api/images/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
+          body: JSON.stringify({
+            profile_id: profileForCall,
+            prompt,
+            model: data.props?.model || 'nano-banana',
+            count: 1,
+            aspect: data.props?.aspect || '1:1',
+            quality: data.props?.quality || '2K',
+            reference_urls: refs.length ? refs : undefined,
+            enhance_prompt: data.props?.enhance_prompt ?? true,
+          }),
+        })
+        const submit = await submitR.json()
+        if (!submitR.ok) throw new Error(submit.error || `Failed (${submitR.status})`)
+        const taskId = submit.taskId
+        if (!taskId) throw new Error('No taskId returned')
+        return taskId
+      }
+
+      const pollOne = async (taskId) => {
+        const start = Date.now()
+        let consecutiveErrors = 0
+        while (Date.now() - start < 720_000) {
+          if (ctx.shouldAbort?.()) throw new Error('Stopped')
+          await new Promise((r) => setTimeout(r, 4000))
+          try {
+            const sR = await fetch(`/api/images/status?taskId=${encodeURIComponent(taskId)}&profile_id=${encodeURIComponent(profileForCall)}`, {
+              headers: { Authorization: `Bearer ${ctx.token}` },
+            })
+            const s = await sR.json()
+            if (!sR.ok) {
+              consecutiveErrors++
+              if (consecutiveErrors >= 3) throw new Error(s.error || `Status check failed (${sR.status})`)
+              continue
+            }
+            consecutiveErrors = 0
+            if (s.state === 'success') return s.images || []
+            if (s.state === 'failed') throw new Error(s.error || 'Generation failed')
+          } catch (e) {
             consecutiveErrors++
-            if (consecutiveErrors >= 3) throw new Error(s.error || `Status check failed (${sR.status})`)
-            continue
+            if (consecutiveErrors >= 3) throw e
           }
-          consecutiveErrors = 0
-          if (s.state === 'success') return { images: s.images || [] }
-          if (s.state === 'failed') throw new Error(s.error || 'Generation failed')
-          // Anything else (waiting / generating / queueing / pending) → loop.
-        } catch (e) {
-          consecutiveErrors++
-          if (consecutiveErrors >= 3) throw e
+        }
+        throw new Error('Image generation timed out after 12 minutes — KIE may still be processing; try again or check the dashboard.')
+      }
+
+      // Submit all N tasks in parallel and poll each for its result. If
+      // any task fails, surface its error but include images from the
+      // tasks that did succeed (better than dropping the whole batch).
+      const taskIds = await Promise.all(
+        Array.from({ length: requestedCount }, () => submitOne())
+      )
+      const results = await Promise.allSettled(taskIds.map(pollOne))
+      const collected = []
+      const errors = []
+      for (const r of results) {
+        if (r.status === 'fulfilled') {
+          for (const im of r.value) collected.push(im)
+        } else {
+          errors.push(r.reason?.message || String(r.reason))
         }
       }
-      throw new Error('Image generation timed out after 12 minutes — KIE may still be processing; try again or check the dashboard.')
+      if (collected.length === 0) {
+        throw new Error(errors[0] || 'Generation failed')
+      }
+      return { images: collected }
     },
   },
 
