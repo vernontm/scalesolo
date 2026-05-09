@@ -576,9 +576,10 @@ a:focus-visible {
 
 /* Landing hero: on mobile, image stacks above copy + tighter padding. */
 @media (max-width: 860px) {
-  .hero-section { padding: 56px 16px 24px !important; }
-  .hero-grid    { gap: 16px !important; }
-  .hero-shot    { order: -1; max-width: 60%; margin-left: auto !important; margin-right: auto !important; }
+  .hero-section { padding: 24px 16px 16px !important; }
+  .hero-grid    { gap: 8px !important; }
+  .hero-shot    { order: -1; max-width: 60%; margin: 0 auto !important; }
+  .hero-shot .hero-img-wrap, .hero-shot > div { margin: 0 !important; }
   .hero-copy    { text-align: center !important; }
   .hero-copy h1 { font-size: clamp(32px, 8vw, 48px) !important; margin-bottom: 14px !important; text-align: center !important; }
   .hero-copy p  { font-size: 14px !important; max-width: 100% !important; margin: 0 auto 20px !important; text-align: center !important; }
