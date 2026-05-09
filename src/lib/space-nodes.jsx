@@ -658,28 +658,26 @@ function ScriptGenBody({ data, onPatch }) {
 
 // ─── 3. CAPTION + HASHTAGS (merged) ─────────────────────────────────────────
 function CaptionGenBody({ data, onPatch }) {
-  // Simplified body: one editable title + caption + hashtags row.
-  // The internal per_platform variants still drive Schedule_post's
-  // platform routing, but the user only edits one canonical version
-  // here and Schedule_post falls back to it when no per-platform
-  // variant exists for a target.
+  // Single canonical title + caption + hashtags + first_comment. The
+  // platform layer (schedule_post + /api/social/upload-post) maps these
+  // to per-platform Upload-Post fields with proper char-limit handling.
   const out = data.output
-  const variants = out?.per_platform || {}
   const hasOutput = !!out
-  // The shown values: prefer overrides the user typed (props), then
-  // the picked variant's value, then the loose top-level output.
+  // Backward compat: legacy outputs stored per_platform variants. If the
+  // canonical fields are empty but variants exist, fall back to the
+  // first variant that has a caption.
+  const variants = out?.per_platform || {}
+  const fallback = variants.instagram?.caption ? variants.instagram
+    : variants.tiktok?.caption ? variants.tiktok
+    : Object.values(variants).find((v) => v?.caption) || {}
   const editedTitle        = data.props?.edited_title        ?? null
   const editedCaption      = data.props?.edited_caption      ?? null
   const editedHashtags     = data.props?.edited_hashtags     ?? null
   const editedFirstComment = data.props?.edited_first_comment ?? null
-  const baseTitle        = out?.title         || variants.instagram?.title         || variants.tiktok?.title         || ''
-  const baseCaption      = out?.caption       || variants.instagram?.caption       || variants.tiktok?.caption       || ''
-  const baseHashtags     = out?.hashtags      || variants.instagram?.hashtags      || variants.tiktok?.hashtags      || ''
-  const baseFirstComment = out?.first_comment || variants.instagram?.first_comment || variants.tiktok?.first_comment || ''
-  const title        = editedTitle        ?? baseTitle
-  const caption      = editedCaption      ?? baseCaption
-  const hashtags     = editedHashtags     ?? baseHashtags
-  const firstComment = editedFirstComment ?? baseFirstComment
+  const title        = editedTitle        ?? (out?.title         || fallback.title         || '')
+  const caption      = editedCaption      ?? (out?.caption       || fallback.caption       || '')
+  const hashtags     = editedHashtags     ?? (out?.hashtags      || fallback.hashtags      || '')
+  const firstComment = editedFirstComment ?? (out?.first_comment || fallback.first_comment || '')
 
   return (
     <>
@@ -3919,36 +3917,41 @@ export const NODE_REGISTRY = {
       const brand = pickBrand(incoming)
       const profileId = brand?.profile_id || ctx.profileId
 
-      // One Claude call returns variants for all five platforms as JSON.
-      // Per-platform constraints baked into the prompt so the variants
-      // already respect the tightest character caps (X is the worst at 280).
-      const prompt = `From the script below, write a TITLE, CAPTION, FIRST_COMMENT, and exactly 5 HASHTAGS for each of: tiktok, instagram, youtube, x, linkedin.
+      // ONE canonical version of every copy field. schedule_post + the
+      // /api/social/upload-post endpoint handle per-platform character
+      // limits and field mapping (Upload-Post exposes platform-specific
+      // title/description/first_comment overrides; we set them server-
+      // side from these canonical values).
+      const prompt = `From the script below, write ONE canonical TITLE, CAPTION, FIRST_COMMENT, and exactly 5 HASHTAGS that will be used across every platform we publish to (TikTok, Instagram, YouTube, Facebook, X, LinkedIn, Threads, Pinterest, Bluesky). Aim for a tight, punchy caption that reads well on the longest-form platforms (Instagram / Facebook / LinkedIn) but doesn't feel bloated on the shorter ones — keep it under 1500 characters total. The platform layer truncates further for X / Threads / Bluesky automatically.
 
-Per-platform constraints (HARD limits — stay under each):
-- tiktok:    caption ≤ 300 chars, fast hook in first sentence
-- instagram: caption ≤ 2200 chars, can be a story; line breaks ok
-- youtube:   caption ≤ 1000 chars, SEO-friendly, first 100 chars matter most
-- x:         caption ≤ 270 chars (HARD — leaves room for hashtags), one punchy line
-- linkedin:  caption ≤ 1500 chars, professional but on-brand voice
+Title rules:
+- ≤ 80 characters, click-worthy, no number prefix.
+- Used as the YouTube title and the post title on platforms that surface a separate title field.
 
-Title rules: each title ≤ 80 chars, click-worthy, no number prefix. tiktok title doubles as the upload-post tiktok_title (≤ 90 chars). Each platform should have its OWN title/caption tuned to that platform's vibe — don't just copy/paste.
+Caption rules:
+- ≤ 1500 characters. Lead with a strong hook in the first sentence.
+- Should land naturally on every platform — no platform-specific phrasing.
+- Plain text, paragraph breaks ok.
 
-Hashtags: EXACTLY 5 per platform, space-separated, each starting with #. Lead with the brand's core hashtags from the brand bible, then add topic-specific ones.
+Hashtags:
+- EXACTLY 5 hashtags, space-separated, each starting with #.
+- Lead with the brand's core hashtags from the brand bible, then add topic-specific ones.
+- Always present — never empty. Same set for every platform.
 
-First comment rules: a SHORT engagement-driver that lands as the first reply on the post. ≤ 220 chars. Match the platform's vibe:
-- tiktok / instagram / youtube: a punchy question or "save if this hit" call-to-action that bait replies and saves. Optionally end with one fitting emoji.
-- x / linkedin: a value-add follow-up thought, mini-list, or question that extends the post. Plain text, no hashtags.
-The first comment should NEVER duplicate the caption — it should add something (a hot take, a question, a pinned takeaway). Do not include the hashtags here; they belong in their own field.
+First comment rules:
+- ≤ 220 characters. A short engagement driver that lands as the first reply on the post.
+- A punchy question, "save if this hit" call-to-action, or value-add follow-up thought.
+- NEVER duplicates the caption.
+- NEVER includes hashtags (those belong in the hashtags field).
 
 Voice: stay on the brand bible's tone (already in your system context). NEVER use em dashes (—); use commas, periods, or colons.
 
 Return ONLY valid JSON, no preamble, no markdown fences. Exact shape:
 {
-  "tiktok":    { "title": "", "caption": "", "first_comment": "", "hashtags": "#a #b #c #d #e" },
-  "instagram": { "title": "", "caption": "", "first_comment": "", "hashtags": "#a #b #c #d #e" },
-  "youtube":   { "title": "", "caption": "", "first_comment": "", "hashtags": "#a #b #c #d #e" },
-  "x":         { "title": "", "caption": "", "first_comment": "", "hashtags": "#a #b #c #d #e" },
-  "linkedin":  { "title": "", "caption": "", "first_comment": "", "hashtags": "#a #b #c #d #e" }
+  "title": "",
+  "caption": "",
+  "first_comment": "",
+  "hashtags": "#a #b #c #d #e"
 }
 
 Script:
@@ -3975,26 +3978,52 @@ ${String(script).slice(0, 2000)}
       const item = body.items?.[0] || {}
       const raw = item.full_script || item.caption || ''
 
-      // Parse the JSON — tolerate ```json fences if Claude added them.
-      let perPlatform = {}
+      // Parse the canonical JSON shape. Tolerate ```json fences if Claude
+      // added them. Also tolerate the LEGACY per-platform shape that
+      // earlier saved spaces still produce — flatten it down to the
+      // canonical fields by picking the instagram/tiktok variant first.
+      let parsed = {}
       try {
         const cleaned = String(raw).replace(/```json\s*|```\s*/gi, '').trim()
         const m = cleaned.match(/\{[\s\S]*\}/)
-        perPlatform = JSON.parse(m ? m[0] : cleaned)
+        parsed = JSON.parse(m ? m[0] : cleaned)
       } catch {
-        // Fallback: salvage what we can from the raw text. Better than failing.
-        perPlatform = {
-          instagram: {
-            title: '',
-            caption: String(raw).replace(/#[\w]+/g, '').trim().slice(0, 2200),
-            hashtags: (String(raw).match(/#[\w]+/g) || []).slice(0, 5).join(' '),
-          },
+        parsed = {}
+      }
+
+      // Detect legacy per-platform shape (has at least one platform key
+      // with a caption inside) and flatten if needed.
+      const legacyKeys = ['tiktok', 'instagram', 'youtube', 'x', 'linkedin', 'facebook', 'threads']
+      const isLegacy = legacyKeys.some((k) => parsed[k] && typeof parsed[k] === 'object' && parsed[k].caption)
+      let canonical
+      if (isLegacy) {
+        const order = ['instagram', 'tiktok', 'facebook', 'youtube', 'linkedin', 'threads', 'x']
+        const k = order.find((kk) => parsed[kk]?.caption) || Object.keys(parsed)[0]
+        const v = parsed[k] || {}
+        canonical = {
+          title: v.title || '',
+          caption: v.caption || '',
+          hashtags: v.hashtags || '',
+          first_comment: v.first_comment || '',
+        }
+      } else {
+        canonical = {
+          title: parsed.title || '',
+          caption: parsed.caption || '',
+          hashtags: parsed.hashtags || '',
+          first_comment: parsed.first_comment || '',
         }
       }
 
-      const order = ['instagram', 'tiktok', 'youtube', 'linkedin', 'x']
-      const defaultKey = order.find((k) => perPlatform[k]?.caption) || Object.keys(perPlatform)[0]
-      const def = perPlatform[defaultKey] || {}
+      // Last-ditch fallback: salvage from raw text if JSON parse failed
+      // entirely (parsed = {}). Empty caption with a usable raw → use
+      // raw as the caption, scrape #-tags into hashtags.
+      if (!canonical.caption && raw) {
+        canonical.caption = String(raw).replace(/#[\w]+/g, '').trim().slice(0, 1500)
+        if (!canonical.hashtags) {
+          canonical.hashtags = (String(raw).match(/#[\w]+/g) || []).slice(0, 5).join(' ')
+        }
+      }
 
       // User edits in the body override the AI output for this run's
       // downstream consumers (Save to drafts / Schedule post). Stored
@@ -4005,11 +4034,10 @@ ${String(script).slice(0, 2000)}
       const userFirstComment = data.props?.edited_first_comment
 
       return {
-        title: (userTitle    ?? def.title)    || '',
-        caption: (userCaption  ?? def.caption)  || '',
-        hashtags: (userHashtags ?? def.hashtags) || '',
-        first_comment: (userFirstComment ?? def.first_comment) || '',
-        per_platform: perPlatform,
+        title:         (userTitle        ?? canonical.title)         || '',
+        caption:       (userCaption      ?? canonical.caption)       || '',
+        hashtags:      (userHashtags     ?? canonical.hashtags)      || '',
+        first_comment: (userFirstComment ?? canonical.first_comment) || '',
       }
     },
   },
@@ -4900,42 +4928,19 @@ ${String(script).slice(0, 2000)}
         throw new Error(`${names} can't accept ${detectedKind} content.`)
       }
 
-      // If caption_gen wired in per-platform variants, prefer the variant
-      // that matches THIS publish target. When multiple platforms are
-      // selected we pick the tightest one (shortest cap) so the single
-      // description Upload-Post sends fits everywhere.
-      if (perPlatform) {
-        const ranked = platforms
-          .map((p) => ({ id: p, def: SCHEDULE_PLATFORMS.find((s) => s.id === p) }))
-          .sort((a, b) => (a.def?.cap || Infinity) - (b.def?.cap || Infinity))
-        let picked = null
-        for (const { id } of ranked) {
-          const v = perPlatform[id]
-          if (v?.caption) {
-            caption = v.caption
-            if (v.hashtags) hashtags = v.hashtags
-            if (v.title) title = v.title
-            if (v.first_comment) firstComment = v.first_comment
-            picked = id
-            break
-          }
-        }
-        // If the chosen platform's variant had no hashtags but ANOTHER
-        // platform's variant did, borrow them rather than ship none.
-        if (!hashtags) {
-          for (const id of Object.keys(perPlatform)) {
-            if (id === picked) continue
-            if (perPlatform[id]?.hashtags) { hashtags = perPlatform[id].hashtags; break }
-          }
-        }
-        // Same backstop for first_comment — borrow from any other
-        // platform's variant if the chosen one didn't generate one.
-        if (!firstComment) {
-          for (const id of Object.keys(perPlatform)) {
-            if (id === picked) continue
-            if (perPlatform[id]?.first_comment) { firstComment = perPlatform[id].first_comment; break }
-          }
-        }
+      // Backward-compat fallback: older saved spaces' caption_gen output
+      // had a per_platform variant block but no canonical caption/hashtags.
+      // If the canonical fields are empty, pull from whichever variant has
+      // a caption — instagram preferred (longest format) so we don't
+      // inadvertently truncate when fanning out to the long-form platforms.
+      if (perPlatform && (!caption || !hashtags)) {
+        const order = ['instagram', 'facebook', 'youtube', 'linkedin', 'threads', 'tiktok', 'x']
+        const k = order.find((kk) => perPlatform[kk]?.caption) || Object.keys(perPlatform)[0]
+        const v = perPlatform[k] || {}
+        if (!caption && v.caption) caption = v.caption
+        if (!hashtags && v.hashtags) hashtags = v.hashtags
+        if (!title && v.title) title = v.title
+        if (!firstComment && v.first_comment) firstComment = v.first_comment
       }
 
       // Last-resort: scrape #tags out of the caption itself if hashtags

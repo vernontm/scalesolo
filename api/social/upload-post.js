@@ -108,28 +108,86 @@ export default async function handler(req, res) {
       }
     }
 
-    // Build the multipart payload Upload-Post expects.
+    // Build the multipart payload Upload-Post expects. We map the
+    // canonical title + description (caption + hashtags) + first_comment
+    // to each platform's specific overrides with proper character-limit
+    // handling. Per Upload-Post docs:
+    //   • `description` is the catch-all caption used by LinkedIn, FB,
+    //     YouTube, and Pinterest.
+    //   • Each platform also exposes a `<platform>_title` override for
+    //     its caption / post text, with platform-specific char limits.
+    //   • `first_comment` is supported on IG, FB, X, Threads, YT, Reddit,
+    //     Bluesky, LinkedIn — falls through to per-platform overrides.
+    //
+    // Char caps (verified against docs.upload-post.com):
+    //   tiktok 2200 · instagram 2200 · facebook 63206 (no real limit)
+    //   youtube_title 100 · youtube_description 5000
+    //   linkedin 3000 · threads 500 · bluesky 300 · x auto-threads
+    //   pinterest_title 100 · pinterest_description 800 · reddit_title 300
+    const fullCaption = String(description || '').trim()    // caption + "\n\n" + hashtags
+    const cleanTitle  = String(title || '').trim()
+    const trim = (s, n) => (s || '').slice(0, n)
+
     const fd = new FormData()
     fd.append('user', effectiveUser)
     for (const p of platforms) fd.append('platform[]', p)
-    if (description) fd.append('description', String(description).slice(0, 2200))
-    if (title) {
-      // Generic title — used by YouTube's title field (it's REQUIRED there)
-      // and for any other platform that surfaces a separate title. 100-char
-      // ceiling keeps it short across platforms.
-      fd.append('title', String(title).slice(0, 100))
-      if (platforms.includes('youtube')) fd.append('youtube_title', String(title).slice(0, 100))
-    }
-    // TikTok: Upload-Post's `tiktok_title` is what TikTok actually shows as
-    // the post's CAPTION (TikTok's API calls the caption field "title").
-    // If we only send the short generic title here, the hashtags in
-    // `description` never reach TikTok and the post lands with no tags.
-    // Fix: ship the full description (caption + hashtags) as tiktok_title
-    // so TikTok gets the same caption+hashtags as every other platform.
-    // 2200 cap matches TikTok's caption limit.
+    if (fullCaption) fd.append('description', trim(fullCaption, 5000))
+    if (cleanTitle)  fd.append('title', trim(cleanTitle, 100))
+
+    // Per-platform caption/title fan-out. Every selected platform gets
+    // the SAME caption + hashtags via its <platform>_title field, trimmed
+    // to that platform's limit. Platforms that also expose a separate
+    // long-description field (YouTube, Facebook, LinkedIn, Pinterest)
+    // get the full caption there too.
     if (platforms.includes('tiktok')) {
-      const tiktokCaption = String(description || title || '').slice(0, 2200)
-      if (tiktokCaption) fd.append('tiktok_title', tiktokCaption)
+      // TikTok's "title" IS the caption.
+      fd.append('tiktok_title', trim(fullCaption || cleanTitle, 2200))
+    }
+    if (platforms.includes('instagram')) {
+      fd.append('instagram_title', trim(fullCaption || cleanTitle, 2200))
+    }
+    if (platforms.includes('facebook')) {
+      // FB's "title" is post caption; "description" is the long body.
+      fd.append('facebook_title', trim(fullCaption || cleanTitle, 5000))
+      fd.append('facebook_description', trim(fullCaption || cleanTitle, 5000))
+    }
+    if (platforms.includes('youtube')) {
+      fd.append('youtube_title', trim(cleanTitle, 100))
+      fd.append('youtube_description', trim(fullCaption || cleanTitle, 5000))
+    }
+    if (platforms.includes('linkedin')) {
+      fd.append('linkedin_title', trim(fullCaption || cleanTitle, 3000))
+      fd.append('linkedin_description', trim(fullCaption || cleanTitle, 3000))
+    }
+    if (platforms.includes('threads')) {
+      // Threads caps at 500. Trim hard — not auto-threaded by Upload-Post.
+      fd.append('threads_title', trim(fullCaption || cleanTitle, 500))
+    }
+    if (platforms.includes('twitter') || platforms.includes('x')) {
+      // Upload-Post auto-threads X posts that exceed 280 chars when
+      // x_long_text_as_post is false (default). Send the full caption +
+      // hashtags and let Upload-Post split.
+      fd.append('x_title', trim(fullCaption || cleanTitle, 25000))
+    }
+    if (platforms.includes('pinterest')) {
+      fd.append('pinterest_title', trim(cleanTitle || fullCaption, 100))
+      fd.append('pinterest_description', trim(fullCaption || cleanTitle, 800))
+    }
+    if (platforms.includes('bluesky')) {
+      // Bluesky caps at 300 characters. Hard trim.
+      fd.append('bluesky_title', trim(fullCaption || cleanTitle, 300))
+    }
+    if (platforms.includes('reddit')) {
+      fd.append('reddit_title', trim(cleanTitle || fullCaption, 300))
+    }
+
+    // First-comment fan-out. Upload-Post takes a top-level `first_comment`
+    // that fans out to every platform that supports the feature; per-
+    // platform overrides exist if we ever need them. Send once at the top.
+    const firstCommentResolved = String(rawFirstComment || '').trim()
+    if (firstCommentResolved) {
+      // 1000 char ceiling is generous for any platform's reply field.
+      fd.append('first_comment', trim(firstCommentResolved, 1000))
     }
     // Resolve "auto" mode: pull the brand profile's posting schedule + the
     // already-scheduled posts on it, find the next open slot. Done at submit
