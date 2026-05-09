@@ -21,6 +21,7 @@ import LandingPublic from './pages/LandingPublic.jsx'
 import Spaces from './pages/Spaces.jsx'
 import Library from './pages/Library.jsx'
 import Landing from './pages/Landing.jsx'
+import Admin from './pages/Admin.jsx'
 import AuthCallback from './pages/AuthCallback.jsx'
 import FormPublic from './pages/FormPublic.jsx'
 import GlobalAgent from './components/GlobalAgent.jsx'
@@ -138,6 +139,10 @@ function AppShell() {
             <Route path="/landing"   element={<LandingPages />} />
             <Route path="/analytics" element={<Placeholder title="Analytics" hint="Cross-platform performance with AI-narrated insights. Polished in Milestone 6." />} />
             <Route path="/agent"     element={<Agent />} />
+            {/* Admin routes — gated client-side by AdminGate inside
+                <Admin/>. Service-role API endpoints under /api/admin/*
+                also gate via requireAdmin() server-side. */}
+            <Route path="/admin/*"   element={<Admin />} />
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>

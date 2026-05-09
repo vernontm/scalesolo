@@ -17,6 +17,8 @@ import {
   Settings,
   Zap,
   LogOut,
+  ShieldCheck,
+  LayoutGrid,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 
@@ -213,7 +215,7 @@ function linkStyle(isActive) {
 }
 
 export default function Sidebar({ mobile = false, compact = false, onClose }) {
-  const { user, signOut } = useAuth()
+  const { user, signOut, isAdmin } = useAuth()
   const initials = (user?.email || 'U').slice(0, 2).toUpperCase()
   const isCompact = compact && !mobile
   const showBeta = readBetaFlag()
@@ -221,10 +223,25 @@ export default function Sidebar({ mobile = false, compact = false, onClose }) {
   // Filter out beta-only groups + items unless the flag is on. Empty
   // groups (all items hidden) get dropped entirely so we don't render
   // a header with nothing under it.
-  const visibleGroups = navGroups
+  let visibleGroups = navGroups
     .filter((g) => showBeta || !g.beta)
     .map((g) => ({ ...g, items: g.items.filter((it) => showBeta || !it.beta) }))
     .filter((g) => g.items.length > 0)
+
+  // Admin section appears only for admins (is_admin = true on user_profiles).
+  if (isAdmin) {
+    visibleGroups = [
+      ...visibleGroups,
+      {
+        label: 'Admin',
+        admin: true,
+        items: [
+          { to: '/admin',           label: 'Admin home',     icon: ShieldCheck },
+          { to: '/admin/templates', label: 'Space templates', icon: LayoutGrid },
+        ],
+      },
+    ]
+  }
 
   const handleNavClick = () => {
     if (mobile && onClose) onClose()

@@ -6,6 +6,23 @@ const AuthContext = createContext(null)
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [isAdmin, setIsAdmin] = useState(false)
+
+  // Pull is_admin from public.user_profiles. RLS lets the user read only
+  // their own row, so this is safe with the anon key. Falls back to false
+  // on any error (missing row, network blip, RLS denial).
+  async function refreshAdminFlag(userId) {
+    if (!userId) { setIsAdmin(false); return }
+    try {
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('is_admin')
+        .eq('id', userId)
+        .maybeSingle()
+      if (error) { setIsAdmin(false); return }
+      setIsAdmin(!!data?.is_admin)
+    } catch { setIsAdmin(false) }
+  }
 
   useEffect(() => {
     let active = true
@@ -14,6 +31,7 @@ export function AuthProvider({ children }) {
       if (!active) return
       setSession(data.session)
       setLoading(false)
+      refreshAdminFlag(data.session?.user?.id)
     })
 
     const {
@@ -21,6 +39,7 @@ export function AuthProvider({ children }) {
     } = supabase.auth.onAuthStateChange((_event, newSession) => {
       setSession(newSession)
       setLoading(false)
+      refreshAdminFlag(newSession?.user?.id)
     })
 
     return () => {
@@ -58,6 +77,7 @@ export function AuthProvider({ children }) {
     session,
     user: session?.user ?? null,
     loading,
+    isAdmin,
     signIn,
     signInWithGoogle,
     signUp,

@@ -77,6 +77,27 @@ export async function requireUser(req, res) {
   return { user, token }
 }
 
+// Admin gate. Resolves the auth user, then checks the user_profiles
+// row's is_admin flag via the service-role REST call (bypasses RLS so
+// the API can verify admin status regardless of who's reading).
+// Returns { user, token } on success, or null after writing the
+// 401/403 response.
+export async function requireAdmin(req, res) {
+  const auth = await requireUser(req, res)
+  if (!auth) return null
+  try {
+    const rows = await supaFetch(`user_profiles?id=eq.${auth.user.id}&select=is_admin`)
+    if (!rows?.[0]?.is_admin) {
+      res.status(403).json({ error: 'Forbidden: admin only' })
+      return null
+    }
+    return auth
+  } catch (e) {
+    res.status(500).json({ error: 'Admin check failed' })
+    return null
+  }
+}
+
 export async function supaFetch(path, options = {}) {
   const url = `${SUPABASE_URL}/rest/v1/${path}`
   const headers = {
