@@ -205,7 +205,7 @@ export default function Landing() {
 
       {/* ── USE CASES ───────────────────────────────────────────────── */}
       <section style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
-        <h2 style={sectionH}>What kind of faceless brand will you launch?</h2>
+        <h2 style={sectionH}>What kind of <span className="brand-text">faceless brand</span> will you launch?</h2>
         <p style={sectionSub}>
           ScaleSolo runs them all the same way. Pick a workflow, set your cadence, walk away.
           Here are a few of the brands solo founders are building right now.
