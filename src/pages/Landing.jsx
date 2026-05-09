@@ -181,31 +181,6 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Angled gradient separator above features */}
-      <div aria-hidden className="feat-separator" />
-
-      {/* ── FEATURES ────────────────────────────────────────────────── */}
-      <div className="feat-section">
-      <section id="features" style={{ ...section, paddingTop: 20, paddingBottom: 100 }} className="fade-up">
-        <h2 style={sectionH}>Everything you need to ship daily</h2>
-        <p style={sectionSub}>One workspace for the whole content engine — write, render, schedule, ship.</p>
-        <div className="feat-grid">
-          <FeatureCard num="1" eyebrow="Realistic avatars" title="Faceless video on autopilot." body="Train an AI avatar from one selfie. Cycle outfits across runs so every render ships looking fresh.">
-            <AvatarMock />
-          </FeatureCard>
-          <FeatureCard num="2" eyebrow="Brand profiles" title="One workspace, many brands." body="Each brand keeps its own voice, cadence, platforms, and avatar. Switch profiles, never cross-pollinate.">
-            <BrandProfilesMock />
-          </FeatureCard>
-          <FeatureCard num="3" eyebrow="Spaces" title="Drag, drop, run forever." body="A visual canvas to wire script → render → schedule. Set it up once, hit run, walk away.">
-            <SpacesMock />
-          </FeatureCard>
-          <FeatureCard num="4" eyebrow="Schedule" title="Consistency on autopilot." body="Pick the cadence. ScaleSolo finds the next open slot per platform and ships on time, every time.">
-            <CalendarMock />
-          </FeatureCard>
-        </div>
-      </section>
-      </div>
-
       {/* ── AVATAR WORKFLOW SHOWCASE ────────────────────────────────── */}
       <section style={section} className="fade-up">
         <div className="showcase-grid">
@@ -263,6 +238,31 @@ export default function Landing() {
           </div>
         </div>
       </section>
+
+      {/* Angled gradient separator above features */}
+      <div aria-hidden className="feat-separator" />
+
+      {/* ── FEATURES ────────────────────────────────────────────────── */}
+      <div className="feat-section">
+      <section id="features" style={{ ...section, paddingTop: 20, paddingBottom: 100 }} className="fade-up">
+        <h2 style={sectionH}>Everything you need to ship daily</h2>
+        <p style={sectionSub}>One workspace for the whole content engine — write, render, schedule, ship.</p>
+        <div className="feat-grid">
+          <FeatureCard num="1" eyebrow="Realistic avatars" title="Faceless video on autopilot." body="Train an AI avatar from one selfie. Cycle outfits across runs so every render ships looking fresh.">
+            <AvatarMock />
+          </FeatureCard>
+          <FeatureCard num="2" eyebrow="Brand profiles" title="One workspace, many brands." body="Each brand keeps its own voice, cadence, platforms, and avatar. Switch profiles, never cross-pollinate.">
+            <BrandProfilesMock />
+          </FeatureCard>
+          <FeatureCard num="3" eyebrow="Spaces" title="Drag, drop, run forever." body="A visual canvas to wire script → render → schedule. Set it up once, hit run, walk away.">
+            <SpacesMock />
+          </FeatureCard>
+          <FeatureCard num="4" eyebrow="Schedule" title="Consistency on autopilot." body="Pick the cadence. ScaleSolo finds the next open slot per platform and ships on time, every time.">
+            <CalendarMock />
+          </FeatureCard>
+        </div>
+      </section>
+      </div>
 
       {/* ── PRICING ─────────────────────────────────────────────────── */}
       <section id="pricing" style={{ ...section, position: 'relative' }} className="fade-up">
