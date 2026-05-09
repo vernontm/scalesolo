@@ -151,41 +151,43 @@ export default function Landing() {
         <div aria-hidden style={heroFlameCore} />
         <div aria-hidden style={heroFlameWisp} />
 
-        <div className="fade-up" style={{ animationDelay: '40ms' }}>
-          <div style={eyebrowWrap}>
-            <span style={eyebrow}>
-              <Sparkles size={11} strokeWidth={2.5} /> 9 steps to a content engine that never stops
-            </span>
+        <div style={heroGrid}>
+          <div style={heroCopy}>
+            <div className="fade-up" style={{ animationDelay: '40ms' }}>
+              <div style={{ ...eyebrowWrap, justifyContent: 'flex-start' }}>
+                <span style={eyebrow}>
+                  <Sparkles size={11} strokeWidth={2.5} /> 9 steps to a content engine that never stops
+                </span>
+              </div>
+            </div>
+            <h1 style={{ ...heroH1, textAlign: 'left' }} className="fade-up">
+              Set up once.<br /><span className="brand-text">Post forever.</span>
+            </h1>
+            <p style={{ ...heroSub, margin: '0 0 32px', textAlign: 'left' }} className="fade-up">
+              ScaleSolo writes posts in your voice, films them with your AI avatar, and ships them to TikTok, Instagram, YouTube, X, and LinkedIn — on the cadence you set, without you ever opening the app again.
+            </p>
+            <div style={{ ...heroCtas, justifyContent: 'flex-start' }} className="fade-up">
+              <button onClick={goSignup} className="btn-primary" style={ctaSizing}>
+                Start free <ArrowRight size={14} />
+              </button>
+              <a href="#canvas" className="btn-secondary" style={ctaSizing}>
+                <Play size={13} fill="currentColor" /> See how it works
+              </a>
+            </div>
+            <div style={{ ...trustPills, justifyContent: 'flex-start', marginBottom: 0 }} className="fade-up">
+              <span style={pill}><Check size={11} /> No credit card required</span>
+              <span style={pill}><Check size={11} /> 5-min setup</span>
+              <span style={pill}><Check size={11} /> Cancel anytime</span>
+            </div>
           </div>
-        </div>
-        <h1 style={heroH1} className="fade-up">
-          Set up once.<br /><span className="brand-text">Post forever.</span>
-        </h1>
-        <p style={heroSub} className="fade-up" >
-          ScaleSolo writes posts in your voice, films them with your AI avatar, and ships them to TikTok, Instagram, YouTube, X, and LinkedIn — on the cadence you set, without you ever opening the app again.
-        </p>
-        <div style={heroCtas} className="fade-up">
-          <button onClick={goSignup} className="btn-primary" style={ctaSizing}>
-            Start free <ArrowRight size={14} />
-          </button>
-          <a href="#canvas" className="btn-secondary" style={ctaSizing}>
-            <Play size={13} fill="currentColor" /> See how it works
-          </a>
-        </div>
-        <div style={trustPills} className="fade-up">
-          <span style={pill}><Check size={11} /> No credit card required</span>
-          <span style={pill}><Check size={11} /> 5-min setup</span>
-          <span style={pill}><Check size={11} /> Cancel anytime</span>
-        </div>
 
-        {/* Hero video card with rotating conic-gradient halo */}
-        <div style={shotWrap} className="fade-up">
-          <div aria-hidden style={shotUnderGlow} />
-          <div style={shotFrame}>
-            {/* The animated halo: a giant conic gradient masked to a ring,
-                rotated continuously. Sits behind the card. */}
-            <div aria-hidden style={{ ...shotHalo, animation: 'glowSpin 12s linear infinite' }} />
-            <HeroShot src={HERO_IMAGE} />
+          {/* Hero image with rotating conic-gradient halo */}
+          <div style={{ ...shotWrap, marginTop: 0, marginBottom: 0 }} className="fade-up">
+            <div aria-hidden style={shotUnderGlow} />
+            <div style={shotFrame}>
+              <div aria-hidden style={{ ...shotHalo, animation: 'glowSpin 12s linear infinite' }} />
+              <HeroShot src={HERO_IMAGE} />
+            </div>
           </div>
         </div>
       </section>
@@ -489,11 +491,17 @@ const navCta = { display: 'flex', alignItems: 'center', gap: 10 }
 // ── Hero ────────────────────────────────────────────────────────────
 const hero = {
   position: 'relative',
-  maxWidth: 1180, margin: '0 auto', padding: '110px 24px 0',
-  textAlign: 'center',
+  maxWidth: 1180, margin: '0 auto', padding: '110px 24px 100px',
   zIndex: 1,
   isolation: 'isolate',
 }
+const heroGrid = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
+  gap: 56,
+  alignItems: 'center',
+}
+const heroCopy = { textAlign: 'left' }
 
 // Outer-most flame: tall radial column, deep red core fading orange.
 const heroFlameOuter = {
