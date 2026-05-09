@@ -4950,6 +4950,11 @@ ${String(script).slice(0, 2000)}
         schedulingMode = 'auto'
       }
 
+      const resolvedTitle = (title
+        || (script ? String(script).split(/[.!?\n]/)[0].trim().slice(0, 90) : '')
+        || (caption ? String(caption).split(/[.!?\n]/)[0].trim().slice(0, 90) : '')
+        || 'Untitled')
+
       const r = await fetch('/api/social/upload-post', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
@@ -4959,14 +4964,25 @@ ${String(script).slice(0, 2000)}
           platforms,
           video_url: videoUrl || undefined,
           photo_urls: !videoUrl && photoUrls.length ? photoUrls : undefined,
+          // Description is what Upload-Post actually publishes on each
+          // platform — it concatenates caption + hashtags. We still send
+          // it for Upload-Post compatibility, BUT we also pass the
+          // distinct fields below so the persistence layer can write them
+          // into their own columns instead of dumping everything into
+          // full_script.
           description,
-          // YouTube REQUIRES a title. Always send something — upstream
-          // caption_gen.title → upstream script first sentence → first
-          // line of caption → final fallback "Untitled". Never undefined.
-          title: (title
-            || (script ? String(script).split(/[.!?\n]/)[0].trim().slice(0, 90) : '')
-            || (caption ? String(caption).split(/[.!?\n]/)[0].trim().slice(0, 90) : '')
-            || 'Untitled'),
+          // YouTube REQUIRES a title. Always send something.
+          title: resolvedTitle,
+          // Distinct copy fields so /api/social/upload-post can persist
+          // them into content_scripts.{caption, hashtags, first_comment,
+          // full_script} instead of mashing them all into full_script.
+          caption: caption || null,
+          hashtags: hashtags || null,
+          script: script || null,
+          // No dedicated first_comment from caption_gen yet; default to
+          // the hashtags so Instagram-style "drop hashtags in the first
+          // comment" workflows have something to publish.
+          first_comment: hashtags || null,
           scheduling_mode: schedulingMode,
           scheduled_iso: scheduledIso,
           timezone: data.props?.timezone || undefined,

@@ -63,6 +63,14 @@ export default async function handler(req, res) {
       description, title,
       scheduling_mode,        // 'now' | 'fixed' | 'auto'
       scheduled_iso, timezone,
+      // Distinct copy fields from schedule_post node, so persistence
+      // can put each in its own content_scripts column instead of
+      // shoving the merged description into full_script. All optional;
+      // we fall back to splitting `description` if these aren't sent.
+      caption: rawCaption,
+      hashtags: rawHashtags,
+      script: rawScript,
+      first_comment: rawFirstComment,
     } = req.body || {}
 
     if (!profile_id || !Array.isArray(platforms) || !platforms.length) {
@@ -209,10 +217,39 @@ export default async function handler(req, res) {
         existing = Array.isArray(matches) ? matches[0] : null
       }
 
+      // Resolve copy fields for the queue row. Prefer explicit fields
+      // from the request body (sent by the schedule_post node so each
+      // piece lands in its own column). If the caller only sent the
+      // legacy merged `description`, do a best-effort split: hashtags
+      // are the trailing #-token block, caption is everything before.
+      let caption = (rawCaption || '').toString().trim()
+      let hashtags = (rawHashtags || '').toString().trim()
+      let firstComment = (rawFirstComment || '').toString().trim()
+      const script = (rawScript || '').toString().trim()
+      if (!caption && !hashtags && description) {
+        const desc = String(description).trim()
+        // Match a trailing run of "#tags" (one or more, allowing line
+        // breaks between caption and tags). Anything before is caption.
+        const m = desc.match(/^([\s\S]*?)\s*((?:#[\w\-]+\s*)+)$/)
+        if (m) {
+          caption = (m[1] || '').trim()
+          hashtags = (m[2] || '').trim()
+        } else {
+          caption = desc
+        }
+      }
+      // Default first_comment to hashtags so Instagram "drop hashtags in
+      // first comment" workflows have something to publish out of the
+      // box. Caller can override with an explicit first_comment field.
+      if (!firstComment && hashtags) firstComment = hashtags
+
       const payload = {
         profile_id,
         title: titleStr,
-        full_script: description || null,
+        full_script: script || null,         // the raw script that drove this post (not the rendered description)
+        caption: caption || null,
+        hashtags: hashtags || null,
+        first_comment: firstComment || null,
         media_urls: mediaUrls,
         media_type: mediaType,
         post_type: postType,
