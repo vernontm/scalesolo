@@ -964,9 +964,25 @@ function VoicePickerModal({ session, profileId, currentVoiceId, onPick, onClose 
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 620, padding: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '14px 18px', borderBottom: '1px solid var(--border)' }}>
+    <div className="modal-overlay" onClick={onClose} style={{ alignItems: 'stretch', padding: 20 }}>
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          // Full-width / full-height layout so long content (connect
+          // wizard, big voice lists) never gets cut off behind a fixed
+          // 60vh body limit.
+          maxWidth: 'min(960px, calc(100vw - 40px))',
+          width: '100%',
+          height: 'calc(100vh - 40px)',
+          maxHeight: 'calc(100vh - 40px)',
+          margin: 'auto',
+          padding: 0,
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '14px 18px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
           <Library size={16} style={{ color: 'var(--red)' }} />
           <h3 style={{ flex: 1, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16, margin: 0 }}>Choose a voice</h3>
           <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}>
@@ -980,7 +996,6 @@ function VoicePickerModal({ session, profileId, currentVoiceId, onPick, onClose 
             { id: 'library', label: 'Library', icon: Library },
             { id: 'mine',    label: `My voices${byokVoices ? ` (${byokVoices.length})` : ''}`, icon: UserCircle2 },
             { id: 'clone',   label: 'Clone new', icon: Mic },
-            { id: 'paste',   label: 'Paste ID',  icon: Search },
           ].map((t) => (
             <button
               key={t.id}
@@ -1017,7 +1032,7 @@ function VoicePickerModal({ session, profileId, currentVoiceId, onPick, onClose 
 
         {error && <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, margin: '12px 18px 0' }}>{error}</div>}
 
-        <div style={{ padding: '12px 18px 18px', maxHeight: '60vh', overflowY: 'auto' }}>
+        <div style={{ padding: '12px 18px 18px', flex: 1, overflowY: 'auto', minHeight: 0 }}>
           {tab === 'library' && (
             shared === null ? <div style={{ padding: 24, textAlign: 'center' }}><Loader2 size={18} className="spin" /></div> :
             <VoiceList
@@ -1074,12 +1089,6 @@ function VoicePickerModal({ session, profileId, currentVoiceId, onPick, onClose 
                 }}
               />
             </>
-          )}
-          {tab === 'paste' && (
-            <PasteVoiceIdForm
-              byokConnected={!!byokStatus?.connected}
-              onPick={(voiceId, owner) => onPick(voiceId, owner)}
-            />
           )}
         </div>
       </div>
@@ -1385,70 +1394,6 @@ function CloneVoiceForm({ session, profileId, onCloned }) {
   )
 }
 
-function PasteVoiceIdForm({ onPick, byokConnected }) {
-  const [voiceId, setVoiceId] = useState('')
-  // When BYOK is connected, the default assumption is the user is
-  // pasting their own voice (since they bothered to connect). Without
-  // BYOK, the only voice IDs that work universally are the public
-  // library ones.
-  const [owner, setOwner] = useState(byokConnected ? 'byok' : 'shared')
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ fontSize: 12.5, color: 'var(--text-soft)', lineHeight: 1.5 }}>
-        Paste an ElevenLabs voice ID. Voice IDs are 20-char alphanumeric strings
-        (e.g. <code style={{ fontFamily: 'monospace', fontSize: 11.5 }}>21m00Tcm4TlvDq8ikWAM</code>).
-      </div>
-      <input
-        className="input" value={voiceId}
-        onChange={(e) => setVoiceId(e.target.value.trim())}
-        placeholder="21m00Tcm4TlvDq8ikWAM"
-        style={{ fontFamily: 'monospace', fontSize: 12 }}
-      />
-
-      <div style={{ marginTop: 4 }}>
-        <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 6 }}>
-          Where does this voice live?
-        </div>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <button type="button" onClick={() => setOwner('shared')} style={ownerChip(owner === 'shared')}>
-            <Library size={11} /> Public library
-          </button>
-          <button
-            type="button"
-            onClick={() => setOwner('byok')}
-            disabled={!byokConnected}
-            title={byokConnected ? '' : 'Connect ElevenLabs first (My voices tab) to use BYOK voices'}
-            style={ownerChip(owner === 'byok', !byokConnected)}
-          >
-            <UserCircle2 size={11} /> My ElevenLabs account
-            {!byokConnected && <span style={{ marginLeft: 4, fontSize: 10, opacity: 0.7 }}>(not connected)</span>}
-          </button>
-        </div>
-      </div>
-
-      <button
-        type="button" className="btn-primary"
-        disabled={!voiceId} onClick={() => onPick(voiceId, owner)}
-        style={{ justifyContent: 'center', marginTop: 4 }}
-      >
-        <Check size={13} /> Use this voice
-      </button>
-    </div>
-  )
-}
-
-function ownerChip(active, disabled) {
-  return {
-    display: 'inline-flex', alignItems: 'center', gap: 5,
-    padding: '6px 12px', borderRadius: 999, fontSize: 11.5, fontWeight: 600,
-    background: active ? 'rgba(239,68,68,0.16)' : 'var(--surface-2)',
-    border: `1px solid ${active ? 'rgba(239,68,68,0.50)' : 'var(--border)'}`,
-    color: disabled ? 'var(--muted)' : (active ? 'var(--text)' : 'var(--text-soft)'),
-    cursor: disabled ? 'not-allowed' : 'pointer',
-    opacity: disabled ? 0.6 : 1,
-    fontFamily: 'inherit',
-  }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Avatar list view
