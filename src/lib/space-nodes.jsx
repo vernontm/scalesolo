@@ -4168,6 +4168,11 @@ ${String(script).slice(0, 2000)}
           }
         }
       }
+      // Expose @brand-logo as a virtual reference whenever the active brand
+      // has a logo — matches the autocomplete chip injected by Spaces.jsx.
+      if (brand?.logo_url) {
+        namedImages.push({ url: brand.logo_url, name: 'brand-logo' })
+      }
       const tokens = [...new Set(
         Array.from((data.props?.prompt || '').matchAll(/@(?:"([^"]+)"|([A-Za-z0-9_-]+))/g))
           .map((m) => (m[1] || m[2] || '').toLowerCase().replace(/[^a-z0-9_-]/g, ''))

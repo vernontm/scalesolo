@@ -954,15 +954,138 @@ function SpaceCreditsPill() {
   )
 }
 
-function SpacesList({ spaces, onCreate, onOpen, onDelete, onHistory, onDuplicate, error }) {
+function SpacesList({ spaces, onCreate, onOpen, onDelete, onHistory, onDuplicate, error, token, profileId, onTemplatePicked }) {
+  const [tab, setTab] = useState('mine')
+  const [templates, setTemplates] = useState(null)
+  const [tplError, setTplError] = useState(null)
+  const [busyTplId, setBusyTplId] = useState(null)
+
+  // Lazy-load templates the first time the user clicks the tab.
+  useEffect(() => {
+    if (tab !== 'templates' || templates !== null || !token) return
+    let alive = true
+    ;(async () => {
+      try {
+        const r = await fetch('/api/spaces?action=templates', { headers: { Authorization: `Bearer ${token}` } })
+        const body = await r.json()
+        if (!alive) return
+        if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
+        setTemplates(body.templates || [])
+      } catch (e) {
+        if (alive) { setTplError(e.message); setTemplates([]) }
+      }
+    })()
+    return () => { alive = false }
+  }, [tab, templates, token])
+
+  const useTemplate = async (tpl) => {
+    if (!profileId || !token) { setTplError('Pick a brand profile first.'); return }
+    setBusyTplId(tpl.id); setTplError(null)
+    try {
+      const r = await fetch('/api/spaces?action=use_template', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ template_id: tpl.id, target_profile_id: profileId }),
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
+      onTemplatePicked?.(body.space, body.template_guide || tpl.template_guide || null)
+    } catch (e) {
+      setTplError(e.message)
+    } finally {
+      setBusyTplId(null)
+    }
+  }
+
+  const fmtUpdated = (iso) => {
+    if (!iso) return ''
+    const d = new Date(iso)
+    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+  }
+
+  const tabBtn = (key, label) => (
+    <button
+      key={key}
+      onClick={() => setTab(key)}
+      style={{
+        padding: '7px 14px', borderRadius: 8, fontSize: 13,
+        fontFamily: 'var(--font-display)', fontWeight: 600,
+        background: tab === key ? 'linear-gradient(135deg, var(--red), var(--red-dark))' : 'transparent',
+        color: tab === key ? '#fff' : 'var(--text-soft)',
+        border: tab === key ? 'none' : '1px solid var(--border)',
+        cursor: 'pointer',
+      }}
+    >{label}</button>
+  )
+
   return (
     <div className="fade-up">
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
-        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, flex: 1 }}>Spaces</h2>
-        <button className="btn-primary" onClick={onCreate}><Plus size={14} /> New space</button>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14, gap: 10, flexWrap: 'wrap' }}>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, marginRight: 6 }}>Spaces</h2>
+        <div style={{ display: 'inline-flex', gap: 6, background: 'var(--surface-2)', borderRadius: 10, padding: 4 }}>
+          {tabBtn('mine', `Your spaces${spaces?.length ? ` (${spaces.length})` : ''}`)}
+          {tabBtn('templates', `Templates${templates ? ` (${templates.length})` : ''}`)}
+        </div>
+        <div style={{ flex: 1 }} />
+        {tab === 'mine' && <button className="btn-primary" onClick={onCreate}><Plus size={14} /> New space</button>}
       </div>
-      {error && <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '10px 14px', borderRadius: 10, fontSize: 13, marginBottom: 14 }}>{error}</div>}
-      {spaces.length === 0 ? (
+      {tab === 'mine' && error && <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '10px 14px', borderRadius: 10, fontSize: 13, marginBottom: 14 }}>{error}</div>}
+      {tab === 'templates' && tplError && <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '10px 14px', borderRadius: 10, fontSize: 13, marginBottom: 14 }}>{tplError}</div>}
+
+      {tab === 'templates' ? (
+        templates === null ? (
+          <div className="card-flat" style={{ padding: 40, textAlign: 'center' }}><span className="spinner" /></div>
+        ) : templates.length === 0 ? (
+          <div className="card-flat" style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>
+            No templates available yet.
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
+            {templates.map((t) => (
+              <div
+                key={t.id}
+                className="card"
+                role="button" tabIndex={0}
+                onClick={() => !busyTplId && useTemplate(t)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); !busyTplId && useTemplate(t) } }}
+                style={{ cursor: busyTplId ? 'wait' : 'pointer' }}
+                aria-label={`Use template ${t.name}`}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
+                  {t.template_visibility === 'public'
+                    ? <Globe size={16} style={{ color: 'var(--red)' }} />
+                    : <Lock size={16} style={{ color: 'var(--muted)' }} />}
+                  {t.template_category && (
+                    <span style={{
+                      fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 9.5,
+                      letterSpacing: '0.04em', padding: '2px 7px', borderRadius: 999,
+                      background: 'rgba(99,102,241,0.16)', color: '#a5b4fc',
+                      textTransform: 'uppercase',
+                    }}>{t.template_category}</span>
+                  )}
+                </div>
+                <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15, marginBottom: 4 }}>{t.name}</div>
+                {t.template_summary && (
+                  <div style={{ fontSize: 12.5, color: 'var(--text-soft)', marginBottom: 8, lineHeight: 1.5 }}>
+                    {String(t.template_summary).slice(0, 160)}
+                  </div>
+                )}
+                <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>Updated {fmtUpdated(t.updated_at)}</div>
+                <div style={{ marginTop: 12 }}>
+                  <button
+                    className="btn-secondary"
+                    style={{ padding: '6px 12px', fontSize: 12 }}
+                    disabled={!!busyTplId}
+                    onClick={(e) => { e.stopPropagation(); useTemplate(t) }}
+                  >
+                    {busyTplId === t.id ? <span className="spinner" /> : <><Copy size={12} /> Use template</>}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      ) : spaces.length === 0 ? (
         <div className="card-flat" style={{ padding: 50, textAlign: 'center', color: 'var(--muted)' }}>
           <Boxes size={28} style={{ marginBottom: 12 }} />
           <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16, color: 'var(--text)', marginBottom: 6 }}>No spaces yet</div>
@@ -1003,7 +1126,10 @@ function SpacesList({ spaces, onCreate, onOpen, onDelete, onHistory, onDuplicate
                 )}
               </div>
               <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15, marginBottom: 4 }}>{s.name}</div>
-              <div style={{ fontSize: 12, color: 'var(--muted)' }}>Updated {new Date(s.updated_at).toLocaleDateString()}</div>
+              <div style={{ fontSize: 12, color: 'var(--muted)' }}>Updated {fmtUpdated(s.updated_at)}</div>
+              {s.created_at && (
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>Created {fmtUpdated(s.created_at)}</div>
+              )}
               <div style={{ display: 'flex', gap: 6, marginTop: 12, flexWrap: 'wrap' }}>
                 <button className="btn-ghost" style={{ padding: '6px 10px', fontSize: 12 }} onClick={(e) => { e.stopPropagation(); onHistory?.(s) }}>
                   <History size={12} /> History
@@ -2363,6 +2489,14 @@ function SpaceBuilder({ space, onSave, onClose }) {
             }
           }
         }
+        // Expose @brand-logo as a synthetic named image when the active brand
+        // profile has a logo_url. This lets users drop the brand logo into
+        // generated imagery without wiring an image_upload node. Hidden if
+        // no logo is set on the profile.
+        const activeProfileForLogo = (profiles || []).find((p) => p.id === selectedProfileId)
+        if (activeProfileForLogo?.logo_url) {
+          named.push({ name: 'brand-logo', url: activeProfileForLogo.logo_url })
+        }
         return { ...n, data: { ...n.data, _ctxNamedImages: named, _ctxProfiles: slim } }
       }
       return n
@@ -2756,7 +2890,18 @@ export default function Spaces() {
   if (editing) return <SpaceBuilder space={editing} onSave={(s) => { refresh(); setEditing(s) }} onClose={() => { refresh(); setEditing(null) }} />
   return (
     <>
-      <SpacesList spaces={spaces} onCreate={onCreate} onOpen={onOpen} onDelete={onDelete} onHistory={onHistory} onDuplicate={onDuplicate} error={error} />
+      <SpacesList
+        spaces={spaces}
+        onCreate={onCreate}
+        onOpen={onOpen}
+        onDelete={onDelete}
+        onHistory={onHistory}
+        onDuplicate={onDuplicate}
+        error={error}
+        token={session?.access_token}
+        profileId={selectedProfileId}
+        onTemplatePicked={(space, guide) => setEditing(space ? { ...space, template_guide: guide } : space)}
+      />
       {historyFor && (
         <RunHistoryModal
           spaceId={historyFor.id}
