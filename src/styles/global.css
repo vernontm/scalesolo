@@ -399,6 +399,27 @@ a:focus-visible {
   .app-main { margin-left: 0 !important; }
 }
 
+/* Spaces builder: subtle dot-grid texture that fades out toward the edges.
+   ::before paints the repeating dot pattern; -webkit-mask-image uses a
+   radial gradient to fade the pattern out at the edges so it never crowds
+   the toolbar or fights the cards. pointer-events: none keeps it
+   non-interactive. The dots are very low contrast against var(--bg) so
+   they read as texture, not as a grid. */
+.space-builder-overlay::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: radial-gradient(circle, rgba(255,255,255,0.07) 1px, transparent 1.4px);
+  background-size: 22px 22px;
+  background-position: 0 0;
+  -webkit-mask-image: radial-gradient(ellipse 70% 65% at center, #000 0%, rgba(0,0,0,0.55) 55%, rgba(0,0,0,0) 90%);
+          mask-image: radial-gradient(ellipse 70% 65% at center, #000 0%, rgba(0,0,0,0.55) 55%, rgba(0,0,0,0) 90%);
+  opacity: 0.9;
+}
+.space-builder-overlay > * { position: relative; z-index: 1; }
+
 /* Spaces builder: full-viewport canvas. On desktop the sidebar stays visible;
    the overlay starts to its right. On mobile (<900px) the overlay covers the
    whole viewport since the sidebar is a drawer.
