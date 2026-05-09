@@ -17,7 +17,7 @@ import {
   ZoomIn, ZoomOut, Maximize, Scissors, Download, X, History, Clock,
   CheckCircle2, XCircle, Square, Settings as SettingsIcon, Copy, Building2,
   BookOpen, ChevronLeft, ChevronRight, Lock, Globe, Bookmark, FileVideo,
-  ShieldCheck,
+  ShieldCheck, Undo2, Redo2,
 } from 'lucide-react'
 import { useRef } from 'react'
 // (useEffect already imported above for other effects in this file)
@@ -1428,6 +1428,71 @@ function SpaceBuilder({ space, onSave, onClose }) {
   useEffect(() => { edgesRef.current = edges }, [edges])
   const [aiSuggestion, setAiSuggestion] = useState(null)
 
+  // ── Undo / redo ────────────────────────────────────────────────────────────
+  // Stack of pre-action snapshots. A snapshot captures (nodes, edges) only —
+  // ephemeral runtime state like status / output is intentionally included
+  // because that's what the user actually sees on the canvas. Pushed BEFORE
+  // each user-initiated mutation. Capped so very long sessions don't OOM.
+  const historyRef = useRef({ past: [], future: [] })
+  const HISTORY_CAP = 60
+  const [, forceHistoryTick] = useState(0)
+  const pushHistory = useCallback(() => {
+    const snap = {
+      nodes: nodesRef.current.map((n) => ({ ...n, data: { ...(n.data || {}) } })),
+      edges: edgesRef.current.map((e) => ({ ...e })),
+    }
+    historyRef.current.past.push(snap)
+    if (historyRef.current.past.length > HISTORY_CAP) historyRef.current.past.shift()
+    // Any new mutation invalidates redo.
+    historyRef.current.future = []
+    forceHistoryTick((t) => t + 1)
+  }, [])
+  const undo = useCallback(() => {
+    const past = historyRef.current.past
+    if (!past.length) return
+    const snap = past.pop()
+    historyRef.current.future.push({
+      nodes: nodesRef.current.map((n) => ({ ...n, data: { ...(n.data || {}) } })),
+      edges: edgesRef.current.map((e) => ({ ...e })),
+    })
+    setNodes(snap.nodes)
+    setEdges(snap.edges)
+    forceHistoryTick((t) => t + 1)
+  }, [])
+  const redo = useCallback(() => {
+    const future = historyRef.current.future
+    if (!future.length) return
+    const snap = future.pop()
+    historyRef.current.past.push({
+      nodes: nodesRef.current.map((n) => ({ ...n, data: { ...(n.data || {}) } })),
+      edges: edgesRef.current.map((e) => ({ ...e })),
+    })
+    setNodes(snap.nodes)
+    setEdges(snap.edges)
+    forceHistoryTick((t) => t + 1)
+  }, [])
+  // Keyboard shortcuts: Cmd/Ctrl+Z = undo, Cmd/Ctrl+Shift+Z = redo. Skip
+  // when focus is in an editable element so the browser's native text
+  // undo still works in textareas / inputs / contentEditable bodies.
+  useEffect(() => {
+    const isEditable = (el) => {
+      if (!el) return false
+      const tag = el.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+      if (el.isContentEditable) return true
+      return false
+    }
+    const onKey = (e) => {
+      const meta = e.metaKey || e.ctrlKey
+      if (!meta || (e.key !== 'z' && e.key !== 'Z')) return
+      if (isEditable(document.activeElement)) return
+      e.preventDefault()
+      if (e.shiftKey) redo(); else undo()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [undo, redo])
+
   // Load avatars (custom + HeyGen public library) so the AvatarPicker node
   // can list them. Also re-fetches whenever the tab regains focus / the
   // page becomes visible so a look added on the Avatars page shows up
@@ -1584,9 +1649,20 @@ function SpaceBuilder({ space, onSave, onClose }) {
     }
   }, [])
 
-  const onNodesChange = useCallback((changes) => setNodes((nds) => applyNodeChanges(changes, nds)), [])
-  const onEdgesChange = useCallback((changes) => setEdges((eds) => applyEdgeChanges(changes, eds)), [])
+  const onNodesChange = useCallback((changes) => {
+    // Snapshot before discrete events: removals and the start of a drag.
+    // Pure 'select' / 'dimensions' / continuous 'position' (mid-drag)
+    // changes are skipped — otherwise undo would just replay every pixel.
+    const significant = changes.some((c) => c.type === 'remove' || (c.type === 'position' && c.dragging === false))
+    if (significant) pushHistory()
+    setNodes((nds) => applyNodeChanges(changes, nds))
+  }, [pushHistory])
+  const onEdgesChange = useCallback((changes) => {
+    if (changes.some((c) => c.type === 'remove')) pushHistory()
+    setEdges((eds) => applyEdgeChanges(changes, eds))
+  }, [pushHistory])
   const onConnect = useCallback((c) => {
+    pushHistory()
     setEdges((eds) => addEdge({ ...c, type: 'scissor', markerEnd: { type: MarkerType.ArrowClosed }, animated: true, style: { stroke: 'var(--red)', strokeWidth: 1.5 } }, eds))
     // Auto-thread cached output: if the user just wired a cached
     // upstream node into a FREE aggregator (Collection / Combine /
@@ -1608,7 +1684,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
       // other ancestor uses its cache verbatim.
       runFromNodeRef.current?.(c.target, 'self_only')
     }, 80)
-  }, [])
+  }, [pushHistory])
 
   // Types that expose a "brand" input — used to auto-wire sync-to-all brand profiles.
   const BRAND_INPUT_TYPES = ['script_gen', 'caption_gen', 'image_gen']
@@ -1616,6 +1692,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
   const addNode = (type, position) => {
     const def = NODE_REGISTRY[type]
     if (!def) return
+    pushHistory()
     const id = `n_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
     setNodes((arr) => [
       ...arr,
@@ -1664,8 +1741,16 @@ function SpaceBuilder({ space, onSave, onClose }) {
   }
 
   const patchNode = useCallback((id, patch) => {
+    // Don't pollute history with internal/cosmetic patches: status / output
+    // changes during a run, and the _ctx* / __name keys we manage server-
+    // side. Inline edited_* fields ARE user edits — but they fire on every
+    // keystroke, so we'd flood the stack. Punt: only snapshot when the
+    // patch contains a real prop key (not status/output/_ctx/__name).
+    const keys = Object.keys(patch || {})
+    const meaningful = keys.some((k) => k !== 'status' && k !== 'output' && k !== 'error' && k !== '__name' && !k.startsWith('_ctx') && !k.startsWith('edited_'))
+    if (meaningful) pushHistory()
     setNodes((arr) => arr.map((n) => n.id === id ? { ...n, data: { ...n.data, ...patch } } : n))
-  }, [])
+  }, [pushHistory])
 
   // After a run finishes, video_polish nodes that produced a clip but have
   // no downstream destination silently lose the result — the user has to
@@ -2594,6 +2679,24 @@ function SpaceBuilder({ space, onSave, onClose }) {
             pools are surfaced here side-by-side. Goes red below 10%
             of the monthly grant so the user sees the wall coming. */}
         <SpaceCreditsPill />
+        <button
+          className="btn-ghost"
+          onClick={undo}
+          disabled={historyRef.current.past.length === 0}
+          title={`Undo${historyRef.current.past.length ? ` (${historyRef.current.past.length})` : ''} — ⌘Z`}
+          style={{ padding: '6px 10px', opacity: historyRef.current.past.length === 0 ? 0.4 : 1 }}
+        >
+          <Undo2 size={13} />
+        </button>
+        <button
+          className="btn-ghost"
+          onClick={redo}
+          disabled={historyRef.current.future.length === 0}
+          title={`Redo${historyRef.current.future.length ? ` (${historyRef.current.future.length})` : ''} — ⌘⇧Z`}
+          style={{ padding: '6px 10px', opacity: historyRef.current.future.length === 0 ? 0.4 : 1 }}
+        >
+          <Redo2 size={13} />
+        </button>
         <button className="btn-ghost" onClick={() => setHistoryOpen(true)} title="Run history" style={{ padding: '6px 10px' }}>
           <History size={13} /> History
         </button>
