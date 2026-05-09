@@ -8,6 +8,7 @@ import Dashboard from './pages/Dashboard.jsx'
 import Placeholder from './pages/Placeholder.jsx'
 import Settings from './pages/Settings.jsx'
 import Affiliate from './pages/Affiliate.jsx'
+import Analytics from './pages/Analytics.jsx'
 import Pricing from './pages/Pricing.jsx'
 import Billing from './pages/Billing.jsx'
 import Agent from './pages/Agent.jsx'
@@ -139,7 +140,7 @@ function AppShell() {
             <Route path="/contacts"  element={<Contacts />} />
             <Route path="/pipeline"  element={<Pipeline />} />
             <Route path="/landing"   element={<LandingPages />} />
-            <Route path="/analytics" element={<Placeholder title="Analytics" hint="Cross-platform performance with AI-narrated insights. Polished in Milestone 6." />} />
+            <Route path="/analytics" element={<Analytics />} />
             <Route path="/agent"     element={<Agent />} />
             {/* Admin routes — gated client-side by AdminGate inside
                 <Admin/>. Service-role API endpoints under /api/admin/*
