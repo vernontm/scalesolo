@@ -13,3 +13,6 @@ coverage/
 supabase/.temp/
 supabase/.branches/
 .claude/
+test-results/
+playwright-report/
+playwright/.cache/
