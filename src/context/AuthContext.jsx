@@ -8,11 +8,18 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
   const [isAdmin, setIsAdmin] = useState(false)
 
-  // Pull is_admin from public.user_profiles. RLS lets the user read only
-  // their own row, so this is safe with the anon key. Falls back to false
-  // on any error (missing row, network blip, RLS denial).
-  async function refreshAdminFlag(userId) {
+  // Resolve is_admin in two passes:
+  //   1. Read from session.user.app_metadata.is_admin — the DB trigger
+  //      keeps it in sync with user_profiles.is_admin and Supabase puts
+  //      it on the JWT, so this is free.
+  //   2. Fall back to a user_profiles SELECT for older sessions issued
+  //      before the trigger landed.
+  async function refreshAdminFlag(session) {
+    const userId = session?.user?.id
     if (!userId) { setIsAdmin(false); return }
+    const claim = session?.user?.app_metadata?.is_admin
+    if (claim === true)  { setIsAdmin(true); return }
+    if (claim === false) { setIsAdmin(false); return }
     try {
       const { data, error } = await supabase
         .from('user_profiles')
@@ -31,7 +38,7 @@ export function AuthProvider({ children }) {
       if (!active) return
       setSession(data.session)
       setLoading(false)
-      refreshAdminFlag(data.session?.user?.id)
+      refreshAdminFlag(data.session)
     })
 
     const {
@@ -39,7 +46,7 @@ export function AuthProvider({ children }) {
     } = supabase.auth.onAuthStateChange((_event, newSession) => {
       setSession(newSession)
       setLoading(false)
-      refreshAdminFlag(newSession?.user?.id)
+      refreshAdminFlag(newSession)
       // Affiliate attribution: if the visitor arrived via ?ref=… on the
       // landing page, attribute the freshly-signed-in user to that
       // affiliate. Read from localStorage first; fall back to the

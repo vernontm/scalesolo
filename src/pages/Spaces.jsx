@@ -11,6 +11,8 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
+import { useAutosave } from '../lib/useAutosave.js'
+import { useUndoRedo } from '../lib/useUndoRedo.js'
 import {
   Plus, Play, Save, Trash2, ArrowLeft, Sparkles, Zap, Boxes, AlertCircle,
   GripHorizontal, Minimize2, Maximize2, Wand2, MessageSquare, Send,
@@ -320,24 +322,7 @@ function SpaceNode({ id, data, selected }) {
   )
 }
 
-// Cheap fingerprint of a node's props for autosave deduping. Skips heavy
-// fields (data URIs, full output blobs) and serializes only what the user
-// can actually edit. We just need "did anything user-meaningful change".
-function propsHashShort(p) {
-  if (!p || typeof p !== 'object') return ''
-  const skip = new Set(['_ctxAvatars', '_ctxPublicAvatars', '_ctxProfiles', '_ctxNamedImages', '_ctxCostPerRun', '_ctxProfileId', '_ctxSyncedPlatforms', '_ctxDetectedKind', '_ctxUpstreamVideoUrl', '_ctxUpstreamScript', '_ctxUpstreamLogoUrl', '_ctxConnectedPlatforms', '_ctxBrandSchedule', '_ctxBrandCTA', '_ctxIncomingDescriptionLength', '_ctxIsTrialing'])
-  const parts = []
-  for (const k of Object.keys(p).sort()) {
-    if (skip.has(k)) continue
-    const v = p[k]
-    if (v == null) continue
-    if (typeof v === 'string') parts.push(`${k}:${v.length}:${v.slice(0, 40)}`)
-    else if (typeof v === 'number' || typeof v === 'boolean') parts.push(`${k}:${v}`)
-    else if (Array.isArray(v)) parts.push(`${k}:[${v.length}]`)
-    else parts.push(`${k}:o`)
-  }
-  return parts.join(',')
-}
+// (autosave fingerprint helper now lives in src/lib/useAutosave.js)
 
 const NODE_TYPES = { space: SpaceNode }
 const EDGE_TYPES = { scissor: ScissorEdge }
@@ -1394,6 +1379,23 @@ function SpaceBuilder({ space, onSave, onClose }) {
   const abortRunRef = runCtx.abortRef
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  // Live id ref so autosave continues to PATCH the same row after the
+  // initial POST (the original `space` prop never changes). Must live
+  // on the SpaceBuilder so the run engine + history modal can also
+  // read the current persisted id.
+  const spaceIdRef = useRef(space.id || null)
+  // Autosave: debounced 1.2s, AbortController-protected, skips first
+  // render. Lives in src/lib/useAutosave.js so the autosave concerns
+  // (debounce, dedupe, race control) stay out of the builder.
+  const { autoStatus, save } = useAutosave({
+    spaceIdRef,
+    name, nodes, edges,
+    session,
+    profileId: selectedProfileId,
+    onSave,
+    setBusy,
+    setError,
+  })
   const [avatars, setAvatars] = useState([])
   const [publicAvatars, setPublicAvatars] = useState([])
   // AI workflow build
@@ -1428,70 +1430,12 @@ function SpaceBuilder({ space, onSave, onClose }) {
   useEffect(() => { edgesRef.current = edges }, [edges])
   const [aiSuggestion, setAiSuggestion] = useState(null)
 
-  // ── Undo / redo ────────────────────────────────────────────────────────────
-  // Stack of pre-action snapshots. A snapshot captures (nodes, edges) only —
-  // ephemeral runtime state like status / output is intentionally included
-  // because that's what the user actually sees on the canvas. Pushed BEFORE
-  // each user-initiated mutation. Capped so very long sessions don't OOM.
-  const historyRef = useRef({ past: [], future: [] })
-  const HISTORY_CAP = 60
-  const [, forceHistoryTick] = useState(0)
-  const pushHistory = useCallback(() => {
-    const snap = {
-      nodes: nodesRef.current.map((n) => ({ ...n, data: { ...(n.data || {}) } })),
-      edges: edgesRef.current.map((e) => ({ ...e })),
-    }
-    historyRef.current.past.push(snap)
-    if (historyRef.current.past.length > HISTORY_CAP) historyRef.current.past.shift()
-    // Any new mutation invalidates redo.
-    historyRef.current.future = []
-    forceHistoryTick((t) => t + 1)
-  }, [])
-  const undo = useCallback(() => {
-    const past = historyRef.current.past
-    if (!past.length) return
-    const snap = past.pop()
-    historyRef.current.future.push({
-      nodes: nodesRef.current.map((n) => ({ ...n, data: { ...(n.data || {}) } })),
-      edges: edgesRef.current.map((e) => ({ ...e })),
-    })
-    setNodes(snap.nodes)
-    setEdges(snap.edges)
-    forceHistoryTick((t) => t + 1)
-  }, [])
-  const redo = useCallback(() => {
-    const future = historyRef.current.future
-    if (!future.length) return
-    const snap = future.pop()
-    historyRef.current.past.push({
-      nodes: nodesRef.current.map((n) => ({ ...n, data: { ...(n.data || {}) } })),
-      edges: edgesRef.current.map((e) => ({ ...e })),
-    })
-    setNodes(snap.nodes)
-    setEdges(snap.edges)
-    forceHistoryTick((t) => t + 1)
-  }, [])
-  // Keyboard shortcuts: Cmd/Ctrl+Z = undo, Cmd/Ctrl+Shift+Z = redo. Skip
-  // when focus is in an editable element so the browser's native text
-  // undo still works in textareas / inputs / contentEditable bodies.
-  useEffect(() => {
-    const isEditable = (el) => {
-      if (!el) return false
-      const tag = el.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
-      if (el.isContentEditable) return true
-      return false
-    }
-    const onKey = (e) => {
-      const meta = e.metaKey || e.ctrlKey
-      if (!meta || (e.key !== 'z' && e.key !== 'Z')) return
-      if (isEditable(document.activeElement)) return
-      e.preventDefault()
-      if (e.shiftKey) redo(); else undo()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [undo, redo])
+  // Undo / redo lives in src/lib/useUndoRedo.js. The hook owns the
+  // history stacks + Cmd/Ctrl+Z keyboard wiring; pushHistory() must be
+  // called BEFORE each user-initiated mutation (addNode, onConnect,
+  // patch, drag-stop, removal) so the snapshot captures the prior state.
+  const { pushHistory, undo, redo, canUndo, canRedo, pastCount, futureCount } =
+    useUndoRedo({ nodesRef, edgesRef, setNodes, setEdges })
 
   // Load avatars (custom + HeyGen public library) so the AvatarPicker node
   // can list them. Also re-fetches whenever the tab regains focus / the
@@ -1798,121 +1742,6 @@ function SpaceBuilder({ space, onSave, onClose }) {
     }
   }, [])
 
-  // Live id ref so autosave continues to PATCH the same row after the
-  // initial POST (the original `space` prop never changes).
-  const spaceIdRef = useRef(space.id || null)
-  const [autoStatus, setAutoStatus] = useState('idle')   // 'idle' | 'saving' | 'saved' | 'error'
-  const skipNextAutosave = useRef(true)
-  const lastPayloadRef = useRef(null)
-
-  // Strip transient `_ctx*` keys that we inject only at render time. They
-  // can balloon the saved JSON and have no business in the persisted row.
-  const cleanNodesForSave = (arr) => (arr || []).map((n) => {
-    if (!n?.data) return n
-    const cleaned = { ...n.data }
-    for (const k of Object.keys(cleaned)) if (k.startsWith('_ctx')) delete cleaned[k]
-    delete cleaned.__id
-    return { ...n, data: cleaned }
-  })
-
-  // Autosave race control: every save() bumps a generation counter and
-  // captures the current AbortController. If a newer save fires while
-  // an older one is still in-flight, the older one is aborted (so it
-  // can't land out-of-order on the server). The response handler also
-  // checks its captured gen against the live one and bails if stale —
-  // belt-and-braces in case AbortController support is patchy.
-  const saveGenRef = useRef(0)
-  const saveAbortRef = useRef(null)
-  const save = async ({ silent = false } = {}) => {
-    // Cancel any in-flight save before starting a new one so requests
-    // can't reach the server out of order.
-    if (saveAbortRef.current) {
-      try { saveAbortRef.current.abort() } catch {}
-    }
-    const myGen = ++saveGenRef.current
-    const ac = new AbortController()
-    saveAbortRef.current = ac
-
-    if (!silent) { setBusy(true); setError(null) }
-    setAutoStatus('saving')
-    try {
-      const id = spaceIdRef.current
-      const cleanNodes = cleanNodesForSave(nodes)
-      const r = await fetch('/api/spaces', {
-        method: id ? 'PATCH' : 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ id, profile_id: selectedProfileId, name, nodes: cleanNodes, edges }),
-        signal: ac.signal,
-      })
-      // If a newer save started between dispatch and response, drop
-      // this one's effects on the floor.
-      if (myGen !== saveGenRef.current) return
-      const body = await r.json()
-      if (!r.ok) throw new Error(body.error || 'Save failed')
-      if (body.space?.id) spaceIdRef.current = body.space.id
-      setAutoStatus('saved')
-      setTimeout(() => setAutoStatus((s) => s === 'saved' ? 'idle' : s), 1500)
-      if (!silent) onSave(body.space)
-    } catch (e) {
-      // AbortError from a superseded save isn't a real error.
-      if (e?.name === 'AbortError') return
-      if (myGen !== saveGenRef.current) return
-      setAutoStatus('error')
-      if (!silent) setError(e.message)
-      else console.warn('autosave failed:', e.message)
-    } finally {
-      if (!silent && myGen === saveGenRef.current) setBusy(false)
-      if (saveAbortRef.current === ac) saveAbortRef.current = null
-    }
-  }
-
-  // Autosave: debounce 1.2s after any change to name/nodes/edges, then PATCH.
-  // Skips the very first render and dedupes by payload-equality so settled
-  // state doesn't fire empty saves.
-  useEffect(() => {
-    if (skipNextAutosave.current) { skipNextAutosave.current = false; return }
-    if (!session || !selectedProfileId) return
-    // For brand-new empty spaces with no content yet, don't autosave.
-    if (!spaceIdRef.current && nodes.length === 0 && edges.length === 0) return
-    // Cheap structural fingerprint — id + type + serialized props (compact)
-    // + position rounded to ints + edges shape. ~100× faster than
-    // JSON.stringify of the full nodes array on big canvases with media.
-    //
-    // Includes data.status + a tiny output signature so completed runs
-    // also trigger autosave — otherwise the rendered video URLs would
-    // disappear on page refresh because the fingerprint stayed the same
-    // through the entire idle → running → done transition.
-    const outputSig = (o) => {
-      if (!o || typeof o !== 'object') return ''
-      const url = o.video?.video_url || o.video_url || ''
-      const items = Array.isArray(o.items) ? o.items.length : 0
-      const vids  = Array.isArray(o.videos) ? o.videos.length : 0
-      const imgs  = Array.isArray(o.images) ? o.images.length : 0
-      const cap   = o.caption ? o.caption.length : 0
-      const txt   = o.full_script ? o.full_script.length : 0
-      return `${url.slice(-40)}|${items}|${vids}|${imgs}|${cap}|${txt}`
-    }
-    const fp = [
-      name,
-      nodes.length,
-      edges.length,
-      ...nodes.map((n) => {
-        const status = n.data?.status || 'idle'
-        // Only let 'done' / 'failed' bump the fingerprint — 'running' is
-        // transient and saving partial state is more confusing than useful.
-        const persistedStatus = (status === 'done' || status === 'failed') ? status : 'idle'
-        return `${n.id}|${n.data?.type}|${Math.round(n.position?.x || 0)},${Math.round(n.position?.y || 0)}|${n.data?.name || ''}|${propsHashShort(n.data?.props)}|${persistedStatus}|${outputSig(n.data?.output)}`
-      }),
-      ...edges.map((e) => `${e.source}-${e.target}-${e.targetHandle || 'in'}`),
-    ].join('::')
-    if (fp === lastPayloadRef.current) return
-    const t = setTimeout(() => {
-      lastPayloadRef.current = fp
-      save({ silent: true })
-    }, 1200)
-    return () => clearTimeout(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, nodes, edges, session, selectedProfileId])
 
   const aiBuild = async () => {
     if (!aiPrompt.trim()) return
@@ -2709,18 +2538,18 @@ function SpaceBuilder({ space, onSave, onClose }) {
         <button
           className="btn-ghost"
           onClick={undo}
-          disabled={historyRef.current.past.length === 0}
-          title={`Undo${historyRef.current.past.length ? ` (${historyRef.current.past.length})` : ''} — ⌘Z`}
-          style={{ padding: '6px 10px', opacity: historyRef.current.past.length === 0 ? 0.4 : 1 }}
+          disabled={!canUndo}
+          title={`Undo${pastCount ? ` (${pastCount})` : ''} — ⌘Z`}
+          style={{ padding: '6px 10px', opacity: canUndo ? 1 : 0.4 }}
         >
           <Undo2 size={13} />
         </button>
         <button
           className="btn-ghost"
           onClick={redo}
-          disabled={historyRef.current.future.length === 0}
-          title={`Redo${historyRef.current.future.length ? ` (${historyRef.current.future.length})` : ''} — ⌘⇧Z`}
-          style={{ padding: '6px 10px', opacity: historyRef.current.future.length === 0 ? 0.4 : 1 }}
+          disabled={!canRedo}
+          title={`Redo${futureCount ? ` (${futureCount})` : ''} — ⌘⇧Z`}
+          style={{ padding: '6px 10px', opacity: canRedo ? 1 : 0.4 }}
         >
           <Redo2 size={13} />
         </button>

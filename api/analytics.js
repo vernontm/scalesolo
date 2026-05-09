@@ -158,16 +158,35 @@ async function computeSummary(profileId, win) {
     }
 
     // (3) Per-post metrics for the most recent ~20 published posts that
-    // have a request_id on file. Capped + parallel; one failure doesn't
-    // poison the rest.
+    // have a request_id on file. Cache layer in `post_metrics_cache`
+    // keeps Upload-Post traffic down: anything fetched in the last
+    // 6 hours is reused verbatim; older rows refetch in parallel and
+    // upsert. Each fetch is independent — one failure doesn't poison
+    // the rest.
+    const POST_METRICS_TTL_MS = 6 * 60 * 60 * 1000  // 6 hours
     const withReq = rows.filter((r) => r.uploadpost_request_id).slice(0, 20)
     if (withReq.length) {
+      const reqIds = withReq.map((r) => r.uploadpost_request_id)
+      const inList = `(${reqIds.map((i) => encodeURIComponent(i)).join(',')})`
+      const cacheRows = await supaFetch(
+        `post_metrics_cache?uploadpost_request_id=in.${inList}&select=*`
+      ).catch(() => [])
+      const cacheByReq = new Map(cacheRows.map((c) => [c.uploadpost_request_id, c]))
+      const cutoff = Date.now() - POST_METRICS_TTL_MS
+
       const fetched = {}
       await Promise.all(withReq.map(async (r) => {
+        const cached = cacheByReq.get(r.uploadpost_request_id)
+        if (cached && new Date(cached.fetched_at).getTime() > cutoff && !force) {
+          fetched[r.id] = {
+            views: cached.views, likes: cached.likes,
+            comments: cached.comments, shares: cached.shares, saves: cached.saves,
+          }
+          return
+        }
         try {
           const data = await uploadpost(`/api/uploadposts/post-analytics/${encodeURIComponent(r.uploadpost_request_id)}`)
           if (data?.success && data?.platforms) {
-            // Flatten to a per-script summary of total likes/views/etc.
             const totals = { views: 0, likes: 0, comments: 0, shares: 0, saves: 0 }
             for (const platformData of Object.values(data.platforms)) {
               const m = platformData?.post_metrics || {}
@@ -177,6 +196,24 @@ async function computeSummary(profileId, win) {
               }
             }
             fetched[r.id] = totals
+            // Upsert into cache (best-effort, never blocks the response).
+            const upsertBody = {
+              profile_id: profileId,
+              uploadpost_request_id: r.uploadpost_request_id,
+              content_script_id: r.id,
+              ...totals,
+              raw: data,
+              fetched_at: new Date().toISOString(),
+            }
+            try {
+              await supaFetch('post_metrics_cache?on_conflict=uploadpost_request_id', {
+                method: 'POST',
+                body: [upsertBody],
+                prefer: 'resolution=merge-duplicates,return=minimal',
+              })
+            } catch (e) {
+              console.warn('post_metrics_cache upsert failed:', e?.message)
+            }
           }
         } catch {}
       }))

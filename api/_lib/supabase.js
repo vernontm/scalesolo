@@ -102,20 +102,36 @@ function writeAdminCache(userId, value) {
   }
 }
 
-// Admin gate. Resolves the auth user, then checks the user_profiles
-// row's is_admin flag via the service-role REST call (bypasses RLS so
-// the API can verify admin status regardless of who's reading).
-// Returns { user, token } on success, or null after writing the
-// 401/403 response. Result is cached per container for 60s.
+// Admin gate. Three-layer check, fastest first:
+//   1. JWT claim — auth.users.raw_app_meta_data.is_admin is mirrored
+//      from user_profiles via DB trigger, so getUserFromRequest()
+//      already has it. Zero DB hits when present.
+//   2. Per-container cache — 60s TTL. Saves a hit when an admin makes
+//      back-to-back calls and the JWT happens to lack the claim
+//      (older sessions issued before the migration).
+//   3. user_profiles fallback — service-role REST call on a true cache
+//      miss. Result feeds the cache.
+// Returns { user, token } on success, or null after writing the 401/403.
 export async function requireAdmin(req, res) {
   const auth = await requireUser(req, res)
   if (!auth) return null
+  // (1) JWT app_meta_data — Supabase puts this on the user payload.
+  const claim = auth.user?.app_metadata?.is_admin
+  if (claim === true) return auth
+  if (claim === false) {
+    // Explicit false in the JWT means we know the answer; trust it.
+    res.status(403).json({ error: 'Forbidden: admin only' })
+    return null
+  }
+  // (2) Cache.
   const cached = readAdminCache(auth.user.id)
   if (cached === true) return auth
   if (cached === false) {
     res.status(403).json({ error: 'Forbidden: admin only' })
     return null
   }
+  // (3) DB fallback. Only hit on a session issued before the trigger
+  // backfill ran.
   try {
     const rows = await supaFetch(`user_profiles?id=eq.${auth.user.id}&select=is_admin`)
     const isAdmin = !!rows?.[0]?.is_admin
