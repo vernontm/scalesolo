@@ -11,6 +11,58 @@
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { message as anthropicMessage } from '../_lib/anthropic.js'
 
+// Reference-role expansion. Always runs when the prompt has any
+// `reference "..."` mentions. A small Claude call classifies each
+// reference's role (person / outfit / background / object) from the
+// surrounding context and rewrites the body with explicit
+// attribute-extraction language for each. This is what makes prompts
+// like "image of woman in @image1 wearing outfit in @image2" actually
+// route attributes correctly across multiple refs without the user
+// writing the boilerplate. Falls through to the original prompt on
+// any error so an Anthropic hiccup never blocks the render.
+async function expandReferenceRoles(rawPrompt) {
+  if (!/reference\s+"[^"]+"/i.test(rawPrompt)) return rawPrompt
+  try {
+    const out = await anthropicMessage({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 800,
+      system: [
+        'You expand image-generation prompts that reference labeled images.',
+        'For each `reference "X"` mention in the body of the prompt, classify what role the reference plays (PERSON / OUTFIT / BACKGROUND / OBJECT) and EXPAND the prompt with the matching attribute-extraction language.',
+        '',
+        'Roles and their expansion language:',
+        '',
+        'PERSON (the reference is being used to define a person/subject):',
+        '  Add: "Keep [her/his/their] exact face, eyes, nose, mouth, eyebrows, jawline, hairline, hair length and style, skin tone, body shape, height, and proportions identical to reference \\"X\\". Do not change the face or proportions."',
+        '',
+        'OUTFIT (the reference is being used to define clothing or styling):',
+        '  Add: "Use ONLY the clothing, accessories, and styling from reference \\"X\\". Do not copy the face, body, hair, or background from reference \\"X\\"."',
+        '',
+        'BACKGROUND / SCENE (the reference is being used as the setting or environment):',
+        '  Add: "Use the background, lighting, and environment from reference \\"X\\". Do not copy any people, faces, or text overlays from reference \\"X\\"."',
+        '',
+        'OBJECT / PROP (the reference is being used for a specific object, logo, product, or prop):',
+        '  Add: "Place the [object] from reference \\"X\\" naturally in the scene. Use only that object, not other elements from reference \\"X\\"."',
+        '',
+        'Disambiguation:',
+        '• If the user has already written explicit role/extraction language for a given reference (e.g. "keep her face from reference X" or "use only the clothing from reference Y"), keep their language as-is. Do not re-expand that reference.',
+        '• If the role of a reference is ambiguous, treat it as PERSON.',
+        '• Use natural pronouns when the subject\'s gender is implied by the prompt ("woman" → her, "man" → his, otherwise use "their").',
+        '',
+        'Block preservation:',
+        '• If a "BRAND IDENTITY DIRECTIVE" or "REFERENCE DIRECTIVE" block is present at the top of the prompt (followed by a "---" separator), keep that block VERBATIM. Do not paraphrase, reformat, or remove any line. Only expand the body that follows the separator.',
+        '',
+        'Output: the full rewritten prompt only. No preamble, no quotes, no explanation.',
+      ].join('\n'),
+      messages: [{ role: 'user', content: rawPrompt }],
+    })
+    const text = (out?.content || []).map((c) => c?.text || '').join('').trim()
+    return text || rawPrompt
+  } catch {
+    return rawPrompt
+  }
+}
+
 // Optional prompt enhancement — Claude rewrites the user's bare prompt with
 // composition, lighting, and brand cues so the image model has more to work
 // with. Falls through to the original prompt on any error so a transient
@@ -159,7 +211,13 @@ export default async function handler(req, res) {
     if (!profile_id || !prompt) return res.status(400).json({ error: 'profile_id + prompt required' })
     await assertProfileAccess(auth.user.id, profile_id)
 
-    const finalPrompt = enhance_prompt ? await enhancePrompt(String(prompt)) : prompt
+    // Two-stage rewrite. expandReferenceRoles ALWAYS runs when the prompt
+    // mentions any `reference "X"` label; it classifies each ref's role
+    // (person/outfit/background/object) from context and injects the
+    // matching attribute-extraction language. enhancePrompt is the
+    // optional aesthetic/composition pass on top.
+    const promptWithRoles = await expandReferenceRoles(String(prompt))
+    const finalPrompt = enhance_prompt ? await enhancePrompt(promptWithRoles) : promptWithRoles
 
     const apiKey = process.env.KIE_API_KEY
     if (!apiKey) return res.status(500).json({ error: 'KIE_API_KEY not configured. Add it in Vercel env.' })
