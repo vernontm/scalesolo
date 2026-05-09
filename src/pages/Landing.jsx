@@ -596,14 +596,16 @@ const shotHalo = {
 }
 const shotCard = {
   position: 'relative', zIndex: 1,
-  borderRadius: 18, overflow: 'hidden',
-  border: '1px solid rgba(239,68,68,0.45)',
-  background: 'var(--surface)',
-  boxShadow: '0 30px 80px rgba(0,0,0,0.55), 0 0 60px rgba(239,68,68,0.18)',
-  aspectRatio: '16/10',
+  background: 'transparent',
   display: 'grid', placeItems: 'center',
 }
-const shotImg = { width: '100%', height: '100%', objectFit: 'cover', display: 'block', position: 'relative', zIndex: 1, transition: 'transform 200ms ease-out', willChange: 'transform' }
+const shotImg = {
+  width: '100%', height: 'auto', display: 'block',
+  position: 'relative', zIndex: 1,
+  filter: 'drop-shadow(0 30px 60px rgba(0,0,0,0.55)) drop-shadow(0 0 40px rgba(239,68,68,0.18))',
+  transition: 'transform 200ms ease-out',
+  willChange: 'transform',
+}
 
 // Hero dashboard image with subtle 3D tilt that follows the cursor.
 function HeroShot({ src }) {
