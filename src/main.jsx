@@ -1,3 +1,8 @@
+// Sentry must initialize BEFORE React mounts so unhandled errors during
+// the very first render still get captured. Top-of-file by design.
+import { initSentry } from './lib/sentry.js'
+initSentry()
+
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'

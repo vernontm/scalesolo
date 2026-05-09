@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { identifySentryUser } from '../lib/sentry.js'
 
 const AuthContext = createContext(null)
 
@@ -37,6 +38,7 @@ export function AuthProvider({ children }) {
     supabase.auth.getSession().then(({ data }) => {
       if (!active) return
       setSession(data.session)
+      identifySentryUser(data.session?.user || null)
       setLoading(false)
       refreshAdminFlag(data.session)
     })
@@ -45,6 +47,7 @@ export function AuthProvider({ children }) {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, newSession) => {
       setSession(newSession)
+      identifySentryUser(newSession?.user || null)
       setLoading(false)
       refreshAdminFlag(newSession)
       // Affiliate attribution: if the visitor arrived via ?ref=… on the

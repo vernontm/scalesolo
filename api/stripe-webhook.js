@@ -502,7 +502,11 @@ export default async function handler(req) {
     return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
   }
 
-  // Idempotency
+  // Idempotency. Only short-circuit when a PRIOR attempt completed
+  // successfully (processed_at IS NOT NULL). If a prior attempt errored
+  // mid-handler, processed_at is null and we re-process — every grant
+  // path is idempotent on its own ref_id, so this is safe.
+  let alreadyProcessed = false
   try {
     await supa('stripe_events', {
       method: 'POST',
@@ -511,9 +515,24 @@ export default async function handler(req) {
     })
   } catch (err) {
     if (err.status === 409 || err.data?.code === '23505') {
-      return new Response(JSON.stringify({ received: true, duplicate: true }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      // Row exists. Check if a previous attempt actually finished.
+      try {
+        const rows = await supa(
+          `stripe_events?stripe_event_id=eq.${encodeURIComponent(event.id)}&select=processed_at,error`
+        )
+        if (rows?.[0]?.processed_at) alreadyProcessed = true
+        // else: previous attempt failed mid-flight; fall through to retry.
+      } catch {
+        // If we can't read the row, default to safe behavior: short-
+        // circuit so we don't double-grant on flaky DB.
+        alreadyProcessed = true
+      }
+    } else {
+      return new Response(JSON.stringify({ error: 'idempotency insert failed', detail: err.message }), { status: 500, headers: { 'Content-Type': 'application/json' } })
     }
-    return new Response(JSON.stringify({ error: 'idempotency insert failed', detail: err.message }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+  }
+  if (alreadyProcessed) {
+    return new Response(JSON.stringify({ received: true, duplicate: true }), { status: 200, headers: { 'Content-Type': 'application/json' } })
   }
 
   let handlerError = null
@@ -521,15 +540,37 @@ export default async function handler(req) {
     await routeEvent(event)
   } catch (err) {
     handlerError = err.message || String(err)
+    console.error('stripe-webhook routeEvent failed:', event.type, event.id, handlerError)
+    // Best-effort Sentry capture. Imported dynamically because this
+    // file runs on Edge runtime; the @sentry/node SDK is a Node-only
+    // import and would fail to load in some Edge contexts. Wrap
+    // defensively so a Sentry hiccup never blocks the webhook.
+    try {
+      const { captureApiError } = await import('./_lib/sentry.js')
+      captureApiError(err, { route: 'stripe-webhook', extra: { event_type: event.type, event_id: event.id } })
+    } catch {}
   }
 
+  // Always record the attempt (success or failure). Failure rows have
+  // `error` set + `processed_at` STILL NULL, so a future Stripe retry
+  // re-enters the handler. (Stripe retries non-2xx for up to 3 days.)
   try {
+    const patch = handlerError
+      ? { error: handlerError, last_attempt_at: new Date().toISOString() }
+      : { processed_at: new Date().toISOString(), error: null }
     await supa(`stripe_events?stripe_event_id=eq.${encodeURIComponent(event.id)}`, {
       method: 'PATCH',
-      body: { processed_at: new Date().toISOString(), error: handlerError },
+      body: patch,
       prefer: 'return=minimal',
     })
   } catch {}
 
+  // Return 500 on handler error so Stripe retries (exponential backoff,
+  // 3 days). Without this, a transient Supabase blip during a
+  // subscription.created handler permanently loses a paying customer's
+  // initial credit grant.
+  if (handlerError) {
+    return new Response(JSON.stringify({ error: 'handler error', detail: handlerError }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+  }
   return new Response(JSON.stringify({ received: true }), { status: 200, headers: { 'Content-Type': 'application/json' } })
 }

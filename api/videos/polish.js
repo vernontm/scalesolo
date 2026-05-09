@@ -347,11 +347,27 @@ export default async function handler(req, res) {
               console.error('video-polish (worker): consume_credits returned failure', {
                 customerId, fee, error_code: result.error_code, profile_id,
               })
+              try {
+                const { captureApiError } = await import('../_lib/sentry.js')
+                captureApiError(new Error('consume_credits returned success=false'), {
+                  route: 'video-polish:worker:consume',
+                  userId: auth.user.id, profileId: profile_id,
+                  extra: { customerId, fee, error_code: result.error_code, kind: 'free_generation_leak' },
+                })
+              } catch {}
             }
           } catch (e) {
             console.error('video-polish (worker): consume_credits threw', {
               customerId, fee, profile_id, message: e?.message,
             })
+            try {
+              const { captureApiError } = await import('../_lib/sentry.js')
+              captureApiError(e, {
+                route: 'video-polish:worker:consume',
+                userId: auth.user.id, profileId: profile_id,
+                extra: { customerId, fee, kind: 'free_generation_leak' },
+              })
+            } catch {}
           }
         }
         NotifyKind.renderDone({
@@ -621,11 +637,27 @@ export default async function handler(req, res) {
           console.error('video-polish: consume_credits returned failure', {
             customerId, fee, error_code: result.error_code, profile_id,
           })
+          try {
+            const { captureApiError } = await import('../_lib/sentry.js')
+            captureApiError(new Error('consume_credits returned success=false'), {
+              route: 'video-polish:consume',
+              userId: auth.user.id, profileId: profile_id,
+              extra: { customerId, fee, error_code: result.error_code, kind: 'free_generation_leak' },
+            })
+          } catch {}
         }
       } catch (e) {
         console.error('video-polish: consume_credits threw', {
           customerId, fee, profile_id, message: e?.message,
         })
+        try {
+          const { captureApiError } = await import('../_lib/sentry.js')
+          captureApiError(e, {
+            route: 'video-polish:consume',
+            userId: auth.user.id, profileId: profile_id,
+            extra: { customerId, fee, kind: 'free_generation_leak' },
+          })
+        } catch {}
       }
     }
 
