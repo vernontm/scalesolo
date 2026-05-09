@@ -2307,6 +2307,107 @@ function SpaceBuilder({ space, onSave, onClose }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [previewItem])
 
+  // ── BFS context precompute ────────────────────────────────────────────────
+  // The per-node ctx injection in renderNodes used to walk back through
+  // the edge graph for EACH save_library / auto_run / image_gen node on
+  // every render. ReactFlow re-creates `nodes` on every drag tick, so
+  // dragging one node triggered hundreds of BFS walks.
+  //
+  // Splitting the BFS work into its own memo keyed on a STRUCTURAL
+  // fingerprint (just node ids/types and the edges array) means drag
+  // events leave the BFS results cached. Per-node ctx then just looks
+  // up by id — O(1) per node.
+  const structuralKey = useMemo(() => {
+    // Compact fingerprint: node-id|type|has-output|image-upload-urls
+    // joined with edge sigs. Drag changes (position/selected/dragging)
+    // are intentionally excluded.
+    const nodeBits = nodes.map((n) => {
+      const t = n.data?.type
+      const hasOutput = n.data?.output ? 1 : 0
+      // image_upload props (urls) feed image_gen's _ctxNamedImages, so
+      // they need to be part of the structural key.
+      const urls = t === 'image_upload'
+        ? (Array.isArray(n.data?.props?.urls) ? n.data.props.urls.join(',').slice(0, 200) : '')
+        : ''
+      return `${n.id}|${t}|${hasOutput}|${urls}`
+    }).join(';')
+    const edgeBits = edges.map((e) => `${e.source}>${e.target}|${e.targetHandle || 'in'}`).join(';')
+    return nodeBits + '||' + edgeBits
+  }, [nodes, edges])
+
+  // Per-node-type ctx maps. Computed only when the structural key
+  // changes (i.e. on add/remove/connect/output-completion), NOT on
+  // drag/select/dimensions.
+  const bfsContexts = useMemo(() => {
+    const imageGenById = new Map()         // id → { namedImages }
+    const saveLibraryById = new Map()      // id → { kind }
+    const autoRunById = new Map()          // id → { costPerRun }
+    const nodesById = new Map(nodes.map((n) => [n.id, n]))
+
+    for (const n of nodes) {
+      const t = n.data?.type
+      if (t === 'image_gen') {
+        const named = []
+        const visited = new Set([n.id])
+        const queue = [n.id]
+        while (queue.length) {
+          const id = queue.shift()
+          for (const e of edges) {
+            if (e.target === id && !visited.has(e.source)) {
+              visited.add(e.source)
+              const src = nodesById.get(e.source)
+              if (src?.data?.type === 'image_upload') {
+                for (const it of readImageItems(src.data?.props)) named.push(it)
+              }
+              queue.push(e.source)
+            }
+          }
+        }
+        imageGenById.set(n.id, { namedImages: named })
+      } else if (t === 'save_library') {
+        let kind = 'text'
+        const seen = new Set([n.id])
+        const queue = [n.id]
+        while (queue.length) {
+          const id = queue.shift()
+          for (const e of edges) {
+            if (e.target === id && !seen.has(e.source)) {
+              seen.add(e.source); queue.push(e.source)
+              const src = nodesById.get(e.source)
+              const out = src?.data?.output
+              if (out?.video_url) kind = 'video'
+              else if (Array.isArray(out?.images) && out.images.length && kind !== 'video') kind = 'image'
+              else if (src?.data?.type === 'avatar_render' && kind !== 'video') kind = 'video'
+              else if (src?.data?.type === 'image_gen' && kind !== 'video') kind = 'image'
+            }
+          }
+        }
+        saveLibraryById.set(n.id, { kind })
+      } else if (t === 'auto_run') {
+        let cost = 0
+        const seen = new Set([n.id])
+        const queue = [n.id]
+        while (queue.length) {
+          const id = queue.shift()
+          for (const e of edges) {
+            if (e.source === id && !seen.has(e.target)) {
+              seen.add(e.target); queue.push(e.target)
+              const child = nodesById.get(e.target)
+              if (!child) continue
+              const ct = child.data?.type
+              const base = NODE_COST_HINT[ct] || 0
+              const mult = ct === 'image_gen' ? Math.max(1, Number(child.data?.props?.count || 1)) : 1
+              cost += base * mult
+            }
+          }
+        }
+        autoRunById.set(n.id, { costPerRun: cost })
+      }
+    }
+    return { imageGenById, saveLibraryById, autoRunById }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [structuralKey])
+
   // Inject ctx slices into nodes that need them at render time (avatars for
   // AvatarPicker, profiles for BrandProfile).
   const renderNodes = useMemo(
@@ -2378,77 +2479,28 @@ function SpaceBuilder({ space, onSave, onClose }) {
         } }
       }
       if (t === 'save_library') {
-        // Walk back to see what kind of media is wired in (image / video /
-        // text), and look up the active brand profile's synced_platforms.
-        let kind = 'text'
-        const seenS = new Set([n.id])
-        const queueS = [n.id]
-        while (queueS.length) {
-          const id = queueS.shift()
-          for (const e of edges) {
-            if (e.target === id && !seenS.has(e.source)) {
-              seenS.add(e.source); queueS.push(e.source)
-              const src = nodes.find((s) => s.id === e.source)
-              const out = src?.data?.output
-              if (out?.video_url) kind = 'video'
-              else if (Array.isArray(out?.images) && out.images.length && kind !== 'video') kind = 'image'
-              else if (src?.data?.type === 'avatar_render' && kind !== 'video') kind = 'video'
-              else if (src?.data?.type === 'image_gen' && kind !== 'video') kind = 'image'
-            }
-          }
-        }
+        // BFS result precomputed in bfsContexts; just attach + add the
+        // brand-profile synced_platforms (cheap, not BFS-dependent).
+        const kind = bfsContexts.saveLibraryById.get(n.id)?.kind || 'text'
         const activeProfile = (profiles || []).find((p) => p.id === selectedProfileId)
         const synced = Array.isArray(activeProfile?.synced_platforms) ? activeProfile.synced_platforms : []
         return { ...n, data: { ...n.data, _ctxSyncedPlatforms: synced, _ctxDetectedKind: kind } }
       }
       if (t === 'auto_run') {
-        // BFS down to compute estimated cost-per-run from the chain
-        let cost = 0
-        const seen = new Set([n.id])
-        const queue = [n.id]
-        while (queue.length) {
-          const id = queue.shift()
-          for (const e of edges) {
-            if (e.source === id && !seen.has(e.target)) {
-              seen.add(e.target); queue.push(e.target)
-              const child = nodes.find((s) => s.id === e.target)
-              if (!child) continue
-              const ct = child.data?.type
-              const base = NODE_COST_HINT[ct] || 0
-              const mult = ct === 'image_gen' ? Math.max(1, Number(child.data?.props?.count || 1)) : 1
-              cost += base * mult
-            }
-          }
-        }
-        return { ...n, data: { ...n.data, _ctxCostPerRun: cost } }
+        const costPerRun = bfsContexts.autoRunById.get(n.id)?.costPerRun || 0
+        return { ...n, data: { ...n.data, _ctxCostPerRun: costPerRun } }
       }
       // Generators that take prompts get _ctxProfiles for @brand autocomplete.
-      // image_gen also gets named upload images via BFS-back through edges.
+      // image_gen also gets named upload images via BFS-back through edges
+      // (precomputed in bfsContexts).
       if (t === 'script_gen' || t === 'caption_gen' || t === 'image_gen') {
         const slim = (profiles || []).map((p) => ({ id: p.id, name: p.business_name }))
         if (t !== 'image_gen') {
           return { ...n, data: { ...n.data, _ctxProfiles: slim } }
         }
-        const named = []
-        const visited = new Set([n.id])
-        const queue = [n.id]
-        while (queue.length) {
-          const id = queue.shift()
-          for (const e of edges) {
-            if (e.target === id && !visited.has(e.source)) {
-              visited.add(e.source)
-              const src = nodes.find((s) => s.id === e.source)
-              if (src?.data?.type === 'image_upload') {
-                for (const it of readImageItems(src.data?.props)) named.push(it)
-              }
-              queue.push(e.source)
-            }
-          }
-        }
+        const named = [...(bfsContexts.imageGenById.get(n.id)?.namedImages || [])]
         // Expose @brand-logo as a synthetic named image when the active brand
-        // profile has a logo_url. This lets users drop the brand logo into
-        // generated imagery without wiring an image_upload node. Hidden if
-        // no logo is set on the profile.
+        // profile has a logo_url. Cheap O(1) lookup; no BFS.
         const activeProfileForLogo = (profiles || []).find((p) => p.id === selectedProfileId)
         if (activeProfileForLogo?.logo_url) {
           named.push({ name: 'brand-logo', url: activeProfileForLogo.logo_url })
@@ -2457,7 +2509,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
       }
       return n
     }),
-    [nodes, edges, avatars, profiles, publicAvatars, selectedProfileId, connectedSocialPlatforms, subscriptionStatus]
+    [nodes, edges, avatars, profiles, publicAvatars, selectedProfileId, connectedSocialPlatforms, subscriptionStatus, bfsContexts]
   )
 
   // Lock body scroll while the builder is mounted (it uses position:fixed).
