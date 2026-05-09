@@ -225,6 +225,7 @@ export default function Landing() {
         <div className="showcase-grid">
           <div className="showcase-img-wrap">
             <img
+              loading="lazy" decoding="async"
               src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/brand_profile.png"
               alt="ScaleSolo brand profile, voice, training, and performance insights"
               className="showcase-img"
@@ -365,6 +366,7 @@ export default function Landing() {
           </div>
           <div className="showcase-img-wrap">
             <img
+              loading="lazy" decoding="async"
               src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/avatar_landing.png"
               alt="Avatar and look creation in ScaleSolo"
               className="showcase-img"
@@ -379,6 +381,7 @@ export default function Landing() {
         <div className="showcase-grid">
           <div className="showcase-img-wrap">
             <img
+              loading="lazy" decoding="async"
               src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/captions_landing.png"
               alt="ScaleSolo video finishing: captions, titles, overlays, music, and watermarks"
               className="showcase-img"
@@ -424,6 +427,7 @@ export default function Landing() {
           </div>
           <div className="showcase-img-wrap">
             <img
+              loading="lazy" decoding="async"
               src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/schedule_post.png"
               alt="ScaleSolo schedule-post feature"
               className="showcase-img"
@@ -813,6 +817,7 @@ function HeroShot({ src }) {
   return (
     <div ref={cardRef} style={shotCard} onMouseMove={handleMove} onMouseLeave={handleLeave}>
       <img
+        loading="lazy" decoding="async"
         ref={imgRef}
         src={src}
         alt="ScaleSolo dashboard"
