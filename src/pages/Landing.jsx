@@ -240,6 +240,35 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ── VIDEO FINISHING SHOWCASE ────────────────────────────────── */}
+      <section style={section} className="fade-up">
+        <div className="showcase-grid">
+          <div className="showcase-copy">
+            <div className="feat-eyebrow">Video finishing</div>
+            <h2 className="showcase-title">Render-ready videos. Zero editor.</h2>
+            <p className="showcase-body">
+              Captions, titles, overlays, music, and watermarks get baked into every render automatically.
+              Pick the look once per brand and ScaleSolo delivers a finished, captioned, scored video on
+              every run, no CapCut, no Descript, no manual passes.
+            </p>
+            <ul className="showcase-list">
+              <li><Check size={14} /> Auto-captions with brand-styled fonts and colors</li>
+              <li><Check size={14} /> Hook titles, lower-thirds, and overlays per platform</li>
+              <li><Check size={14} /> Licensed music and SFX added on the right beat</li>
+              <li><Check size={14} /> Brand watermarks locked in so nothing ships off-brand</li>
+            </ul>
+          </div>
+          <div className="showcase-img-wrap">
+            <img
+              src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/captions_landing.png"
+              alt="ScaleSolo video finishing: captions, titles, overlays, music, and watermarks"
+              className="showcase-img"
+              onError={(e) => { e.currentTarget.style.opacity = '0' }}
+            />
+          </div>
+        </div>
+      </section>
+
       {/* ── SCHEDULE-POST FEATURE SHOWCASE ──────────────────────────── */}
       <section style={section} className="fade-up">
         <div className="showcase-grid">
