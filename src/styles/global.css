@@ -462,60 +462,23 @@ a:focus-visible {
 }
 .feat-body { font-size: 13.5px; color: var(--text-soft); line-height: 1.5; }
 
-/* Mock #1 — Templates: row of phone cards with progress bars */
-.mock-templates { display: flex; gap: 6px; padding: 14px; align-items: flex-end; width: 100%; height: 100%; }
-.mock-templates .phone {
-  flex: 1; height: 100%;
-  border-radius: 6px;
-  background: rgba(99, 102, 241, 0.08);
-  border: 1px solid rgba(139, 92, 246, 0.18);
+/* Angled gradient separator above the features section */
+.feat-separator {
   position: relative;
+  height: 200px;
+  width: 100%;
+  background:
+    linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.65) 60%, #000 100%),
+    linear-gradient(115deg, rgba(40, 12, 60, 0.55) 0%, rgba(70, 20, 100, 0.65) 35%, rgba(140, 60, 200, 0.55) 78%, rgba(180, 100, 220, 0.45) 100%);
+  border-bottom: 1px solid rgba(180, 130, 220, 0.28);
 }
-.mock-templates .phone::after {
-  content: ''; position: absolute; left: 14%; right: 14%; bottom: 14%;
-  height: 4px; border-radius: 2px;
-  background: linear-gradient(90deg, #ef4444, #f97316);
-  transform-origin: left;
-  animation: fillBar 2.4s var(--ease) infinite;
-}
-.mock-templates .phone:nth-child(2)::after { background: linear-gradient(90deg, #8b5cf6, #c084fc); animation-delay: .15s; }
-.mock-templates .phone:nth-child(3)::after { animation-delay: .30s; }
-.mock-templates .phone:nth-child(4)::after { background: linear-gradient(90deg, #8b5cf6, #c084fc); animation-delay: .45s; }
-.mock-templates .phone:nth-child(5)::after { animation-delay: .60s; }
-.mock-templates .phone:nth-child(6)::after { background: linear-gradient(90deg, #8b5cf6, #c084fc); animation-delay: .75s; }
-.mock-templates .phone:nth-child(7)::after { animation-delay: .90s; }
-
-/* Mock #2 — AI Writer: text bars with a typing gradient bar */
-.mock-writer { width: 86%; display: flex; flex-direction: column; gap: 10px; }
-.mock-writer .bar { height: 9px; border-radius: 5px; background: rgba(255,255,255,0.07); }
-.mock-writer .bar.short { width: 60%; }
-.mock-writer .bar.gradient {
-  background: linear-gradient(90deg, #ef4444, #f97316);
-  width: 0;
-  animation: typeLine 3s var(--ease) infinite;
+.feat-separator::before {
+  content: ''; position: absolute; inset: 0;
+  background: radial-gradient(120% 80% at 100% 0%, rgba(200, 130, 240, 0.35) 0%, rgba(120, 50, 180, 0.18) 35%, rgba(0,0,0,0) 60%);
+  pointer-events: none;
 }
 
-/* Mock #3 — Repurpose: source → platforms with dashed arrows */
-.mock-repurpose { width: 100%; padding: 0 18px; display: flex; align-items: center; justify-content: space-between; }
-.mock-repurpose .source {
-  background: linear-gradient(135deg, #ef4444, #f97316);
-  color: white; font-family: var(--font-display); font-weight: 800; font-size: 10px;
-  padding: 8px 12px; border-radius: 8px; letter-spacing: 0.1em;
-}
-.mock-repurpose .targets { display: flex; flex-direction: column; gap: 6px; }
-.mock-repurpose .target {
-  border: 1px solid rgba(139, 92, 246, 0.35);
-  background: rgba(139, 92, 246, 0.08);
-  color: var(--text-soft); font-family: var(--font-display); font-weight: 700;
-  font-size: 10px; padding: 6px 12px; border-radius: 6px; min-width: 36px; text-align: center;
-}
-.mock-repurpose svg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
-.mock-repurpose svg path {
-  stroke: rgba(239,68,68,0.7); stroke-width: 1.2; fill: none;
-  stroke-dasharray: 4 4; animation: flowDash 1.6s linear infinite;
-}
-
-/* Mock #4 — Avatar / visual engine: 3 phone frames */
+/* Mock — Avatar: 3 phone frames */
 .mock-avatar { display: flex; gap: 10px; padding: 14px; align-items: center; height: 100%; }
 .mock-avatar .frame {
   flex: 1; height: 80%; border-radius: 8px;
@@ -532,28 +495,57 @@ a:focus-visible {
   background: repeating-linear-gradient(45deg, rgba(239,68,68,0.18) 0 6px, transparent 6px 12px);
 }
 
-/* Mock #5 — Cross-posting: platform pills */
-.mock-platforms {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
-  padding: 18px; width: 100%;
+/* Mock — Brand profiles: stacked fanned cards */
+.mock-brands { position: relative; width: 75%; height: 100%; display: flex; align-items: center; justify-content: center; }
+.mock-brands .brand-card {
+  position: absolute;
+  width: 70%; padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(20, 20, 30, 0.85);
+  border: 1px solid rgba(255,255,255,0.08);
+  display: flex; align-items: center; gap: 10px;
+  box-shadow: 0 8px 22px rgba(0,0,0,0.45);
 }
-.mock-platforms .pill {
-  text-align: center; font-family: var(--font-display); font-weight: 800; font-size: 10px;
-  padding: 8px 0; border-radius: 8px;
-  border: 1px solid rgba(139, 92, 246, 0.30);
-  background: rgba(139, 92, 246, 0.08);
-  color: var(--text-soft);
-  animation: pillGlow 2.8s var(--ease) infinite;
+.mock-brands .brand-dot {
+  width: 18px; height: 18px; border-radius: 50%;
+  flex-shrink: 0;
+  animation: pulseDot 2s var(--ease) infinite;
 }
-.mock-platforms .pill:nth-child(2) { animation-delay: .2s; }
-.mock-platforms .pill:nth-child(3) { animation-delay: .4s; }
-.mock-platforms .pill:nth-child(4) { animation-delay: .6s; }
-.mock-platforms .pill:nth-child(5) { animation-delay: .8s; }
-.mock-platforms .pill:nth-child(6) { animation-delay: 1.0s; }
-.mock-platforms .pill:nth-child(7) { animation-delay: 1.2s; }
-.mock-platforms .pill:nth-child(8) { animation-delay: 1.4s; }
+.mock-brands .brand-lines { display: flex; flex-direction: column; gap: 5px; flex: 1; }
+.mock-brands .brand-lines span { display: block; height: 5px; border-radius: 3px; background: rgba(255,255,255,0.10); }
+.mock-brands .brand-lines span:last-child { width: 60%; background: rgba(255,255,255,0.06); }
+.mock-brands .brand-a { transform: translate(-22%, -22%) rotate(-7deg); z-index: 3; }
+.mock-brands .brand-a .brand-dot { background: linear-gradient(135deg, #ef4444, #f97316); }
+.mock-brands .brand-b { transform: rotate(0deg); z-index: 2; }
+.mock-brands .brand-b .brand-dot { background: linear-gradient(135deg, #8b5cf6, #c084fc); }
+.mock-brands .brand-c { transform: translate(22%, 22%) rotate(7deg); z-index: 1; opacity: 0.85; }
+.mock-brands .brand-c .brand-dot { background: linear-gradient(135deg, #38bdf8, #6366f1); }
 
-/* Mock #6 — Calendar: week grid */
+/* Mock — Spaces: 3 connected nodes with a flowing dot */
+.mock-spaces { position: relative; width: 100%; height: 100%; padding: 18px; }
+.mock-spaces svg {
+  position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none;
+}
+.mock-spaces svg path {
+  stroke: rgba(239,68,68,0.55); stroke-width: 1.4; fill: none;
+  stroke-dasharray: 4 4; animation: flowDash 1.6s linear infinite;
+}
+.mock-spaces svg .flow-dot { fill: #ef4444; filter: drop-shadow(0 0 6px rgba(239,68,68,0.8)); }
+.mock-spaces .node {
+  position: absolute;
+  width: 56px; padding: 8px;
+  border-radius: 8px;
+  background: rgba(20, 20, 30, 0.9);
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.mock-spaces .node span { display: block; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.12); }
+.mock-spaces .node span:last-child { width: 60%; }
+.mock-spaces .n1 { left: 6%;  top: 38%; }
+.mock-spaces .n2 { left: 50%; top: 12%; transform: translateX(-50%); border-color: rgba(239,68,68,0.55); }
+.mock-spaces .n3 { right: 6%; top: 38%; }
+
+/* Mock — Calendar: week grid */
 .mock-cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; padding: 18px; width: 100%; height: 100%; }
 .mock-cal .cell {
   border-radius: 4px;

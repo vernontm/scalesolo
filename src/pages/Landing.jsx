@@ -153,7 +153,7 @@ export default function Landing() {
               Set up once.<br /><span className="brand-text">Post forever.</span>
             </h1>
             <p style={{ ...heroSub, margin: '0 0 32px', textAlign: 'left' }} className="fade-up">
-              ScaleSolo writes posts in your voice, films them with your AI avatar, and ships them to TikTok, Instagram, YouTube, X, and LinkedIn — on the cadence you set, without you ever opening the app again.
+              Drop a topic. Pick a proven workflow. Walk away with finished posts — written, rendered, and scheduled to every platform.
             </p>
             <div style={{ ...heroCtas, justifyContent: 'flex-start' }} className="fade-up hero-ctas">
               <button onClick={goSignup} className="btn-primary" style={ctaSizing}>
@@ -181,27 +181,24 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* Angled gradient separator above features */}
+      <div aria-hidden className="feat-separator" />
+
       {/* ── FEATURES ────────────────────────────────────────────────── */}
       <section id="features" style={section} className="fade-up">
         <h2 style={sectionH}>Everything you need to ship daily</h2>
         <p style={sectionSub}>One workspace for the whole content engine — write, render, schedule, ship.</p>
         <div className="feat-grid">
-          <FeatureCard num="1" eyebrow="Viral templates" title="Topic in. 7 finished posts out." body="Drop a topic, pick a template. Get a full week of platform-ready posts, written and queued.">
-            <TemplatesMock />
-          </FeatureCard>
-          <FeatureCard num="2" eyebrow="Brand-voice writer" title="Writes in your voice, not robot." body="Tuned on your hooks and cadence so every caption sounds like you wrote it on a good day.">
-            <WriterMock />
-          </FeatureCard>
-          <FeatureCard num="3" eyebrow="Repurpose" title="One idea, every channel." body="TikTok → tweet. Podcast → blog. YouTube → carousel. Reformat across surfaces with one click.">
-            <RepurposeMock />
-          </FeatureCard>
-          <FeatureCard num="4" eyebrow="AI avatar" title="Faceless video on autopilot." body="Train an avatar from one selfie. Renders that ship — without you ever opening a camera app.">
+          <FeatureCard num="1" eyebrow="Realistic avatars" title="Faceless video on autopilot." body="Train an AI avatar from one selfie. Cycle outfits across runs so every render ships looking fresh.">
             <AvatarMock />
           </FeatureCard>
-          <FeatureCard num="5" eyebrow="Cross-posting" title="Post everywhere. For free." body="Native publishing to 9+ platforms. No per-post fee, no third-party scheduler tax.">
-            <PlatformsMock />
+          <FeatureCard num="2" eyebrow="Brand profiles" title="One workspace, many brands." body="Each brand keeps its own voice, cadence, platforms, and avatar. Switch profiles, never cross-pollinate.">
+            <BrandProfilesMock />
           </FeatureCard>
-          <FeatureCard num="6" eyebrow="Calendar" title="Consistency on autopilot." body="Schedule the whole week in one sitting. Drag-and-drop calendar that respects your timezone.">
+          <FeatureCard num="3" eyebrow="Spaces" title="Drag, drop, run forever." body="A visual canvas to wire script → render → schedule. Set it up once, hit run, walk away.">
+            <SpacesMock />
+          </FeatureCard>
+          <FeatureCard num="4" eyebrow="Schedule" title="Consistency on autopilot." body="Pick the cadence. ScaleSolo finds the next open slot per platform and ships on time, every time.">
             <CalendarMock />
           </FeatureCard>
         </div>
@@ -533,42 +530,6 @@ function FeatureCard({ num, eyebrow, title, body, children }) {
   )
 }
 
-function TemplatesMock() {
-  return (
-    <div className="mock-templates">
-      {Array.from({ length: 7 }).map((_, i) => <div key={i} className="phone" />)}
-    </div>
-  )
-}
-
-function WriterMock() {
-  return (
-    <div className="mock-writer">
-      <div className="bar" />
-      <div className="bar short" />
-      <div className="bar gradient" />
-    </div>
-  )
-}
-
-function RepurposeMock() {
-  return (
-    <div className="mock-repurpose">
-      <div className="source">SOURCE</div>
-      <svg viewBox="0 0 100 100" preserveAspectRatio="none">
-        <path d="M 28 50 C 50 50, 60 22, 78 22" />
-        <path d="M 28 50 C 50 50, 60 50, 78 50" />
-        <path d="M 28 50 C 50 50, 60 78, 78 78" />
-      </svg>
-      <div className="targets">
-        <div className="target">X</div>
-        <div className="target">IG</div>
-        <div className="target">LI</div>
-      </div>
-    </div>
-  )
-}
-
 function AvatarMock() {
   return (
     <div className="mock-avatar">
@@ -579,11 +540,41 @@ function AvatarMock() {
   )
 }
 
-function PlatformsMock() {
-  const tags = ['X', 'IG', 'LI', 'TT', 'YT', 'TH', 'FB', 'BS']
+function BrandProfilesMock() {
+  // 3 stacked brand cards, fanned, each with its own accent.
   return (
-    <div className="mock-platforms">
-      {tags.map((t) => <div key={t} className="pill">{t}</div>)}
+    <div className="mock-brands">
+      <div className="brand-card brand-c">
+        <div className="brand-dot" />
+        <div className="brand-lines"><span /><span /></div>
+      </div>
+      <div className="brand-card brand-b">
+        <div className="brand-dot" />
+        <div className="brand-lines"><span /><span /></div>
+      </div>
+      <div className="brand-card brand-a">
+        <div className="brand-dot" />
+        <div className="brand-lines"><span /><span /></div>
+      </div>
+    </div>
+  )
+}
+
+function SpacesMock() {
+  // Canvas-style: 3 nodes connected by an edge with a moving dot.
+  return (
+    <div className="mock-spaces">
+      <svg viewBox="0 0 200 100" preserveAspectRatio="none">
+        <path id="spaces-path" d="M 28 50 L 100 28 L 172 50" />
+        <circle r="3" className="flow-dot">
+          <animateMotion dur="2.4s" repeatCount="indefinite">
+            <mpath href="#spaces-path" />
+          </animateMotion>
+        </circle>
+      </svg>
+      <div className="node n1"><span /><span /></div>
+      <div className="node n2"><span /><span /></div>
+      <div className="node n3"><span /><span /></div>
     </div>
   )
 }
