@@ -510,12 +510,22 @@ a:focus-visible {
 /* ── Stack-replaced section ──────────────────────────────────────────── */
 .kill-grid {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+  flex-wrap: nowrap;
   gap: 12px;
-  margin: 32px 0;
+  margin: 32px -24px;
+  padding: 4px 24px 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(239,68,68,0.45) transparent;
 }
-.kill-card { flex: 0 1 220px; min-width: 180px; }
+.kill-grid::-webkit-scrollbar { height: 6px; }
+.kill-grid::-webkit-scrollbar-track { background: transparent; }
+.kill-grid::-webkit-scrollbar-thumb { background: rgba(239,68,68,0.45); border-radius: 999px; }
+.kill-grid::-webkit-scrollbar-thumb:hover { background: rgba(239,68,68,0.7); }
+.kill-card { flex: 0 0 220px; min-width: 220px; scroll-snap-align: start; }
 .kill-card {
   position: relative;
   padding: 16px 16px 14px;
