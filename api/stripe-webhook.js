@@ -540,15 +540,11 @@ export default async function handler(req) {
     await routeEvent(event)
   } catch (err) {
     handlerError = err.message || String(err)
-    console.error('stripe-webhook routeEvent failed:', event.type, event.id, handlerError)
-    // Best-effort Sentry capture. Imported dynamically because this
-    // file runs on Edge runtime; the @sentry/node SDK is a Node-only
-    // import and would fail to load in some Edge contexts. Wrap
-    // defensively so a Sentry hiccup never blocks the webhook.
-    try {
-      const { captureApiError } = await import('./_lib/sentry.js')
-      captureApiError(err, { route: 'stripe-webhook', extra: { event_type: event.type, event_id: event.id } })
-    } catch {}
+    // This file runs on Edge runtime; @sentry/node won't bundle here,
+    // so we rely on Vercel logs + Stripe's own retry mechanism. Every
+    // failed event row also stays unprocessed in stripe_events with
+    // an `error` column populated — query for those to reconcile.
+    console.error('stripe-webhook routeEvent failed:', event.type, event.id, handlerError, err?.stack)
   }
 
   // Always record the attempt (success or failure). Failure rows have
