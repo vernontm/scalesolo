@@ -204,6 +204,35 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ── SCHEDULE-POST FEATURE SHOWCASE ──────────────────────────── */}
+      <section style={section} className="fade-up">
+        <div className="showcase-grid">
+          <div className="showcase-copy">
+            <div className="feat-eyebrow">One-click scheduling</div>
+            <h2 className="showcase-title">Queue a week in 60 seconds.</h2>
+            <p className="showcase-body">
+              Drop your script, pick the slot, and ScaleSolo handles the rest — caption, hashtags,
+              first-comment, watermark, and platform-specific formatting. Then it ships at the time
+              your audience is actually online.
+            </p>
+            <ul className="showcase-list">
+              <li><Check size={14} /> Native publishing to TikTok, IG, YouTube, X, LinkedIn, Threads, FB</li>
+              <li><Check size={14} /> Per-platform captions, hashtags, and first-comment</li>
+              <li><Check size={14} /> Auto-finds the next open slot on your posting schedule</li>
+              <li><Check size={14} /> Recycle high-performers on a cadence you control</li>
+            </ul>
+          </div>
+          <div className="showcase-img-wrap">
+            <img
+              src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/schedule_post.png"
+              alt="ScaleSolo schedule-post feature"
+              className="showcase-img"
+              onError={(e) => { e.currentTarget.style.opacity = '0' }}
+            />
+          </div>
+        </div>
+      </section>
+
       {/* ── PRICING ─────────────────────────────────────────────────── */}
       <section id="pricing" style={{ ...section, position: 'relative' }} className="fade-up">
         <div aria-hidden style={{ ...sectionAura, top: '40%', left: '50%', transform: 'translate(-50%, -50%)', width: 720, height: 480, opacity: 0.55 }} />
