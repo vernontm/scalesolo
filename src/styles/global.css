@@ -509,11 +509,13 @@ a:focus-visible {
 
 /* ── Stack-replaced section ──────────────────────────────────────────── */
 .kill-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 12px;
-  margin: 32px 0 32px;
+  margin: 32px 0;
 }
+.kill-card { flex: 0 1 220px; min-width: 180px; }
 .kill-card {
   position: relative;
   padding: 16px 16px 14px;
