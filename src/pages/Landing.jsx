@@ -151,7 +151,7 @@ export default function Landing() {
         <div style={heroGrid} className="hero-grid">
           <div style={heroCopy} className="hero-copy">
             <h1 style={{ ...heroH1, textAlign: 'left' }} className="fade-up">
-              Launch your faceless brand.<br /><span className="brand-text">Run it on autopilot.</span>
+              Launch your faceless brand in minutes.<br /><span className="brand-text">Run it on autopilot.</span>
             </h1>
             <p style={{ ...heroSub, margin: '0 0 32px', textAlign: 'left' }} className="fade-up">
               ScaleSolo is the first AI platform that builds a faceless brand for you and runs it forever. Pick a workflow, plug in your voice and avatar, and ScaleSolo writes, films, and ships content to every platform on its own. No camera. No editor. No daily grind.
