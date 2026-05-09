@@ -17,6 +17,7 @@ import {
   ZoomIn, ZoomOut, Maximize, Scissors, Download, X, History, Clock,
   CheckCircle2, XCircle, Square, Settings as SettingsIcon, Copy, Building2,
   BookOpen, ChevronLeft, ChevronRight, Lock, Globe, Bookmark, FileVideo,
+  ShieldCheck,
 } from 'lucide-react'
 import { useRef } from 'react'
 // (useEffect already imported above for other effects in this file)
@@ -1059,7 +1060,7 @@ function FloatingPalette({ onAdd }) {
 // Builder
 
 function SpaceBuilder({ space, onSave, onClose }) {
-  const { session } = useAuth()
+  const { session, isAdmin } = useAuth()
   const { selectedProfileId, profiles } = useProfile()
   const { refresh: refreshCredits } = useCredits()
 
@@ -2328,6 +2329,47 @@ function SpaceBuilder({ space, onSave, onClose }) {
         >
           {savingAsTemplate ? <span className="spinner" /> : <Bookmark size={13} />} Save as template
         </button>
+        {isAdmin && (
+          <button
+            className="btn-ghost"
+            onClick={async () => {
+              if (!spaceIdRef.current) {
+                setError('Save the space first before promoting it to a public template.')
+                return
+              }
+              const tplName = window.prompt('Public template name (shown to every user):', `${name || 'Workflow'} template`)
+              if (!tplName) return
+              const summary = window.prompt('Short description for the gallery card (optional):', '') || ''
+              setSavingAsTemplate(true)
+              try {
+                const r = await fetch('/api/admin/templates', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+                  body: JSON.stringify({
+                    source_id: spaceIdRef.current,
+                    name: tplName,
+                    summary: summary || null,
+                    guide: templateGuide || null,
+                    plan_gate: [],     // free for everyone by default; admin can edit later
+                    sort_order: 100,
+                  }),
+                })
+                const body = await r.json()
+                if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
+                toast?.success?.('Promoted to public template — manage in /admin/templates') || toast?.('Promoted to public template')
+              } catch (e) {
+                setError(e.message)
+              } finally {
+                setSavingAsTemplate(false)
+              }
+            }}
+            disabled={savingAsTemplate}
+            title="Admin only — promote this workflow to a public template visible in every user's gallery."
+            style={{ padding: '6px 10px', borderColor: 'rgba(46,204,113,0.4)', color: '#2ecc71' }}
+          >
+            <ShieldCheck size={13} /> Save as public template
+          </button>
+        )}
         {templateGuide && guideHidden && (
           <button
             className="btn-ghost"
@@ -2533,7 +2575,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
 // Page
 
 export default function Spaces() {
-  const { session } = useAuth()
+  const { session, isAdmin } = useAuth()
   const { selectedProfileId, profiles } = useProfile()
   const [spaces, setSpaces] = useState([])
   const [editing, setEditing] = useState(null)
