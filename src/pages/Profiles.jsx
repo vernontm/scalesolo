@@ -251,6 +251,23 @@ function ProfileEditor({ profile, onClose, onSaved }) {
         </div>
 
         <div style={{ marginTop: 14 }}>
+          <Field label={
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              Brand call-to-action
+              <span className="pill pill-muted" style={{ marginLeft: 6 }}>Auto-fills first comment on posts</span>
+            </span>
+          }>
+            <textarea
+              className="textarea"
+              style={{ minHeight: 70, width: '100%' }}
+              value={form.brand_cta || ''}
+              onChange={(e) => set('brand_cta', e.target.value)}
+              placeholder={`e.g. Free workflow library → scalesolo.ai/free`}
+            />
+          </Field>
+        </div>
+
+        <div style={{ marginTop: 14 }}>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>
             Posting schedule
           </div>

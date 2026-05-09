@@ -1206,6 +1206,23 @@ function PromptHighlightField({ textareaRef, value, placeholder, minHeight, onCh
   )
 }
 
+// Starter prompts — picked to be one-tap useful for the most common faceless
+// brand workflows (UGC product shots, lifestyle, before/after, quote tile,
+// etc.). The user can edit before running. @brand pulls the active brand
+// profile's bible+colors+logo through the mention system.
+const IMAGE_GEN_TEMPLATES = [
+  { id: 'product-hero',     label: 'Product hero shot',         prompt: 'High-end product photography of @brand product on a clean studio backdrop. Soft directional lighting from the upper left, gentle shadow on the right. Centered composition, shallow depth of field, photorealistic, 35mm. No text overlays.' },
+  { id: 'ugc-lifestyle',    label: 'UGC lifestyle / in-use',    prompt: 'Authentic UGC-style smartphone photo of someone using @brand product in a real home setting. Natural window light, slight motion blur, slightly desaturated. Looks unposed and trustworthy. No watermark, no text.' },
+  { id: 'flat-lay',         label: 'Flat lay (overhead)',       prompt: 'Top-down flat lay of @brand product surrounded by complementary props in @brand colors. Even soft daylight, clean background, copy space in upper third for headline. Editorial, magazine-quality.' },
+  { id: 'before-after',     label: 'Before / after split',      prompt: 'Side-by-side before/after image. Left side shows the problem (dull, cluttered, frustrated). Right side shows the @brand product solving it (bright, clean, satisfying). Subtle vertical divider down the center.' },
+  { id: 'quote-tile',       label: 'Quote / text tile',         prompt: 'A bold typographic social tile in @brand colors. Centered short headline (3-7 words). Large display sans-serif, generous whitespace. Subtle texture or gradient background. Designed for 1:1 or 4:5 feed.' },
+  { id: 'meme-relatable',   label: 'Relatable meme tile',       prompt: 'A relatable, slightly humorous social tile aimed at @brand audience. Simple two-panel layout with a punchy short caption (under 12 words) on top, illustrative photo on the bottom. Clean, modern, mobile-first.' },
+  { id: 'list-carousel',    label: 'Carousel cover (list)',     prompt: 'Carousel cover for a "5 ways to ___" listicle from @brand. Big number "5" on the left, short headline on the right, secondary "swipe →" hint at bottom right. Brand colors, strong typographic hierarchy.' },
+  { id: 'avatar-portrait',  label: 'Avatar / spokesperson',     prompt: 'Studio portrait of a friendly spokesperson for @brand. Eye-level, sharp focus on face, soft seamless background in @brand color. Looking directly at camera, slight smile. Shoulders up, color-graded warm.' },
+  { id: 'minimal-banner',   label: 'Minimal banner / cover',    prompt: 'A minimalist cover banner for @brand. Single hero element centered, oceans of whitespace, mono-tonal palette in @brand colors. Cinematic 16:9 framing, subtle film grain.' },
+  { id: 'announcement',     label: 'Announcement / launch',     prompt: 'Bold launch announcement social tile for @brand. Large headline "Now live" or "Coming soon" stacked on the left, product mock or hero photo on the right. Energetic gradient background using @brand colors. Crisp, modern, mobile-first.' },
+]
+
 function ImageGenBody({ data, onPatch }) {
   const out = data.output
   const imgs = Array.isArray(out?.images) ? out.images : (out?.image_url ? [{ url: out.image_url }] : [])
@@ -1259,6 +1276,26 @@ function ImageGenBody({ data, onPatch }) {
         )}
       </div>
 
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
+        <select
+          value=""
+          onChange={(e) => {
+            const tpl = IMAGE_GEN_TEMPLATES.find((t) => t.id === e.target.value)
+            if (!tpl) return
+            const cur = (data.props?.prompt || '').trim()
+            const next = cur ? `${cur}\n\n${tpl.prompt}` : tpl.prompt
+            onPatch({ prompt: next })
+            e.target.value = ''
+          }}
+          style={{ ...pillSelect, fontSize: 10.5 }}
+          title="Insert a starter prompt"
+        >
+          <option value="">Starter prompts ▾</option>
+          {IMAGE_GEN_TEMPLATES.map((t) => (
+            <option key={t.id} value={t.id}>{t.label}</option>
+          ))}
+        </select>
+      </div>
       <MentionPrompt
         value={data.props?.prompt || ''}
         onChange={(v) => onPatch({ prompt: v })}
@@ -5041,12 +5078,10 @@ ${String(script).slice(0, 2000)}
           caption: caption || null,
           hashtags: hashtags || null,
           script: script || null,
-          // Prefer the AI-generated first_comment from caption_gen.
-          // Falls back to hashtags so Instagram-style "drop hashtags in
-          // the first comment" workflows still publish something useful
-          // when first_comment is empty (e.g. an older caption_gen run
-          // that hadn't generated this field yet).
-          first_comment: firstComment || hashtags || null,
+          // Prefer the AI-generated first_comment from caption_gen, fall
+          // back to the brand profile's CTA (so every post gets a
+          // consistent call-to-action), then to hashtags as a last resort.
+          first_comment: firstComment || (data._ctxBrandCTA || '').trim() || hashtags || null,
           scheduling_mode: schedulingMode,
           scheduled_iso: scheduledIso,
           timezone: data.props?.timezone || undefined,

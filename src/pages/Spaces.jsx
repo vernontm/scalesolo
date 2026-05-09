@@ -325,7 +325,7 @@ function SpaceNode({ id, data, selected }) {
 // can actually edit. We just need "did anything user-meaningful change".
 function propsHashShort(p) {
   if (!p || typeof p !== 'object') return ''
-  const skip = new Set(['_ctxAvatars', '_ctxPublicAvatars', '_ctxProfiles', '_ctxNamedImages', '_ctxCostPerRun', '_ctxProfileId', '_ctxSyncedPlatforms', '_ctxDetectedKind', '_ctxUpstreamVideoUrl', '_ctxUpstreamScript', '_ctxUpstreamLogoUrl', '_ctxConnectedPlatforms', '_ctxBrandSchedule', '_ctxIncomingDescriptionLength'])
+  const skip = new Set(['_ctxAvatars', '_ctxPublicAvatars', '_ctxProfiles', '_ctxNamedImages', '_ctxCostPerRun', '_ctxProfileId', '_ctxSyncedPlatforms', '_ctxDetectedKind', '_ctxUpstreamVideoUrl', '_ctxUpstreamScript', '_ctxUpstreamLogoUrl', '_ctxConnectedPlatforms', '_ctxBrandSchedule', '_ctxBrandCTA', '_ctxIncomingDescriptionLength'])
   const parts = []
   for (const k of Object.keys(p).sort()) {
     if (skip.has(k)) continue
@@ -2291,6 +2291,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
             timezone: activeProfile.timezone,
             posting_schedule: activeProfile.posting_schedule,
           } : null,
+          _ctxBrandCTA: activeProfile?.brand_cta || '',
           _ctxIncomingDescriptionLength: descLen,
         } }
       }
