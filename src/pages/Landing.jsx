@@ -149,13 +149,6 @@ export default function Landing() {
 
         <div style={heroGrid} className="hero-grid">
           <div style={heroCopy} className="hero-copy">
-            <div className="fade-up" style={{ animationDelay: '40ms' }}>
-              <div style={{ ...eyebrowWrap, justifyContent: 'flex-start' }} className="eyebrow-wrap">
-                <span style={eyebrow}>
-                  <Sparkles size={11} strokeWidth={2.5} /> 9 steps to a content engine that never stops
-                </span>
-              </div>
-            </div>
             <h1 style={{ ...heroH1, textAlign: 'left' }} className="fade-up">
               Set up once.<br /><span className="brand-text">Post forever.</span>
             </h1>
