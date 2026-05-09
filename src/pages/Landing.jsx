@@ -632,7 +632,6 @@ const page = {
   minHeight: '100vh',
   fontFamily: 'var(--font-body, system-ui, sans-serif)',
   position: 'relative',
-  overflowX: 'hidden',
 }
 
 const particleField = {
