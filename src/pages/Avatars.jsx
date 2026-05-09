@@ -657,7 +657,9 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
               <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
                 No renders yet. Hit "New render" to generate one.
               </div>
-            ) : renders.map((r) => (
+            ) : (
+            <div style={{ maxHeight: 480, overflowY: 'auto', paddingRight: 4 }}>
+            {renders.map((r) => (
               <div key={r.id} style={{
                 display: 'flex', alignItems: 'center', gap: 12,
                 padding: '10px 12px', marginBottom: 8,
@@ -688,6 +690,8 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
                 )}
               </div>
             ))}
+            </div>
+            )}
           </div>
         </div>
 
@@ -760,7 +764,7 @@ function AvatarList({ avatars, models, onCreate, onOpen }) {
                 {a.photo_url || a.thumbnail_url ? (
                   <img src={a.photo_url || a.thumbnail_url} alt={a.name} style={{ width: '100%', height: 200, objectFit: 'cover' }} />
                 ) : (
-                  <div style={{ width: '100%', height: 200, background: 'var(--surface-2)', display: 'grid', placeItems: 'center', color: 'var(--muted)' }}>
+                  <div style={{ width: '100%', height: 200, background: 'var(--surface-2)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: 40, color: 'var(--muted)' }}>
                     <UserCircle2 size={48} />
                   </div>
                 )}

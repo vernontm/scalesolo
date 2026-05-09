@@ -202,9 +202,42 @@ function ProfileEditor({ profile, onClose, onSaved }) {
 
         <div style={{ marginTop: 14 }}>
           <Field label={
-            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              Brand bible
-              <span className="pill pill-muted" style={{ marginLeft: 6 }}><Sparkles size={10} /> Embedded for AI CEO</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'space-between', width: '100%' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                Brand bible
+                <span className="pill pill-muted" style={{ marginLeft: 6 }}><Sparkles size={10} /> Embedded for AI CEO</span>
+              </span>
+              <label
+                className="btn-secondary"
+                style={{ fontSize: 11.5, padding: '4px 10px', cursor: 'pointer' }}
+                title="Upload a .txt or .md file to fill this field"
+              >
+                Upload file
+                <input
+                  type="file"
+                  accept=".txt,.md,text/plain,text/markdown"
+                  style={{ display: 'none' }}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0]
+                    if (!file) return
+                    if (file.size > 1_000_000) {
+                      alert('File too large. Max 1MB. For PDFs/DOCX, paste the text instead.')
+                      e.target.value = ''
+                      return
+                    }
+                    try {
+                      const text = await file.text()
+                      const existing = form.brand_bible || ''
+                      const next = existing.trim() ? `${existing}\n\n${text}` : text
+                      set('brand_bible', next)
+                    } catch (err) {
+                      alert('Could not read file: ' + (err?.message || err))
+                    } finally {
+                      e.target.value = ''
+                    }
+                  }}
+                />
+              </label>
             </span>
           }>
             <textarea

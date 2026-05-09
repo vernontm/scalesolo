@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Library as LibraryIcon, Download, Play, Image as ImageIcon, Search, X } from 'lucide-react'
+import { Library as LibraryIcon, Download, Play, Image as ImageIcon, Search, X, Trash2, CheckSquare, Square } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 
@@ -39,6 +39,44 @@ export default function LibraryPage() {
   const [kind, setKind] = useState('all')
   const [q, setQ] = useState('')
   const [previewItem, setPreviewItem] = useState(null)
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState(() => new Set())
+  const [deleting, setDeleting] = useState(false)
+
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+  const clearSelection = () => setSelectedIds(new Set())
+  const exitSelectMode = () => { setSelectMode(false); clearSelection() }
+
+  const deleteSelected = async () => {
+    if (!session?.access_token || selectedIds.size === 0) return
+    const n = selectedIds.size
+    if (!window.confirm(`Delete ${n} asset${n === 1 ? '' : 's'}? This can't be undone.`)) return
+    setDeleting(true)
+    const ids = Array.from(selectedIds)
+    const failed = []
+    for (const id of ids) {
+      try {
+        const r = await fetch(`/api/content?id=${id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        })
+        if (!r.ok && r.status !== 204) failed.push(id)
+      } catch {
+        failed.push(id)
+      }
+    }
+    setItems((prev) => (prev || []).filter((it) => !ids.includes(it.id) || failed.includes(it.id)))
+    setSelectedIds(new Set(failed))
+    setDeleting(false)
+    if (failed.length) setError(`${failed.length} asset${failed.length === 1 ? '' : 's'} could not be deleted.`)
+    else exitSelectMode()
+  }
 
   useEffect(() => {
     if (!session?.access_token || !selectedProfileId) return
@@ -102,6 +140,47 @@ export default function LibraryPage() {
       </div>
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 18, alignItems: 'center' }}>
+        {selectMode ? (
+          <>
+            <button
+              onClick={exitSelectMode}
+              style={{ ...selectStyle, cursor: 'pointer' }}
+            >Cancel</button>
+            <button
+              onClick={() => {
+                if (!filtered) return
+                const allIds = filtered.map((it) => it.id)
+                const allSelected = allIds.length > 0 && allIds.every((id) => selectedIds.has(id))
+                setSelectedIds(allSelected ? new Set() : new Set(allIds))
+              }}
+              style={{ ...selectStyle, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
+              {filtered && filtered.length > 0 && filtered.every((it) => selectedIds.has(it.id))
+                ? <><CheckSquare size={13} /> Deselect all</>
+                : <><Square size={13} /> Select all</>}
+            </button>
+            <button
+              onClick={deleteSelected}
+              disabled={deleting || selectedIds.size === 0}
+              style={{
+                padding: '8px 12px', borderRadius: 8, fontSize: 13, fontFamily: 'inherit',
+                background: 'var(--red)', color: '#fff', border: 'none',
+                cursor: (deleting || selectedIds.size === 0) ? 'not-allowed' : 'pointer',
+                opacity: (deleting || selectedIds.size === 0) ? 0.6 : 1,
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+              }}
+            >
+              <Trash2 size={13} /> Delete {selectedIds.size > 0 ? `(${selectedIds.size})` : ''}
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={() => setSelectMode(true)}
+            style={{ ...selectStyle, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <CheckSquare size={13} /> Select
+          </button>
+        )}
         <div style={{ position: 'relative', flex: '1 1 240px', maxWidth: 360 }}>
           <Search size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
           <input
@@ -149,12 +228,17 @@ export default function LibraryPage() {
           {filtered.map((it) => {
             const url = it.media_urls?.[0]
             const isVideo = (it.media_type || 'image') === 'video'
+            const isSelected = selectedIds.has(it.id)
             return (
               <div
                 key={it.id}
-                onClick={() => setPreviewItem({ url, type: isVideo ? 'video' : 'image', item: it })}
+                onClick={() => {
+                  if (selectMode) toggleSelect(it.id)
+                  else setPreviewItem({ url, type: isVideo ? 'video' : 'image', item: it })
+                }}
                 style={{
-                  background: 'var(--surface)', border: '1px solid var(--border)',
+                  background: 'var(--surface)',
+                  border: isSelected ? '2px solid var(--red)' : '1px solid var(--border)',
                   borderRadius: 12, overflow: 'hidden', cursor: 'pointer',
                   display: 'flex', flexDirection: 'column',
                   transition: 'transform 120ms ease, box-shadow 120ms ease',
@@ -163,6 +247,20 @@ export default function LibraryPage() {
                 onMouseLeave={(e) => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = '' }}
               >
                 <div style={{ position: 'relative', aspectRatio: '9/16', background: '#000' }}>
+                  {selectMode && (
+                    <div
+                      onClick={(e) => { e.stopPropagation(); toggleSelect(it.id) }}
+                      style={{
+                        position: 'absolute', top: 8, left: 8, zIndex: 2,
+                        width: 26, height: 26, borderRadius: 6,
+                        background: isSelected ? 'var(--red)' : 'rgba(0,0,0,0.55)',
+                        color: '#fff', display: 'grid', placeItems: 'center',
+                        cursor: 'pointer', backdropFilter: 'blur(4px)',
+                      }}
+                    >
+                      {isSelected ? <CheckSquare size={14} /> : <Square size={14} />}
+                    </div>
+                  )}
                   {isVideo ? (
                     <>
                       <video src={url} autoPlay loop muted playsInline preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
