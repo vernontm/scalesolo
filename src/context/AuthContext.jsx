@@ -42,7 +42,14 @@ export function AuthProvider({ children }) {
     supabase.auth.signUp({
       email,
       password,
-      options: { data: meta || {} },
+      options: {
+        data: meta || {},
+        // Pin the post-confirmation redirect to this exact origin so the
+        // confirm-email link always lands somewhere this SPA can handle.
+        // Whatever origin must also be whitelisted in Supabase → Auth →
+        // URL Configuration → Redirect URLs.
+        emailRedirectTo: typeof window !== 'undefined' ? `${window.location.origin}/auth/callback` : undefined,
+      },
     })
 
   const signOut = () => supabase.auth.signOut()

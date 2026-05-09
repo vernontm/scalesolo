@@ -21,6 +21,7 @@ import LandingPublic from './pages/LandingPublic.jsx'
 import Spaces from './pages/Spaces.jsx'
 import Library from './pages/Library.jsx'
 import Landing from './pages/Landing.jsx'
+import AuthCallback from './pages/AuthCallback.jsx'
 import FormPublic from './pages/FormPublic.jsx'
 import GlobalAgent from './components/GlobalAgent.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
@@ -117,6 +118,7 @@ function AppShell() {
         <Header onOpenSidebar={() => setMobileOpen(true)} />
         <main style={contentStyle}>
           <Routes>
+            <Route path="/auth/callback" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/spaces"    element={<Spaces />} />
             <Route path="/schedule"  element={<Content />} />
@@ -157,6 +159,7 @@ export default function App() {
           <Route path="/" element={<Landing />} />
           <Route path="/pricing" element={<Pricing />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/auth/callback" element={<AuthCallback />} />
           <Route path="/f/:slug" element={<FormPublic />} />
           <Route path="/p/:slug" element={<LandingPublic />} />
           <Route path="*" element={<Login />} />
