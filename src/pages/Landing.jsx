@@ -82,6 +82,19 @@ export default function Landing() {
   const nav = useNavigate()
   const goSignup = () => nav('/login')
 
+  // Capture affiliate ref code from ?ref=… and stash in localStorage so
+  // it survives the round-trip to email-confirmation. Auth context
+  // attributes it to the user post-signup.
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search)
+      const ref = params.get('ref')
+      if (ref && /^[a-z0-9_-]{2,64}$/i.test(ref)) {
+        localStorage.setItem('scalesolo.ref', ref.toLowerCase())
+      }
+    } catch {}
+  }, [])
+
   // Persona-driven canvas morphing. When the user clicks a card in
   // <UseCaseGrid />, we (a) scroll back up to the canvas section and
   // (b) hand the persona down to <WorkflowDemo /> which dims the

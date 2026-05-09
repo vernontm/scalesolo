@@ -19,6 +19,7 @@ import {
   LogOut,
   ShieldCheck,
   LayoutGrid,
+  Gift,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 
@@ -62,6 +63,7 @@ const navGroups = [
     items: [
       { to: '/profiles', label: 'Brand profiles', icon: Building2 },
       { to: '/billing',  label: 'Billing',        icon: CreditCard },
+      { to: '/affiliate', label: 'Affiliate',     icon: Gift },
       { to: '/settings', label: 'Settings',       icon: Settings },
     ],
   },

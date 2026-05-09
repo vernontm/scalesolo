@@ -101,6 +101,76 @@ async function findCustomerRowByStripeId(stripeCustomerId) {
   return rows?.[0] || null
 }
 
+// ── Affiliate commissions ──────────────────────────────────────────────────
+// Tier rates kept in sync with api/_lib/affiliate.js — duplicated here
+// because the webhook runs in Edge runtime and the shared helper isn't
+// edge-safe (it imports the node supabase helper).
+const AFFILIATE_RATE_BY_TIER = { starter: 0.20, pro: 0.35, elite: 0.50 }
+
+async function recordAffiliateCommission(invoice) {
+  if (!invoice?.id) return
+  const amountPaid = Number(invoice.amount_paid) || 0
+  if (amountPaid <= 0) return
+  // Subscription invoices only — one-off topups don't earn affiliate
+  // commission (same convention most affiliate programs use).
+  if (!invoice.subscription) return
+
+  // Idempotency: never log the same invoice twice.
+  const dup = await supa(
+    `affiliate_commissions?stripe_invoice_id=eq.${encodeURIComponent(invoice.id)}&select=id`
+  ).catch(() => [])
+  if (dup?.length) return
+
+  // Resolve referred user_id via billing_customers → user_id, then
+  // affiliate_referrals.
+  const customerRow = await findCustomerRowByStripeId(invoice.customer)
+  const userId = customerRow?.user_id
+  if (!userId) return
+
+  const refs = await supa(
+    `affiliate_referrals?referred_user_id=eq.${userId}&select=id,affiliate_id,first_paid_at`
+  ).catch(() => [])
+  const ref = refs?.[0]
+  if (!ref) return
+
+  const affRows = await supa(
+    `affiliates?id=eq.${ref.affiliate_id}&select=tier,status`
+  ).catch(() => [])
+  const aff = affRows?.[0]
+  if (!aff || aff.status !== 'approved') return  // Only approved affiliates earn
+
+  const rate = AFFILIATE_RATE_BY_TIER[aff.tier] ?? AFFILIATE_RATE_BY_TIER.starter
+  const commissionCents = Math.round(amountPaid * rate)
+  if (commissionCents <= 0) return
+
+  await supa('affiliate_commissions', {
+    method: 'POST',
+    body: [{
+      affiliate_id: ref.affiliate_id,
+      referral_id: ref.id,
+      stripe_invoice_id: invoice.id,
+      stripe_customer_id: invoice.customer,
+      gross_amount_cents: amountPaid,
+      commission_rate: rate,
+      commission_cents: commissionCents,
+      currency: (invoice.currency || 'usd').toLowerCase(),
+      status: 'pending',
+      invoice_paid_at: new Date((invoice.status_transitions?.paid_at || invoice.created || Date.now() / 1000) * 1000).toISOString(),
+    }],
+    prefer: 'return=minimal',
+  })
+
+  // Stamp first_paid_at on the referral so admin tier-promotion logic
+  // can count paying referrals without re-querying invoices.
+  if (!ref.first_paid_at) {
+    await supa(`affiliate_referrals?id=eq.${ref.id}`, {
+      method: 'PATCH',
+      body: { first_paid_at: new Date().toISOString() },
+      prefer: 'return=minimal',
+    }).catch(() => {})
+  }
+}
+
 // Resolve the email we should notify. Prefer the canonical email on
 // auth.users; fall back to billing_customers.email (the value Stripe
 // gave us at checkout) which is normally the same anyway.
@@ -349,6 +419,14 @@ async function routeEvent(event) {
       if (subId) {
         const sub = await stripeGet(`/subscriptions/${subId}`)
         await upsertSubscription(sub, event.type)
+      }
+      // Affiliate: every paid invoice from a referred user generates a
+      // commission row. Logged independently of the upsert so a logging
+      // failure doesn't break the rest of the webhook.
+      if (event.type === 'invoice.payment_succeeded') {
+        try { await recordAffiliateCommission(invoice) } catch (e) {
+          console.warn('affiliate commission record failed:', e?.message || e)
+        }
       }
       // Also send a payment-failure notice on a failed invoice — gives
       // the user a chance to update their card before Stripe's retries

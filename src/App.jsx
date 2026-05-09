@@ -7,6 +7,7 @@ import Login from './pages/Login.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Placeholder from './pages/Placeholder.jsx'
 import Settings from './pages/Settings.jsx'
+import Affiliate from './pages/Affiliate.jsx'
 import Pricing from './pages/Pricing.jsx'
 import Billing from './pages/Billing.jsx'
 import Agent from './pages/Agent.jsx'
@@ -129,6 +130,7 @@ function AppShell() {
             <Route path="/profiles"  element={<Profiles />} />
             <Route path="/billing"   element={<Billing />} />
             <Route path="/settings"  element={<Settings />} />
+            <Route path="/affiliate" element={<Affiliate />} />
             {/* Beta-gated routes. The pages still mount when reached
                 directly (?beta=1 stickies the localStorage flag the
                 sidebar reads) so existing deep links keep working —

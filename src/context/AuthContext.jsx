@@ -40,6 +40,25 @@ export function AuthProvider({ children }) {
       setSession(newSession)
       setLoading(false)
       refreshAdminFlag(newSession?.user?.id)
+      // Affiliate attribution: if the visitor arrived via ?ref=… on the
+      // landing page, attribute the freshly-signed-in user to that
+      // affiliate. The endpoint is idempotent (refuses to overwrite an
+      // existing attribution) so calling on every SIGNED_IN is safe.
+      try {
+        if (newSession?.access_token) {
+          const ref = localStorage.getItem('scalesolo.ref')
+          if (ref) {
+            fetch('/api/affiliate/attribute', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${newSession.access_token}` },
+              body: JSON.stringify({ code: ref }),
+            })
+              .then((r) => r.json().catch(() => ({})))
+              .then((b) => { if (b?.attributed || b?.error) localStorage.removeItem('scalesolo.ref') })
+              .catch(() => {})
+          }
+        }
+      } catch {}
     })
 
     return () => {

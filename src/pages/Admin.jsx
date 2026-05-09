@@ -1,10 +1,11 @@
 import { useEffect } from 'react'
 import { Link, Routes, Route, useNavigate } from 'react-router-dom'
-import { ShieldCheck, LayoutGrid, ArrowRight, Activity, Users } from 'lucide-react'
+import { ShieldCheck, LayoutGrid, ArrowRight, Activity, Users, Sparkles } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import AdminTemplates from './AdminTemplates.jsx'
 import AdminUsage from './AdminUsage.jsx'
 import AdminUsers from './AdminUsers.jsx'
+import AdminAffiliates from './AdminAffiliates.jsx'
 
 // Admin home + nested admin routes. The Sidebar only shows the link to
 // admins, but we also gate at the route level so a non-admin who guesses
@@ -41,6 +42,12 @@ const cards = [
     body: 'Search accounts, send password resets, comp credits. Stripe subscription + coupon flows live in the Stripe dashboard.',
     Icon: Users,
   },
+  {
+    to: '/admin/affiliates',
+    title: 'Affiliates',
+    body: 'Approve applications, promote tier (Starter / Pro / Elite), and record manual PayPal payouts.',
+    Icon: Sparkles,
+  },
 ]
 
 function AdminHome() {
@@ -75,6 +82,7 @@ export default function Admin() {
         <Route path="/templates" element={<AdminTemplates />} />
         <Route path="/usage" element={<AdminUsage />} />
         <Route path="/users" element={<AdminUsers />} />
+        <Route path="/affiliates" element={<AdminAffiliates />} />
       </Routes>
     </AdminGate>
   )
