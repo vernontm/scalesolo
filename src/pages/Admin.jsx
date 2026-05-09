@@ -1,8 +1,9 @@
 import { useEffect } from 'react'
 import { Link, Routes, Route, useNavigate } from 'react-router-dom'
-import { ShieldCheck, LayoutGrid, ArrowRight } from 'lucide-react'
+import { ShieldCheck, LayoutGrid, ArrowRight, Activity } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import AdminTemplates from './AdminTemplates.jsx'
+import AdminUsage from './AdminUsage.jsx'
 
 // Admin home + nested admin routes. The Sidebar only shows the link to
 // admins, but we also gate at the route level so a non-admin who guesses
@@ -26,6 +27,12 @@ const cards = [
     title: 'Space templates',
     body: 'Create, edit, and gate global Spaces templates that users can clone as a starting point for their own canvases.',
     Icon: LayoutGrid,
+  },
+  {
+    to: '/admin/usage',
+    title: 'Usage & cost',
+    body: 'Credit consumption breakdown by action and user across 24h / 7d / 30d windows. Spot the actions eating the bulk of cost.',
+    Icon: Activity,
   },
 ]
 
@@ -59,6 +66,7 @@ export default function Admin() {
       <Routes>
         <Route path="/" element={<AdminHome />} />
         <Route path="/templates" element={<AdminTemplates />} />
+        <Route path="/usage" element={<AdminUsage />} />
       </Routes>
     </AdminGate>
   )
