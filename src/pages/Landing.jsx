@@ -154,7 +154,7 @@ export default function Landing() {
               Launch your faceless brand in minutes.<br /><span className="brand-text">Run it on autopilot.</span>
             </h1>
             <p style={{ ...heroSub, margin: '0 0 32px', textAlign: 'left' }} className="fade-up">
-              ScaleSolo is the first AI platform that builds a faceless brand for you and runs it forever. Pick a workflow, plug in your voice and avatar, and ScaleSolo writes, films, and ships content to every platform on its own. No camera. No editor. No daily grind.
+              ScaleSolo is the first AI platform that builds a faceless brand for you and runs it on autopilot. Pick a workflow, plug in your voice and avatar, and ScaleSolo writes, films, and ships content to every platform on its own. No camera. No editor. No daily grind.
             </p>
             <div style={{ ...heroCtas, justifyContent: 'flex-start' }} className="fade-up hero-ctas">
               <button onClick={goSignup} className="btn-primary" style={ctaSizing}>
