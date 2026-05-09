@@ -144,7 +144,11 @@ export const generateVideoV3 = ({ avatarId, voiceId, script, audioUrl, modelKey 
   }
   if (audioUrl) {
     // Lip-sync to a user-provided audio file; bypass HeyGen's TTS.
-    body.voice = { type: 'audio', audio_url: audioUrl }
+    // HeyGen V3 expects audio_url at the ROOT of the body (alongside
+    // script/voice_id/audio_asset_id) — not inside a "voice" sub-object.
+    // Putting it in body.voice triggers "Value error, An audio source
+    // is required" because the validator only checks the root.
+    body.audio_url = audioUrl
   } else {
     body.script = script
     body.voice_id = voiceId
