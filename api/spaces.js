@@ -64,7 +64,7 @@ export default async function handler(req, res) {
         const filter =
           `or=(template_visibility.eq.public,and(template_visibility.eq.private,created_by.eq.${auth.user.id}))`
         const rows = await supaFetch(
-          `spaces?is_template=eq.true&${filter}&order=template_sort_order.asc,template_visibility.asc,updated_at.desc&select=id,name,description,template_summary,template_visibility,template_guide,template_plan_gate,template_sort_order,nodes,edges,created_by,updated_at`
+          `spaces?is_template=eq.true&${filter}&order=template_sort_order.asc,template_visibility.asc,updated_at.desc&select=id,name,description,template_summary,template_visibility,template_guide,template_plan_gate,template_sort_order,template_category,nodes,edges,created_by,updated_at`
         )
         return res.status(200).json({ templates: rows || [] })
       }
@@ -91,7 +91,7 @@ export default async function handler(req, res) {
         // Hide template rows from the per-profile list so the user's "spaces"
         // tab stays clean even if they save private templates anchored to a
         // brand. The Templates tab is the one place templates surface.
-        `spaces?profile_id=eq.${profileId}&is_template=is.false&order=updated_at.desc&select=id,name,description,updated_at,created_at`
+        `spaces?profile_id=eq.${profileId}&is_template=is.false&order=updated_at.desc&select=id,name,description,updated_at,created_at,is_template,template_category,nodes,edges`
       )
       return res.status(200).json({ spaces: rows || [] })
     }
@@ -219,6 +219,11 @@ export default async function handler(req, res) {
         const crossProfile = src.profile_id !== targetProfileId
         const cleanedNodes = scrubNodes(src.nodes, { crossProfile, isFromTemplate: false })
 
+        // Duplicating a TEMPLATE always produces a regular workflow,
+        // never another template — explicitly clear the template fields
+        // so admins can copy a template into their own gallery without
+        // accidentally cloning the template metadata too. Editing the
+        // resulting workflow doesn't affect the original template row.
         const created = await supaFetch('spaces', {
           method: 'POST',
           body: {
@@ -227,6 +232,13 @@ export default async function handler(req, res) {
             description: src.description || null,
             nodes: cleanedNodes,
             edges: src.edges || [],
+            is_template: false,
+            template_visibility: null,
+            template_summary: null,
+            template_guide: null,
+            template_plan_gate: null,
+            template_sort_order: null,
+            template_category: null,
           },
         })
         const space = Array.isArray(created) ? created[0] : created

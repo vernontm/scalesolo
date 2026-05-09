@@ -27,7 +27,7 @@ function normalizeGate(input) {
 }
 
 const TEMPLATE_FIELDS =
-  'id,profile_id,name,description,template_visibility,template_summary,template_guide,template_plan_gate,template_sort_order,nodes,edges,is_template,created_by,created_at,updated_at'
+  'id,profile_id,name,description,template_visibility,template_summary,template_guide,template_plan_gate,template_sort_order,template_category,nodes,edges,is_template,created_by,created_at,updated_at'
 
 export default async function handler(req, res) {
   setCors(req, res)
@@ -62,6 +62,7 @@ export default async function handler(req, res) {
         if (body.guide !== undefined) patch.template_guide = body.guide || null
         if (body.plan_gate !== undefined) patch.template_plan_gate = normalizeGate(body.plan_gate)
         if (body.sort_order !== undefined) patch.template_sort_order = Math.max(0, Math.min(9999, Number(body.sort_order) || 100))
+        if (body.category !== undefined) patch.template_category = body.category ? String(body.category).slice(0, 60) : null
         const updated = await supaFetch(`spaces?id=eq.${id}`, { method: 'PATCH', body: patch })
         return res.status(200).json({ template: Array.isArray(updated) ? updated[0] : updated })
       }
@@ -90,6 +91,7 @@ export default async function handler(req, res) {
           template_guide: body.guide ?? src.template_guide ?? null,
           template_plan_gate: normalizeGate(body.plan_gate),
           template_sort_order: Math.max(0, Math.min(9999, Number(body.sort_order) || 100)),
+          template_category: body.category ? String(body.category).slice(0, 60) : null,
           created_by: auth.user.id,
         },
       })
@@ -115,6 +117,7 @@ export default async function handler(req, res) {
       }
       if (body.plan_gate !== undefined) patch.template_plan_gate = normalizeGate(body.plan_gate)
       if (body.sort_order !== undefined) patch.template_sort_order = Math.max(0, Math.min(9999, Number(body.sort_order) || 100))
+      if (body.category !== undefined) patch.template_category = body.category ? String(body.category).slice(0, 60) : null
 
       if (!Object.keys(patch).length) return res.status(400).json({ error: 'No editable fields in body' })
       const updated = await supaFetch(`spaces?id=eq.${id}`, { method: 'PATCH', body: patch })

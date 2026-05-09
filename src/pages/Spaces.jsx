@@ -565,6 +565,7 @@ function NewSpaceModal({ profileId, token, onClose, onPicked }) {
   const [error, setError] = useState(null)
   const [userTier, setUserTier] = useState(null)
   const [upsellTpl, setUpsellTpl] = useState(null)
+  const [categoryFilter, setCategoryFilter] = useState('all')
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -630,8 +631,15 @@ function NewSpaceModal({ profileId, token, onClose, onPicked }) {
     if (sa !== sb) return sa - sb
     return new Date(b.updated_at || 0) - new Date(a.updated_at || 0)
   }
-  const publicTemplates  = (templates || []).filter((t) => t.template_visibility === 'public').sort(tplSort)
-  const privateTemplates = (templates || []).filter((t) => t.template_visibility === 'private').sort(tplSort)
+  const filterByCategory = (list) => categoryFilter === 'all'
+    ? list
+    : list.filter((t) => (t.template_category || '') === categoryFilter)
+  const publicTemplates  = filterByCategory((templates || []).filter((t) => t.template_visibility === 'public')).sort(tplSort)
+  const privateTemplates = filterByCategory((templates || []).filter((t) => t.template_visibility === 'private')).sort(tplSort)
+  // Distinct categories (across all visible templates) for the filter row.
+  const allCategories = Array.from(new Set(
+    (templates || []).filter((t) => t.template_category).map((t) => t.template_category)
+  )).sort()
 
   return (
     <div className="modal-overlay" onClick={busy ? undefined : onClose}>
@@ -667,6 +675,27 @@ function NewSpaceModal({ profileId, token, onClose, onPicked }) {
         <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>
           Start from a template
         </div>
+        {allCategories.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+            {[{ k: 'all', l: `All (${(templates || []).length})` }, ...allCategories.map((c) => ({ k: c, l: c }))].map((opt) => (
+              <button
+                key={opt.k}
+                type="button"
+                onClick={() => setCategoryFilter(opt.k)}
+                style={{
+                  fontSize: 11.5, padding: '5px 10px', borderRadius: 999,
+                  fontWeight: 600,
+                  background: categoryFilter === opt.k ? 'rgba(239,68,68,0.18)' : 'var(--surface-2)',
+                  border: `1px solid ${categoryFilter === opt.k ? 'rgba(239,68,68,0.5)' : 'var(--border)'}`,
+                  color: categoryFilter === opt.k ? 'var(--text)' : 'var(--text-soft)',
+                  cursor: 'pointer',
+                }}
+              >
+                {opt.l}
+              </button>
+            ))}
+          </div>
+        )}
         {templates === null ? (
           <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)' }}><span className="spinner" /></div>
         ) : (templates.length === 0 ? (
@@ -708,8 +737,17 @@ function NewSpaceModal({ profileId, token, onClose, onPicked }) {
                             : <Lock size={15} style={{ color: 'var(--muted)' }} />}
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                           {tpl.name}
+                          {tpl.template_category && (
+                            <span style={{
+                              fontSize: 9.5, fontWeight: 700, letterSpacing: '0.04em',
+                              padding: '2px 7px', borderRadius: 999,
+                              background: 'rgba(245,158,11,0.16)', color: '#fbbf24',
+                              border: '1px solid rgba(245,158,11,0.28)',
+                              textTransform: 'uppercase',
+                            }}>{tpl.template_category}</span>
+                          )}
                           {gated && (
                             <span style={{
                               fontSize: 9.5, fontWeight: 700, letterSpacing: '0.08em',
@@ -916,6 +954,102 @@ function SpaceCreditsPill() {
   )
 }
 
+// Small SVG thumbnail of a space's node graph. Reads node positions
+// from each node's React Flow {x,y} and draws nodes as rounded rects
+// + edges as thin connectors. The dot pattern + edge fades echo the
+// canvas styling so the card reads as a miniature of the workflow.
+function WorkflowPreview({ nodes, edges, width = 268, height = 110 }) {
+  const arr = Array.isArray(nodes) ? nodes.filter((n) => n?.position) : []
+  if (arr.length === 0) {
+    return (
+      <div style={{
+        width: '100%', height,
+        background: 'var(--surface-2)',
+        border: '1px solid var(--border)',
+        borderRadius: 10,
+        display: 'grid', placeItems: 'center',
+        fontSize: 11, color: 'var(--muted)',
+        marginBottom: 10,
+      }}>Empty workflow</div>
+    )
+  }
+  const NW = 70, NH = 30   // intrinsic node size in canvas coords (matches SpaceNode width:280, plus generous height)
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const n of arr) {
+    minX = Math.min(minX, n.position.x)
+    minY = Math.min(minY, n.position.y)
+    maxX = Math.max(maxX, n.position.x + NW)
+    maxY = Math.max(maxY, n.position.y + NH)
+  }
+  const pad = 6
+  const w = Math.max(1, maxX - minX) + pad * 2
+  const h = Math.max(1, maxY - minY) + pad * 2
+  const scale = Math.min(width / w, height / h)
+  const translateX = -minX + pad
+  const translateY = -minY + pad
+  const nodeColor = (type) => {
+    // Match the major-category palette so the thumbnail hints at flow shape.
+    if (/avatar/.test(type))                    return '#60a5fa'
+    if (/script|caption/.test(type))            return '#a855f7'
+    if (/image/.test(type))                     return '#a855f7'
+    if (/video|polish|combine|captions/.test(type)) return '#0ea5e9'
+    if (/schedule|save|library/.test(type))     return '#2ecc71'
+    if (/auto_run/.test(type))                  return '#f59e0b'
+    if (/upload/.test(type))                    return '#ef4444'
+    return '#9ca3af'
+  }
+  const nodeById = new Map(arr.map((n) => [n.id, n]))
+  return (
+    <div style={{
+      width: '100%', height, marginBottom: 10, overflow: 'hidden',
+      background: 'var(--surface-2)',
+      border: '1px solid var(--border)',
+      borderRadius: 10,
+      position: 'relative',
+    }}>
+      <svg
+        width="100%" height="100%"
+        viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio="xMidYMid meet"
+        style={{ display: 'block' }}
+      >
+        <g transform={`translate(${(width - w * scale) / 2}, ${(height - h * scale) / 2}) scale(${scale}) translate(${translateX}, ${translateY})`}>
+          {/* Edges first (under nodes). Drawn from source-right to target-left. */}
+          {(edges || []).map((e) => {
+            const a = nodeById.get(e.source)
+            const b = nodeById.get(e.target)
+            if (!a || !b) return null
+            const x1 = a.position.x + NW
+            const y1 = a.position.y + NH / 2
+            const x2 = b.position.x
+            const y2 = b.position.y + NH / 2
+            return <path key={e.id || `${e.source}-${e.target}`} d={`M ${x1} ${y1} C ${(x1 + x2) / 2} ${y1} ${(x1 + x2) / 2} ${y2} ${x2} ${y2}`} stroke="rgba(239,68,68,0.55)" strokeWidth={1.4} fill="none" />
+          })}
+          {arr.map((n) => (
+            <rect
+              key={n.id}
+              x={n.position.x}
+              y={n.position.y}
+              width={NW}
+              height={NH}
+              rx={5}
+              fill={nodeColor(n?.data?.type || '')}
+              fillOpacity={0.85}
+              stroke="rgba(255,255,255,0.08)"
+              strokeWidth={0.8}
+            />
+          ))}
+        </g>
+      </svg>
+      <div style={{
+        position: 'absolute', bottom: 4, right: 6,
+        fontSize: 9.5, color: 'var(--muted)',
+        fontFamily: 'var(--font-mono, monospace)', letterSpacing: '0.04em',
+      }}>{arr.length} nodes</div>
+    </div>
+  )
+}
+
 function SpacesList({ spaces, onCreate, onOpen, onDelete, onHistory, onDuplicate, error }) {
   return (
     <div className="fade-up">
@@ -944,8 +1078,26 @@ function SpacesList({ spaces, onCreate, onOpen, onDelete, onHistory, onDuplicate
               style={{ cursor: 'pointer' }}
               onClick={() => onOpen(s)}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+              <WorkflowPreview nodes={s.nodes} edges={s.edges} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
                 <Boxes size={16} style={{ color: 'var(--red)' }} />
+                {s.is_template && (
+                  <span style={{
+                    fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 9.5,
+                    letterSpacing: '0.08em', textTransform: 'uppercase',
+                    padding: '2px 7px', borderRadius: 999,
+                    background: 'rgba(46,204,113,0.16)', color: '#2ecc71',
+                    border: '1px solid rgba(46,204,113,0.4)',
+                  }}>Template</span>
+                )}
+                {s.template_category && (
+                  <span style={{
+                    fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 9.5,
+                    letterSpacing: '0.04em',
+                    padding: '2px 7px', borderRadius: 999,
+                    background: 'rgba(99,102,241,0.16)', color: '#a5b4fc',
+                  }}>{s.template_category}</span>
+                )}
               </div>
               <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15, marginBottom: 4 }}>{s.name}</div>
               <div style={{ fontSize: 12, color: 'var(--muted)' }}>Updated {new Date(s.updated_at).toLocaleDateString()}</div>

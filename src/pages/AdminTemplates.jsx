@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { LayoutGrid, Plus, Pencil, Trash2, Globe, Lock, X, Loader2, ArrowUpRight, Save } from 'lucide-react'
+import { LayoutGrid, Plus, Pencil, Trash2, Globe, Lock, X, Loader2, ArrowUpRight, Save, Sparkles, RefreshCw } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { supabase } from '../lib/supabase'
 
@@ -33,6 +33,7 @@ export default function AdminTemplates() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [editing, setEditing] = useState(null)  // template object being edited
+  const [categoryFilter, setCategoryFilter] = useState('all')
 
   const refresh = useCallback(async () => {
     setLoading(true); setError(null)
@@ -85,6 +86,31 @@ export default function AdminTemplates() {
 
       {error && <div style={errorBanner}>{error}</div>}
 
+      {templates.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+          {(() => {
+            const cats = Array.from(new Set(templates.map((t) => t.template_category).filter(Boolean))).sort()
+            const opts = [{ key: 'all', label: `All (${templates.length})` }, ...cats.map((c) => ({ key: c, label: c }))]
+            return opts.map((o) => (
+              <button
+                key={o.key}
+                type="button"
+                onClick={() => setCategoryFilter(o.key)}
+                style={{
+                  ...pillBtnStyle,
+                  padding: '6px 12px', fontSize: 11.5,
+                  background: categoryFilter === o.key ? 'rgba(239,68,68,0.18)' : 'var(--surface-2)',
+                  borderColor: categoryFilter === o.key ? 'rgba(239,68,68,0.5)' : 'var(--border)',
+                  color: categoryFilter === o.key ? 'var(--text)' : 'var(--text-soft)',
+                }}
+              >
+                {o.label}
+              </button>
+            ))
+          })()}
+        </div>
+      )}
+
       {templates.length === 0 && !error ? (
         <div style={emptyCard}>
           <div style={cardTitle}>No templates yet</div>
@@ -95,7 +121,9 @@ export default function AdminTemplates() {
         </div>
       ) : (
         <div style={grid}>
-          {templates.map((t) => (
+          {templates
+            .filter((t) => categoryFilter === 'all' || (t.template_category || '') === categoryFilter)
+            .map((t) => (
             <div key={t.id} style={card}>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10 }}>
                 <div style={{
@@ -112,6 +140,7 @@ export default function AdminTemplates() {
                   <div style={cardTitle}>{t.name}</div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
                     <span style={visibilityPill(t.template_visibility)}>{t.template_visibility}</span>
+                    {t.template_category && <span style={categoryPill}>{t.template_category}</span>}
                     {Array.isArray(t.template_plan_gate) && t.template_plan_gate.length > 0 ? (
                       t.template_plan_gate.map((tier) => (
                         <span key={tier} style={tierPill}>{TIERS.find((x) => x.key === tier)?.label || tier}</span>
@@ -160,7 +189,9 @@ function EditDrawer({ template, onClose, onSaved }) {
   const [visibility, setVisibility] = useState(template.template_visibility || 'private')
   const [sortOrder, setSortOrder] = useState(template.template_sort_order ?? 100)
   const [planGate, setPlanGate] = useState(Array.isArray(template.template_plan_gate) ? [...template.template_plan_gate] : [])
+  const [category, setCategory] = useState(template.template_category || '')
   const [busy, setBusy] = useState(false)
+  const [genBusy, setGenBusy] = useState(false)
   const [err, setErr] = useState(null)
 
   function toggleTier(tier) {
@@ -178,6 +209,7 @@ function EditDrawer({ template, onClose, onSaved }) {
           visibility,
           plan_gate: planGate,
           sort_order: Number(sortOrder),
+          category: category.trim() || null,
         }),
       })
       const body = await r.json()
@@ -187,6 +219,22 @@ function EditDrawer({ template, onClose, onSaved }) {
       setErr(e.message)
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function autoDescribe() {
+    setGenBusy(true); setErr(null)
+    try {
+      const r = await authedFetch(`/api/admin/templates-describe?id=${encodeURIComponent(template.id)}`, {
+        method: 'POST',
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body?.error || `Generate failed (${r.status})`)
+      if (body.summary) setSummary(body.summary)
+    } catch (e) {
+      setErr(e.message)
+    } finally {
+      setGenBusy(false)
     }
   }
 
@@ -207,8 +255,27 @@ function EditDrawer({ template, onClose, onSaved }) {
         <Field label="Name">
           <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={200} />
         </Field>
+        <Field label="Category (e.g. Avatars, Podcast, Product)">
+          <input className="input" value={category} onChange={(e) => setCategory(e.target.value)} maxLength={60} placeholder="Optional. Used as a filter chip in the user-facing picker." />
+        </Field>
         <Field label="Summary (shown on the gallery card)">
           <textarea className="input" value={summary} onChange={(e) => setSummary(e.target.value)} rows={3} maxLength={600} />
+          <div style={{ marginTop: 6 }}>
+            <button
+              type="button"
+              onClick={autoDescribe}
+              disabled={genBusy}
+              style={{
+                ...iconBtnStyle,
+                background: 'rgba(168,85,247,0.10)',
+                borderColor: 'rgba(168,85,247,0.4)',
+                color: '#c4b5fd',
+              }}
+              title="Auto-generate a summary by reading the workflow's nodes"
+            >
+              {genBusy ? <Loader2 size={12} className="spin" /> : <Sparkles size={12} />} Auto-generate description
+            </button>
+          </div>
         </Field>
 
         <Field label="Visibility">
@@ -338,6 +405,13 @@ const tierPill = {
   letterSpacing: '0.04em',
   padding: '2px 7px', borderRadius: 999,
   background: 'rgba(99,102,241,0.16)', color: '#a5b4fc',
+}
+const categoryPill = {
+  fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 9.5,
+  letterSpacing: '0.04em', textTransform: 'uppercase',
+  padding: '2px 7px', borderRadius: 999,
+  background: 'rgba(245,158,11,0.16)', color: '#fbbf24',
+  border: '1px solid rgba(245,158,11,0.28)',
 }
 const freePill = {
   fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 9.5,

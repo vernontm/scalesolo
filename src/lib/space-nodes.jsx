@@ -1522,6 +1522,12 @@ function AutoRunBody({ data, onPatch }) {
   const active = !!data.props?.active
   const lastRun = data.props?.last_run_at
   const remaining = Math.max(0, maxRuns - runsUsed)
+  // Draft string for the max-runs input so the user can transiently
+  // clear it while typing (e.g. backspace from "10" → "" → "5").
+  // The previous controlled-value path snapped empty back to 1 on every
+  // keystroke, which prevented clearing the field at all.
+  const [maxRunsDraft, setMaxRunsDraft] = useState(String(maxRuns))
+  useEffect(() => { setMaxRunsDraft(String(maxRuns)) }, [maxRuns])
 
   const opt = AUTORUN_OPTIONS.find((o) => o.id === cadence) || AUTORUN_OPTIONS[2]
   const estPerRun = Number(data?._ctxCostPerRun ?? 0)
@@ -1557,10 +1563,26 @@ function AutoRunBody({ data, onPatch }) {
           max={1000}
           step={1}
           style={tinyInput}
-          value={maxRuns}
+          value={maxRunsDraft}
           onChange={(e) => {
-            const n = parseInt(e.target.value, 10)
-            onPatch({ max_runs: Number.isFinite(n) ? Math.max(1, Math.min(1000, n)) : 1 })
+            const v = e.target.value
+            setMaxRunsDraft(v)
+            // Empty / mid-edit: don't commit anything yet so the field
+            // stays clearable. We snap to a valid number on blur.
+            if (v === '') return
+            const n = parseInt(v, 10)
+            if (Number.isFinite(n)) {
+              onPatch({ max_runs: Math.max(1, Math.min(1000, n)) })
+            }
+          }}
+          onBlur={() => {
+            const n = parseInt(maxRunsDraft, 10)
+            if (!Number.isFinite(n) || n < 1) {
+              // Empty or invalid on commit → snap to current value or 1.
+              const fallback = Number.isFinite(maxRuns) && maxRuns >= 1 ? maxRuns : 1
+              setMaxRunsDraft(String(fallback))
+              if (fallback !== maxRuns) onPatch({ max_runs: fallback })
+            }
           }}
           disabled={active}
         />
