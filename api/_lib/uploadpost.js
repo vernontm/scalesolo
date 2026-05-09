@@ -91,6 +91,20 @@ export async function uploadpostGenerateJwt(username, opts = {}) {
   })
 }
 
+// Cancel a scheduled Upload-Post job. Fails soft on 404 (already fired or
+// never existed) so callers can use this in cascade-delete paths without
+// blocking the local delete.
+export async function uploadpostCancelScheduled(jobId) {
+  if (!jobId) return { ok: false, reason: 'no_job_id' }
+  try {
+    await uploadpost(`/api/uploadposts/schedule/${encodeURIComponent(jobId)}`, { method: 'DELETE' })
+    return { ok: true }
+  } catch (e) {
+    if (e.status === 404) return { ok: false, reason: 'not_found', status: 404 }
+    return { ok: false, reason: e.message, status: e.status }
+  }
+}
+
 // Idempotent: returns the profile (creates first if missing).
 export async function uploadpostEnsureUserProfile(username) {
   try {

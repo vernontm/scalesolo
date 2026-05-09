@@ -12,6 +12,7 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from './_lib/supabase.js'
 import { findNextOpenSlot, syncContentStatusInSpaces } from './_lib/scheduling.js'
+import { uploadpostCancelScheduled } from './_lib/uploadpost.js'
 
 const ALLOWED = new Set([
   'title','hook','full_script','series_name','caption','hashtags','first_comment',
@@ -171,10 +172,24 @@ export default async function handler(req, res) {
     if (req.method === 'DELETE') {
       const id = req.query.id
       if (!id) return res.status(400).json({ error: 'id required' })
-      const rows = await supaFetch(`content_scripts?id=eq.${id}&select=profile_id`)
-      const profileId = rows?.[0]?.profile_id
+      const rows = await supaFetch(`content_scripts?id=eq.${id}&select=profile_id,status,uploadpost_request_id`)
+      const row = rows?.[0]
+      const profileId = row?.profile_id
       if (!profileId) return res.status(404).json({ error: 'Not found' })
       await assertProfileAccess(auth.user.id, profileId)
+      // Cascade-cancel the Upload-Post job before dropping the local row, so a
+      // deleted-in-app post doesn't keep firing on the schedule. Best-effort:
+      // 404s (already fired / never existed) don't block the local delete.
+      if (row.status === 'scheduled' && row.uploadpost_request_id) {
+        try {
+          const result = await uploadpostCancelScheduled(row.uploadpost_request_id)
+          if (!result.ok && result.status !== 404) {
+            console.warn('upload-post cancel failed:', row.uploadpost_request_id, result.reason)
+          }
+        } catch (e) {
+          console.warn('upload-post cancel threw:', e.message)
+        }
+      }
       await supaFetch(`content_scripts?id=eq.${id}`, { method: 'DELETE', prefer: 'return=minimal' })
       // Mark collection items as deleted so they reflect in the canvas.
       syncContentStatusInSpaces(profileId, id, 'deleted').catch(() => {})
