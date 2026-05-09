@@ -7,7 +7,7 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { generateVideoV2, generateVideoV3, MODELS, videoUnitsForModel, listLooksForGroup } from '../_lib/heygen.js'
-import { synthesizeToPublicUrl, looksLikeElevenLabsVoiceId } from '../_lib/elevenlabs.js'
+import { synthesizeToPublicUrl, looksLikeElevenLabsVoiceId, resolveByoApiKey } from '../_lib/elevenlabs.js'
 
 function estimateDurationSecs(script) {
   const words = (script || '').trim().split(/\s+/).filter(Boolean).length
@@ -137,10 +137,24 @@ export default async function handler(req, res) {
 
     if (!resolvedAudioUrl && elevenLabsVoice && script) {
       try {
-        resolvedAudioUrl = await synthesizeToPublicUrl(elevenLabsVoice, script, avatar.profile_id)
+        // BYOK avatars resolve voices under the user's own ElevenLabs
+        // key, not ours. avatar.voice_owner = 'byok' flips the lookup.
+        let apiKey = null
+        if (avatar.voice_owner === 'byok') {
+          apiKey = await resolveByoApiKey(avatar.profile_id)
+          if (!apiKey) {
+            return res.status(401).json({
+              error: 'This avatar uses a voice from your own ElevenLabs workspace, but the API key for this brand profile isn\'t connected. Connect it under Avatar → Choose voice → Connect ElevenLabs.',
+            })
+          }
+        }
+        resolvedAudioUrl = await synthesizeToPublicUrl(
+          elevenLabsVoice, script, avatar.profile_id,
+          apiKey ? { apiKey } : undefined,
+        )
       } catch (e) {
         return res.status(502).json({
-          error: `ElevenLabs TTS failed: ${e.message}. Check ELEVENLABS_API_KEY and that voice "${elevenLabsVoice}" exists in your ElevenLabs account.`,
+          error: `ElevenLabs TTS failed: ${e.message}. Check that voice "${elevenLabsVoice}" exists in the ${avatar.voice_owner === 'byok' ? "user's connected" : 'shared'} ElevenLabs workspace.`,
         })
       }
     } else if (!resolvedAudioUrl) {

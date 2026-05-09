@@ -9,7 +9,7 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { createPhotoAvatarV3, generateVideoV3, MODELS, videoUnitsForModel } from '../_lib/heygen.js'
-import { synthesizeToPublicUrl, looksLikeElevenLabsVoiceId } from '../_lib/elevenlabs.js'
+import { synthesizeToPublicUrl, looksLikeElevenLabsVoiceId, resolveByoApiKey } from '../_lib/elevenlabs.js'
 
 function estimateDurationSecs(script) {
   const words = (script || '').trim().split(/\s+/).filter(Boolean).length
@@ -64,20 +64,38 @@ export default async function handler(req, res) {
 
     if (!resolvedAudioUrl) {
       const explicitElevenLabs = voice_id && looksLikeElevenLabsVoiceId(voice_id)
+      let voiceOwner = 'shared'  // 'shared' = master key; 'byok' = user's key
       if (avatar_id) {
         try {
-          const aRows = await supaFetch(`avatars?id=eq.${avatar_id}&select=elevenlabs_voice_id`)
+          const aRows = await supaFetch(`avatars?id=eq.${avatar_id}&select=elevenlabs_voice_id,voice_owner`)
           elevenLabsVoice = aRows?.[0]?.elevenlabs_voice_id || null
+          voiceOwner = aRows?.[0]?.voice_owner || 'shared'
         } catch {}
       }
       if (!elevenLabsVoice && explicitElevenLabs) elevenLabsVoice = voice_id
 
       if (elevenLabsVoice && script) {
         try {
-          resolvedAudioUrl = await synthesizeToPublicUrl(elevenLabsVoice, script, profile_id)
+          // BYOK voices need the user's own key. We do a defensive
+          // fallback: if their key is missing/invalid, fall back to
+          // the master key (which works for shared library voices but
+          // would 404 a BYOK voice — surfaced cleanly in the catch).
+          let apiKey = null
+          if (voiceOwner === 'byok') {
+            apiKey = await resolveByoApiKey(profile_id)
+            if (!apiKey) {
+              return res.status(401).json({
+                error: 'This avatar uses a voice from your own ElevenLabs workspace, but the API key for this brand profile isn\'t connected. Connect it under Avatar → Choose voice → Connect ElevenLabs.',
+              })
+            }
+          }
+          resolvedAudioUrl = await synthesizeToPublicUrl(
+            elevenLabsVoice, script, profile_id,
+            apiKey ? { apiKey } : undefined,
+          )
         } catch (e) {
           return res.status(502).json({
-            error: `ElevenLabs TTS failed: ${e.message}. Check ELEVENLABS_API_KEY and that voice "${elevenLabsVoice}" exists in your ElevenLabs account.`,
+            error: `ElevenLabs TTS failed: ${e.message}. Check that voice "${elevenLabsVoice}" exists in the ${voiceOwner === 'byok' ? "user's connected" : 'shared'} ElevenLabs workspace.`,
           })
         }
       } else {

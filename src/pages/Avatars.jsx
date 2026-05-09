@@ -710,7 +710,12 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
             avatar={avatar}
             session={session}
             profileId={selectedProfileId}
-            onChange={(voiceId) => updateAvatar({ elevenlabs_voice_id: voiceId || null })}
+            onChange={(voiceId, voiceOwner) =>
+              updateAvatar({
+                elevenlabs_voice_id: voiceId || null,
+                voice_owner: voiceOwner || (voiceId ? 'shared' : 'shared'),
+              })
+            }
           />
 
           <button className="btn-ghost" style={{ color: 'var(--red)', width: '100%', justifyContent: 'center' }} onClick={deleteAvatar}>
@@ -742,7 +747,11 @@ function AvatarVoiceSection({ avatar, session, profileId, onChange }) {
       const r = await fetch('/api/voices/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ voice_id: avatar.elevenlabs_voice_id, profile_id: profileId }),
+        body: JSON.stringify({
+          voice_id: avatar.elevenlabs_voice_id,
+          profile_id: profileId,
+          byok: avatar.voice_owner === 'byok',
+        }),
       })
       const body = await r.json()
       if (!r.ok) throw new Error(body.error || 'Preview failed')
@@ -782,11 +791,21 @@ function AvatarVoiceSection({ avatar, session, profileId, onChange }) {
       }}>
         {avatar.elevenlabs_voice_id ? (
           <>
-            <div style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-soft)' }}>
-              {avatar.elevenlabs_voice_id}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-soft)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                {avatar.elevenlabs_voice_id}
+              </div>
+              <span style={{
+                fontSize: 9.5, fontWeight: 700, padding: '1px 6px', borderRadius: 999,
+                background: avatar.voice_owner === 'byok' ? 'rgba(168,85,247,0.16)' : 'rgba(46,204,113,0.16)',
+                color: avatar.voice_owner === 'byok' ? '#a78bfa' : '#2ecc71',
+                letterSpacing: '0.04em', textTransform: 'uppercase',
+              }}>{avatar.voice_owner === 'byok' ? 'Your account' : 'Shared'}</span>
             </div>
             <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
-              Used as the default voice for renders.
+              {avatar.voice_owner === 'byok'
+                ? 'Resolves under your connected ElevenLabs key.'
+                : 'Used as the default voice for renders.'}
             </div>
           </>
         ) : (
@@ -832,31 +851,72 @@ function AvatarVoiceSection({ avatar, session, profileId, onChange }) {
 function VoicePickerModal({ session, profileId, currentVoiceId, onPick, onClose }) {
   const [tab, setTab] = useState('library')   // 'library' | 'mine' | 'clone' | 'paste'
   const [shared, setShared] = useState(null)   // null = loading
-  const [cloned, setCloned] = useState(null)
+  const [byokVoices, setByokVoices] = useState(null)
+  const [byokStatus, setByokStatus] = useState(null)  // { connected, last4, connected_at }
   const [error, setError] = useState(null)
   const [q, setQ] = useState('')
   const [previewingId, setPreviewingId] = useState(null)
   const audioRef = useRef(null)
 
-  const refresh = async () => {
-    if (!session?.access_token) return
-    setError(null); setShared(null); setCloned(null)
+  const loadShared = async () => {
+    setShared(null)
     try {
       const r = await fetch('/api/voices/library', {
         headers: { Authorization: `Bearer ${session.access_token}` },
       })
       const body = await r.json()
-      if (!r.ok) throw new Error(body.error || 'Failed to load voices')
+      if (!r.ok) throw new Error(body.error || 'Failed to load shared voices')
       setShared(body.shared || [])
-      setCloned(body.cloned || [])
-    } catch (e) {
-      setError(e.message)
-      setShared([]); setCloned([])
-    }
+    } catch (e) { setError(e.message); setShared([]) }
   }
-  useEffect(() => { refresh() /* eslint-disable-next-line */ }, [session?.access_token])
 
-  const playPreview = async (voice) => {
+  const loadByokStatus = async () => {
+    if (!profileId) { setByokStatus({ connected: false }); return }
+    try {
+      const r = await fetch(`/api/voices/byok?profile_id=${profileId}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      const body = await r.json()
+      setByokStatus({ connected: !!body.connected, last4: body.last4, connected_at: body.connected_at })
+    } catch (e) { setByokStatus({ connected: false }) }
+  }
+
+  const loadByokVoices = async () => {
+    if (!profileId) return
+    setByokVoices(null)
+    try {
+      const r = await fetch(`/api/voices/library?byo=1&profile_id=${profileId}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      const body = await r.json()
+      if (r.status === 401 && body.code === 'byok_not_connected') {
+        setByokVoices([])
+        return
+      }
+      if (!r.ok) throw new Error(body.error || 'Failed to load BYOK voices')
+      setByokVoices(body.byok || [])
+    } catch (e) { setError(e.message); setByokVoices([]) }
+  }
+
+  // Initial loads
+  useEffect(() => {
+    if (!session?.access_token) return
+    setError(null)
+    loadShared()
+    loadByokStatus()
+    /* eslint-disable-next-line */
+  }, [session?.access_token, profileId])
+
+  // Lazy-load BYOK voices when the user opens the relevant tabs.
+  useEffect(() => {
+    if (!byokStatus?.connected) return
+    if (tab !== 'mine') return
+    if (byokVoices !== null) return
+    loadByokVoices()
+    /* eslint-disable-next-line */
+  }, [tab, byokStatus?.connected])
+
+  const playPreview = async (voice, source = 'shared') => {
     if (previewingId === voice.voice_id) {
       try { audioRef.current?.pause() } catch {}
       setPreviewingId(null)
@@ -864,14 +924,18 @@ function VoicePickerModal({ session, profileId, currentVoiceId, onPick, onClose 
     }
     setPreviewingId(voice.voice_id)
     try {
-      // Prefer the static preview_url ElevenLabs ships for premade voices —
-      // free + faster than calling our TTS endpoint.
+      // Premade voices ship a static preview_url — free + fast.
+      // BYOK voices: fall through to /api/voices/preview with byok=true.
       let url = voice.preview_url
       if (!url) {
         const r = await fetch('/api/voices/preview', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ voice_id: voice.voice_id, profile_id: profileId }),
+          body: JSON.stringify({
+            voice_id: voice.voice_id,
+            profile_id: profileId,
+            byok: source === 'byok',
+          }),
         })
         const body = await r.json()
         if (!r.ok) throw new Error(body.error || 'Preview failed')
@@ -911,10 +975,10 @@ function VoicePickerModal({ session, profileId, currentVoiceId, onPick, onClose 
         </div>
 
         {/* Tabs */}
-        <div style={{ display: 'flex', gap: 4, padding: '10px 18px 0' }}>
+        <div style={{ display: 'flex', gap: 4, padding: '10px 18px 0', flexWrap: 'wrap' }}>
           {[
             { id: 'library', label: 'Library', icon: Library },
-            { id: 'mine',    label: `My voices${cloned ? ` (${cloned.length})` : ''}`, icon: UserCircle2 },
+            { id: 'mine',    label: `My voices${byokVoices ? ` (${byokVoices.length})` : ''}`, icon: UserCircle2 },
             { id: 'clone',   label: 'Clone new', icon: Mic },
             { id: 'paste',   label: 'Paste ID',  icon: Search },
           ].map((t) => (
@@ -956,25 +1020,66 @@ function VoicePickerModal({ session, profileId, currentVoiceId, onPick, onClose 
         <div style={{ padding: '12px 18px 18px', maxHeight: '60vh', overflowY: 'auto' }}>
           {tab === 'library' && (
             shared === null ? <div style={{ padding: 24, textAlign: 'center' }}><Loader2 size={18} className="spin" /></div> :
-            <VoiceList list={filterList(shared)} currentVoiceId={currentVoiceId} previewingId={previewingId} onPreview={playPreview} onPick={onPick} />
-          )}
-          {tab === 'mine' && (
-            cloned === null ? <div style={{ padding: 24, textAlign: 'center' }}><Loader2 size={18} className="spin" /></div> :
-            cloned.length === 0
-              ? <div style={{ padding: 18, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
-                  No cloned voices yet. Use the "Clone new" tab to record one from a sample.
-                </div>
-              : <VoiceList list={filterList(cloned)} currentVoiceId={currentVoiceId} previewingId={previewingId} onPreview={playPreview} onPick={onPick} />
-          )}
-          {tab === 'clone' && (
-            <CloneVoiceForm
-              session={session}
-              profileId={profileId}
-              onCloned={(voiceId) => { onPick(voiceId); refresh() }}
+            <VoiceList
+              list={filterList(shared)}
+              currentVoiceId={currentVoiceId}
+              previewingId={previewingId}
+              onPreview={(v) => playPreview(v, 'shared')}
+              onPick={(voiceId) => onPick(voiceId, 'shared')}
             />
           )}
+
+          {/* My voices / Clone new — both gated by BYOK connection.
+              When not connected, render the wizard inline so users can
+              connect without leaving the modal. */}
+          {(tab === 'mine' || tab === 'clone') && byokStatus === null && (
+            <div style={{ padding: 24, textAlign: 'center' }}><Loader2 size={18} className="spin" /></div>
+          )}
+          {(tab === 'mine' || tab === 'clone') && byokStatus && !byokStatus.connected && (
+            <ConnectByokWizard
+              session={session}
+              profileId={profileId}
+              onConnected={(s) => {
+                setByokStatus({ connected: true, last4: s.last4, connected_at: s.connected_at })
+                if (tab === 'mine') loadByokVoices()
+              }}
+            />
+          )}
+          {tab === 'mine' && byokStatus?.connected && (
+            byokVoices === null ? <div style={{ padding: 24, textAlign: 'center' }}><Loader2 size={18} className="spin" /></div> :
+            byokVoices.length === 0
+              ? <div style={{ padding: 18, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
+                  No voices in your ElevenLabs workspace yet. Use the "Clone new" tab to make one.
+                </div>
+              : <>
+                  <ByokConnectedBanner status={byokStatus} session={session} profileId={profileId} onDisconnected={() => { setByokStatus({ connected: false }); setByokVoices(null) }} />
+                  <VoiceList
+                    list={filterList(byokVoices)}
+                    currentVoiceId={currentVoiceId}
+                    previewingId={previewingId}
+                    onPreview={(v) => playPreview(v, 'byok')}
+                    onPick={(voiceId) => onPick(voiceId, 'byok')}
+                  />
+                </>
+          )}
+          {tab === 'clone' && byokStatus?.connected && (
+            <>
+              <ByokConnectedBanner status={byokStatus} session={session} profileId={profileId} onDisconnected={() => { setByokStatus({ connected: false }); setByokVoices(null) }} />
+              <CloneVoiceForm
+                session={session}
+                profileId={profileId}
+                onCloned={(voiceId) => {
+                  onPick(voiceId, 'byok')
+                  loadByokVoices()
+                }}
+              />
+            </>
+          )}
           {tab === 'paste' && (
-            <PasteVoiceIdForm onPick={onPick} />
+            <PasteVoiceIdForm
+              byokConnected={!!byokStatus?.connected}
+              onPick={(voiceId, owner) => onPick(voiceId, owner)}
+            />
           )}
         </div>
       </div>
@@ -1044,6 +1149,132 @@ const pillStyle = {
   fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 999,
   background: 'var(--surface)', color: 'var(--text-soft)', border: '1px solid var(--border)',
   textTransform: 'capitalize',
+}
+
+// Walks the user through getting an ElevenLabs API key + connects it
+// to the brand profile. Required before "My voices" / "Clone new"
+// work, since those operate on voices that live in the user's own
+// ElevenLabs workspace (not ours).
+function ConnectByokWizard({ session, profileId, onConnected }) {
+  const [apiKey, setApiKey] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  const submit = async (e) => {
+    e.preventDefault()
+    if (!apiKey.trim()) return
+    if (!profileId) { setError('Pick a brand profile first.'); return }
+    setBusy(true); setError(null)
+    try {
+      const r = await fetch('/api/voices/byok?action=connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ profile_id: profileId, api_key: apiKey.trim() }),
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body.error || 'Connection failed')
+      toast?.success?.('ElevenLabs connected.')
+      onConnected({ last4: body.last4, connected_at: body.connected_at })
+    } catch (err) {
+      setError(err.message); setBusy(false)
+    }
+  }
+  return (
+    <div style={{ padding: '4px 0' }}>
+      <div style={{
+        padding: 14, borderRadius: 10,
+        background: 'rgba(168,85,247,0.08)',
+        border: '1px solid rgba(168,85,247,0.32)',
+        marginBottom: 14,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+          <UserCircle2 size={14} style={{ color: '#a78bfa' }} />
+          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13.5, color: 'var(--text)' }}>
+            Connect your own ElevenLabs
+          </div>
+        </div>
+        <div style={{ fontSize: 12.5, color: 'var(--text-soft)', lineHeight: 1.55 }}>
+          Cloned voices and any custom voices stay in <strong>your</strong> ElevenLabs
+          account, not ours. We use your API key to TTS them at render time.
+          You stay in control: revoke the key on ElevenLabs and we lose access immediately.
+        </div>
+      </div>
+
+      <ol style={{ margin: '0 0 14px', paddingLeft: 20, fontSize: 13, color: 'var(--text-soft)', lineHeight: 1.7 }}>
+        <li>
+          Open <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank" rel="noreferrer" style={{ color: 'var(--red)', textDecoration: 'none' }}>
+            elevenlabs.io / Settings / API Keys</a>.
+        </li>
+        <li>Click <strong>Create API key</strong>. Name it something like "ScaleSolo".</li>
+        <li>Copy the key (starts with <code style={{ background: 'var(--surface-2)', padding: '1px 5px', borderRadius: 4 }}>sk_</code>).</li>
+        <li>Paste it below.</li>
+      </ol>
+
+      <form onSubmit={submit}>
+        <label className="label">ElevenLabs API key</label>
+        <input
+          className="input"
+          value={apiKey} onChange={(e) => setApiKey(e.target.value)}
+          placeholder="sk_…"
+          autoComplete="off"
+          spellCheck={false}
+          style={{ width: '100%', fontFamily: 'monospace', fontSize: 12 }}
+        />
+        {error && <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, marginTop: 10 }}>{error}</div>}
+        <button type="submit" className="btn-primary" disabled={busy || !apiKey.trim()} style={{ marginTop: 12, justifyContent: 'center', width: '100%' }}>
+          {busy ? <Loader2 size={13} className="spin" /> : <Check size={13} />}
+          {busy ? 'Verifying…' : 'Connect ElevenLabs'}
+        </button>
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8, textAlign: 'center' }}>
+          Stored AES-256 encrypted. We only show the last 4 chars after connecting.
+        </div>
+      </form>
+    </div>
+  )
+}
+
+// Tiny "connected as ••••XXXX" banner shown above the My voices /
+// Clone new tabs. Lets the user disconnect from the modal directly
+// instead of hunting for a Settings page.
+function ByokConnectedBanner({ status, session, profileId, onDisconnected }) {
+  const [busy, setBusy] = useState(false)
+  const disconnect = async () => {
+    if (!window.confirm('Disconnect ElevenLabs? Avatars using BYOK voices will fail to render until reconnected.')) return
+    setBusy(true)
+    try {
+      const r = await fetch('/api/voices/byok?action=disconnect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ profile_id: profileId }),
+      })
+      if (!r.ok) {
+        const b = await r.json().catch(() => ({}))
+        throw new Error(b.error || 'Failed')
+      }
+      toast?.success?.('ElevenLabs disconnected.')
+      onDisconnected()
+    } catch (err) {
+      toast?.error?.(err.message) || alert(err.message)
+    } finally { setBusy(false) }
+  }
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10,
+      padding: '8px 12px', borderRadius: 8, marginBottom: 12,
+      background: 'rgba(46,204,113,0.08)', border: '1px solid rgba(46,204,113,0.30)',
+    }}>
+      <CheckCircle2 size={13} style={{ color: '#2ecc71', flexShrink: 0 }} />
+      <div style={{ flex: 1, fontSize: 12, color: 'var(--text-soft)' }}>
+        Connected as <code style={{ background: 'var(--surface-2)', padding: '1px 5px', borderRadius: 4, fontSize: 11 }}>••••{status.last4}</code>
+      </div>
+      <button
+        type="button" onClick={disconnect} disabled={busy}
+        style={{
+          background: 'transparent', border: 'none', color: 'var(--muted)',
+          fontSize: 11.5, cursor: busy ? 'wait' : 'pointer', padding: 0,
+        }}
+      >Disconnect</button>
+    </div>
+  )
 }
 
 function CloneVoiceForm({ session, profileId, onCloned }) {
@@ -1154,28 +1385,69 @@ function CloneVoiceForm({ session, profileId, onCloned }) {
   )
 }
 
-function PasteVoiceIdForm({ onPick }) {
+function PasteVoiceIdForm({ onPick, byokConnected }) {
   const [voiceId, setVoiceId] = useState('')
+  // When BYOK is connected, the default assumption is the user is
+  // pasting their own voice (since they bothered to connect). Without
+  // BYOK, the only voice IDs that work universally are the public
+  // library ones.
+  const [owner, setOwner] = useState(byokConnected ? 'byok' : 'shared')
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ fontSize: 12.5, color: 'var(--text-soft)', lineHeight: 1.5 }}>
-        Paste an ElevenLabs voice ID — e.g. one you've cloned in your own
-        ElevenLabs dashboard. Voice IDs are 20-char alphanumeric strings.
+        Paste an ElevenLabs voice ID. Voice IDs are 20-char alphanumeric strings
+        (e.g. <code style={{ fontFamily: 'monospace', fontSize: 11.5 }}>21m00Tcm4TlvDq8ikWAM</code>).
       </div>
       <input
         className="input" value={voiceId}
         onChange={(e) => setVoiceId(e.target.value.trim())}
         placeholder="21m00Tcm4TlvDq8ikWAM"
+        style={{ fontFamily: 'monospace', fontSize: 12 }}
       />
+
+      <div style={{ marginTop: 4 }}>
+        <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 6 }}>
+          Where does this voice live?
+        </div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <button type="button" onClick={() => setOwner('shared')} style={ownerChip(owner === 'shared')}>
+            <Library size={11} /> Public library
+          </button>
+          <button
+            type="button"
+            onClick={() => setOwner('byok')}
+            disabled={!byokConnected}
+            title={byokConnected ? '' : 'Connect ElevenLabs first (My voices tab) to use BYOK voices'}
+            style={ownerChip(owner === 'byok', !byokConnected)}
+          >
+            <UserCircle2 size={11} /> My ElevenLabs account
+            {!byokConnected && <span style={{ marginLeft: 4, fontSize: 10, opacity: 0.7 }}>(not connected)</span>}
+          </button>
+        </div>
+      </div>
+
       <button
         type="button" className="btn-primary"
-        disabled={!voiceId} onClick={() => onPick(voiceId)}
-        style={{ justifyContent: 'center' }}
+        disabled={!voiceId} onClick={() => onPick(voiceId, owner)}
+        style={{ justifyContent: 'center', marginTop: 4 }}
       >
         <Check size={13} /> Use this voice
       </button>
     </div>
   )
+}
+
+function ownerChip(active, disabled) {
+  return {
+    display: 'inline-flex', alignItems: 'center', gap: 5,
+    padding: '6px 12px', borderRadius: 999, fontSize: 11.5, fontWeight: 600,
+    background: active ? 'rgba(239,68,68,0.16)' : 'var(--surface-2)',
+    border: `1px solid ${active ? 'rgba(239,68,68,0.50)' : 'var(--border)'}`,
+    color: disabled ? 'var(--muted)' : (active ? 'var(--text)' : 'var(--text-soft)'),
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    opacity: disabled ? 0.6 : 1,
+    fontFamily: 'inherit',
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

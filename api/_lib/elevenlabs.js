@@ -22,14 +22,20 @@ export function looksLikeElevenLabsVoiceId(s) {
 
 // Synthesize `text` to MP3 using ElevenLabs voice `voiceId`. Returns the raw
 // audio Buffer. Throws on any non-200 response.
+//
+// `opts.apiKey` overrides our master ELEVENLABS_API_KEY when provided —
+// used for BYOK voices that live in the user's own workspace and only
+// resolve under their key. Caller passes this through after looking up
+// avatars.voice_owner.
 export async function synthesizeMp3(voiceId, text, opts = {}) {
-  if (!ELEVENLABS_API_KEY) throw new Error('ELEVENLABS_API_KEY not configured')
+  const apiKey = opts.apiKey || ELEVENLABS_API_KEY
+  if (!apiKey) throw new Error('ELEVENLABS_API_KEY not configured')
   if (!voiceId) throw new Error('voiceId required')
   if (!text) throw new Error('text required')
   const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`, {
     method: 'POST',
     headers: {
-      'xi-api-key': ELEVENLABS_API_KEY,
+      'xi-api-key': apiKey,
       'Accept': 'audio/mpeg',
       'Content-Type': 'application/json',
     },
@@ -51,6 +57,26 @@ export async function synthesizeMp3(voiceId, text, opts = {}) {
   }
   const buf = Buffer.from(await r.arrayBuffer())
   return buf
+}
+
+// Look up the user's BYOK ElevenLabs key for a profile. Returns null
+// when the profile hasn't connected one. Best-effort — never throws,
+// the caller treats null as "fall through to master key."
+export async function resolveByoApiKey(profileId) {
+  if (!profileId) return null
+  try {
+    const { supaFetch } = await import('./supabase.js')
+    const { decryptSecret } = await import('./crypto.js')
+    const rows = await supaFetch(
+      `profiles?id=eq.${profileId}&select=elevenlabs_api_key_encrypted`
+    )
+    const enc = rows?.[0]?.elevenlabs_api_key_encrypted
+    if (!enc) return null
+    return decryptSecret(enc)
+  } catch (e) {
+    console.warn('resolveByoApiKey failed:', e?.message || e)
+    return null
+  }
 }
 
 // Synthesize and upload to Supabase storage. Returns a CORS-friendly public
