@@ -805,7 +805,7 @@ function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = 
           Now only appears when the user is actively typing @. The
           suggest popover below covers them otherwise. */}
       {suggest.open && (brands.length > 0 || namedImages.length > 0) && filtered.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+        <div key="ss-mention-chips" style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
           <span style={{ fontSize: 9.5, color: 'var(--muted)', fontFamily: 'var(--font-display)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', alignSelf: 'center' }}>tag:</span>
           {filtered.map((it) => (
             <button
@@ -842,6 +842,7 @@ function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = 
         </div>
       )}
       <PromptHighlightField
+        key="ss-mention-input"
         textareaRef={ref}
         value={promptStr}
         placeholder={placeholder}
@@ -853,7 +854,7 @@ function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = 
         namedImages={namedImages}
       />
       {suggest.open && filtered.length > 0 && (
-        <div className="nodrag" style={{
+        <div key="ss-mention-popover" className="nodrag" style={{
           position: 'absolute', left: 0, right: 0, top: '100%',
           marginTop: 2, zIndex: 50,
           background: 'var(--surface)', border: '1px solid var(--border-strong)',
@@ -3936,6 +3937,10 @@ ${String(script).slice(0, 2000)}
       // to its role and bans watermark leakage. The api enhance step
       // is told to preserve this block verbatim.
       if (refs.length) {
+        // Only ban watermark/text reproduction when the user did NOT
+        // explicitly ask for one. If they want a watermark or text
+        // overlay in the output we should let the model produce it.
+        const userWantsTextLayer = /\b(watermark|signature|logo|caption|text overlay|caption text|subtitles?|on-?screen text|name plate|sticker)\b/i.test(prompt)
         const lines = ['REFERENCE DIRECTIVE']
         if (refLabels.length) {
           lines.push('Labeled reference images (resolve any "reference \\"X\\"" mention to the matching label):')
@@ -3947,7 +3952,11 @@ ${String(script).slice(0, 2000)}
         lines.push('Rules:')
         lines.push('• When the prompt says "use [attribute] from reference \\"X\\"", pull ONLY that attribute from that reference. Do not pull other attributes from it.')
         lines.push('• Person identity (face, skin tone, hair, body shape, build) is locked to whichever reference the prompt names for it. Do not blend identities across references.')
-        lines.push('• Do NOT reproduce watermarks, signatures, logos, captions, or any text overlays that appear in any reference image. The output must be clean, with no copied branding from the references unless the prompt explicitly asks for it.')
+        if (userWantsTextLayer) {
+          lines.push('• The user has explicitly asked for a watermark, signature, logo, or text overlay. Honor that request. You MAY add the requested text/branding, but only as instructed in the body of the prompt below — not by copying any unrelated text or branding from reference images.')
+        } else {
+          lines.push('• Do NOT reproduce watermarks, signatures, logos, captions, or any text overlays that appear in any reference image. The output must be clean, with no copied branding from the references.')
+        }
         prompt = `${lines.join('\n')}\n\n---\n\n${prompt}`
       }
 
