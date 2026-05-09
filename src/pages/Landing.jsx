@@ -188,6 +188,32 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ── FEATURES ────────────────────────────────────────────────── */}
+      <section id="features" style={section} className="fade-up">
+        <h2 style={sectionH}>Everything you need to ship daily</h2>
+        <p style={sectionSub}>One workspace for the whole content engine — write, render, schedule, ship.</p>
+        <div className="feat-grid">
+          <FeatureCard num="1" eyebrow="Viral templates" title="Topic in. 7 finished posts out." body="Drop a topic, pick a template. Get a full week of platform-ready posts, written and queued.">
+            <TemplatesMock />
+          </FeatureCard>
+          <FeatureCard num="2" eyebrow="Brand-voice writer" title="Writes in your voice, not robot." body="Tuned on your hooks and cadence so every caption sounds like you wrote it on a good day.">
+            <WriterMock />
+          </FeatureCard>
+          <FeatureCard num="3" eyebrow="Repurpose" title="One idea, every channel." body="TikTok → tweet. Podcast → blog. YouTube → carousel. Reformat across surfaces with one click.">
+            <RepurposeMock />
+          </FeatureCard>
+          <FeatureCard num="4" eyebrow="AI avatar" title="Faceless video on autopilot." body="Train an avatar from one selfie. Renders that ship — without you ever opening a camera app.">
+            <AvatarMock />
+          </FeatureCard>
+          <FeatureCard num="5" eyebrow="Cross-posting" title="Post everywhere. For free." body="Native publishing to 9+ platforms. No per-post fee, no third-party scheduler tax.">
+            <PlatformsMock />
+          </FeatureCard>
+          <FeatureCard num="6" eyebrow="Calendar" title="Consistency on autopilot." body="Schedule the whole week in one sitting. Drag-and-drop calendar that respects your timezone.">
+            <CalendarMock />
+          </FeatureCard>
+        </div>
+      </section>
+
       {/* ── PRICING ─────────────────────────────────────────────────── */}
       <section id="pricing" style={{ ...section, position: 'relative' }} className="fade-up">
         <div aria-hidden style={{ ...sectionAura, top: '40%', left: '50%', transform: 'translate(-50%, -50%)', width: 720, height: 480, opacity: 0.55 }} />
@@ -497,6 +523,94 @@ function HeroShot({ src }) {
         style={shotImg}
         onError={(e) => { e.currentTarget.style.opacity = '0' }}
       />
+    </div>
+  )
+}
+
+// ── Feature cards (with CSS-animated dash mocks) ────────────────────
+function FeatureCard({ num, eyebrow, title, body, children }) {
+  return (
+    <div className="feat-card lift">
+      <div className="feat-num">{num}</div>
+      <div className="feat-mock">{children}</div>
+      <div className="feat-eyebrow">{eyebrow}</div>
+      <div className="feat-title">{title}</div>
+      <div className="feat-body">{body}</div>
+    </div>
+  )
+}
+
+function TemplatesMock() {
+  return (
+    <div className="mock-templates">
+      {Array.from({ length: 7 }).map((_, i) => <div key={i} className="phone" />)}
+    </div>
+  )
+}
+
+function WriterMock() {
+  return (
+    <div className="mock-writer">
+      <div className="bar" />
+      <div className="bar short" />
+      <div className="bar gradient" />
+    </div>
+  )
+}
+
+function RepurposeMock() {
+  return (
+    <div className="mock-repurpose">
+      <div className="source">SOURCE</div>
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+        <path d="M 28 50 C 50 50, 60 22, 78 22" />
+        <path d="M 28 50 C 50 50, 60 50, 78 50" />
+        <path d="M 28 50 C 50 50, 60 78, 78 78" />
+      </svg>
+      <div className="targets">
+        <div className="target">X</div>
+        <div className="target">IG</div>
+        <div className="target">LI</div>
+      </div>
+    </div>
+  )
+}
+
+function AvatarMock() {
+  return (
+    <div className="mock-avatar">
+      <div className="frame"><div className="play" /></div>
+      <div className="frame stripes" />
+      <div className="frame"><div className="play" /></div>
+    </div>
+  )
+}
+
+function PlatformsMock() {
+  const tags = ['X', 'IG', 'LI', 'TT', 'YT', 'TH', 'FB', 'BS']
+  return (
+    <div className="mock-platforms">
+      {tags.map((t) => <div key={t} className="pill">{t}</div>)}
+    </div>
+  )
+}
+
+function CalendarMock() {
+  // 3 rows × 7 cols. Decide which cells are colored.
+  const layout = [
+    ['red', null, 'violet', null, 'red', null, null],
+    [null, 'violet', null, 'red', null, null, 'red'],
+    ['violet', null, null, null, 'red', 'violet', null],
+  ]
+  return (
+    <div className="mock-cal">
+      {layout.flat().map((kind, i) => (
+        <div
+          key={i}
+          className={`cell ${kind ? `fill ${kind}` : ''}`}
+          style={kind ? { animationDelay: `${i * 70}ms` } : undefined}
+        />
+      ))}
     </div>
   )
 }

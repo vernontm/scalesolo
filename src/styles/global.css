@@ -413,17 +413,179 @@ a:focus-visible {
   .modal-card { padding: 18px !important; }
 }
 
+/* ── Landing features grid ─────────────────────────────────────────── */
+.feat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 18px;
+  margin-top: 32px;
+}
+.feat-card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 18px 18px 22px;
+  overflow: hidden;
+  transition: transform .25s var(--ease), border-color .25s var(--ease), box-shadow .25s var(--ease);
+}
+.feat-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(239,68,68,0.45);
+  box-shadow: 0 18px 50px rgba(0,0,0,0.45), 0 0 30px rgba(239,68,68,0.12);
+}
+.feat-num {
+  position: absolute; top: 14px; right: 16px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px; color: var(--muted); letter-spacing: 0.06em;
+}
+.feat-mock {
+  position: relative;
+  height: 160px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+  border: 1px solid rgba(255,255,255,0.06);
+  overflow: hidden;
+  margin-bottom: 22px;
+  display: flex; align-items: center; justify-content: center;
+}
+.feat-eyebrow {
+  font-family: var(--font-display);
+  font-weight: 700; font-size: 10.5px;
+  color: var(--red); letter-spacing: 0.14em; text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.feat-title {
+  font-family: var(--font-display);
+  font-weight: 700; font-size: 19px; line-height: 1.2;
+  color: var(--text); margin-bottom: 10px; letter-spacing: -0.01em;
+}
+.feat-body { font-size: 13.5px; color: var(--text-soft); line-height: 1.5; }
+
+/* Mock #1 — Templates: row of phone cards with progress bars */
+.mock-templates { display: flex; gap: 6px; padding: 14px; align-items: flex-end; width: 100%; height: 100%; }
+.mock-templates .phone {
+  flex: 1; height: 100%;
+  border-radius: 6px;
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(139, 92, 246, 0.18);
+  position: relative;
+}
+.mock-templates .phone::after {
+  content: ''; position: absolute; left: 14%; right: 14%; bottom: 14%;
+  height: 4px; border-radius: 2px;
+  background: linear-gradient(90deg, #ef4444, #f97316);
+  transform-origin: left;
+  animation: fillBar 2.4s var(--ease) infinite;
+}
+.mock-templates .phone:nth-child(2)::after { background: linear-gradient(90deg, #8b5cf6, #c084fc); animation-delay: .15s; }
+.mock-templates .phone:nth-child(3)::after { animation-delay: .30s; }
+.mock-templates .phone:nth-child(4)::after { background: linear-gradient(90deg, #8b5cf6, #c084fc); animation-delay: .45s; }
+.mock-templates .phone:nth-child(5)::after { animation-delay: .60s; }
+.mock-templates .phone:nth-child(6)::after { background: linear-gradient(90deg, #8b5cf6, #c084fc); animation-delay: .75s; }
+.mock-templates .phone:nth-child(7)::after { animation-delay: .90s; }
+
+/* Mock #2 — AI Writer: text bars with a typing gradient bar */
+.mock-writer { width: 86%; display: flex; flex-direction: column; gap: 10px; }
+.mock-writer .bar { height: 9px; border-radius: 5px; background: rgba(255,255,255,0.07); }
+.mock-writer .bar.short { width: 60%; }
+.mock-writer .bar.gradient {
+  background: linear-gradient(90deg, #ef4444, #f97316);
+  width: 0;
+  animation: typeLine 3s var(--ease) infinite;
+}
+
+/* Mock #3 — Repurpose: source → platforms with dashed arrows */
+.mock-repurpose { width: 100%; padding: 0 18px; display: flex; align-items: center; justify-content: space-between; }
+.mock-repurpose .source {
+  background: linear-gradient(135deg, #ef4444, #f97316);
+  color: white; font-family: var(--font-display); font-weight: 800; font-size: 10px;
+  padding: 8px 12px; border-radius: 8px; letter-spacing: 0.1em;
+}
+.mock-repurpose .targets { display: flex; flex-direction: column; gap: 6px; }
+.mock-repurpose .target {
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  background: rgba(139, 92, 246, 0.08);
+  color: var(--text-soft); font-family: var(--font-display); font-weight: 700;
+  font-size: 10px; padding: 6px 12px; border-radius: 6px; min-width: 36px; text-align: center;
+}
+.mock-repurpose svg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
+.mock-repurpose svg path {
+  stroke: rgba(239,68,68,0.7); stroke-width: 1.2; fill: none;
+  stroke-dasharray: 4 4; animation: flowDash 1.6s linear infinite;
+}
+
+/* Mock #4 — Avatar / visual engine: 3 phone frames */
+.mock-avatar { display: flex; gap: 10px; padding: 14px; align-items: center; height: 100%; }
+.mock-avatar .frame {
+  flex: 1; height: 80%; border-radius: 8px;
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  background: rgba(99, 102, 241, 0.06);
+  display: flex; align-items: center; justify-content: center; position: relative;
+}
+.mock-avatar .frame .play {
+  width: 0; height: 0; border-left: 12px solid #ef4444;
+  border-top: 7px solid transparent; border-bottom: 7px solid transparent;
+  animation: pulseDot 1.6s var(--ease) infinite;
+}
+.mock-avatar .frame.stripes {
+  background: repeating-linear-gradient(45deg, rgba(239,68,68,0.18) 0 6px, transparent 6px 12px);
+}
+
+/* Mock #5 — Cross-posting: platform pills */
+.mock-platforms {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
+  padding: 18px; width: 100%;
+}
+.mock-platforms .pill {
+  text-align: center; font-family: var(--font-display); font-weight: 800; font-size: 10px;
+  padding: 8px 0; border-radius: 8px;
+  border: 1px solid rgba(139, 92, 246, 0.30);
+  background: rgba(139, 92, 246, 0.08);
+  color: var(--text-soft);
+  animation: pillGlow 2.8s var(--ease) infinite;
+}
+.mock-platforms .pill:nth-child(2) { animation-delay: .2s; }
+.mock-platforms .pill:nth-child(3) { animation-delay: .4s; }
+.mock-platforms .pill:nth-child(4) { animation-delay: .6s; }
+.mock-platforms .pill:nth-child(5) { animation-delay: .8s; }
+.mock-platforms .pill:nth-child(6) { animation-delay: 1.0s; }
+.mock-platforms .pill:nth-child(7) { animation-delay: 1.2s; }
+.mock-platforms .pill:nth-child(8) { animation-delay: 1.4s; }
+
+/* Mock #6 — Calendar: week grid */
+.mock-cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; padding: 18px; width: 100%; height: 100%; }
+.mock-cal .cell {
+  border-radius: 4px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.mock-cal .cell.fill {
+  animation: pop .6s var(--ease) backwards;
+}
+.mock-cal .cell.red    { background: linear-gradient(135deg, #ef4444, #f97316); border-color: transparent; }
+.mock-cal .cell.violet { background: linear-gradient(135deg, #8b5cf6, #c084fc); border-color: transparent; }
+
+@keyframes fillBar  { 0% { transform: scaleX(0); } 50% { transform: scaleX(1); } 100% { transform: scaleX(0); } }
+@keyframes typeLine { 0% { width: 0; } 60% { width: 100%; } 100% { width: 100%; opacity: .15; } }
+@keyframes flowDash { to { stroke-dashoffset: -16; } }
+@keyframes pulseDot { 0%, 100% { transform: scale(1); opacity: .85; } 50% { transform: scale(1.18); opacity: 1; } }
+@keyframes pop      { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes pillGlow { 0%, 100% { box-shadow: 0 0 0 rgba(239,68,68,0); border-color: rgba(139, 92, 246, 0.30); }
+                      50%      { box-shadow: 0 0 16px rgba(239,68,68,0.35); border-color: rgba(239,68,68,0.55); color: var(--text); } }
+
 /* Landing hero: on mobile, image stacks above copy + tighter padding. */
 @media (max-width: 860px) {
-  .hero-section { padding: 80px 16px 56px !important; }
-  .hero-grid    { gap: 24px !important; }
-  .hero-shot    { order: -1; max-width: 75%; margin-left: auto !important; margin-right: auto !important; }
+  .hero-section { padding: 56px 16px 24px !important; }
+  .hero-grid    { gap: 16px !important; }
+  .hero-shot    { order: -1; max-width: 60%; margin-left: auto !important; margin-right: auto !important; }
   .hero-copy    { text-align: center !important; }
-  .hero-copy h1 { font-size: clamp(36px, 9vw, 56px) !important; text-align: center !important; }
-  .hero-copy p  { font-size: 15px !important; max-width: 100% !important; text-align: center !important; margin-left: auto !important; margin-right: auto !important; }
-  .hero-copy .eyebrow-wrap,
+  .hero-copy h1 { font-size: clamp(32px, 8vw, 48px) !important; margin-bottom: 14px !important; text-align: center !important; }
+  .hero-copy p  { font-size: 14px !important; max-width: 100% !important; margin: 0 auto 20px !important; text-align: center !important; }
+  .hero-copy .eyebrow-wrap { margin-bottom: 14px !important; justify-content: center !important; }
   .hero-copy .hero-ctas,
-  .hero-copy .hero-pills { justify-content: center !important; }
+  .hero-copy .hero-pills   { justify-content: center !important; }
+  .hero-copy .hero-ctas    { margin-bottom: 12px !important; }
 }
 
 /* Spaces zoom controls (bottom-left). Custom-styled to match the app and
