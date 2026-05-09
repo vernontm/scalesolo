@@ -143,7 +143,7 @@ export default function Landing() {
       </header>
 
       {/* ── HERO ────────────────────────────────────────────────────── */}
-      <section style={hero}>
+      <section style={hero} className="hero-section">
         {/* Rising-flame glow stack — 4 layers, two animations
             so the bloom breathes AND drifts sideways slightly. */}
         <div aria-hidden style={{ ...heroFlameOuter, animation: 'auroraPulse 6.5s var(--ease) infinite, auroraDrift 11s var(--ease) infinite' }} />
@@ -151,8 +151,8 @@ export default function Landing() {
         <div aria-hidden style={heroFlameCore} />
         <div aria-hidden style={heroFlameWisp} />
 
-        <div style={heroGrid}>
-          <div style={heroCopy}>
+        <div style={heroGrid} className="hero-grid">
+          <div style={heroCopy} className="hero-copy">
             <div className="fade-up" style={{ animationDelay: '40ms' }}>
               <div style={{ ...eyebrowWrap, justifyContent: 'flex-start' }}>
                 <span style={eyebrow}>
@@ -182,7 +182,7 @@ export default function Landing() {
           </div>
 
           {/* Hero image with rotating conic-gradient halo */}
-          <div style={{ ...shotWrap, marginTop: 0, marginBottom: 0 }} className="fade-up">
+          <div style={{ ...shotWrap, marginTop: 0, marginBottom: 0 }} className="fade-up hero-shot">
             <div aria-hidden style={shotUnderGlow} />
             <div style={shotFrame}>
               <div aria-hidden style={{ ...shotHalo, animation: 'glowSpin 12s linear infinite' }} />
