@@ -210,6 +210,16 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ── STATS BAR ───────────────────────────────────────────────── */}
+      <section style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
+        <div className="stats-grid">
+          <Stat number="$250B+" label={<>Creator economy<br />size by 2027</>} />
+          <Stat number="10x"     label={<>Your monthly<br />content output</>} />
+          <Stat number="30+ hrs" label={<>Saved per brand,<br />every single week</>} />
+          <Stat number="9+"      label={<>Platforms publishing<br />on full autopilot</>} />
+        </div>
+      </section>
+
       {/* ── USE CASES ───────────────────────────────────────────────── */}
       <section id="use-cases" style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
         <h2 style={sectionH}>What kind of <span className="brand-text">faceless brand</span> will you launch?</h2>
