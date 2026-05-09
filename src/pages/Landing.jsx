@@ -212,12 +212,12 @@ export default function Landing() {
           <UseCaseCard
             Icon={Mic2}
             tag="AI podcast"
-            title="A daily podcast that posts itself."
-            body="Turn one idea a week into a podcast that ships every weekday. Your AI voice narrates the script, ScaleSolo cuts shorts from each episode, and the whole feed publishes on its own."
+            title="A daily short-form podcast on autopilot."
+            body="Drop a topic, ScaleSolo writes a punchy 60-second podcast script in your voice, narrates it, and ships it every day. Build a podcast brand entirely on Reels, Shorts, and TikTok with zero recording."
             steps={[
-              'Voice clone narrates the full episode',
-              'Auto-cuts 9 shorts from every long-form',
-              'Posts to YouTube, Spotify, TikTok, IG',
+              'AI writes a 60s script in your brand voice',
+              'Voice clone narrates the daily episode',
+              'Posts as Shorts, Reels, and TikToks automatically',
             ]}
           />
           <UseCaseCard
