@@ -185,7 +185,8 @@ export default function Landing() {
       <div aria-hidden className="feat-separator" />
 
       {/* ── FEATURES ────────────────────────────────────────────────── */}
-      <section id="features" style={{ ...section, paddingTop: 20 }} className="fade-up">
+      <div className="feat-section">
+      <section id="features" style={{ ...section, paddingTop: 20, paddingBottom: 100 }} className="fade-up">
         <h2 style={sectionH}>Everything you need to ship daily</h2>
         <p style={sectionSub}>One workspace for the whole content engine — write, render, schedule, ship.</p>
         <div className="feat-grid">
@@ -203,6 +204,7 @@ export default function Landing() {
           </FeatureCard>
         </div>
       </section>
+      </div>
 
       {/* ── SCHEDULE-POST FEATURE SHOWCASE ──────────────────────────── */}
       <section style={section} className="fade-up">
