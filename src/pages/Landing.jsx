@@ -25,8 +25,7 @@ import UseCaseGrid from '../components/UseCaseGrid.jsx'
 //  Vendor names (Claude / HeyGen) removed from user-facing strings.
 // ─────────────────────────────────────────────────────────────────────
 
-const HERO_IMG   = '/landing/hero-poster.jpg'   // first-frame still extracted from HERO_VIDEO; shows instantly while the video loads
-const HERO_VIDEO = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/scalesolo_dash.mp4'
+const HERO_IMAGE = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/dash_landing.svg'
 const FEAT_IMG_BUILD   = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/shared/workflow_landing.mp4'
 const FEAT_IMG_RUN     = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/autoscheduling_landing.png'
 const FEAT_IMG_AVATAR  = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/shared/avatar_landing_video.mp4'
@@ -186,16 +185,7 @@ export default function Landing() {
             {/* The animated halo: a giant conic gradient masked to a ring,
                 rotated continuously. Sits behind the card. */}
             <div aria-hidden style={{ ...shotHalo, animation: 'glowSpin 12s linear infinite' }} />
-            <div style={shotCard}>
-              <video
-                src={HERO_VIDEO}
-                poster={HERO_IMG}
-                autoPlay loop muted playsInline preload="metadata"
-                aria-label="ScaleSolo Spaces canvas demo"
-                style={shotImg}
-                onError={(e) => { e.currentTarget.style.opacity = '0' }}
-              />
-            </div>
+            <HeroShot src={HERO_IMAGE} />
           </div>
         </div>
       </section>
@@ -613,7 +603,38 @@ const shotCard = {
   aspectRatio: '16/10',
   display: 'grid', placeItems: 'center',
 }
-const shotImg = { width: '100%', height: '100%', objectFit: 'cover', display: 'block', position: 'relative', zIndex: 1 }
+const shotImg = { width: '100%', height: '100%', objectFit: 'cover', display: 'block', position: 'relative', zIndex: 1, transition: 'transform 200ms ease-out', willChange: 'transform' }
+
+// Hero dashboard image with subtle 3D tilt that follows the cursor.
+function HeroShot({ src }) {
+  const cardRef = useRef(null)
+  const imgRef = useRef(null)
+  const handleMove = (e) => {
+    const el = cardRef.current
+    const img = imgRef.current
+    if (!el || !img) return
+    const r = el.getBoundingClientRect()
+    const px = (e.clientX - r.left) / r.width  // 0..1
+    const py = (e.clientY - r.top) / r.height
+    const rx = (0.5 - py) * 8   // tilt up/down
+    const ry = (px - 0.5) * 10  // tilt left/right
+    img.style.transform = `perspective(900px) rotateX(${rx}deg) rotateY(${ry}deg) scale(1.02)`
+  }
+  const handleLeave = () => {
+    if (imgRef.current) imgRef.current.style.transform = 'perspective(900px) rotateX(0deg) rotateY(0deg) scale(1)'
+  }
+  return (
+    <div ref={cardRef} style={shotCard} onMouseMove={handleMove} onMouseLeave={handleLeave}>
+      <img
+        ref={imgRef}
+        src={src}
+        alt="ScaleSolo dashboard"
+        style={shotImg}
+        onError={(e) => { e.currentTarget.style.opacity = '0' }}
+      />
+    </div>
+  )
+}
 
 // ── Trust strip ─────────────────────────────────────────────────────
 const trustSection = { padding: '40px 24px 60px', background: 'transparent', position: 'relative', zIndex: 1 }
