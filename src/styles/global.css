@@ -721,7 +721,7 @@ a:focus-visible {
 
 /* Landing hero: on mobile, image stacks above copy + tighter padding. */
 @media (max-width: 860px) {
-  .hero-section { padding: 24px 16px 16px !important; }
+  .hero-section { padding: 36px 16px 16px !important; }
   .hero-grid    { gap: 8px !important; }
   .hero-shot    { order: -1; max-width: 60%; margin: 0 auto !important; }
   .hero-shot .hero-img-wrap, .hero-shot > div { margin: 0 !important; }

@@ -482,7 +482,7 @@ const navCta = { display: 'flex', alignItems: 'center', gap: 10 }
 // ── Hero ────────────────────────────────────────────────────────────
 const hero = {
   position: 'relative',
-  maxWidth: 1180, margin: '0 auto', padding: '110px 24px 20px',
+  maxWidth: 1180, margin: '0 auto', padding: '165px 24px 20px',
   zIndex: 1,
   isolation: 'isolate',
 }
