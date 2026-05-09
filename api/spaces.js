@@ -91,7 +91,12 @@ export default async function handler(req, res) {
         // Hide template rows from the per-profile list so the user's "spaces"
         // tab stays clean even if they save private templates anchored to a
         // brand. The Templates tab is the one place templates surface.
-        `spaces?profile_id=eq.${profileId}&is_template=is.false&order=updated_at.desc&select=id,name,description,updated_at,created_at,is_template,template_category,nodes,edges`
+        // Show all spaces the user has access to under this brand profile,
+        // PLUS any templates they personally created (profile_id is null on
+        // template rows, so they wouldn't show under the profile filter
+        // alone). Templates that exist only under /admin/templates do NOT
+        // show here unless created_by matches the caller.
+        `spaces?or=(profile_id.eq.${profileId},and(is_template.eq.true,created_by.eq.${auth.user.id}))&order=is_template.asc,updated_at.desc&select=id,name,description,updated_at,created_at,is_template,template_visibility,template_category`
       )
       return res.status(200).json({ spaces: rows || [] })
     }
