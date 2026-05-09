@@ -9,7 +9,7 @@
 //   @scriptgen1, @"My image" — substituted with the upstream output before
 //   being sent to APIs. Resolution uses the source node's editable name.
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Type, Wand2, Captions, UserCircle2, Save, Image as ImageIcon,
   ListChecks, FileVideo, Upload, Loader2, Maximize2, ArrowUpRight,
@@ -746,13 +746,33 @@ function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = 
     // a stale prompt and silently chop characters.
     const current = ta?.value ?? value ?? ''
     if (!ta) { onChange(`${current} ${tag}`.trim()); return }
-    const sel = lastSelRef.current
-    const start = suggest.start >= 0 ? suggest.start : sel.start
-    // end is whichever is greater — covers both the "user had a real
-    // selection" case and the "@-suggest, end was at caret" case.
-    const end = Math.max(sel.end, start)
+    // Resolve the active selection from whichever source actually has a
+    // valid range. Some browsers reset selectionStart/End to 0 or to
+    // text.length when the textarea is mid-blur, which would corrupt the
+    // splice and either eat trailing text or insert at the wrong spot.
+    // Priority: live DOM selection (most accurate) → captured ref
+    // (fallback for blur cases) → end of text. We sanity-check that the
+    // resolved range is inside the current text.
+    const liveStart = ta.selectionStart
+    const liveEnd   = ta.selectionEnd
+    const ref0 = lastSelRef.current
+    const haveLive = Number.isFinite(liveStart) && Number.isFinite(liveEnd)
+    let selStart = haveLive ? liveStart : ref0.start
+    let selEnd   = haveLive ? liveEnd   : ref0.end
+    // If neither source seems sane (negative, beyond length), fall back
+    // to a safe default at the end of the text.
+    const len = current.length
+    if (!Number.isFinite(selStart) || selStart < 0 || selStart > len) selStart = len
+    if (!Number.isFinite(selEnd)   || selEnd   < 0 || selEnd   > len) selEnd   = selStart
+    if (selEnd < selStart) selEnd = selStart
+
+    // When the user had typed `@foo` and is picking from the popover, the
+    // splice should replace from the `@` (suggest.start) up to the live
+    // caret end. Otherwise we just splice in at the current selection.
+    const start = suggest.start >= 0 ? suggest.start : selStart
+    const end   = Math.max(selEnd, start)
     const before = current.slice(0, start)
-    const after = current.slice(end)
+    const after  = current.slice(end)
     const needsTrailingSpace = after.length === 0 ? false : !after.startsWith(' ')
     const next = `${before}${tag}${needsTrailingSpace ? ' ' : ''}${after}`
     onChange(next)
@@ -905,6 +925,25 @@ function PromptHighlightField({ textareaRef, value, placeholder, minHeight, onCh
   // Defensive — same coercion the outer MentionPrompt does, in case this
   // component ever gets used standalone with a non-string value.
   const safeValue = typeof value === 'string' ? value : (value == null ? '' : String(value))
+
+  // Sync the textarea's DOM value to the external prop while preserving
+  // caret/selection. React's normal controlled-component path resets the
+  // caret to the end whenever the committed `value` differs from what's
+  // already in the DOM. By managing the sync ourselves and restoring the
+  // selection range, we keep the cursor exactly where the user left it
+  // even when the parent reconstructs `data` on every keystroke.
+  useLayoutEffect(() => {
+    const ta = textareaRef?.current
+    if (!ta) return
+    if (ta.value === safeValue) return
+    const isFocused = document.activeElement === ta
+    const start = isFocused ? ta.selectionStart : null
+    const end   = isFocused ? ta.selectionEnd   : null
+    ta.value = safeValue
+    if (isFocused && start !== null && end !== null) {
+      try { ta.setSelectionRange(start, end) } catch {}
+    }
+  }, [safeValue, textareaRef])
   const brandSet = new Set((brands || []).map((b) => (b.name || '').toLowerCase().replace(/[^a-z0-9_-]/g, '')))
   const imageSet = new Set((namedImages || []).map((im) => (im.name || '').toLowerCase().replace(/[^a-z0-9_-]/g, '')))
 
@@ -1011,7 +1050,11 @@ function PromptHighlightField({ textareaRef, value, placeholder, minHeight, onCh
           outline: 'none',
         }}
         placeholder={placeholder}
-        value={safeValue}
+        // Uncontrolled: defaultValue seeds the initial DOM value, and
+        // useLayoutEffect above keeps the textarea in sync with `safeValue`
+        // while restoring the caret. This avoids React's controlled-input
+        // caret-reset behavior entirely.
+        defaultValue={safeValue}
         onChange={onChange}
         onBlur={onBlur}
         onSelect={onSelect}
