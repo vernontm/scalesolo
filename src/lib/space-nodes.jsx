@@ -3959,6 +3959,18 @@ ${String(script).slice(0, 2000)}
         }
       }
 
+      // KIE's image_input field caps at 8 references. Trim defensively and
+      // log a warning if we'd otherwise exceed. Earlier @-mention matches
+      // win because they're in user-prompt order; the fallback "all
+      // upstream images" path and the brand logo come last and are the
+      // first to get dropped if we're over.
+      if (refs.length > 8) {
+        const dropped = refs.length - 8
+        // eslint-disable-next-line no-console
+        console.warn(`[image_gen] Trimmed ${dropped} reference image(s) — KIE accepts max 8.`, refs.slice(8))
+        refs = refs.slice(0, 8)
+      }
+
       // Strip @-mentions from the prompt before sending to KIE — image
       // models don't parse them and the raw "@image1" text confuses
       // Gemini-based providers. We've already pulled the matching URLs
