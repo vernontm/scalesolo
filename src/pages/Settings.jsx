@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTheme } from '../context/ThemeContext.jsx'
 import { useAuth } from '../context/AuthContext.jsx'
-import { Sun, Moon, Monitor, Bell } from 'lucide-react'
+import { Sun, Moon, Monitor, Bell, Download, Trash2 } from 'lucide-react'
 
 const sectionTitle = {
   fontFamily: 'var(--font-display)',
@@ -144,6 +144,103 @@ function NotificationsSection() {
   )
 }
 
+function DataExportDeleteSection() {
+  const { session, signOut } = useAuth()
+  const [busy, setBusy] = useState(null) // 'export' | 'delete' | null
+  const [error, setError] = useState(null)
+
+  const downloadExport = async () => {
+    if (!session?.access_token) return
+    setBusy('export'); setError(null)
+    try {
+      const r = await fetch('/api/me/export', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      if (!r.ok) {
+        const b = await r.json().catch(() => ({}))
+        throw new Error(b.error || `Export failed (${r.status})`)
+      }
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `scalesolo-export-${Date.now()}.json`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const deleteAccount = async () => {
+    if (!session?.access_token) return
+    const ok = window.prompt('This permanently deletes your account, brand profiles, content, and avatars. Cancel any Stripe subscription separately so you stop being charged.\n\nType DELETE to confirm:')
+    if (ok !== 'DELETE') return
+    setBusy('delete'); setError(null)
+    try {
+      const r = await fetch('/api/me/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ confirm: 'DELETE' }),
+      })
+      const b = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(b.error || 'Delete failed')
+      alert(b.note || 'Account deleted.')
+      try { signOut?.() } catch {}
+      window.location.href = '/'
+    } catch (e) {
+      setError(e.message)
+      setBusy(null)
+    }
+  }
+
+  return (
+    <>
+      {error && <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, marginTop: 8, marginBottom: 8 }}>{error}</div>}
+      <div style={row}>
+        <div>
+          <div style={rowLabel}>Export your data</div>
+          <div style={rowHint}>Download every brand profile, post, avatar, and credit transaction we have on file as JSON.</div>
+        </div>
+        <button
+          onClick={downloadExport}
+          disabled={busy === 'export'}
+          style={{
+            padding: '8px 14px', borderRadius: 8, border: '1px solid var(--border)',
+            background: 'var(--surface-2)', color: 'var(--text)',
+            display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, fontWeight: 600,
+            cursor: busy === 'export' ? 'wait' : 'pointer',
+          }}
+        >
+          <Download size={13} /> {busy === 'export' ? 'Preparing…' : 'Download'}
+        </button>
+      </div>
+      <div style={{ ...row, borderBottom: 'none' }}>
+        <div>
+          <div style={rowLabel} className="text-red">Delete account</div>
+          <div style={rowHint}>Removes your account and all owned content. Cannot be undone. Cancel any Stripe subscription separately.</div>
+        </div>
+        <button
+          onClick={deleteAccount}
+          disabled={busy === 'delete'}
+          style={{
+            padding: '8px 14px', borderRadius: 8, border: '1px solid rgba(239,68,68,0.45)',
+            background: 'rgba(239,68,68,0.10)', color: 'var(--red)',
+            display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, fontWeight: 600,
+            cursor: busy === 'delete' ? 'wait' : 'pointer',
+          }}
+        >
+          <Trash2 size={13} /> {busy === 'delete' ? 'Deleting…' : 'Delete account'}
+        </button>
+      </div>
+    </>
+  )
+}
+
 export default function Settings() {
   const { theme, setTheme } = useTheme()
 
@@ -188,13 +285,7 @@ export default function Settings() {
             <div style={rowHint}>Manage profiles, billing, and team in their dedicated pages.</div>
           </div>
         </div>
-        <div style={{ ...row, borderBottom: 'none' }}>
-          <div>
-            <div style={rowLabel}>Data export & deletion</div>
-            <div style={rowHint}>Self-serve in Milestone 8.</div>
-          </div>
-          <div style={{ color: 'var(--muted)', fontSize: 13 }}>Coming soon</div>
-        </div>
+        <DataExportDeleteSection />
       </div>
     </div>
   )
