@@ -4,6 +4,7 @@
 
 import { setCors, requireUser } from '../_lib/supabase.js'
 import { getVideoStatusV3Direct } from '../_lib/heygen.js'
+import { refundConsumeByMetadata } from '../_lib/credits.js'
 
 export default async function handler(req, res) {
   setCors(req, res)
@@ -25,6 +26,18 @@ export default async function handler(req, res) {
       return res.status(200).json({ state: 'success', video_url: url })
     }
     if (status === 'failed' || status === 'error') {
+      // Refund the consume:photo-avatar-render keyed on heygen_video_id.
+      // Idempotent so repeat polls only refund once.
+      try {
+        const refund = await refundConsumeByMetadata({
+          originalAction: 'consume:photo-avatar-render',
+          metadataKey: 'heygen_video_id',
+          metadataValue: videoId,
+        })
+        if (refund.refunded) console.log('photo-render refund:', { videoId, amount: refund.amount })
+      } catch (e) {
+        console.error('photo-render refund failed:', videoId, e?.message)
+      }
       return res.status(200).json({ state: 'failed', error: data?.failure_message || data?.error?.message || 'Render failed' })
     }
     return res.status(200).json({ state: status || 'pending' })

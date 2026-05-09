@@ -4,6 +4,7 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { getVideoStatusForEngine, MODELS } from '../_lib/heygen.js'
+import { refundConsumeByMetadata } from '../_lib/credits.js'
 
 export default async function handler(req, res) {
   setCors(req, res)
@@ -45,6 +46,26 @@ export default async function handler(req, res) {
 
     if (Object.keys(updates).length) {
       await supaFetch(`avatar_renders?id=eq.${id}`, { method: 'PATCH', body: updates, prefer: 'return=minimal' })
+    }
+
+    // Refund the consume:photo-avatar-render when HeyGen reports a
+    // terminal failure. The original consume metadata records
+    // heygen_video_id (see api/avatars/photo-render.js consume site)
+    // so refundConsumeByMetadata finds the right transaction.
+    // Idempotent — polling the failed render multiple times only
+    // refunds once.
+    if (updates.status === 'failed') {
+      try {
+        const refund = await refundConsumeByMetadata({
+          originalAction: 'consume:photo-avatar-render',
+          metadataKey: 'heygen_video_id',
+          metadataValue: render.heygen_video_id,
+          profileId: render.profile_id,
+        })
+        if (refund.refunded) console.log('avatar-render refund:', { id, heygen_video_id: render.heygen_video_id, amount: refund.amount })
+      } catch (e) {
+        console.error('avatar-render refund failed:', id, e?.message)
+      }
     }
 
     return res.status(200).json({

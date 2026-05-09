@@ -10,6 +10,7 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { message as anthropicMessage } from '../_lib/anthropic.js'
+import { withCreditReservation } from '../_lib/credits.js'
 
 // Reference-role expansion. Always runs when the prompt has any
 // `reference "..."` mentions. A small Claude call classifies each
@@ -228,65 +229,58 @@ export default async function handler(req, res) {
     const apiKey = process.env.KIE_API_KEY
     if (!apiKey) return res.status(500).json({ error: 'KIE_API_KEY not configured. Add it in Vercel env.' })
 
-    const cust = await supaFetch(`billing_customers?user_id=eq.${auth.user.id}&select=id`)
-    const customerId = cust?.[0]?.id
-    if (customerId) {
-      const pools = await supaFetch(`credit_pools?customer_id=eq.${customerId}&pool_type=eq.ai_tokens&select=balance`)
-      const need = 4000 * Math.max(1, Number(count) || 1)
-      if ((Number(pools?.[0]?.balance ?? 0)) < need) {
-        return res.status(402).json({ error: 'Insufficient AI tokens for image generation.', code: 'insufficient_credits' })
-      }
-    }
-
     const hasRefs = Array.isArray(reference_urls) && reference_urls.length > 0
     const kieModel = resolveKieModel(model || 'nano-banana-2', hasRefs)
     const input = buildInput(kieModel, { prompt: finalPrompt, aspect, count, quality, reference_urls })
 
-    // Submit task via the unified jobs endpoint
-    const submitResp = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: kieModel, input }),
-    })
-    const submitText = await submitResp.text()
-    let submit = {}
-    try { submit = JSON.parse(submitText) } catch { submit = { raw: submitText } }
-    if (!submitResp.ok || (submit?.code && submit.code !== 200)) {
-      return res.status(502).json({
-        error: pickError(submit, submitResp.status),
-        kie_status: submitResp.status,
-        kie_body: submit,
+    const fee = 4000 * Math.max(1, Number(count) || 1)
+
+    // withCreditReservation: reserves the budget BEFORE submitting to KIE,
+    // refunds automatically if the inner fn throws (network blip, KIE
+    // rejection, etc.). This eliminates the previous "two concurrent
+    // requests both pre-pass, one consume succeeds, the other gets the
+    // image free" race that was the dominant revenue leak.
+    return await withCreditReservation({
+      userId: auth.user.id,
+      poolType: 'ai_tokens',
+      amount: fee,
+      action: 'consume:image-gen',
+      profileId: profile_id,
+      metadata: { model: kieModel, aspect, count, quality: quality || '1K', prompt: String(prompt).slice(0, 200) },
+    }, async ({ refundIfFailed, tagMetadata }) => {
+      // Submit task via the unified jobs endpoint
+      const submitResp = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: kieModel, input }),
       })
-    }
-    const taskId = submit?.data?.taskId || submit?.data?.task_id || submit?.taskId
-    if (!taskId) {
-      return res.status(502).json({ error: 'KIE returned no taskId', kie_body: submit })
-    }
-
-    // Debit credits up front (KIE submission was accepted). If the task
-    // later fails the cost is small relative to the round trip latency,
-    // and this avoids us holding the connection open for 60-180s.
-    if (customerId) {
-      try {
-        await supaFetch('rpc/consume_credits', {
-          method: 'POST',
-          body: {
-            p_customer_id: customerId,
-            p_pool_type: 'ai_tokens',
-            p_amount: 4000 * Math.max(1, Number(count) || 1),
-            p_action: 'consume:image-gen',
-            p_profile_id: profile_id,
-            p_metadata: { model: kieModel, aspect, count, quality: quality || '1K', prompt: String(prompt).slice(0, 200), taskId },
-          },
+      const submitText = await submitResp.text()
+      let submit = {}
+      try { submit = JSON.parse(submitText) } catch { submit = { raw: submitText } }
+      if (!submitResp.ok || (submit?.code && submit.code !== 200)) {
+        // Refund explicitly so the user isn't charged for a KIE 4xx.
+        await refundIfFailed()
+        return res.status(502).json({
+          error: pickError(submit, submitResp.status),
+          kie_status: submitResp.status,
+          kie_body: submit,
         })
-      } catch {}
-    }
-
-    // Return the taskId immediately. The client polls /api/images/status
-    // until the job completes — keeps us under Vercel's serverless timeout.
-    return res.status(202).json({ taskId, model: kieModel })
+      }
+      const taskId = submit?.data?.taskId || submit?.data?.task_id || submit?.taskId
+      if (!taskId) {
+        await refundIfFailed()
+        return res.status(502).json({ error: 'KIE returned no taskId', kie_body: submit })
+      }
+      // Stash taskId on the consume row's metadata so /api/images/status
+      // can refund-by-metadata when the task later fails inside KIE.
+      await tagMetadata({ taskId })
+      return res.status(202).json({ taskId, model: kieModel })
+    })
 
   } catch (err) {
+    if (err?.code === 'insufficient_credits') {
+      return res.status(402).json({ error: err.message, code: 'insufficient_credits', need: err.need })
+    }
     return res.status(err.status || 500).json({ error: err.message })
   }
 }

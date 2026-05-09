@@ -6,6 +6,7 @@
 
 import { setCors, requireUser } from '../_lib/supabase.js'
 import { mirrorToStorage } from './_mirror.js'
+import { refundConsumeByMetadata } from '../_lib/credits.js'
 
 function pickResultUrls(data) {
   let out = []
@@ -60,6 +61,22 @@ export default async function handler(req, res) {
       return res.status(200).json({ state: 'success', images: mirrored })
     }
     if (state === 'fail' || state === 'failed' || state === 'error') {
+      // Refund the original consume:image-gen for this taskId. Idempotent
+      // on (customer, action='refund:image-gen', ref_id) so polling the
+      // failed task multiple times only refunds once.
+      try {
+        const refund = await refundConsumeByMetadata({
+          originalAction: 'consume:image-gen',
+          metadataKey: 'taskId',
+          metadataValue: taskId,
+          profileId: profile_id || null,
+        })
+        if (refund.refunded) {
+          console.log('image-gen refund:', { taskId, amount: refund.amount })
+        }
+      } catch (e) {
+        console.error('image-gen refund failed:', taskId, e?.message)
+      }
       return res.status(200).json({ state: 'failed', error: data?.failMsg || data?.errorMessage || data?.message || 'Generation failed' })
     }
     return res.status(200).json({ state: state || 'pending' })

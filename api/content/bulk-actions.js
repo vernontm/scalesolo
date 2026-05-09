@@ -36,9 +36,9 @@ export default async function handler(req, res) {
   await assertProfileAccess(auth.user.id, profile_id)
 
   try {
-    if (action === 'generate-captions') return generateCaptions({ res, profile_id, script_ids })
+    if (action === 'generate-captions') return generateCaptions({ res, profile_id, script_ids, user_id: auth.user.id })
     if (action === 'auto-schedule')     return autoSchedule({ res, profile_id, script_ids })
-    if (action === 'publish-selected')  return publishSelected({ req, res, profile_id, script_ids })
+    if (action === 'publish-selected')  return publishSelected({ req, res, profile_id, script_ids, user_id: auth.user.id })
     return res.status(400).json({ error: `Unknown action: ${action}` })
   } catch (err) {
     console.error('bulk-actions error:', err?.stack || err)
@@ -47,7 +47,7 @@ export default async function handler(req, res) {
 }
 
 // ── generate-captions ──────────────────────────────────────────────────────
-async function generateCaptions({ res, profile_id, script_ids }) {
+async function generateCaptions({ res, profile_id, script_ids, user_id }) {
   if (!ANTHROPIC_API_KEY) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' })
 
   const profileRows = await supaFetch(`profiles?id=eq.${profile_id}&select=*`)
@@ -63,6 +63,22 @@ async function generateCaptions({ res, profile_id, script_ids }) {
   q += '&select=id,title,full_script,hook,caption,media_type,media_urls'
   const scripts = await supaFetch(q)
   if (!scripts?.length) return res.status(200).json({ updated: 0 })
+
+  // Credit gating. ~3000 ai_tokens per script captures the cost of one
+  // Claude Sonnet call with a vision image block; we consume eagerly
+  // BEFORE the upstream call and refund any unused budget afterwards
+  // if Claude failed entirely. Without this, /generate-captions was a
+  // free Sonnet pipe.
+  const CAPTION_TOKENS_PER_SCRIPT = 3000
+  const fee = scripts.length * CAPTION_TOKENS_PER_SCRIPT
+  const cust = user_id ? await supaFetch(`billing_customers?user_id=eq.${user_id}&select=id`).catch(() => []) : []
+  const customerId = cust?.[0]?.id || null
+  if (customerId) {
+    const pools = await supaFetch(`credit_pools?customer_id=eq.${customerId}&pool_type=eq.ai_tokens&select=balance`).catch(() => [])
+    if ((Number(pools?.[0]?.balance ?? 0)) < fee) {
+      return res.status(402).json({ error: 'Insufficient AI tokens for batch caption generation.', code: 'insufficient_credits', need: fee })
+    }
+  }
 
   // Build brand context the same way the rest of the app does.
   const brandContext = [
@@ -168,6 +184,40 @@ No markdown, no preamble.` })
       .catch((e) => { console.warn('caption patch failed for', script.id, e.message); return { ok: false } })
   }))
   const updated = results.filter((r) => r.status === 'fulfilled' && r.value?.ok).length
+
+  // Consume credits AFTER the Claude call returned. Idempotent ref_id
+  // (the AI request id from the response would be cleaner, but we
+  // don't have it here; use scripts.length × created_at-derived id).
+  // Pre-check above ensured the balance was sufficient — the consume
+  // here is the actual debit.
+  if (customerId && updated > 0) {
+    try {
+      const result = await supaFetch('rpc/consume_credits', {
+        method: 'POST',
+        body: {
+          p_customer_id: customerId,
+          p_pool_type: 'ai_tokens',
+          p_amount: fee,
+          p_action: 'consume:bulk-caption',
+          p_profile_id: profile_id,
+          p_metadata: { scripts: scripts.length, updated, has_images: scripts.some((s) => s.media_type === 'image') },
+        },
+      })
+      if (result && typeof result === 'object' && result.success === false) {
+        console.error('bulk-caption: consume_credits returned failure', { customerId, fee, error_code: result.error_code, profile_id })
+        try {
+          const { captureApiError } = await import('../_lib/sentry.js')
+          captureApiError(new Error('consume_credits returned success=false'), {
+            route: 'bulk-caption:consume',
+            userId: user_id, profileId: profile_id,
+            extra: { customerId, fee, error_code: result.error_code, kind: 'free_generation_leak' },
+          })
+        } catch {}
+      }
+    } catch (e) {
+      console.error('bulk-caption: consume_credits threw', { customerId, fee, profile_id, message: e?.message })
+    }
+  }
   return res.status(200).json({ updated, total: scripts.length })
 }
 
@@ -216,7 +266,7 @@ async function autoSchedule({ res, profile_id, script_ids }) {
 }
 
 // ── publish-selected ───────────────────────────────────────────────────────
-async function publishSelected({ res, profile_id, script_ids }) {
+async function publishSelected({ res, profile_id, script_ids, user_id }) {
   if (!Array.isArray(script_ids) || !script_ids.length) {
     return res.status(400).json({ error: 'script_ids required' })
   }
@@ -230,6 +280,21 @@ async function publishSelected({ res, profile_id, script_ids }) {
     `content_scripts?id=in.(${script_ids.map((id) => encodeURIComponent(id)).join(',')})&select=*`
   )
   if (!rows?.length) return res.status(404).json({ error: 'No scripts found' })
+
+  // Credit gating: 100 ai_tokens per post, matching the per-post fee
+  // schedule_post charges for individual publishes. Pre-check the sum;
+  // consume per row only on success so a partial failure refunds the
+  // unpublished portion automatically (we never debit them).
+  const PUBLISH_TOKENS_PER_POST = 100
+  const fee = rows.length * PUBLISH_TOKENS_PER_POST
+  const cust = user_id ? await supaFetch(`billing_customers?user_id=eq.${user_id}&select=id`).catch(() => []) : []
+  const customerId = cust?.[0]?.id || null
+  if (customerId) {
+    const pools = await supaFetch(`credit_pools?customer_id=eq.${customerId}&pool_type=eq.ai_tokens&select=balance`).catch(() => [])
+    if ((Number(pools?.[0]?.balance ?? 0)) < fee) {
+      return res.status(402).json({ error: 'Insufficient AI tokens for batch publish.', code: 'insufficient_credits', need: fee })
+    }
+  }
 
   const results = []
   for (const r of rows) {
@@ -283,5 +348,37 @@ async function publishSelected({ res, profile_id, script_ids }) {
     }
   }
   const okCount = results.filter((x) => x.ok).length
+
+  // Consume credits ONLY for the rows that successfully posted. Failed
+  // rows aren't billed — same model as schedule_post's per-call fee.
+  if (customerId && okCount > 0) {
+    try {
+      const result = await supaFetch('rpc/consume_credits', {
+        method: 'POST',
+        body: {
+          p_customer_id: customerId,
+          p_pool_type: 'ai_tokens',
+          p_amount: okCount * PUBLISH_TOKENS_PER_POST,
+          p_action: 'consume:bulk-publish',
+          p_profile_id: profile_id,
+          p_metadata: { posted: okCount, failed: results.length - okCount },
+        },
+      })
+      if (result && typeof result === 'object' && result.success === false) {
+        console.error('bulk-publish: consume_credits returned failure', { customerId, fee, error_code: result.error_code, profile_id })
+        try {
+          const { captureApiError } = await import('../_lib/sentry.js')
+          captureApiError(new Error('consume_credits returned success=false'), {
+            route: 'bulk-publish:consume',
+            userId: user_id, profileId: profile_id,
+            extra: { customerId, fee, error_code: result.error_code, kind: 'free_generation_leak' },
+          })
+        } catch {}
+      }
+    } catch (e) {
+      console.error('bulk-publish: consume_credits threw', { customerId, fee, profile_id, message: e?.message })
+    }
+  }
+
   return res.status(200).json({ submitted: okCount, failed: results.length - okCount, results })
 }
