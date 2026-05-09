@@ -220,87 +220,6 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── USE CASES ───────────────────────────────────────────────── */}
-      <section id="use-cases" style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
-        <h2 style={sectionH}>What kind of <span className="brand-text">faceless brand</span> will you launch?</h2>
-        <p style={sectionSub}>
-          ScaleSolo runs them all the same way. Pick a workflow, set your cadence, walk away.
-          Here are a few of the brands solo founders are building right now.
-        </p>
-        <div className="usecase-grid">
-          <UseCaseCard
-            Icon={Mic2}
-            tag="AI podcast"
-            title="A daily short-form podcast on autopilot."
-            body="Drop a topic, ScaleSolo writes a punchy 60-second podcast script in your voice, narrates it, and ships it every day. Build a podcast brand entirely on Reels, Shorts, and TikTok with zero recording."
-            steps={[
-              'AI writes a 60s script in your brand voice',
-              'Voice clone narrates the daily episode',
-              'Posts as Shorts, Reels, and TikToks automatically',
-            ]}
-          />
-          <UseCaseCard
-            Icon={ShoppingBag}
-            tag="Product brand"
-            title="Promote a product without filming."
-            body="Run a faceless e-commerce or SaaS brand with daily demo videos, hooks, and CTAs. Your AI avatar shows the product, ScaleSolo writes the angles, and ads ship at scale."
-            steps={[
-              'AI avatar demos features in 30s reels',
-              'Hooks and CTAs auto-generated per platform',
-              'Ships to TikTok Shop, IG Reels, YouTube Shorts',
-            ]}
-          />
-          <UseCaseCard
-            Icon={GraduationCap}
-            tag="Niche education"
-            title="Build authority while you sleep."
-            body="Pick a niche, drop your perspective, and ScaleSolo turns it into daily explainers in your tone of voice. Fitness, finance, mindset, dev, you name it."
-            steps={[
-              'Pulls topics from your backlog or trends',
-              'Avatar delivers in your brand voice',
-              'Hooks and CTAs tailored per platform',
-            ]}
-          />
-          <UseCaseCard
-            Icon={Newspaper}
-            tag="News & curation"
-            title="Be the go-to source in your niche."
-            body="Aggregate, summarize, and rewrite the news in your brand voice. ScaleSolo turns daily updates into a 60-second video and posts before your competitors are awake."
-            steps={[
-              'AI scans and summarizes the day',
-              'Renders a daily 60s recap with captions',
-              'Posts to all 9+ platforms automatically',
-            ]}
-          />
-        </div>
-      </section>
-
-      {/* ── TOOLS REPLACED ──────────────────────────────────────────── */}
-      <section style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
-        <h2 style={sectionH}>Your whole stack, <span className="brand-text">in one engine.</span></h2>
-        <p style={sectionSub}>
-          Most faceless brands run on a Frankenstein bundle of seven AI tools, seven logins, and seven monthly bills. ScaleSolo collapses all of it into one workflow that writes, films, captions, scores, and ships on its own.
-        </p>
-        <div className="kill-grid">
-          <KillCard Icon={PenLine}      name="AI script writer"        cost="$30/mo" delay={0} />
-          <KillCard Icon={Mic2}          name="Voice cloning"            cost="$22/mo" delay={1} />
-          <KillCard Icon={UserCircle2}   name="AI avatar studio"         cost="$60/mo" delay={2} />
-          <KillCard Icon={CaptionsIcon}  name="Captions and titles"      cost="$20/mo" delay={3} />
-          <KillCard Icon={Film}          name="Video editor"             cost="$25/mo" delay={4} />
-          <KillCard Icon={Music2}        name="Music and SFX"            cost="$15/mo" delay={5} />
-          <KillCard Icon={Calendar}      name="Multi-platform scheduler" cost="$30/mo" delay={6} />
-        </div>
-        <div className="kill-total-wrap">
-          <div className="kill-total">
-            <div className="kill-total-num">$200+</div>
-            <div className="kill-total-label">
-              in monthly subscriptions, gone.<br />
-              <span className="kill-total-sub">Run the whole pipeline on one ScaleSolo plan.</span>
-            </div>
-          </div>
-        </div>
-      </section>
-
       {/* ── BRAND PROFILE SHOWCASE ──────────────────────────────────── */}
       <section style={section} className="fade-up">
         <div className="showcase-grid">
@@ -331,6 +250,95 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ── USE CASES ───────────────────────────────────────────────── */}
+      <section id="use-cases" style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
+        <h2 style={sectionH}>What kind of <span className="brand-text">faceless brand</span> will you launch?</h2>
+        <p style={sectionSub}>
+          ScaleSolo runs them all the same way. Pick a workflow, set your cadence, walk away.
+          Here are a few of the brands solo founders are building right now.
+        </p>
+        <div className="usecase-grid">
+          <UseCaseCard
+            Icon={Mic2}
+            tag="AI podcast"
+            title="A daily short-form podcast on autopilot."
+            body="Drop a topic, ScaleSolo writes a punchy 60-second podcast script in your voice, narrates it, and posts it every day. Build a podcast brand entirely on Reels, Shorts, and TikTok with zero recording."
+            steps={[
+              'AI writes a 60s script in your brand voice',
+              'Voice clone narrates the daily episode',
+              'Posts as Shorts, Reels, and TikToks automatically',
+            ]}
+          />
+          <UseCaseCard
+            Icon={ShoppingBag}
+            tag="Product brand"
+            title="Promote a product without filming."
+            body="Run a faceless e-commerce or SaaS brand with daily demo videos, hooks, and CTAs. Your AI avatar shows the product, ScaleSolo writes the angles, and ads post at scale."
+            steps={[
+              'AI avatar demos features in 30s reels',
+              'Hooks and CTAs auto-generated per platform',
+              'Posts to TikTok Shop, IG Reels, YouTube Shorts',
+            ]}
+          />
+          <UseCaseCard
+            Icon={GraduationCap}
+            tag="Niche education"
+            title="Build authority while you sleep."
+            body="Pick a niche, drop your perspective, and ScaleSolo turns it into daily explainers in your tone of voice. Fitness, finance, mindset, productivity, you name it."
+            steps={[
+              'Pulls topics from your backlog or trends',
+              'Avatar delivers in your brand voice',
+              'Hooks and CTAs tailored per platform',
+            ]}
+          />
+          <UseCaseCard
+            Icon={Newspaper}
+            tag="News & curation"
+            title="Be the go-to source in your niche."
+            body="Aggregate, summarize, and rewrite the news in your brand voice. ScaleSolo turns daily updates into a 60-second video and posts before your competitors are awake."
+            steps={[
+              'AI scans and summarizes the day',
+              'Renders a daily 60s recap with captions',
+              'Posts to all 9+ platforms automatically',
+            ]}
+          />
+        </div>
+      </section>
+
+      {/* ── TOOLS REPLACED ──────────────────────────────────────────── */}
+      <section style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
+        <h2 style={sectionH}>Your whole stack, <span className="brand-text">in one engine.</span></h2>
+        <p style={sectionSub}>
+          Most faceless brands run on a Frankenstein bundle of seven AI tools, seven logins, and seven monthly bills. ScaleSolo collapses all of it into one workflow that writes, films, captions, scores, and posts on its own.
+        </p>
+        <div className="kill-grid">
+          <KillCard Icon={PenLine}      name="AI script writer"        cost="$30/mo" delay={0} />
+          <KillCard Icon={Mic2}          name="Voice cloning"            cost="$22/mo" delay={1} />
+          <KillCard Icon={UserCircle2}   name="AI avatar studio"         cost="$60/mo" delay={2} />
+          <KillCard Icon={CaptionsIcon}  name="Captions and titles"      cost="$20/mo" delay={3} />
+          <KillCard Icon={Film}          name="Video editor"             cost="$25/mo" delay={4} />
+          <KillCard Icon={Music2}        name="Music and SFX"            cost="$15/mo" delay={5} />
+          <KillCard Icon={Calendar}      name="Multi-platform scheduler" cost="$30/mo" delay={6} />
+        </div>
+        <div className="kill-total-wrap">
+          <div className="kill-total">
+            <div className="kill-total-num">$200+</div>
+            <div className="kill-total-label">
+              in monthly subscriptions, gone.<br />
+              <span className="kill-total-sub">Run the whole pipeline on one ScaleSolo plan.</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── PRICING ─────────────────────────────────────────────────── */}
+      <section id="pricing" style={{ ...section, position: 'relative' }} className="fade-up">
+        <div aria-hidden style={{ ...sectionAura, top: '40%', left: '50%', transform: 'translate(-50%, -50%)', width: 720, height: 480, opacity: 0.55 }} />
+        <h2 style={sectionH}>Choose what fits you</h2>
+        <p style={sectionSub}>All tiers include unlimited workflows, social scheduling, and brand-voice generation. Pick by output volume.</p>
+        <PricingPlans />
+      </section>
+
       {/* ── AVATAR WORKFLOW SHOWCASE ────────────────────────────────── */}
       <section style={section} className="fade-up">
         <div className="showcase-grid">
@@ -340,7 +348,7 @@ export default function Landing() {
             <p className="showcase-body">
               Train photorealistic AI avatars for any brand on the platform: founders, spokespeople,
               creators, internal teams. Build a roster of on-brand presenters with consistent looks,
-              wardrobes, and delivery, ready to ship video at the volume modern social demands.
+              wardrobes, and delivery, ready to post video at the volume modern social demands.
             </p>
             <ul className="showcase-list">
               <li><Check size={14} /> Production-grade avatars trained from a single reference</li>
@@ -383,7 +391,7 @@ export default function Landing() {
               <li><Check size={14} /> Auto-captions with brand-styled fonts and colors</li>
               <li><Check size={14} /> Hook titles, lower-thirds, and overlays per platform</li>
               <li><Check size={14} /> Licensed music and SFX added on the right beat</li>
-              <li><Check size={14} /> Brand watermarks locked in so nothing ships off-brand</li>
+              <li><Check size={14} /> Brand watermarks locked in so nothing posts off-brand</li>
             </ul>
           </div>
         </div>
@@ -403,7 +411,7 @@ export default function Landing() {
             </p>
             <ul className="showcase-list">
               <li><Check size={14} /> Hands-off after setup with no daily content management</li>
-              <li><Check size={14} /> Auto-generates and ships posts on your set cadence</li>
+              <li><Check size={14} /> Auto-generates and posts on your set cadence</li>
               <li><Check size={14} /> Native publishing to TikTok, IG, YouTube, X, LinkedIn, Threads, FB</li>
               <li><Check size={14} /> Run brands at scale with every brand on its own autopilot</li>
             </ul>
@@ -425,10 +433,10 @@ export default function Landing() {
       {/* ── FEATURES ────────────────────────────────────────────────── */}
       <div className="feat-section">
       <section id="features" style={{ ...section, paddingTop: 20, paddingBottom: 100 }} className="fade-up">
-        <h2 style={sectionH}>Everything you need to ship daily</h2>
-        <p style={sectionSub}>One workspace for the whole content engine: write, render, schedule, ship.</p>
+        <h2 style={sectionH}>Everything you need to post daily</h2>
+        <p style={sectionSub}>One workspace for the whole content engine: write, render, schedule, post.</p>
         <div className="feat-grid">
-          <FeatureCard num="1" eyebrow="Realistic avatars" title="Faceless video on autopilot." body="Train an AI avatar from one selfie. Cycle outfits across runs so every render ships looking fresh.">
+          <FeatureCard num="1" eyebrow="Realistic avatars" title="Faceless video on autopilot." body="Train an AI avatar from one selfie. Cycle outfits across runs so every video posts looking fresh.">
             <AvatarMock />
           </FeatureCard>
           <FeatureCard num="2" eyebrow="Brand profiles" title="One workspace, many brands." body="Each brand keeps its own voice, cadence, platforms, and avatar. Switch profiles, never cross-pollinate.">
@@ -437,20 +445,12 @@ export default function Landing() {
           <FeatureCard num="3" eyebrow="Workflow builder" title="Drag, drop, run forever." body="A visual canvas that connects script, render, and schedule. Set it up once, hit run, walk away.">
             <SpacesMock />
           </FeatureCard>
-          <FeatureCard num="4" eyebrow="Schedule" title="Consistency on autopilot." body="Pick the cadence. ScaleSolo finds the next open slot per platform and ships on time, every time.">
+          <FeatureCard num="4" eyebrow="Schedule" title="Consistency on autopilot." body="Pick the cadence. ScaleSolo finds the next open slot per platform and posts on time, every time.">
             <CalendarMock />
           </FeatureCard>
         </div>
       </section>
       </div>
-
-      {/* ── PRICING ─────────────────────────────────────────────────── */}
-      <section id="pricing" style={{ ...section, position: 'relative' }} className="fade-up">
-        <div aria-hidden style={{ ...sectionAura, top: '40%', left: '50%', transform: 'translate(-50%, -50%)', width: 720, height: 480, opacity: 0.55 }} />
-        <h2 style={sectionH}>Choose what fits you</h2>
-        <p style={sectionSub}>All tiers include unlimited workflows, social scheduling, and brand-voice generation. Pick by output volume.</p>
-        <PricingPlans />
-      </section>
 
       {/* ── FAQ ─────────────────────────────────────────────────────── */}
       <section id="faq" style={section} className="fade-up">
