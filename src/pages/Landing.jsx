@@ -80,7 +80,10 @@ const testimonials = [
 
 export default function Landing() {
   const nav = useNavigate()
-  const goSignup = () => nav('/login')
+  // Landing CTAs all funnel here. Pass ?mode=signup so the Login page
+  // opens directly to the signup form (the segmented control on the
+  // Login card highlights the right tab on render).
+  const goSignup = () => nav('/login?mode=signup')
 
   // Capture affiliate ref code from ?ref=… and stash in BOTH localStorage
   // and a 30-day first-party cookie. Cookies survive a localStorage wipe

@@ -21,14 +21,7 @@
 // pools so we can spot abuse / runaway pipelines.
 
 import { setCors, requireAdmin, supaFetch } from '../_lib/supabase.js'
-
-// Per-pool USD cost we attribute to one consumed unit. Anchor: cheapest
-// topup option in TOPUP_OPTIONS so we don't undercount.
-const COST_PER_UNIT_USD = {
-  ai_tokens:     10 / 100_000,   // $10 / 100K tokens
-  video_units:   20 / 10,        // $20 / 10 video units
-  voice_minutes: 0,              // not yet sold
-}
+import { estimateCogsUsd } from '../_lib/cogs.js'
 
 const WINDOWS = {
   '24h': 24 * 60 * 60 * 1000,
@@ -50,18 +43,26 @@ export default async function handler(req, res) {
 
   try {
     // Pull all consumption rows in the window. Negative-only deltas are
-    // the consumption events (positive deltas are grants / topups).
+    // the consumption events (positive deltas are grants / topups). We
+    // need `metadata` so the per-action COGS calculator can read
+    // model_version / duration_secs / quality / count.
     const rows = await supaFetch(
-      `credit_transactions?delta=lt.0&created_at=gte.${encodeURIComponent(since)}&select=action,pool_type,delta,customer_id,profile_id,created_at&order=created_at.desc&limit=5000`
+      `credit_transactions?delta=lt.0&created_at=gte.${encodeURIComponent(since)}&select=action,pool_type,delta,customer_id,profile_id,created_at,metadata&order=created_at.desc&limit=5000`
     )
 
-    // Aggregate by action.
+    // Aggregate by action. `est_usd` reflects our actual upstream COGS
+    // (HeyGen per-second, KIE per-image, etc.) via api/_lib/cogs.js
+    // rather than a flat per-pool topup rate. Where the action isn't
+    // catalogued, the calculator falls back to per-pool estimates so
+    // novel actions still report a non-zero number.
     const byActionKey = new Map()
     let aiTokensTotal = 0, videoUnitsTotal = 0, voiceMinutesTotal = 0
+    let totalEstUsd = 0
     const byUser = new Map()
     for (const r of rows) {
       const units = Math.abs(Number(r.delta) || 0)
-      const cost = units * (COST_PER_UNIT_USD[r.pool_type] || 0)
+      const cost = estimateCogsUsd(r)
+      totalEstUsd += cost
       const key = `${r.action}|${r.pool_type}`
       const cur = byActionKey.get(key) || { action: r.action, pool_type: r.pool_type, count: 0, units: 0, est_usd: 0 }
       cur.count += 1
@@ -109,10 +110,6 @@ export default async function handler(req, res) {
       }
     }
 
-    const est_usd = aiTokensTotal * COST_PER_UNIT_USD.ai_tokens
-                  + videoUnitsTotal * COST_PER_UNIT_USD.video_units
-                  + voiceMinutesTotal * COST_PER_UNIT_USD.voice_minutes
-
     return res.status(200).json({
       window: win,
       since,
@@ -120,7 +117,7 @@ export default async function handler(req, res) {
         ai_tokens: aiTokensTotal,
         video_units: videoUnitsTotal,
         voice_minutes: voiceMinutesTotal,
-        est_usd,
+        est_usd: totalEstUsd,
         events: rows.length,
       },
       by_action: byAction,

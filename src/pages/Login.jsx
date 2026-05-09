@@ -83,7 +83,11 @@ export default function Login() {
   const initialTier = params.get('tier') || (typeof window !== 'undefined' ? localStorage.getItem('scalesolo.signup.tier') : null)
   const initialCycle = params.get('cycle') || (typeof window !== 'undefined' ? localStorage.getItem('scalesolo.signup.cycle') : null) || 'monthly'
 
-  const [mode, setMode] = useState(initialTier ? 'signup' : 'signin')
+  // ?mode=signup explicitly opens the signup form (used by every CTA on
+  // the landing page that says "Get started" / "Try free"). A pending
+  // tier always wins (came from /pricing or a checkout retry).
+  const initialMode = initialTier ? 'signup' : (params.get('mode') === 'signup' ? 'signup' : 'signin')
+  const [mode, setMode] = useState(initialMode)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [tier] = useState(initialTier)
@@ -169,12 +173,57 @@ export default function Login() {
           </div>
         </div>
 
+        {/* Mode toggle — clearer than a tiny "Sign up / Sign in" link.
+            Highlights the active tab so the user always knows whether
+            they're creating an account or signing in. */}
+        <div role="tablist" aria-label="Auth mode" style={{
+          display: 'inline-flex', gap: 4,
+          background: 'var(--surface-2)', border: '1px solid var(--border)',
+          borderRadius: 10, padding: 4, marginBottom: 14, alignSelf: 'flex-start',
+        }}>
+          {['signup', 'signin'].map((m) => {
+            const active = mode === m
+            return (
+              <button
+                key={m}
+                role="tab"
+                aria-selected={active}
+                type="button"
+                onClick={() => { setMode(m); setError(null); setInfo(null) }}
+                style={{
+                  padding: '7px 14px', borderRadius: 7,
+                  background: active ? 'linear-gradient(135deg, var(--red), var(--red-dark))' : 'transparent',
+                  color: active ? '#fff' : 'var(--text-soft)',
+                  border: 'none', cursor: 'pointer',
+                  fontFamily: 'var(--font-display)', fontSize: 12.5, fontWeight: 700,
+                  boxShadow: active ? '0 4px 12px rgba(239,68,68,0.25)' : 'none',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                {m === 'signup' ? 'Create account' : 'Sign in'}
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Headline — louder than the previous one-liner so the user is
+            never unsure which mode they're in. The signup variant also
+            calls out the free trial so it doesn't feel like a paywall
+            until the form is filled in. */}
+        <div style={{
+          fontFamily: 'var(--font-display)', fontWeight: 800,
+          fontSize: 22, color: 'var(--text)', lineHeight: 1.25,
+          marginBottom: 6,
+        }}>
+          {mode === 'signin' ? 'Welcome back.' : tier ? 'Start your 3-day free trial.' : 'Create your account.'}
+        </div>
+
         <div style={subtitle}>
           {mode === 'signin'
             ? 'Sign in to your workspace.'
             : tier
-              ? <>You're starting <strong style={{ color: 'var(--text)' }}>{TIER_LABELS[tier] || tier}</strong> — create your account to begin your 3-day free trial.</>
-              : 'Create your ScaleSolo account.'}
+              ? <>You're starting <strong style={{ color: 'var(--text)' }}>{TIER_LABELS[tier] || tier}</strong>. No charge for 3 days, cancel anytime.</>
+              : 'Free to start. Upgrade when you need more.'}
         </div>
 
         <form style={formStack} onSubmit={onSubmit}>

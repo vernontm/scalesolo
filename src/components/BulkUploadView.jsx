@@ -129,6 +129,19 @@ const STATUS_TABS = [
   { id: 'delivered', label: 'Delivered',     filter: (s) => s.status === 'posted' },
 ]
 
+// Convert a UTC ISO timestamp to the "YYYY-MM-DDTHH:mm" string format
+// that <input type="datetime-local"> expects. The browser treats that
+// value as LOCAL wall-clock, so we have to subtract the local timezone
+// offset before slicing — a UTC-formatted string would otherwise show
+// the user the UTC clock face instead of their own.
+function toLocalDatetimeInput(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 // Direct upload helper. Mirrors what audio_upload + Avatars.jsx do.
 async function uploadFileToBucket(file, profileId, kind) {
   const ext = (file.name.split('.').pop() || 'bin').toLowerCase()
@@ -696,7 +709,14 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                     <td style={{ padding: 8, verticalAlign: 'top', fontSize: 11.5, color: 'var(--text-soft)' }}>
                       <input
                         type="datetime-local"
-                        value={r.scheduled_datetime ? new Date(r.scheduled_datetime).toISOString().slice(0, 16) : ''}
+                        // datetime-local's value is interpreted as LOCAL
+                        // wall-clock by the browser. We store
+                        // scheduled_datetime as UTC ISO, so we must
+                        // convert UTC → local for display, and local →
+                        // UTC on change. Without this conversion the
+                        // user sees the UTC clock face and an EST user
+                        // who picked 11:00 PM sees 3:00 AM on reload.
+                        value={r.scheduled_datetime ? toLocalDatetimeInput(r.scheduled_datetime) : ''}
                         onChange={(e) => {
                           const v = e.target.value
                           patchScript(r.id, { scheduled_datetime: v ? new Date(v).toISOString() : null })

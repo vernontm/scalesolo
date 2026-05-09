@@ -276,7 +276,7 @@ export default async function handler(req, res) {
             p_amount: 4000 * Math.max(1, Number(count) || 1),
             p_action: 'consume:image-gen',
             p_profile_id: profile_id,
-            p_metadata: { model: kieModel, aspect, count, prompt: String(prompt).slice(0, 200), taskId },
+            p_metadata: { model: kieModel, aspect, count, quality: quality || '1K', prompt: String(prompt).slice(0, 200), taskId },
           },
         })
       } catch {}

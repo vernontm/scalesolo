@@ -4,6 +4,7 @@ import { Sparkles, Zap, ClipboardCheck, ArrowRight, Boxes, Calendar, BookOpen, C
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import CreditsPanel from '../components/CreditsPanel.jsx'
+import OnboardingSurvey from '../components/OnboardingSurvey.jsx'
 
 // ScaleSolo's wedge: automated content workflows in your brand voice.
 // The dashboard's job is to reflect that — one big "shipped while you
@@ -148,6 +149,25 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const [pendingApprovals, setPendingApprovals] = useState(0)
   const [shippedThisMonth, setShippedThisMonth] = useState(null)
+  // Onboarding survey: 'unknown' until we've checked, then 'show' or
+  // 'hide'. Blocks the dashboard with a full-screen popup until the
+  // 6 questions are answered. Skipped if the user already finished.
+  const [onboardingState, setOnboardingState] = useState('unknown')
+
+  useEffect(() => {
+    if (!session) return
+    let cancelled = false
+    fetch('/api/me/onboarding', {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    })
+      .then((r) => r.json())
+      .then((b) => {
+        if (cancelled) return
+        setOnboardingState(b?.completed ? 'hide' : 'show')
+      })
+      .catch(() => { if (!cancelled) setOnboardingState('hide') })
+    return () => { cancelled = true }
+  }, [session])
 
   // "Shipped" = content_scripts rows with status='posted' (auto or
   // manual) inside the current calendar month. Single GET, no expensive
@@ -191,6 +211,12 @@ export default function Dashboard() {
 
   return (
     <div className="fade-up">
+      {onboardingState === 'show' && session?.access_token && (
+        <OnboardingSurvey
+          token={session.access_token}
+          onComplete={() => setOnboardingState('hide')}
+        />
+      )}
       <section style={heroStyle}>
         <div style={heroIcon}><Sparkles size={26} strokeWidth={2.2} /></div>
         <div style={{ flex: 1 }}>

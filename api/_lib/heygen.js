@@ -24,16 +24,24 @@ const HEADERS = () => ({
 
 // ── MODEL COST CATALOG ──────────────────────────────────────────────────────
 // `engine` maps our label → which API path the render dispatches to.
-// `cents_per_sec`     = real $ cost we pay HeyGen (rough, for cost display)
-// `video_units_per_sec` = how much we charge against the user's video_units pool.
+// `cents_per_sec`     = real $ cost we pay HeyGen (Photo Avatar 1080p tier
+//                       per their dev pricing page, Nov 2025). Used for
+//                       COGS display in the admin usage dashboard.
+// `cents_per_sec_4k`  = same but the 4K tier — bumped ~25% on V4/V5 and
+//                       ~20% on V3.
+// `video_units_per_sec` = how much we charge against the user's video_units
+//                       pool. Wholesale-ish; one video_unit ≈ a 6-7s clip.
 //
+// Sources:
+//   https://developers.heygen.com/docs/pricing#video-generation-%E2%80%94-avatar-iv
 // Update this in one place — UI reads it through /api/avatars at runtime.
 export const MODELS = {
   v3: {
     label:               'V3 — Standard',
     description:         'Avatar III (legacy talking photo). Fastest renders.',
     engine:              'v2_legacy',
-    cents_per_sec:       8,
+    cents_per_sec:       1.67,    // HeyGen Photo Avatar 720/1080p
+    cents_per_sec_4k:    2,
     video_units_per_sec: 0.10,
     badge:               'Fast',
   },
@@ -42,7 +50,8 @@ export const MODELS = {
     description:         'Avatar IV. Better lip-sync and expression. The everyday default.',
     engine:              'v3_avatar_iv',
     expressiveness:      'low',
-    cents_per_sec:       12,
+    cents_per_sec:       5,       // HeyGen Avatar IV Photo 720/1080p
+    cents_per_sec_4k:    6.67,
     video_units_per_sec: 0.15,
     badge:               'Recommended',
   },
@@ -52,7 +61,11 @@ export const MODELS = {
     engine:              'v3_avatar_v',
     expressiveness:      'high',
     motion_default:      true,
-    cents_per_sec:       18,
+    // V5 is not yet on HeyGen's public pricing page; conservatively
+    // assume Avatar IV parity until announced. Bump in admin usage if
+    // we get a real number from HeyGen.
+    cents_per_sec:       5,
+    cents_per_sec_4k:    6.67,
     video_units_per_sec: 0.20,
     badge:               'Premium',
   },
