@@ -181,6 +181,35 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ── BRAND PROFILE SHOWCASE ──────────────────────────────────── */}
+      <section style={section} className="fade-up">
+        <div className="showcase-grid">
+          <div className="showcase-copy">
+            <div className="feat-eyebrow">Brand profiles</div>
+            <h2 className="showcase-title">The first platform that actually sounds like you.</h2>
+            <p className="showcase-body">
+              ScaleSolo doesn't generate generic AI slop. Every brand profile studies your past
+              scripts, hooks, and posts — what landed, what flopped, the words you'd never say —
+              so every caption it writes reads like you on a good day, not a bot on any day.
+            </p>
+            <ul className="showcase-list">
+              <li><Check size={14} /> Trained on your scripts, hooks, and brand vocabulary</li>
+              <li><Check size={14} /> Studies your top-performing posts to spot what converts</li>
+              <li><Check size={14} /> Filters out off-brand phrases automatically</li>
+              <li><Check size={14} /> Run multiple brands side-by-side without cross-contamination</li>
+            </ul>
+          </div>
+          <div className="showcase-img-wrap">
+            <img
+              src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/brand_profile.png"
+              alt="ScaleSolo brand profile — voice, training, and performance insights"
+              className="showcase-img"
+              onError={(e) => { e.currentTarget.style.opacity = '0' }}
+            />
+          </div>
+        </div>
+      </section>
+
       {/* ── AVATAR WORKFLOW SHOWCASE ────────────────────────────────── */}
       <section style={section} className="fade-up">
         <div className="showcase-grid">
