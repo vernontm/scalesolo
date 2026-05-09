@@ -372,7 +372,7 @@ const navCta = { display: 'flex', alignItems: 'center', gap: 10 }
 // ── Hero ────────────────────────────────────────────────────────────
 const hero = {
   position: 'relative',
-  maxWidth: 1180, margin: '0 auto', padding: '110px 24px 100px',
+  maxWidth: 1180, margin: '0 auto', padding: '110px 24px 40px',
   zIndex: 1,
   isolation: 'isolate',
 }
@@ -637,7 +637,7 @@ const logoChip = {
 }
 
 // ── Generic section ─────────────────────────────────────────────────
-const section = { maxWidth: 1180, margin: '0 auto', padding: '90px 24px', position: 'relative', zIndex: 1 }
+const section = { maxWidth: 1180, margin: '0 auto', padding: '40px 24px 60px', position: 'relative', zIndex: 1 }
 const sectionH = {
   fontFamily: 'var(--font-display)', fontWeight: 800,
   fontSize: 'clamp(28px, 3.8vw, 44px)', textAlign: 'center', margin: 0, marginBottom: 14,
