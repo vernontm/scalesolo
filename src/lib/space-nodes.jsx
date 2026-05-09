@@ -668,15 +668,18 @@ function CaptionGenBody({ data, onPatch }) {
   const hasOutput = !!out
   // The shown values: prefer overrides the user typed (props), then
   // the picked variant's value, then the loose top-level output.
-  const editedTitle    = data.props?.edited_title    ?? null
-  const editedCaption  = data.props?.edited_caption  ?? null
-  const editedHashtags = data.props?.edited_hashtags ?? null
-  const baseTitle    = out?.title    || variants.instagram?.title    || variants.tiktok?.title    || ''
-  const baseCaption  = out?.caption  || variants.instagram?.caption  || variants.tiktok?.caption  || ''
-  const baseHashtags = out?.hashtags || variants.instagram?.hashtags || variants.tiktok?.hashtags || ''
-  const title    = editedTitle    ?? baseTitle
-  const caption  = editedCaption  ?? baseCaption
-  const hashtags = editedHashtags ?? baseHashtags
+  const editedTitle        = data.props?.edited_title        ?? null
+  const editedCaption      = data.props?.edited_caption      ?? null
+  const editedHashtags     = data.props?.edited_hashtags     ?? null
+  const editedFirstComment = data.props?.edited_first_comment ?? null
+  const baseTitle        = out?.title         || variants.instagram?.title         || variants.tiktok?.title         || ''
+  const baseCaption      = out?.caption       || variants.instagram?.caption       || variants.tiktok?.caption       || ''
+  const baseHashtags     = out?.hashtags      || variants.instagram?.hashtags      || variants.tiktok?.hashtags      || ''
+  const baseFirstComment = out?.first_comment || variants.instagram?.first_comment || variants.tiktok?.first_comment || ''
+  const title        = editedTitle        ?? baseTitle
+  const caption      = editedCaption      ?? baseCaption
+  const hashtags     = editedHashtags     ?? baseHashtags
+  const firstComment = editedFirstComment ?? baseFirstComment
 
   return (
     <>
@@ -713,6 +716,16 @@ function CaptionGenBody({ data, onPatch }) {
               onChange={(e) => { e.stopPropagation(); onPatch({ edited_hashtags: e.target.value }) }}
               onClick={(e) => e.stopPropagation()}
               placeholder="#tag1 #tag2"
+            />
+          </NodeField>
+          <NodeField label="First comment">
+            <textarea
+              className="nodrag"
+              style={{ ...tinyInput, minHeight: 50, resize: 'vertical', fontFamily: 'inherit' }}
+              value={firstComment}
+              onChange={(e) => { e.stopPropagation(); onPatch({ edited_first_comment: e.target.value }) }}
+              onClick={(e) => e.stopPropagation()}
+              placeholder="Engagement question or value-add — lands as the first reply on the post."
             />
           </NodeField>
           <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 4, lineHeight: 1.4 }}>
@@ -3909,7 +3922,7 @@ export const NODE_REGISTRY = {
       // One Claude call returns variants for all five platforms as JSON.
       // Per-platform constraints baked into the prompt so the variants
       // already respect the tightest character caps (X is the worst at 280).
-      const prompt = `From the script below, write a TITLE, CAPTION, and exactly 5 HASHTAGS for each of: tiktok, instagram, youtube, x, linkedin.
+      const prompt = `From the script below, write a TITLE, CAPTION, FIRST_COMMENT, and exactly 5 HASHTAGS for each of: tiktok, instagram, youtube, x, linkedin.
 
 Per-platform constraints (HARD limits — stay under each):
 - tiktok:    caption ≤ 300 chars, fast hook in first sentence
@@ -3922,15 +3935,20 @@ Title rules: each title ≤ 80 chars, click-worthy, no number prefix. tiktok tit
 
 Hashtags: EXACTLY 5 per platform, space-separated, each starting with #. Lead with the brand's core hashtags from the brand bible, then add topic-specific ones.
 
+First comment rules: a SHORT engagement-driver that lands as the first reply on the post. ≤ 220 chars. Match the platform's vibe:
+- tiktok / instagram / youtube: a punchy question or "save if this hit" call-to-action that bait replies and saves. Optionally end with one fitting emoji.
+- x / linkedin: a value-add follow-up thought, mini-list, or question that extends the post. Plain text, no hashtags.
+The first comment should NEVER duplicate the caption — it should add something (a hot take, a question, a pinned takeaway). Do not include the hashtags here; they belong in their own field.
+
 Voice: stay on the brand bible's tone (already in your system context). NEVER use em dashes (—); use commas, periods, or colons.
 
 Return ONLY valid JSON, no preamble, no markdown fences. Exact shape:
 {
-  "tiktok":    { "title": "", "caption": "", "hashtags": "#a #b #c #d #e" },
-  "instagram": { "title": "", "caption": "", "hashtags": "#a #b #c #d #e" },
-  "youtube":   { "title": "", "caption": "", "hashtags": "#a #b #c #d #e" },
-  "x":         { "title": "", "caption": "", "hashtags": "#a #b #c #d #e" },
-  "linkedin":  { "title": "", "caption": "", "hashtags": "#a #b #c #d #e" }
+  "tiktok":    { "title": "", "caption": "", "first_comment": "", "hashtags": "#a #b #c #d #e" },
+  "instagram": { "title": "", "caption": "", "first_comment": "", "hashtags": "#a #b #c #d #e" },
+  "youtube":   { "title": "", "caption": "", "first_comment": "", "hashtags": "#a #b #c #d #e" },
+  "x":         { "title": "", "caption": "", "first_comment": "", "hashtags": "#a #b #c #d #e" },
+  "linkedin":  { "title": "", "caption": "", "first_comment": "", "hashtags": "#a #b #c #d #e" }
 }
 
 Script:
@@ -3984,11 +4002,13 @@ ${String(script).slice(0, 2000)}
       const userTitle    = data.props?.edited_title
       const userCaption  = data.props?.edited_caption
       const userHashtags = data.props?.edited_hashtags
+      const userFirstComment = data.props?.edited_first_comment
 
       return {
         title: (userTitle    ?? def.title)    || '',
         caption: (userCaption  ?? def.caption)  || '',
         hashtags: (userHashtags ?? def.hashtags) || '',
+        first_comment: (userFirstComment ?? def.first_comment) || '',
         per_platform: perPlatform,
       }
     },
@@ -4835,6 +4855,7 @@ ${String(script).slice(0, 2000)}
       const arr = asArr(inputs?.in)
       let caption = ''
       let hashtags = ''
+      let firstComment = ''
       let script = ''
       let title = ''
       let perPlatform = null
@@ -4847,6 +4868,7 @@ ${String(script).slice(0, 2000)}
         if (!script && (v.script || v.full_script)) script = v.script || v.full_script
         if (!caption && v.caption) caption = v.caption
         if (!hashtags && v.hashtags) hashtags = v.hashtags
+        if (!firstComment && v.first_comment) firstComment = v.first_comment
         if (!perPlatform && v.per_platform && typeof v.per_platform === 'object') perPlatform = v.per_platform
         // Image collection / explicit images array.
         if (Array.isArray(v.images)) for (const im of v.images) { if (im?.url) photoUrls.push(im.url) }
@@ -4893,6 +4915,7 @@ ${String(script).slice(0, 2000)}
             caption = v.caption
             if (v.hashtags) hashtags = v.hashtags
             if (v.title) title = v.title
+            if (v.first_comment) firstComment = v.first_comment
             picked = id
             break
           }
@@ -4903,6 +4926,14 @@ ${String(script).slice(0, 2000)}
           for (const id of Object.keys(perPlatform)) {
             if (id === picked) continue
             if (perPlatform[id]?.hashtags) { hashtags = perPlatform[id].hashtags; break }
+          }
+        }
+        // Same backstop for first_comment — borrow from any other
+        // platform's variant if the chosen one didn't generate one.
+        if (!firstComment) {
+          for (const id of Object.keys(perPlatform)) {
+            if (id === picked) continue
+            if (perPlatform[id]?.first_comment) { firstComment = perPlatform[id].first_comment; break }
           }
         }
       }
@@ -4979,10 +5010,12 @@ ${String(script).slice(0, 2000)}
           caption: caption || null,
           hashtags: hashtags || null,
           script: script || null,
-          // No dedicated first_comment from caption_gen yet; default to
-          // the hashtags so Instagram-style "drop hashtags in the first
-          // comment" workflows have something to publish.
-          first_comment: hashtags || null,
+          // Prefer the AI-generated first_comment from caption_gen.
+          // Falls back to hashtags so Instagram-style "drop hashtags in
+          // the first comment" workflows still publish something useful
+          // when first_comment is empty (e.g. an older caption_gen run
+          // that hadn't generated this field yet).
+          first_comment: firstComment || hashtags || null,
           scheduling_mode: schedulingMode,
           scheduled_iso: scheduledIso,
           timezone: data.props?.timezone || undefined,
