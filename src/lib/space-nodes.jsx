@@ -5961,9 +5961,20 @@ export const NODE_REGISTRY = {
       let upstreamTitle = ''
       let upstreamScript = ''
       let upstreamChunkScripts = null  // [{ order, sentence }, …] from voice_gen randomize
+      // Forward caption_gen metadata through polish so downstream
+      // schedule_post can still find caption / hashtags / first_comment /
+      // captions[] after the polish step. Without this, wiring
+      // caption_gen → Finish video → Schedule post bombed with "Nothing
+      // to publish" because Finish video's output stripped all of it.
+      let upstreamCaption = '', upstreamHashtags = '', upstreamFirstComment = ''
+      let upstreamCaptions = null  // captions[] from caption_gen multi-clip mode
       for (const v of arr) {
         if (!v || typeof v !== 'object') continue
         if (!upstreamTitle && typeof v.title === 'string') upstreamTitle = v.title
+        if (!upstreamCaption && typeof v.caption === 'string') upstreamCaption = v.caption
+        if (!upstreamHashtags && typeof v.hashtags === 'string') upstreamHashtags = v.hashtags
+        if (!upstreamFirstComment && typeof v.first_comment === 'string') upstreamFirstComment = v.first_comment
+        if (!upstreamCaptions && Array.isArray(v.captions) && v.captions.length) upstreamCaptions = v.captions
         if (!upstreamScript) {
           if (typeof v.script === 'string') upstreamScript = v.script
           else if (typeof v.full_script === 'string') upstreamScript = v.full_script
@@ -6093,6 +6104,15 @@ export const NODE_REGISTRY = {
         return { video_url: body.video_url, title: titleOn ? resolvedTitle : undefined, source_url: videoUrl }
       }
 
+      // Forward caption metadata from caption_gen so it survives the
+      // polish hop to schedule_post.
+      const captionForward = {
+        ...(upstreamCaption       ? { caption: upstreamCaption } : {}),
+        ...(upstreamHashtags      ? { hashtags: upstreamHashtags } : {}),
+        ...(upstreamFirstComment  ? { first_comment: upstreamFirstComment } : {}),
+        ...(upstreamCaptions      ? { captions: upstreamCaptions, is_clip_set: true } : {}),
+      }
+
       // Single-video → flat output shape (unchanged).
       if (urls.length === 1) {
         const out = await polishOne(urls[0], 0, 1)
@@ -6102,6 +6122,7 @@ export const NODE_REGISTRY = {
           media_type: 'video',
           title: out.title,
           polished: true,
+          ...captionForward,
         }
       }
 
@@ -6149,6 +6170,7 @@ export const NODE_REGISTRY = {
         media_type: 'video',
         is_clip_set: true,
         polished: true,
+        ...captionForward,
         ...(failures.length ? { partial_failures: failures } : {}),
       }
     },
