@@ -335,6 +335,19 @@ function pickAudio(v) {
   return null
 }
 
+// Pre-chunked audio output from voice_gen (randomize mode). Each chunk
+// is { audio_url, sentence, image_url, order } — image_url is paired
+// upstream so downstream avatar_render doesn't have to re-fetch
+// look-images.
+function pickAudioChunks(v) {
+  for (const x of asArr(v)) {
+    if (x && typeof x === 'object' && Array.isArray(x.audio_chunks) && x.audio_chunks.length > 0) {
+      return x.audio_chunks
+    }
+  }
+  return null
+}
+
 // Returns the first video URL found in an array of upstream input values.
 // Handles every shape the canvas produces:
 //   { video: { video_url } }                avatar_render single / video_polish / combine_videos success
@@ -1833,6 +1846,12 @@ export const NODE_COST_HINT = {
   image_gen:     4000,    // per image
   avatar_picker: 0,
   avatar_render: 8000,    // ~30s clip equivalent
+  // Voice gen: ~1 token/char on Turbo, scaled by model. ~1500 chars ×
+  // 1×–5× depending on model. The number here is a rough hint for the
+  // pre-flight cost estimate; the real charge happens server-side via
+  // chargeTtsCredits.
+  voice_gen:     2000,
+  url_reference: 0,        // transcription is metered per-month, not credits
   collection:    0,
   combine_videos: 1500,
   video_polish:  1500,
@@ -2868,6 +2887,134 @@ function AudioReviewPanel({ data, onPatch }) {
         }}
       >Cancel review</button>
     </div>
+  )
+}
+
+// Voice gen body. Shows the synthesized audio + voice tuning so the
+// user can review before downstream nodes run. No "Approve" — the
+// output exists once Run completes; downstream picks it up. To regen,
+// click Re-synth (overwrites the output and invalidates downstream
+// caches naturally).
+function VoiceGenBody({ data, onPatch }) {
+  const out = data.output
+  const audio = out?.audio
+  const chunks = Array.isArray(out?.audio_chunks) ? out.audio_chunks : null
+  const voiceUsed = out?.voice_used || {}
+  const [previewIdx, setPreviewIdx] = useState(0)
+  const [showTuning, setShowTuning] = useState(false)
+
+  // Local draft of voice settings — initialized from whatever was used
+  // for the synth we just heard, persisted into props on change.
+  const stored = data.props?.voice_settings_override || voiceUsed.voice_settings || null
+  const [draftSettings, setDraftSettings] = useState(stored || {
+    stability: 0.5, similarity_boost: 0.85, style: 0.2, use_speaker_boost: true, speed: 1.0,
+  })
+  const [draftModel, setDraftModel] = useState(
+    data.props?.voice_model_id_override || voiceUsed.model_id || 'eleven_turbo_v2_5'
+  )
+  const [draftLanguage, setDraftLanguage] = useState(
+    data.props?.voice_language_override || voiceUsed.language_code || 'en'
+  )
+  // Persist tuning -> props so a re-run picks them up automatically.
+  useEffect(() => {
+    onPatch?.({
+      voice_settings_override: draftSettings,
+      voice_model_id_override: draftModel,
+      voice_language_override: draftLanguage,
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftSettings, draftModel, draftLanguage])
+
+  const fieldSet = (k, v) => setDraftSettings((d) => ({ ...d, [k]: v }))
+
+  return (
+    <>
+      {data.status !== 'done' && data.status !== 'failed' && data.status !== 'running' && (
+        <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>Connect a script + avatar input.</div>
+      )}
+      {data.status === 'failed' && <NodePreview status="failed" error={data.error} />}
+      {data.status === 'running' && <ProgressPill progress={data.progress} fallback="Synthesizing audio…" />}
+
+      {data.status === 'done' && (audio?.url || chunks) && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* Single audio: one player. */}
+          {audio?.url && !chunks && (
+            <audio controls className="nodrag" src={audio.url} style={{ width: '100%' }} />
+          )}
+
+          {/* Chunked audio: previewer that lets the user step through
+              clips before the avatar render runs. */}
+          {chunks && (
+            <>
+              <div style={{ fontSize: 10.5, color: 'var(--muted)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span>{chunks.length} chunks · click a slice to preview</span>
+                <span>Slice {previewIdx + 1} of {chunks.length}</span>
+              </div>
+              <audio controls className="nodrag" key={chunks[previewIdx]?.audio_url} src={chunks[previewIdx]?.audio_url} style={{ width: '100%' }} />
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {chunks.map((c, i) => (
+                  <button
+                    key={i} type="button" className="nodrag"
+                    onClick={(e) => { e.stopPropagation(); setPreviewIdx(i) }}
+                    style={{
+                      padding: '3px 8px', borderRadius: 6,
+                      background: previewIdx === i ? 'rgba(34,211,238,0.20)' : 'var(--surface-2)',
+                      border: `1px solid ${previewIdx === i ? '#22d3ee' : 'var(--border)'}`,
+                      color: previewIdx === i ? '#22d3ee' : 'var(--text-soft)',
+                      fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-display)',
+                      cursor: 'pointer',
+                    }}
+                  >{i + 1}</button>
+                ))}
+              </div>
+            </>
+          )}
+
+          <details>
+            <summary style={{ cursor: 'pointer', fontSize: 10.5, color: 'var(--muted)' }}>
+              Voice tuning (this run only)
+            </summary>
+            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <MiniSlider label="Stability"   min={0} max={1} step={0.05} value={draftSettings.stability}        onChange={(v) => fieldSet('stability', v)} />
+              <MiniSlider label="Similarity"  min={0} max={1} step={0.05} value={draftSettings.similarity_boost} onChange={(v) => fieldSet('similarity_boost', v)} />
+              <MiniSlider label="Style"       min={0} max={1} step={0.05} value={draftSettings.style}            onChange={(v) => fieldSet('style', v)} />
+              <MiniSlider label="Speed"       min={0.7} max={1.2} step={0.05} value={draftSettings.speed}        onChange={(v) => fieldSet('speed', v)} format={(v) => `${Number(v).toFixed(2)}×`} />
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-soft)' }}>
+                <input
+                  type="checkbox" className="nodrag"
+                  checked={!!draftSettings.use_speaker_boost}
+                  onChange={(e) => fieldSet('use_speaker_boost', e.target.checked)}
+                /> Speaker boost
+              </label>
+              <select className="nodrag" value={draftModel} onChange={(e) => setDraftModel(e.target.value)} style={{ ...tinyInput, fontSize: 11 }}>
+                <option value="eleven_turbo_v2_5">Turbo v2.5 (1× tokens)</option>
+                <option value="eleven_multilingual_v2">Multilingual v2 (3× tokens)</option>
+                <option value="eleven_v3">v3 (5× tokens, expression tags)</option>
+              </select>
+              <select className="nodrag" value={draftLanguage} onChange={(e) => setDraftLanguage(e.target.value)} style={{ ...tinyInput, fontSize: 11 }}>
+                <option value="en">English</option><option value="es">Spanish</option>
+                <option value="fr">French</option><option value="de">German</option>
+                <option value="pt">Portuguese</option><option value="it">Italian</option>
+                <option value="nl">Dutch</option><option value="pl">Polish</option>
+                <option value="tr">Turkish</option><option value="ru">Russian</option>
+                <option value="ja">Japanese</option><option value="zh">Chinese</option>
+                <option value="ko">Korean</option><option value="hi">Hindi</option>
+                <option value="ar">Arabic</option>
+              </select>
+              <div style={{ fontSize: 10, color: 'var(--muted)' }}>
+                Changes here apply on the next Run. Click the node's Run button to re-synth.
+              </div>
+            </div>
+          </details>
+
+          <div style={{ fontSize: 10, color: 'var(--muted)', textAlign: 'center' }}>
+            {chunks
+              ? `${out?.script_chars?.toLocaleString() || '?'} chars · ${chunks.length} slices`
+              : `${out?.script_chars?.toLocaleString() || '?'} chars · single take`}
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -4662,6 +4809,167 @@ export const NODE_REGISTRY = {
     },
   },
 
+  // ── Voice Gen ─────────────────────────────────────────────────────────────
+  // Synthesizes audio from a script using the connected avatar's voice
+  // (or a per-node override). Supports single AND randomize modes —
+  // the body inspects the avatar config and chops the audio for
+  // randomize so downstream avatar_render gets pre-chunked audio.
+  // The whole point of this node is review-before-render: synthesize
+  // cheaply, listen, tune, re-synth as many times as needed, THEN
+  // run the (expensive) avatar render against the audio you approved.
+  voice_gen: {
+    label: 'Voice gen',
+    description: 'Synthesizes audio from a script using your avatar\'s voice. Connect text + avatar; downstream Avatar video uses this audio so HeyGen never re-synths. For Randomize avatars the script gets chunked automatically.',
+    icon: Mic, category: 'generators', color: '#22d3ee',
+    inputs: [{ id: 'in', label: 'In (script + avatar)' }],
+    outputs: [{ id: 'out', label: 'Out' }],
+    initialProps: {
+      // Per-render overrides — when set, override the avatar's stored
+      // voice settings for THIS run only. Avatar's saved voice stays
+      // untouched.
+      voice_settings_override: null,
+      voice_model_id_override: null,
+      voice_language_override: null,
+      // Cache key fingerprint of the last successful synth so the
+      // body can show "stale" status when upstream changes.
+      last_synth_fingerprint: null,
+    },
+    Body: VoiceGenBody,
+    run: async ({ data, inputs, ctx, reportProgress }) => {
+      const incoming = inputs?.in
+      const avatar = pickAvatarConfig(incoming)
+      if (!avatar?.avatar_id) throw new Error('Connect an Avatar picker so we know which voice to use.')
+      const script = pickScript(incoming)
+      if (!script) throw new Error('Wire in a script (Text or Script generator).')
+
+      const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` }
+
+      // Idempotency: same script + same avatar + same overrides → return
+      // cached output. New synth fires only when something material
+      // changes upstream OR the user clicks Re-synth from the body.
+      const fingerprint = JSON.stringify({
+        s: script,
+        avatar: avatar.avatar_id,
+        mode: avatar.mode || 'single',
+        look: avatar.look_id || null,
+        vs: data.props?.voice_settings_override || null,
+        vm: data.props?.voice_model_id_override || null,
+        vl: data.props?.voice_language_override || null,
+      })
+      if (
+        data.output?.audio?.url &&
+        data.output?._fp === fingerprint &&
+        avatar.mode !== 'randomize'
+      ) {
+        return data.output
+      }
+      if (
+        Array.isArray(data.output?.audio_chunks) &&
+        data.output.audio_chunks.length > 0 &&
+        data.output?._fp === fingerprint
+      ) {
+        return data.output
+      }
+
+      reportProgress?.({ message: `Synthesizing audio (${script.length.toLocaleString()} chars)…` })
+
+      const synthRes = await fetch('/api/avatars/synth-script', {
+        method: 'POST', headers,
+        body: JSON.stringify({
+          profile_id: ctx.profileId,
+          avatar_id: avatar.avatar_id,
+          script,
+          voice_settings: data.props?.voice_settings_override || undefined,
+          voice_model_id:  data.props?.voice_model_id_override  || undefined,
+          voice_language:  data.props?.voice_language_override  || undefined,
+        }),
+      })
+      const synthText = await synthRes.text()
+      let synthBody = null
+      try { synthBody = synthText ? JSON.parse(synthText) : {} } catch {
+        throw new Error(
+          synthRes.status === 504
+            ? 'Synth timed out. Try a shorter script or Turbo v2.5.'
+            : `Synth response was not JSON (${synthRes.status}). ${synthText.slice(0, 140)}`
+        )
+      }
+      if (!synthRes.ok) throw new Error(synthBody?.error || `Synth failed (${synthRes.status})`)
+      if (!synthBody?.audio_url) throw new Error('Synth returned no audio URL — check ELEVENLABS_API_KEY in Vercel env.')
+
+      // Single mode → done with one full audio output.
+      const wantsRandomize = avatar.mode === 'randomize'
+      const couldAutoRandomize = avatar.mode === 'single' && !avatar.image_id && avatar.look_id
+      if (!wantsRandomize && !couldAutoRandomize) {
+        return {
+          _fp: fingerprint,
+          audio: {
+            url: synthBody.audio_url,
+            name: 'voice_gen.mp3',
+            duration_secs: null,  // Not measured server-side; downstream estimates from duration if needed.
+          },
+          voice_used: synthBody.voice_used || null,
+          script_chars: synthBody.chars || script.length,
+        }
+      }
+
+      // Randomize mode → chunk the synthesized audio against the look
+      // image count so each clip gets a slice of the same continuous take.
+      reportProgress?.({ message: 'Slicing audio into clips…' })
+      const lookId = avatar.look_id
+      if (!lookId) throw new Error('Randomize mode needs a look. Pick one in the Avatar picker.')
+      const imgRes = await fetch(`/api/avatars/look-images?look_id=${encodeURIComponent(lookId)}`, { headers })
+      const imgBody = await imgRes.json()
+      if (!imgRes.ok) throw new Error(imgBody?.error || 'Could not fetch look images')
+      const images = (imgBody.images || []).slice().sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
+      if (!images.length) throw new Error('Look has no images')
+
+      // Single-image look — fall back to single output even in randomize.
+      if (images.length === 1) {
+        return {
+          _fp: fingerprint,
+          audio: {
+            url: synthBody.audio_url,
+            name: 'voice_gen.mp3',
+            duration_secs: null,
+          },
+          voice_used: synthBody.voice_used || null,
+          script_chars: synthBody.chars || script.length,
+        }
+      }
+
+      const cRes = await fetch('/api/avatars/audio-chunks', {
+        method: 'POST', headers,
+        body: JSON.stringify({
+          audio_url: synthBody.audio_url,
+          look_count: images.length,
+          profile_id: ctx.profileId,
+        }),
+      })
+      const cBody = await cRes.json().catch(() => ({}))
+      if (!cRes.ok) throw new Error(cBody?.error || `Audio chunking failed (${cRes.status})`)
+      const chunks = Array.isArray(cBody.chunks) ? cBody.chunks : []
+      if (!chunks.length) throw new Error('Audio chunking produced 0 slices.')
+
+      // Pair chunks with images so downstream avatar_render has the
+      // assignments ready (no second look-images fetch).
+      const audio_chunks = chunks.map((c, i) => ({
+        audio_url: c.audio_url,
+        sentence: c.sentence || '',
+        image_url: images[i % images.length].image_url,
+        order: i,
+      }))
+
+      return {
+        _fp: fingerprint,
+        audio_chunks,
+        full_audio_url: synthBody.audio_url,
+        voice_used: synthBody.voice_used || null,
+        script_chars: synthBody.chars || script.length,
+        chunk_count: audio_chunks.length,
+      }
+    },
+  },
+
   audio_upload: {
     free: true,
     label: 'Audio', description: 'Upload an audio file (MP3 / WAV / M4A) to use as the voice track for an avatar render. Wire its "out" into Avatar render in place of (or alongside) a script.',
@@ -5328,11 +5636,70 @@ ${String(script).slice(0, 2000)}
       const incoming = inputs?.in
       const avatar = pickAvatarConfig(incoming)
       if (!avatar?.avatar_id) throw new Error('Connect an Avatar picker')
+      // voice_gen pre-chunks audio for randomize mode — when present,
+      // we skip our own audio-chunks call and use the assignments
+      // verbatim (each chunk already paired with a look image upstream).
+      const preChunkedAudio = pickAudioChunks(incoming)
       const audio = pickAudio(incoming)
-      const script = audio ? '' : pickScript(incoming)
-      if (!audio && !script) throw new Error('Wire in either a script (text/script_gen) or an audio file.')
+      const script = (audio || preChunkedAudio) ? '' : pickScript(incoming)
+      if (!audio && !preChunkedAudio && !script) {
+        throw new Error('Wire in a script (text/script_gen), an audio file, or a Voice gen output.')
+      }
 
       const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` }
+
+      // Pre-chunked path: voice_gen already synthesized + sliced the
+      // audio for a randomize avatar. Each chunk has audio_url +
+      // image_url paired. Fan out N parallel HeyGen renders using
+      // those assignments — no script-split, no audio-chunks call.
+      if (preChunkedAudio) {
+        const total = preChunkedAudio.length
+        let done = 0
+        reportProgress?.({ done: 0, total, message: `Rendering 0 of ${total} clips…` })
+        const settled = await Promise.allSettled(preChunkedAudio.map(async (a) => {
+          const r = await fetch('/api/avatars/photo-render', {
+            method: 'POST', headers,
+            body: JSON.stringify({
+              profile_id: ctx.profileId,
+              photo_url: a.image_url,
+              audio_url: a.audio_url,
+              avatar_id: avatar.avatar_id,
+            }),
+          })
+          const body = await r.json()
+          if (!r.ok) throw new Error(body?.error || `Render submit failed (${r.status})`)
+          const videoId = body.video_id
+          if (!videoId) throw new Error('No video id')
+          const start = Date.now()
+          while (Date.now() - start < 480_000) {
+            if (ctx.shouldAbort?.()) throw new Error('Stopped')
+            await new Promise((res) => setTimeout(res, 6000))
+            const sR = await fetch(`/api/avatars/photo-render-status?video_id=${encodeURIComponent(videoId)}`, { headers })
+            const s = await sR.json()
+            if (!sR.ok) throw new Error(s.error || `Status failed (${sR.status})`)
+            if (s.state === 'success') {
+              done += 1
+              reportProgress?.({ done, total, message: `Rendered ${done} of ${total} clips` })
+              return { video_url: s.video_url, order: a.order, image_url: a.image_url, sentence: a.sentence || '', audio_chunk_url: a.audio_url }
+            }
+            if (s.state === 'failed') throw new Error(s.error || 'Render failed')
+          }
+          throw new Error('Render timed out')
+        }))
+        const clips = []
+        const failures = []
+        for (let i = 0; i < settled.length; i++) {
+          if (settled[i].status === 'fulfilled') clips.push(settled[i].value)
+          else failures.push({ clip_index: i, error: settled[i].reason?.message || String(settled[i].reason) })
+        }
+        if (!clips.length) throw new Error(`All ${preChunkedAudio.length} clips failed. First error: ${failures[0]?.error || 'unknown'}`)
+        return {
+          videos: clips,
+          media_type: 'video',
+          is_clip_set: true,
+          ...(failures.length ? { partial_failures: failures } : {}),
+        }
+      }
 
       // ── Audio review path ─────────────────────────────────────────────
       // When the toggle is on AND we have a script (not pre-recorded
