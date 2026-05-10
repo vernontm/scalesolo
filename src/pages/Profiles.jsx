@@ -7,6 +7,7 @@ import {
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { supabase } from '../lib/supabase.js'
+import VoiceTrainingSection from '../components/VoiceTrainingSection.jsx'
 
 const grid = {
   display: 'grid',
@@ -44,6 +45,9 @@ const FORM_DEFAULTS = {
   business_type: '',
   website_url: '',
   brand_bible: '',
+  brand_cta: '',
+  do_not_say: [],
+  always_include: [],
   brand_primary_color: '#ef4444',
   brand_secondary_color: '',
   preferred_tone: '',
@@ -266,6 +270,22 @@ function ProfileEditor({ profile, onClose, onSaved }) {
             />
           </Field>
         </div>
+
+        {/* Voice training — paste reference scripts + opener hooks +
+            hard rules per profile. Generation pulls the liked items as
+            few-shot examples. The whole section is opt-in (collapsed
+            initially) so existing profiles aren't overwhelmed. */}
+        {profile?.id && (
+          <div style={{ marginTop: 14 }}>
+            <VoiceTrainingSection
+              profileId={profile.id}
+              session={session}
+              doNotSay={Array.isArray(form.do_not_say) ? form.do_not_say : []}
+              alwaysInclude={Array.isArray(form.always_include) ? form.always_include : []}
+              onRulesChange={(key, arr) => set(key, arr)}
+            />
+          </div>
+        )}
 
         <div style={{ marginTop: 14 }}>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>

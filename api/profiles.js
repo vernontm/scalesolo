@@ -55,6 +55,7 @@ export default async function handler(req, res) {
       const ALLOWED = new Set([
         'business_name','owner_name','industry','business_type','website_url',
         'brand_bible','brand_bible_summary','brand_cta','brand_primary_color','brand_secondary_color',
+        'do_not_say','always_include','default_formats',
         'brand_colors','brand_fonts','logo_url',
         'timezone','synced_platforms','posting_schedule',
         'preferred_tone','target_audience','core_hashtags','location','timezone',
