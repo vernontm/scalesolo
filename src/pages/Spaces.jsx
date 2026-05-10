@@ -2421,13 +2421,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
     () => nodes.map((n) => {
       const t = n.data?.type
       if (t === 'avatar_picker') return { ...n, data: { ...n.data, _ctxAvatars: avatars, _ctxPublicAvatars: publicAvatars } }
-      if (t === 'avatar_render') return { ...n, data: {
-        ...n.data,
-        _ctxIsTrialing: subscriptionStatus === 'trialing',
-        // Audio review needs profile id (for synth + render endpoints)
-        // and the upstream avatar so it can resolve voice settings live.
-        _ctxProfileId: selectedProfileId,
-      } }
+      if (t === 'avatar_render') return { ...n, data: { ...n.data, _ctxIsTrialing: subscriptionStatus === 'trialing' } }
       if (t === 'brand_profile') return { ...n, data: { ...n.data, _ctxProfiles: profiles } }
       if (t === 'image_upload')  return { ...n, data: { ...n.data, _ctxProfileId: selectedProfileId } }
       if (t === 'captions') {
