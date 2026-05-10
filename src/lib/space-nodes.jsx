@@ -2486,7 +2486,12 @@ function AvatarRenderBody({ data, onPatch }) {
       )}
 
       {data.status === 'failed' && <NodePreview status="failed" error={data.error} />}
-      {data.status === 'running' && <ProgressPill progress={data.progress} fallback="Rendering…" />}
+      {data.status === 'running' && (
+        <ProgressPill
+          progress={data.progress}
+          fallback={data.props?.audio_review_enabled ? 'Synthesizing audio…' : 'Rendering…'}
+        />
+      )}
       {data.status === 'done' && !pending && !out?.video_url && clipCount === 0 && (
         <div style={{ ...previewBox, color: 'var(--text-soft)' }}>Done</div>
       )}
@@ -5354,6 +5359,11 @@ ${String(script).slice(0, 2000)}
             script_for_render: script,
           }
         }
+        // Per-character progress estimate so the user sees "Synthesizing
+        // audio…" instead of the generic "Rendering…" pill. Helps
+        // distinguish the synth phase from the (much longer) HeyGen
+        // render phase.
+        reportProgress?.({ message: `Synthesizing audio (${script.length.toLocaleString()} chars)…` })
         const r = await fetch('/api/avatars/synth-script', {
           method: 'POST', headers,
           body: JSON.stringify({
@@ -5365,8 +5375,20 @@ ${String(script).slice(0, 2000)}
             voice_language:  data.props?.voice_language_override  || undefined,
           }),
         })
-        const body = await r.json()
-        if (!r.ok) throw new Error(body.error || `Synth failed (${r.status})`)
+        // Read as text first so non-JSON responses (Vercel timeout HTML
+        // pages, gateway 502 markup) surface as a useful error instead
+        // of a cryptic "Unexpected token < in JSON".
+        const rawText = await r.text()
+        let body = null
+        try { body = rawText ? JSON.parse(rawText) : {} } catch {
+          throw new Error(
+            r.status === 504
+              ? 'Synth timed out. Try a shorter script or a faster model (Turbo v2.5).'
+              : `Synth response was not JSON (${r.status}). ${rawText.slice(0, 140)}`
+          )
+        }
+        if (!r.ok) throw new Error(body?.error || `Synth failed (${r.status})`)
+        if (!body?.audio_url) throw new Error('Synth returned no audio URL — check ELEVENLABS_API_KEY in Vercel env.')
         // Output shape: pending_audio is the signal to the body that
         // we're paused for review. avatar_config / script are stashed
         // so the Approve handler has everything it needs to fire the

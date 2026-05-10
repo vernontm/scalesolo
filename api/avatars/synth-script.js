@@ -21,6 +21,13 @@ import {
   sanitizeVoiceSettings, chargeTtsCredits,
 } from '../_lib/elevenlabs.js'
 
+// Vercel's default function timeout is 10s, but ElevenLabs Multilingual
+// v2 / v3 on longer scripts can reasonably take 15-30s end-to-end
+// (synth + Storage upload). 60s leaves comfortable headroom; if a
+// single synth somehow takes longer than that the user has bigger
+// problems (giant script, ElevenLabs incident).
+export const config = { maxDuration: 60 }
+
 export default async function handler(req, res) {
   setCors(req, res)
   if (req.method === 'OPTIONS') return res.status(204).end()
