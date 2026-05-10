@@ -173,6 +173,9 @@ export default async function handler(req, res) {
     // 3. Totals.
     const renderCostSum = videos.reduce((s, v) => s + (v.render_cost_usd || 0), 0)
     const postProcessingSum = postProcessing.reduce((s, p) => s + (p.est_usd || 0), 0)
+    // Sum of HeyGen seconds across renders. Counts every render including
+    // failed ones, since HeyGen bills the second they start generation.
+    const totalDurationSecs = videos.reduce((s, v) => s + (Number(v.duration_secs) || 0), 0)
 
     return res.status(200).json({
       customer_id: customer.id,
@@ -184,6 +187,7 @@ export default async function handler(req, res) {
       post_processing: postProcessing,
       totals: {
         videos_count: videos.length,
+        total_duration_secs: totalDurationSecs,
         render_cost_usd: renderCostSum,
         post_processing_cost_usd: postProcessingSum,
         total_usd: renderCostSum + postProcessingSum,

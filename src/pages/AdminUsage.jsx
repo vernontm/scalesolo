@@ -32,6 +32,19 @@ function fmtUsd(n) {
 function fmtNum(n) {
   return new Intl.NumberFormat().format(Math.round(Number(n) || 0))
 }
+// Render seconds → human duration. Under a minute reads "Ns"; over a
+// minute prefers "Mm Ss" (or "Hh Mm" for long stretches) so admins can
+// eyeball it without doing math.
+function fmtDuration(secs) {
+  const s = Math.max(0, Math.round(Number(secs) || 0))
+  if (!s) return '0s'
+  if (s < 60) return `${s}s`
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const r = s % 60
+  if (h > 0) return r > 0 ? `${h}h ${m}m` : `${h}h ${m}m`
+  return r > 0 ? `${m}m ${r}s` : `${m}m`
+}
 
 function SortableTable({ rows, columns, defaultSort, onRowClick }) {
   const [sortKey, setSortKey] = useState(defaultSort?.key || columns[0]?.key)
@@ -318,8 +331,9 @@ function UserVideoDetail({ user, windowId, onClose }) {
         ) : (
           <>
             {/* Headline numbers */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginBottom: 18 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 18 }}>
               <Stat label="Videos rendered"  value={fmtNum(totals.videos_count)} />
+              <Stat label="Total duration"   value={fmtDuration(totals.total_duration_secs)} />
               <Stat label="Render cost"      value={fmtUsd(totals.render_cost_usd)} />
               <Stat label="Post-processing"  value={fmtUsd(totals.post_processing_cost_usd)} />
               <Stat label="TOTAL"            value={fmtUsd(totals.total_usd)} accent />
