@@ -7,7 +7,12 @@
 // Endpoint defaults to v1 (production). Override with SHOTSTACK_HOST
 // (e.g. https://api.shotstack.io/edit/stage for staging).
 
-const SHOTSTACK_HOST = (process.env.SHOTSTACK_HOST || 'https://api.shotstack.io/edit/v1').replace(/\/$/, '')
+// Accept the base path with or without a trailing slash and tolerate the
+// user pasting the full `/render` URL straight from the Shotstack
+// dashboard — we strip it so the submit/poll helpers can append cleanly.
+const SHOTSTACK_HOST = (process.env.SHOTSTACK_HOST || 'https://api.shotstack.io/edit/v1')
+  .replace(/\/+$/, '')
+  .replace(/\/render$/, '')
 
 function authHeaders() {
   const key = process.env.SHOTSTACK_API_KEY
