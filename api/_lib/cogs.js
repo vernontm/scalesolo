@@ -56,7 +56,14 @@ function heygenRenderCost(metadata = {}) {
 const ACTION_COGS = {
   // Image gen: KIE wholesale by model + quality + count.
   'consume:image-gen': (meta) => kieImageCost(meta),
-  // Avatar render: HeyGen per-second by model.
+  // Avatar render: HeyGen per-second by model. Both the regular V3/V4/V5
+  // talking-head path (consume:avatar-render) and the photo-avatar
+  // instant path (consume:photo-avatar-render) bill the same way —
+  // duration_secs × cents_per_sec for the model's tier. Without the
+  // first entry, regular HeyGen renders fell through to the flat
+  // $2/video-unit fallback and the admin dashboard understated cost
+  // for high-fidelity V4 / V5 jobs.
+  'consume:avatar-render':       (meta) => heygenRenderCost(meta),
   'consume:photo-avatar-render': (meta) => heygenRenderCost(meta),
   // Caption / copy generation via Claude — rough Sonnet pass-through.
   // 1 ai_token consumed ~= 1 model token; Sonnet is ~$0.005 / token

@@ -202,7 +202,14 @@ export default async function handler(req, res) {
             p_amount: fee,
             p_action: 'consume:combine-videos',
             p_profile_id: profile_id,
-            p_metadata: { clips: video_urls.length, bytes: outBytes.byteLength },
+            // Record the count + URLs we stitched so the admin usage
+            // drill-down can show "this combine pulled these N inputs"
+            // at a glance. Capped at 50 to keep the jsonb compact.
+            p_metadata: {
+              clips: video_urls.length,
+              video_urls: Array.isArray(video_urls) ? video_urls.slice(0, 50) : [],
+              bytes: outBytes.byteLength,
+            },
           },
         })
         // RPC returns { success, error_code, ... } — check the shape.

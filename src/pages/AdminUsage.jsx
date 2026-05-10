@@ -369,6 +369,7 @@ function UserVideoDetail({ user, windowId, onClose }) {
                     columns={[
                       { key: 'created_at',  label: 'Date',   render: (r) => fmtDate(r.created_at) },
                       { key: 'action',      label: 'Action', render: (r) => <code style={{ fontSize: 11.5, color: 'var(--text-soft)' }}>{r.action.replace(/^consume:/, '')}</code> },
+                      { key: 'inputs',      label: 'Inputs', render: (r) => <PostProcessingInputs row={r} /> },
                       { key: 'units',       label: 'Tokens', align: 'right', render: (r) => fmtNum(r.units) },
                       { key: 'est_usd',     label: 'Cost',   align: 'right', render: (r) => fmtUsd(r.est_usd) },
                     ]}
@@ -398,6 +399,53 @@ function StatusPill({ status }) {
       fontFamily: 'var(--font-display)', letterSpacing: '0.04em',
     }}>{m.label}</span>
   )
+}
+
+// Pretty-print whatever inputs we recorded on a post-processing
+// metadata blob. combine-videos: clip count + popover with URLs.
+// video-polish: the source video URL. captions/auto-title: a small
+// hint for what got processed.
+function PostProcessingInputs({ row }) {
+  const m = row?.metadata || {}
+  if (row.action === 'consume:combine-videos') {
+    const count = Number(m.clips || (Array.isArray(m.video_urls) ? m.video_urls.length : 0)) || 0
+    const urls = Array.isArray(m.video_urls) ? m.video_urls : []
+    if (count === 0) return <span style={{ color: 'var(--muted)', fontSize: 11.5 }}>—</span>
+    return (
+      <details style={{ display: 'inline-block' }} onClick={(e) => e.stopPropagation()}>
+        <summary style={{
+          cursor: 'pointer', fontSize: 11.5, color: 'var(--text-soft)',
+          listStyle: 'none', userSelect: 'none',
+        }}>
+          {count} clip{count === 1 ? '' : 's'}{urls.length > 0 ? ' ▾' : ''}
+        </summary>
+        {urls.length > 0 && (
+          <div style={{
+            marginTop: 6, padding: 8, borderRadius: 6,
+            background: 'var(--surface-2)', border: '1px solid var(--border)',
+            maxWidth: 360, fontSize: 11,
+          }}>
+            {urls.map((u, i) => (
+              <div key={i} style={{ marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <a href={u} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--red)', textDecoration: 'none' }}>
+                  clip {i + 1} <ExternalLink size={10} style={{ verticalAlign: '-1px' }} />
+                </a>
+              </div>
+            ))}
+          </div>
+        )}
+      </details>
+    )
+  }
+  if (row.action === 'consume:video-polish' && m.video_url) {
+    return (
+      <a href={m.video_url} target="_blank" rel="noopener noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        style={{ color: 'var(--red)', textDecoration: 'none', fontSize: 11.5, display: 'inline-flex', alignItems: 'center', gap: 3 }}
+      >source <ExternalLink size={11} /></a>
+    )
+  }
+  return <span style={{ color: 'var(--muted)', fontSize: 11.5 }}>—</span>
 }
 
 function EmptyHint({ children }) {
