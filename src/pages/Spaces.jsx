@@ -269,7 +269,14 @@ function SpaceNode({ id, data, selected }) {
             }}
           ><SettingsIcon size={12} /></button>
         )}
-        {data.type !== 'collection' && (
+        {/* Hide the Run button on input nodes that have no work to do —
+            text_input just emits its prop verbatim, so the runner already
+            auto-executes it as a free node. The button was misleading
+            (clicking it acted as a no-op for users) and added visual
+            noise next to a one-line text field. Other free inputs
+            (audio_upload, image upload, brand_profile, auto_run) still
+            show Run because they validate / fetch / kick off side work. */}
+        {data.type !== 'collection' && data.type !== 'text_input' && (
           <button
             type="button"
             className="nodrag space-node-runbtn"
