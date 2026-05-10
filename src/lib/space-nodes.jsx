@@ -3375,47 +3375,11 @@ function VideoPolishBody({ data, onPatch }) {
           </div>
         </>
       )}
-      {/* Per-section toggles. Clicking the checkbox flips the section
-          on / off without opening the editor. Click the row label to
-          open the sidebar focused on that section. */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 6 }}>
-        <PolishToggle
-          label="Captions"
-          on={props.captions_enabled !== false}
-          summary={props.captions_enabled !== false
-            ? (props.caption_template_name || 'No template picked')
-            : 'Off'}
-          onToggle={(v) => onPatch({ captions_enabled: v })}
-          onOpen={() => window.__spaceOpenEditor?.(data.__id)}
-        />
-        <PolishToggle
-          label="Title overlay"
-          on={props.title_enabled !== false}
-          summary={props.title_enabled === false
-            ? 'Off'
-            : (props.title_mode || 'auto') === 'auto' ? 'Auto from script' : ((props.title || 'Manual').slice(0, 28))}
-          onToggle={(v) => onPatch({ title_enabled: v })}
-          onOpen={() => window.__spaceOpenEditor?.(data.__id)}
-        />
-        <PolishToggle
-          label="Watermark / logo"
-          on={(props.watermark_position || 'br') !== 'none'}
-          summary={(props.watermark_position || 'br') === 'none'
-            ? 'Off'
-            : `${props.watermark_size_pct ?? 25}% · ${(props.watermark_position || 'br').toUpperCase()}`}
-          onToggle={(v) => onPatch({ watermark_position: v ? 'br' : 'none' })}
-          onOpen={() => window.__spaceOpenEditor?.(data.__id)}
-        />
-        <PolishToggle
-          label="Music"
-          on={(props.music_volume ?? 0.15) > 0}
-          summary={(props.music_volume ?? 0.15) > 0
-            ? `${Math.round((Number(props.music_volume ?? 0.15)) * 100)}% · ${(props.music_fade_secs ?? 1.5).toFixed(1)}s fade`
-            : 'Off'}
-          onToggle={(v) => onPatch({ music_volume: v ? (props.music_volume_remembered ?? 0.15) : 0, music_volume_remembered: v ? undefined : (props.music_volume ?? 0.15) })}
-          onOpen={() => window.__spaceOpenEditor?.(data.__id)}
-        />
-      </div>
+      {/* Per-section toggles removed — all configuration lives in the
+          settings drawer (opened via the Settings icon in the header
+          or the "Open all settings" button below). The inline toggles
+          were duplicating drawer state and adding a lot of visual
+          weight on the node body. */}
       <button
         type="button"
         className="nodrag"
@@ -4640,7 +4604,57 @@ function SchedulePostBody({ data, onPatch }) {
       <div style={{ fontSize: 10.5, color: 'var(--muted)', lineHeight: 1.4, marginTop: 4 }}>
         Wire a video (or images) plus an optional caption / hashtags / script.
       </div>
-      {out?.request_id && (
+      {/* Submission summary. Multi-clip fan-out emits submissions[] —
+          one row per post — so the user can verify each clip landed
+          in the queue at the right time. Single-clip falls back to
+          the legacy flat {request_id, scheduled_iso} shape. */}
+      {Array.isArray(out?.submissions) && out.submissions.length > 0 ? (
+        <div style={{ ...previewBox, marginTop: 8, padding: '8px 10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <span style={{ display: 'inline-grid', placeItems: 'center', width: 18, height: 18, borderRadius: 999, background: 'rgba(46,204,113,0.18)', color: '#2ecc71', fontSize: 11, fontWeight: 700 }}>✓</span>
+            <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 12 }}>
+              Submitted {out.submissions.length} {out.submissions.length === 1 ? 'post' : 'posts'}
+            </div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {out.submissions.map((s, i) => (
+              <div key={s.request_id || i} style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                fontSize: 11, padding: '4px 6px',
+                background: 'var(--surface-2)',
+                border: '1px solid var(--border)', borderRadius: 5,
+              }}>
+                <span style={{
+                  fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 10,
+                  color: '#0ea5e9', letterSpacing: '0.04em',
+                  minWidth: 42,
+                }}>CLIP {i + 1}</span>
+                <span style={{ flex: 1, color: 'var(--text-soft)' }}>
+                  {s.scheduled_iso
+                    ? new Date(s.scheduled_iso).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+                    : <span style={{ color: 'var(--muted)' }}>Publishing now</span>
+                  }
+                </span>
+              </div>
+            ))}
+          </div>
+          {Array.isArray(out.platforms) && out.platforms.length > 0 && (
+            <div style={{ marginTop: 6, fontSize: 10.5, color: 'var(--muted)' }}>
+              to {out.platforms.join(', ')}
+            </div>
+          )}
+          {Array.isArray(out.partial_failures) && out.partial_failures.length > 0 && (
+            <div style={{
+              marginTop: 6, padding: '6px 8px', fontSize: 10.5,
+              background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.35)',
+              borderRadius: 5, color: 'var(--red)',
+            }}>
+              {out.partial_failures.length} clip{out.partial_failures.length === 1 ? '' : 's'} failed —
+              first: {out.partial_failures[0].error?.slice(0, 80)}
+            </div>
+          )}
+        </div>
+      ) : out?.request_id && (
         <div style={{ ...previewBox, marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ display: 'inline-grid', placeItems: 'center', width: 18, height: 18, borderRadius: 999, background: 'rgba(46,204,113,0.18)', color: '#2ecc71', fontSize: 11, fontWeight: 700 }}>✓</span>
           <div style={{ flex: 1 }}>
