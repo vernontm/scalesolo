@@ -383,6 +383,106 @@ function pickFirstVideoUrl(arr) {
   return null
 }
 
+// Single-script caption generator. The default path when caption_gen
+// has one script-bearing input. Returns the canonical
+// { title, caption, hashtags, first_comment } shape with user edits
+// overlaid. Extracted as a helper so the video-only fallback can reuse
+// it for the single-video case (transcribe → use transcript as script).
+async function runSingleCaptionFromScript({ ctx, profileId, script, edits }) {
+  const prompt = `From the script below, write ONE canonical TITLE, CAPTION, FIRST_COMMENT, and exactly 5 HASHTAGS that will be used across every platform we publish to (TikTok, Instagram, YouTube, Facebook, X, LinkedIn, Threads, Pinterest, Bluesky). Aim for a tight, punchy caption that reads well on the longest-form platforms (Instagram / Facebook / LinkedIn) but doesn't feel bloated on the shorter ones — keep it under 1500 characters total. The platform layer truncates further for X / Threads / Bluesky automatically.
+
+Title rules:
+- ≤ 80 characters, click-worthy, no number prefix.
+- Used as the YouTube title and the post title on platforms that surface a separate title field.
+
+Caption rules:
+- ≤ 1500 characters. Lead with a strong hook in the first sentence.
+- Should land naturally on every platform — no platform-specific phrasing.
+- Plain text, paragraph breaks ok.
+
+Hashtags:
+- EXACTLY 5 hashtags, space-separated, each starting with #.
+- Lead with the brand's core hashtags from the brand bible, then add topic-specific ones.
+- Always present — never empty. Same set for every platform.
+
+First comment rules:
+- ≤ 220 characters. A short engagement driver that lands as the first reply on the post.
+- A punchy question, "save if this hit" call-to-action, or value-add follow-up thought.
+- NEVER duplicates the caption.
+- NEVER includes hashtags (those belong in the hashtags field).
+
+Voice: stay on the brand bible's tone (already in your system context). NEVER use em dashes; use commas, periods, or colons.
+
+Return ONLY valid JSON, no preamble, no markdown fences. Exact shape:
+{
+  "title": "",
+  "caption": "",
+  "first_comment": "",
+  "hashtags": "#a #b #c #d #e"
+}
+
+Script:
+"""
+${String(script).slice(0, 2000)}
+"""`
+
+  const r = await fetch('/api/content/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
+    body: JSON.stringify({
+      profile_id: profileId,
+      format: 'ig-post',
+      topic: prompt,
+      count: 1,
+      dry_run: true,
+    }),
+  })
+  const body = await r.json()
+  if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
+  const item = body.items?.[0] || {}
+  const raw = item.full_script || item.caption || ''
+
+  let parsed = {}
+  try {
+    const cleaned = String(raw).replace(/```json\s*|```\s*/gi, '').trim()
+    const m = cleaned.match(/\{[\s\S]*\}/)
+    parsed = JSON.parse(m ? m[0] : cleaned)
+  } catch { parsed = {} }
+
+  // Tolerate the legacy per-platform shape from older saved spaces.
+  const legacyKeys = ['tiktok', 'instagram', 'youtube', 'x', 'linkedin', 'facebook', 'threads']
+  const isLegacy = legacyKeys.some((k) => parsed[k] && typeof parsed[k] === 'object' && parsed[k].caption)
+  let canonical
+  if (isLegacy) {
+    const order = ['instagram', 'tiktok', 'facebook', 'youtube', 'linkedin', 'threads', 'x']
+    const k = order.find((kk) => parsed[kk]?.caption) || Object.keys(parsed)[0]
+    const v = parsed[k] || {}
+    canonical = { title: v.title || '', caption: v.caption || '', hashtags: v.hashtags || '', first_comment: v.first_comment || '' }
+  } else {
+    canonical = {
+      title: parsed.title || '',
+      caption: parsed.caption || '',
+      hashtags: parsed.hashtags || '',
+      first_comment: parsed.first_comment || '',
+    }
+  }
+  // Salvage from raw text on JSON parse failure.
+  if (!canonical.caption && raw) {
+    canonical.caption = String(raw).replace(/#[\w]+/g, '').trim().slice(0, 1500)
+    if (!canonical.hashtags) {
+      canonical.hashtags = (String(raw).match(/#[\w]+/g) || []).slice(0, 5).join(' ')
+    }
+  }
+
+  // User edits in the body win over the AI output.
+  return {
+    title:         (edits?.edited_title         ?? canonical.title)         || '',
+    caption:       (edits?.edited_caption       ?? canonical.caption)       || '',
+    hashtags:      (edits?.edited_hashtags      ?? canonical.hashtags)      || '',
+    first_comment: (edits?.edited_first_comment ?? canonical.first_comment) || '',
+  }
+}
+
 // Multi-clip caption generator. Given N script chunks (typically
 // voice_gen audio_chunks' sentence text), asks Claude for N caption
 // sets in a single call. Returns the canonical single-caption shape
@@ -5017,13 +5117,13 @@ export const NODE_REGISTRY = {
   },
 
   caption_gen: {
-    label: 'Title + caption + hashtags', description: 'Generates a click-worthy title, a platform-tuned caption, and 5 hashtags. With a single script in: one canonical set. With multi-clip audio (voice_gen randomize): one independent set per clip in one Claude call. schedule_post matches clip[i] → captions[i] automatically.',
+    label: 'Title + caption + hashtags', description: 'Generates a click-worthy title, a platform-tuned caption, and 5 hashtags. Accepts a script, voice_gen audio chunks, OR raw videos (Upload media / Collection / avatar_render output) — videos get transcribed automatically and each gets its own caption set. schedule_post matches clip[i] → captions[i].',
     icon: Captions, category: 'generators', color: '#f59e0b',
-    inputs: [{ id: 'in', label: 'In (script / chunks / brand)' }],
+    inputs: [{ id: 'in', label: 'In (script / chunks / videos / brand)' }],
     outputs: [{ id: 'out', label: 'Out' }],
     initialProps: {},
     Body: CaptionGenBody,
-    run: async ({ data, inputs, ctx }) => {
+    run: async ({ data, inputs, ctx, reportProgress }) => {
       const incoming = inputs?.in
       const brand = pickBrand(incoming)
       const profileId = brand?.profile_id || ctx.profileId
@@ -5032,8 +5132,7 @@ export const NODE_REGISTRY = {
       // audio_chunks[{ sentence, image_url, order }]. Each chunk's
       // sentence is what gets spoken in that clip, which is exactly
       // what we need for per-clip captions. One Claude call generates
-      // N caption sets (cheaper than N separate calls and the model
-      // keeps a more consistent voice across the batch).
+      // N caption sets.
       let chunkSentences = null
       for (const v of asArr(incoming)) {
         if (v && Array.isArray(v.audio_chunks) && v.audio_chunks.length > 1) {
@@ -5043,139 +5142,68 @@ export const NODE_REGISTRY = {
           if (arr.length > 1) { chunkSentences = arr; break }
         }
       }
-
-      // Fan-out path: one prompt that asks for N caption sets, returned
-      // as a JSON array. Falls back to single-caption path on parse
-      // failure so a malformed response doesn't break the canvas.
       if (chunkSentences) {
         return await runMultiCaption({ ctx, profileId, chunkSentences, edits: data.props })
       }
 
+      // Script-bearing input wins over raw videos when both are
+      // present. pickScript walks the bag for any { script | text |
+      // full_script | caption } shape.
       const script = pickScript(incoming)
-      if (!script) throw new Error('No script provided')
 
-      // ONE canonical version of every copy field. schedule_post + the
-      // /api/social/upload-post endpoint handle per-platform character
-      // limits and field mapping (Upload-Post exposes platform-specific
-      // title/description/first_comment overrides; we set them server-
-      // side from these canonical values).
-      const prompt = `From the script below, write ONE canonical TITLE, CAPTION, FIRST_COMMENT, and exactly 5 HASHTAGS that will be used across every platform we publish to (TikTok, Instagram, YouTube, Facebook, X, LinkedIn, Threads, Pinterest, Bluesky). Aim for a tight, punchy caption that reads well on the longest-form platforms (Instagram / Facebook / LinkedIn) but doesn't feel bloated on the shorter ones — keep it under 1500 characters total. The platform layer truncates further for X / Threads / Bluesky automatically.
-
-Title rules:
-- ≤ 80 characters, click-worthy, no number prefix.
-- Used as the YouTube title and the post title on platforms that surface a separate title field.
-
-Caption rules:
-- ≤ 1500 characters. Lead with a strong hook in the first sentence.
-- Should land naturally on every platform — no platform-specific phrasing.
-- Plain text, paragraph breaks ok.
-
-Hashtags:
-- EXACTLY 5 hashtags, space-separated, each starting with #.
-- Lead with the brand's core hashtags from the brand bible, then add topic-specific ones.
-- Always present — never empty. Same set for every platform.
-
-First comment rules:
-- ≤ 220 characters. A short engagement driver that lands as the first reply on the post.
-- A punchy question, "save if this hit" call-to-action, or value-add follow-up thought.
-- NEVER duplicates the caption.
-- NEVER includes hashtags (those belong in the hashtags field).
-
-Voice: stay on the brand bible's tone (already in your system context). NEVER use em dashes (—); use commas, periods, or colons.
-
-Return ONLY valid JSON, no preamble, no markdown fences. Exact shape:
-{
-  "title": "",
-  "caption": "",
-  "first_comment": "",
-  "hashtags": "#a #b #c #d #e"
-}
-
-Script:
-"""
-${String(script).slice(0, 2000)}
-"""`
-
-      const r = await fetch('/api/content/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
-        body: JSON.stringify({
-          profile_id: profileId,
-          format: 'ig-post',  // generic; the prompt does the heavy lifting
-          topic: prompt,
-          count: 1,
-          // We just need the AI output to feed downstream; the row itself
-          // gets saved by save_library. Without dry_run we'd leave a draft
-          // titled with the raw prompt template.
-          dry_run: true,
-        }),
-      })
-      const body = await r.json()
-      if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
-      const item = body.items?.[0] || {}
-      const raw = item.full_script || item.caption || ''
-
-      // Parse the canonical JSON shape. Tolerate ```json fences if Claude
-      // added them. Also tolerate the LEGACY per-platform shape that
-      // earlier saved spaces still produce — flatten it down to the
-      // canonical fields by picking the instagram/tiktok variant first.
-      let parsed = {}
-      try {
-        const cleaned = String(raw).replace(/```json\s*|```\s*/gi, '').trim()
-        const m = cleaned.match(/\{[\s\S]*\}/)
-        parsed = JSON.parse(m ? m[0] : cleaned)
-      } catch {
-        parsed = {}
-      }
-
-      // Detect legacy per-platform shape (has at least one platform key
-      // with a caption inside) and flatten if needed.
-      const legacyKeys = ['tiktok', 'instagram', 'youtube', 'x', 'linkedin', 'facebook', 'threads']
-      const isLegacy = legacyKeys.some((k) => parsed[k] && typeof parsed[k] === 'object' && parsed[k].caption)
-      let canonical
-      if (isLegacy) {
-        const order = ['instagram', 'tiktok', 'facebook', 'youtube', 'linkedin', 'threads', 'x']
-        const k = order.find((kk) => parsed[kk]?.caption) || Object.keys(parsed)[0]
-        const v = parsed[k] || {}
-        canonical = {
-          title: v.title || '',
-          caption: v.caption || '',
-          hashtags: v.hashtags || '',
-          first_comment: v.first_comment || '',
+      // Video-only fallback: if no script / chunks but we DO have
+      // videos in the bag (Upload media output, Collection of videos,
+      // avatar_render output), transcribe each in parallel via the
+      // auto-title endpoint with transcript_only=true, then route
+      // through the same multi-caption fan-out.
+      if (!script) {
+        const videoUrls = pickAllVideoUrls(asArr(incoming))
+        if (videoUrls.length > 0) {
+          reportProgress?.({ message: `Transcribing ${videoUrls.length} video${videoUrls.length === 1 ? '' : 's'}…`, done: 0, total: videoUrls.length })
+          const sess = ctx.token
+          let done = 0
+          const transcripts = await Promise.all(videoUrls.map(async (url, i) => {
+            try {
+              const r = await fetch('/api/videos/auto-title', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sess}` },
+                body: JSON.stringify({
+                  profile_id: profileId,
+                  video_url: url,
+                  transcript_only: true,
+                }),
+              })
+              const body = await r.json().catch(() => ({}))
+              done += 1
+              reportProgress?.({ message: `Transcribed ${done} of ${videoUrls.length}`, done, total: videoUrls.length })
+              if (!r.ok) return { idx: i, order: i, text: '', source_url: url, error: body?.error || `Transcribe ${r.status}` }
+              return { idx: i, order: i, text: String(body?.transcript || '').trim(), source_url: url }
+            } catch (e) {
+              done += 1
+              reportProgress?.({ message: `Transcribed ${done} of ${videoUrls.length}`, done, total: videoUrls.length })
+              return { idx: i, order: i, text: '', source_url: url, error: e?.message || String(e) }
+            }
+          }))
+          const valid = transcripts.filter((c) => c.text.length > 30)
+          if (!valid.length) {
+            const errs = transcripts.map((c) => c.error).filter(Boolean).slice(0, 2).join('; ')
+            throw new Error(`No usable transcripts from ${videoUrls.length} videos${errs ? ` — ${errs}` : ''}.`)
+          }
+          // Single video → use the transcript as a script and continue
+          // through the existing single-caption path so the user gets
+          // the canonical { title, caption, hashtags, first_comment }
+          // shape. Multiple videos → fan out per video.
+          if (valid.length === 1) {
+            return await runSingleCaptionFromScript({ ctx, profileId, script: valid[0].text, edits: data.props })
+          }
+          return await runMultiCaption({ ctx, profileId, chunkSentences: valid, edits: data.props })
         }
-      } else {
-        canonical = {
-          title: parsed.title || '',
-          caption: parsed.caption || '',
-          hashtags: parsed.hashtags || '',
-          first_comment: parsed.first_comment || '',
-        }
+        throw new Error('Wire a script (Text / script_gen / voice_gen) or videos (Upload media / Collection / avatar_render) into "in".')
       }
 
-      // Last-ditch fallback: salvage from raw text if JSON parse failed
-      // entirely (parsed = {}). Empty caption with a usable raw → use
-      // raw as the caption, scrape #-tags into hashtags.
-      if (!canonical.caption && raw) {
-        canonical.caption = String(raw).replace(/#[\w]+/g, '').trim().slice(0, 1500)
-        if (!canonical.hashtags) {
-          canonical.hashtags = (String(raw).match(/#[\w]+/g) || []).slice(0, 5).join(' ')
-        }
-      }
-
-      // User edits in the body override the AI output for this run's
-      // downstream consumers (Save to drafts / Schedule post). Stored
-      // on the node's props as edited_*; if present, they win.
-      const userTitle    = data.props?.edited_title
-      const userCaption  = data.props?.edited_caption
-      const userHashtags = data.props?.edited_hashtags
-      const userFirstComment = data.props?.edited_first_comment
-
-      return {
-        title:         (userTitle        ?? canonical.title)         || '',
-        caption:       (userCaption      ?? canonical.caption)       || '',
-        hashtags:      (userHashtags     ?? canonical.hashtags)      || '',
-        first_comment: (userFirstComment ?? canonical.first_comment) || '',
-      }
+      // Single-script path — extracted into runSingleCaptionFromScript
+      // so video-only callers (above) can reuse it for the 1-video case.
+      return await runSingleCaptionFromScript({ ctx, profileId, script, edits: data.props })
     },
   },
 

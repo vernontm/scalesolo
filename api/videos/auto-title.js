@@ -111,23 +111,30 @@ export default async function handler(req, res) {
   if (!auth) return
 
   try {
-    const { profile_id, video_url, topic, transcript: providedTranscript } = req.body || {}
+    const { profile_id, video_url, topic, transcript: providedTranscript, transcript_only } = req.body || {}
     if (!profile_id || (!video_url && !providedTranscript)) {
       return res.status(400).json({ error: 'profile_id + (video_url OR transcript) required' })
     }
     await assertProfileAccess(auth.user.id, profile_id)
 
-    // When the caller already has the script (e.g. polish run reads it
-    // from upstream voice_gen / script_gen), we skip ElevenLabs Scribe
-    // entirely. Saves 5-15s per call AND the STT fee. The fee for a
-    // pure-Claude title is much smaller — bumped down here.
+    // Three operating modes:
+    //   1. transcript provided  → skip Scribe (caller already has it)
+    //   2. transcript_only=true → run Scribe, skip Claude title (used
+    //                              by caption_gen video fan-out so it
+    //                              can transcribe N clips cheaply,
+    //                              then build all captions in a single
+    //                              Claude call instead of N).
+    //   3. default              → Scribe + Claude title (legacy flow)
     const skipStt = typeof providedTranscript === 'string' && providedTranscript.trim().length > 30
+    const wantTitleToo = !transcript_only
 
-    // Pre-flight: tiny ai_tokens fee since this calls STT + Claude (or
-    // just Claude when transcript is provided upstream).
+    // Pre-flight: ai_tokens fee scales with what work we'll actually do.
+    //   Scribe + Claude → 800
+    //   Scribe only     → 600 (Claude saved, ~$0.005)
+    //   Claude only     → 200 (Scribe saved, the bulk of cost)
     const cust = await supaFetch(`billing_customers?user_id=eq.${auth.user.id}&select=id`)
     const customerId = cust?.[0]?.id
-    const fee = skipStt ? 200 : 800
+    const fee = skipStt ? 200 : (wantTitleToo ? 800 : 600)
     if (customerId) {
       const pools = await supaFetch(`credit_pools?customer_id=eq.${customerId}&pool_type=eq.ai_tokens&select=balance`)
       if ((Number(pools?.[0]?.balance ?? 0)) < fee) {
@@ -149,7 +156,7 @@ export default async function handler(req, res) {
       if (!transcript) return res.status(200).json({ title: '', transcript: '', warning: 'Empty transcript' })
     }
 
-    const title = await titleFromTranscript({ transcript, profile, topic })
+    const title = wantTitleToo ? await titleFromTranscript({ transcript, profile, topic }) : ''
 
     if (customerId) {
       try {
