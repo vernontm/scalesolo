@@ -360,7 +360,21 @@ function pickFirstVideoUrl(arr) {
     if (v.video?.video_url) return v.video.video_url
     if (v.video_url) return v.video_url
     if (Array.isArray(v.videos)) {
-      for (const c of v.videos) if (c?.video_url) return c.video_url
+      // Two shapes: avatar_render emits { video_url } per clip;
+      // image_upload emits { url } per video. Accept either.
+      for (const c of v.videos) {
+        if (c?.video_url) return c.video_url
+        if (c?.url && /\.(mp4|mov|webm|m4v)(\?|#|$)/i.test(c.url)) return c.url
+      }
+    }
+    // Fallback for image_upload shapes that lost their kind (cached
+    // output from before the kind-preservation fix in readImageItems).
+    // Sniff every entry in images[] for a video extension.
+    if (Array.isArray(v.images)) {
+      for (const c of v.images) {
+        const u = c?.url || (typeof c === 'string' ? c : null)
+        if (u && /\.(mp4|mov|webm|m4v)(\?|#|$)/i.test(u)) return u
+      }
     }
     if (Array.isArray(v.items)) {
       for (const it of v.items) if (it?.kind === 'video' && it.url) return it.url
