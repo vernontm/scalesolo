@@ -15,17 +15,17 @@ export const config = { maxDuration: 120 }
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY
 const ANTHROPIC_API_KEY  = process.env.ANTHROPIC_API_KEY
 
-async function fetchToBuffer(url) {
-  const r = await fetch(url)
-  if (!r.ok) throw new Error(`Fetch ${url} → ${r.status}`)
-  return Buffer.from(await r.arrayBuffer())
-}
-
-async function transcribeWithElevenLabs(videoBuf, mime = 'video/mp4') {
+// Scribe v1 accepts EITHER a multipart `file` upload OR a public
+// `cloud_storage_url` it fetches itself. URL mode is dramatically
+// cheaper for our Vercel function: no inbound bandwidth, no buffering
+// the video bytes (which OOMs the 1024 MB function on 100 MB+ files
+// with the FUNCTION_INVOCATION_FAILED Vercel error). We default to
+// URL mode whenever the caller hands us a fetchable URL.
+async function transcribeFromUrl(videoUrl) {
   if (!ELEVENLABS_API_KEY) throw new Error('ELEVENLABS_API_KEY not configured')
   const fd = new FormData()
   fd.append('model_id', 'scribe_v1')
-  fd.append('file', new Blob([videoBuf], { type: mime }), 'in.mp4')
+  fd.append('cloud_storage_url', videoUrl)
   const r = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
     method: 'POST',
     headers: { 'xi-api-key': ELEVENLABS_API_KEY },
@@ -151,8 +151,10 @@ export default async function handler(req, res) {
     if (skipStt) {
       transcript = String(providedTranscript).slice(0, 8000)
     } else {
-      const videoBuf = await fetchToBuffer(video_url)
-      transcript = await transcribeWithElevenLabs(videoBuf)
+      // URL mode: Scribe pulls the video directly from Supabase Storage.
+      // Our Vercel function never holds the bytes, so even multi-100MB
+      // clips no longer OOM the runtime.
+      transcript = await transcribeFromUrl(video_url)
       if (!transcript) return res.status(200).json({ title: '', transcript: '', warning: 'Empty transcript' })
     }
 
