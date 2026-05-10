@@ -528,16 +528,151 @@ function probeVideoMeta(file) {
 
 // ─── 1. TEXT INPUT ──────────────────────────────────────────────────────────
 function TextInputBody({ data, onPatch }) {
+  // Scroll + selection inside React Flow nodes only works if the input
+  // opts out of pan + wheel-zoom. `nodrag` keeps highlighting and
+  // cursor-positioning intact when you click-drag inside the textarea.
+  // `nowheel` lets you scroll long content without zooming the canvas.
+  // `resize: vertical` lets users grow the box inline; the expand
+  // button below opens a fullscreen editor for serious writing.
+  const [expanded, setExpanded] = useState(false)
+  const value = data.props?.text || ''
+  const charCount = value.length
   return (
     <>
-      <textarea
-        style={{ ...tinyInput, minHeight: 90, fontFamily: 'inherit' }}
-        placeholder='Try "Happy dog with sunglasses and floating ring"'
-        value={data.props?.text || ''}
-        onChange={(e) => onPatch({ text: e.target.value })}
-      />
+      <div style={{ position: 'relative' }}>
+        <textarea
+          className="nodrag nowheel"
+          style={{
+            ...tinyInput,
+            minHeight: 110, maxHeight: 260,
+            resize: 'vertical', fontFamily: 'inherit',
+            paddingRight: 30,                // breathing room for the expand button
+          }}
+          placeholder='Try "Happy dog with sunglasses and floating ring"'
+          value={value}
+          onChange={(e) => onPatch({ text: e.target.value })}
+        />
+        <button
+          type="button"
+          className="nodrag"
+          onClick={(e) => { e.stopPropagation(); setExpanded(true) }}
+          title="Expand editor"
+          aria-label="Expand text editor"
+          style={{
+            position: 'absolute', top: 4, right: 4,
+            padding: 4, borderRadius: 6,
+            background: 'rgba(0,0,0,0.5)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            color: 'var(--text-soft)', cursor: 'pointer',
+            display: 'inline-flex',
+          }}
+        >
+          <Maximize2 size={11} />
+        </button>
+      </div>
+      {charCount > 0 && (
+        <div style={{ fontSize: 9.5, color: 'var(--muted)', marginTop: 4, textAlign: 'right' }}>
+          {charCount.toLocaleString()} chars
+        </div>
+      )}
       <NodePreview status={data.status} output={data.output} error={data.error} />
+      {expanded && (
+        <ExpandedTextEditor
+          value={value}
+          onCommit={(next) => { onPatch({ text: next }); setExpanded(false) }}
+          onClose={() => setExpanded(false)}
+        />
+      )}
     </>
+  )
+}
+
+// Fullscreen text editor for the Text node. Opens above the canvas
+// (z-index well above React Flow), portals to the body so node
+// transforms don't clip it, captures Esc, and commits on Save.
+function ExpandedTextEditor({ value, onCommit, onClose }) {
+  const [draft, setDraft] = useState(value || '')
+  const taRef = useRef(null)
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose()
+      // Cmd/Ctrl+Enter saves — common shortcut for this kind of editor.
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') onCommit(draft)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [draft, onClose, onCommit])
+  useEffect(() => {
+    // Auto-focus + place caret at the end so the user picks up where
+    // they left off without losing their cursor position.
+    const el = taRef.current
+    if (!el) return
+    el.focus()
+    el.setSelectionRange(el.value.length, el.value.length)
+  }, [])
+
+  return (
+    <div
+      onClick={onClose}
+      onMouseDown={(e) => e.stopPropagation()}  // don't let the canvas marquee-select beneath us
+      style={{
+        position: 'fixed', inset: 0, zIndex: 9999,
+        background: 'rgba(0,0,0,0.78)', backdropFilter: 'blur(8px)',
+        display: 'grid', placeItems: 'center', padding: 24,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: 'min(880px, calc(100vw - 32px))',
+          height: 'min(680px, calc(100vh - 48px))',
+          display: 'flex', flexDirection: 'column',
+          background: 'var(--surface)', border: '1px solid var(--border)',
+          borderRadius: 14, overflow: 'hidden',
+          boxShadow: '0 30px 80px rgba(0,0,0,0.5)',
+        }}
+      >
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          padding: '14px 18px', borderBottom: '1px solid var(--border)',
+        }}>
+          <Type size={16} style={{ color: 'var(--text-soft)' }} />
+          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14, flex: 1 }}>
+            Text editor
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+            {draft.length.toLocaleString()} chars · ⌘↵ to save
+          </div>
+          <button
+            type="button" onClick={onClose} aria-label="Close"
+            style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 4, borderRadius: 6 }}
+          ><X size={16} /></button>
+        </div>
+        <textarea className="nodrag nowheel"
+          ref={taRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          spellCheck={true}
+          style={{
+            flex: 1, width: '100%', resize: 'none',
+            background: 'var(--surface)', border: 'none', outline: 'none',
+            color: 'var(--text)', fontFamily: 'inherit',
+            fontSize: 14, lineHeight: 1.6,
+            padding: '18px 22px',
+          }}
+          placeholder="Write here. Mention upstream nodes with @nodeName."
+        />
+        <div style={{
+          display: 'flex', gap: 10, justifyContent: 'flex-end',
+          padding: '12px 18px', borderTop: '1px solid var(--border)',
+        }}>
+          <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn-primary" onClick={() => onCommit(draft)}>
+            <Save size={13} /> Save
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -635,7 +770,7 @@ function ScriptGenBody({ data, onPatch }) {
         </button>
       </div>
       <div style={pillRow}>
-        <select style={pillSelect} value={format} onChange={(e) => onPatch({ format: e.target.value })}>
+        <select className="nodrag" style={pillSelect} value={format} onChange={(e) => onPatch({ format: e.target.value })}>
           <option value="tiktok-script">TikTok</option>
           <option value="ig-post">Instagram</option>
           <option value="thread">Thread</option>
@@ -644,7 +779,7 @@ function ScriptGenBody({ data, onPatch }) {
           <option value="blog-post">Blog post</option>
         </select>
         {showLengthPicker && (
-          <select
+          <select className="nodrag"
             style={pillSelect}
             value={lenSecs}
             onChange={(e) => onPatch({ target_length_secs: Number(e.target.value) })}
@@ -658,7 +793,7 @@ function ScriptGenBody({ data, onPatch }) {
         )}
         {/* Structural format picker. "Auto" lets Claude decide based on
             topic + brand voice; the catalog options pin a specific shape. */}
-        <select
+        <select className="nodrag"
           style={pillSelect}
           value={structural}
           onChange={(e) => onPatch({ structural_format: e.target.value || null })}
@@ -745,7 +880,7 @@ function CaptionGenBody({ data, onPatch }) {
           </NodeField>
           <NodeField label="Caption">
             <textarea
-              className="nodrag"
+              className="nodrag nowheel"
               style={{ ...tinyInput, minHeight: 70, resize: 'vertical', fontFamily: 'inherit' }}
               value={caption}
               onChange={(e) => { e.stopPropagation(); onPatch({ edited_caption: e.target.value }) }}
@@ -765,7 +900,7 @@ function CaptionGenBody({ data, onPatch }) {
           </NodeField>
           <NodeField label="First comment">
             <textarea
-              className="nodrag"
+              className="nodrag nowheel"
               style={{ ...tinyInput, minHeight: 50, resize: 'vertical', fontFamily: 'inherit' }}
               value={firstComment}
               onChange={(e) => { e.stopPropagation(); onPatch({ edited_first_comment: e.target.value }) }}
@@ -1221,7 +1356,7 @@ function PromptHighlightField({ textareaRef, value, placeholder, minHeight, onCh
       </div>
       <textarea
         ref={textareaRef}
-        className="nodrag"
+        className="nodrag nowheel"
         style={{
           ...sharedTextStyle,
           position: 'relative',
@@ -1320,7 +1455,7 @@ function ImageGenBody({ data, onPatch }) {
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
-        <select
+        <select className="nodrag"
           value=""
           onChange={(e) => {
             const tpl = IMAGE_GEN_TEMPLATES.find((t) => t.id === e.target.value)
@@ -1349,22 +1484,22 @@ function ImageGenBody({ data, onPatch }) {
       />
 
       <div style={pillRow}>
-        <select style={pillSelect} value={data.props?.model || 'nano-banana-2'} onChange={(e) => onPatch({ model: e.target.value })}>
+        <select className="nodrag" style={pillSelect} value={data.props?.model || 'nano-banana-2'} onChange={(e) => onPatch({ model: e.target.value })}>
           <option value="nano-banana-2">Nano Banana 2</option>
           <option value="nano-banana-pro">Nano Banana Pro</option>
           <option value="gpt-2">GPT 2.0</option>
         </select>
-        <select style={pillSelect} value={data.props?.aspect || '1:1'} onChange={(e) => onPatch({ aspect: e.target.value })}>
+        <select className="nodrag" style={pillSelect} value={data.props?.aspect || '1:1'} onChange={(e) => onPatch({ aspect: e.target.value })}>
           <option value="1:1">1:1</option>
           <option value="16:9">16:9</option>
           <option value="9:16">9:16</option>
           <option value="4:3">4:3</option>
           <option value="3:4">3:4</option>
         </select>
-        <select style={pillSelect} value={data.props?.count || 1} onChange={(e) => onPatch({ count: Number(e.target.value) })}>
+        <select className="nodrag" style={pillSelect} value={data.props?.count || 1} onChange={(e) => onPatch({ count: Number(e.target.value) })}>
           {[1, 2, 3, 4, 6, 8].map((n) => <option key={n} value={n}>×{n}</option>)}
         </select>
-        <select style={pillSelect} value={data.props?.quality || '2K'} onChange={(e) => onPatch({ quality: e.target.value })}>
+        <select className="nodrag" style={pillSelect} value={data.props?.quality || '2K'} onChange={(e) => onPatch({ quality: e.target.value })}>
           <option value="1K">1K</option>
           <option value="2K">2K</option>
           <option value="4K">4K</option>
@@ -1505,7 +1640,7 @@ function ImageUploadBody({ data, onPatch }) {
                   aria-label="Remove">×</button>
               </div>
               {editingIdx === idx ? (
-                <input
+                <input className="nodrag"
                   autoFocus
                   value={draftName}
                   onChange={(e) => setDraftName(e.target.value)}
@@ -1846,7 +1981,7 @@ function BrandProfileBody({ data, onPatch }) {
   return (
     <>
       <NodeField label="Profile">
-        <select
+        <select className="nodrag"
           style={tinyInput}
           value={data.props?.profile_id || ''}
           onChange={(e) => onPatch({ profile_id: e.target.value })}
@@ -1864,7 +1999,7 @@ function BrandProfileBody({ data, onPatch }) {
         border: `1px solid ${syncAll ? '#ec4899' : 'var(--border)'}`,
         borderRadius: 6, cursor: 'pointer', fontSize: 11.5,
       }}>
-        <input
+        <input className="nodrag"
           type="checkbox"
           checked={syncAll}
           onChange={(e) => toggleSyncAll(e.target.checked)}
@@ -1900,7 +2035,7 @@ function BrandProfileBody({ data, onPatch }) {
               border: `1px solid ${on ? 'rgba(236,72,153,0.4)' : 'var(--border)'}`,
               cursor: 'pointer', fontSize: 10.5,
             }}>
-              <input
+              <input className="nodrag"
                 type="checkbox"
                 checked={on}
                 onChange={(e) => onPatch({ inject: { ...inject, [key]: e.target.checked } })}
@@ -2560,7 +2695,7 @@ function PolishToggle({ label, on, summary, onToggle, onOpen }) {
         cursor: 'pointer', fontSize: 11,
       }}
     >
-      <input
+      <input className="nodrag"
         type="checkbox"
         checked={on}
         onClick={(e) => e.stopPropagation()}
@@ -2680,7 +2815,7 @@ function PolishSlider({ label, value, min, max, step = 1, suffix = '', onChange 
         <span>{label}</span>
         <span style={{ color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>{value}{suffix}</span>
       </div>
-      <input
+      <input className="nodrag"
         type="range" min={min} max={max} step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
@@ -2694,7 +2829,7 @@ function PolishColorRow({ label, value, onChange }) {
   return (
     <div style={{ flex: 1 }}>
       <div style={labelStyle}>{label}</div>
-      <input
+      <input className="nodrag"
         type="color" value={value}
         onChange={(e) => onChange(e.target.value)}
         style={{
@@ -2720,7 +2855,7 @@ function SectionEnable({ label, checked, onChange }) {
         marginBottom: 14,
       }}
     >
-      <input
+      <input className="nodrag"
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
@@ -2888,7 +3023,7 @@ function ZapcapTemplatePicker({ selectedId, onChange }) {
       <div style={{ padding: 10, fontSize: 10.5, lineHeight: 1.45, color: 'var(--amber)', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: 6 }}>
         Couldn't load ZapCap styles: {err}<br/>
         Make sure <code style={{ fontSize: 10 }}>ZAPCAP_API_KEY</code> is set in Vercel env. You can still paste a template UUID manually below.
-        <input
+        <input className="nodrag"
           style={{ ...tinyInput, marginTop: 8 }}
           placeholder="ZapCap template UUID"
           value={selectedId}
@@ -3254,7 +3389,7 @@ export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges })
             </div>
 
             <NodeField label="Title source">
-              <select
+              <select className="nodrag"
                 style={tinyInput}
                 value={props.title_mode || 'auto'}
                 onChange={(e) => setP({ title_mode: e.target.value })}
@@ -3265,7 +3400,7 @@ export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges })
             </NodeField>
             {(props.title_mode || 'auto') === 'auto' ? (
               <NodeField label="Angle hint (optional)">
-                <textarea
+                <textarea className="nodrag nowheel"
                   style={{ ...tinyInput, minHeight: 56, fontFamily: 'inherit', resize: 'vertical' }}
                   placeholder='e.g. "punchy red-flag hook, max 6 words"'
                   value={props.title_topic || ''}
@@ -3277,7 +3412,7 @@ export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges })
               </NodeField>
             ) : (
               <NodeField label="Title text">
-                <input
+                <input className="nodrag"
                   style={tinyInput}
                   placeholder="Your title here"
                   value={props.title || ''}
@@ -3291,7 +3426,7 @@ export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges })
             )}
 
             <NodeField label="Font">
-              <select style={tinyInput} value={props.title_font || 'Montserrat ExtraBold'} onChange={(e) => setP({ title_font: e.target.value })}>
+              <select className="nodrag" style={tinyInput} value={props.title_font || 'Montserrat ExtraBold'} onChange={(e) => setP({ title_font: e.target.value })}>
                 {POLISH_FONT_OPTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
               </select>
             </NodeField>
@@ -3309,7 +3444,7 @@ export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges })
             </div>
 
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, cursor: 'pointer' }}>
-              <input
+              <input className="nodrag"
                 type="checkbox"
                 checked={!!props.title_uppercase}
                 onChange={(e) => setP({ title_uppercase: e.target.checked })}
@@ -3593,7 +3728,7 @@ function SchedulePostBody({ data, onPatch }) {
         </div>
       </NodeField>
       <NodeField label="When">
-        <select style={tinyInput} value={when} onChange={(e) => onPatch({ when: e.target.value })}>
+        <select className="nodrag" style={tinyInput} value={when} onChange={(e) => onPatch({ when: e.target.value })}>
           <option value="now">Publish now</option>
           <option value="auto">Schedule (next slot from posting schedule)</option>
           <option value="scheduled">Schedule for specific date / time…</option>
@@ -3709,13 +3844,13 @@ function CombineBody({ data, onPatch }) {
   return (
     <>
       <NodeField label="Mode">
-        <select style={tinyInput} value={mode} onChange={(e) => onPatch({ mode: e.target.value })}>
+        <select className="nodrag" style={tinyInput} value={mode} onChange={(e) => onPatch({ mode: e.target.value })}>
           <option value="post">Post bundle (text + media)</option>
           <option value="avatar_video">Avatar video (photo + script/audio)</option>
         </select>
       </NodeField>
       <NodeField label="Title (optional)">
-        <input style={tinyInput} placeholder="Auto-derived from script" value={data.props?.title || ''} onChange={(e) => onPatch({ title: e.target.value })} />
+        <input className="nodrag" style={tinyInput} placeholder="Auto-derived from script" value={data.props?.title || ''} onChange={(e) => onPatch({ title: e.target.value })} />
       </NodeField>
       {mode === 'avatar_video' && (
         <div style={{ marginTop: 4, padding: '8px 10px', background: 'rgba(14,165,233,0.12)', border: '1px solid rgba(14,165,233,0.4)', borderRadius: 6, fontSize: 11, color: '#0ea5e9', lineHeight: 1.45 }}>
@@ -3765,10 +3900,10 @@ function SaveBody({ data, onPatch }) {
   return (
     <>
       <NodeField label="Title (optional)">
-        <input style={tinyInput} placeholder="Auto-derived" value={data.props?.title || ''} onChange={(e) => onPatch({ title: e.target.value })} />
+        <input className="nodrag" style={tinyInput} placeholder="Auto-derived" value={data.props?.title || ''} onChange={(e) => onPatch({ title: e.target.value })} />
       </NodeField>
       <NodeField label="Status">
-        <select style={tinyInput} value={data.props?.status || 'draft'} onChange={(e) => onPatch({ status: e.target.value })}>
+        <select className="nodrag" style={tinyInput} value={data.props?.status || 'draft'} onChange={(e) => onPatch({ status: e.target.value })}>
           <option value="draft">Draft (needs approval before scheduling)</option>
           <option value="caption_ready">Ready to schedule (auto-fills next slot)</option>
         </select>
