@@ -111,16 +111,23 @@ export default async function handler(req, res) {
   if (!auth) return
 
   try {
-    const { profile_id, video_url, topic } = req.body || {}
-    if (!profile_id || !video_url) {
-      return res.status(400).json({ error: 'profile_id + video_url required' })
+    const { profile_id, video_url, topic, transcript: providedTranscript } = req.body || {}
+    if (!profile_id || (!video_url && !providedTranscript)) {
+      return res.status(400).json({ error: 'profile_id + (video_url OR transcript) required' })
     }
     await assertProfileAccess(auth.user.id, profile_id)
 
-    // Pre-flight: tiny ai_tokens fee since this calls STT + Claude.
+    // When the caller already has the script (e.g. polish run reads it
+    // from upstream voice_gen / script_gen), we skip ElevenLabs Scribe
+    // entirely. Saves 5-15s per call AND the STT fee. The fee for a
+    // pure-Claude title is much smaller — bumped down here.
+    const skipStt = typeof providedTranscript === 'string' && providedTranscript.trim().length > 30
+
+    // Pre-flight: tiny ai_tokens fee since this calls STT + Claude (or
+    // just Claude when transcript is provided upstream).
     const cust = await supaFetch(`billing_customers?user_id=eq.${auth.user.id}&select=id`)
     const customerId = cust?.[0]?.id
-    const fee = 800
+    const fee = skipStt ? 200 : 800
     if (customerId) {
       const pools = await supaFetch(`credit_pools?customer_id=eq.${customerId}&pool_type=eq.ai_tokens&select=balance`)
       if ((Number(pools?.[0]?.balance ?? 0)) < fee) {
@@ -133,9 +140,14 @@ export default async function handler(req, res) {
     )
     const profile = profileRows?.[0] || {}
 
-    const videoBuf = await fetchToBuffer(video_url)
-    const transcript = await transcribeWithElevenLabs(videoBuf)
-    if (!transcript) return res.status(200).json({ title: '', transcript: '', warning: 'Empty transcript' })
+    let transcript
+    if (skipStt) {
+      transcript = String(providedTranscript).slice(0, 8000)
+    } else {
+      const videoBuf = await fetchToBuffer(video_url)
+      transcript = await transcribeWithElevenLabs(videoBuf)
+      if (!transcript) return res.status(200).json({ title: '', transcript: '', warning: 'Empty transcript' })
+    }
 
     const title = await titleFromTranscript({ transcript, profile, topic })
 

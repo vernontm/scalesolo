@@ -587,7 +587,11 @@ export default async function handler(req, res) {
       try {
         const zVideoId = await zapcapAddVideoByUrl(intermediateUrl, { ttl: '1d' })
         const zTaskId = await zapcapCreateTask(zVideoId, { templateId: caption_template_id, autoApprove: true })
-        const zResult = await zapcapPollTask(zVideoId, zTaskId, { timeoutMs: 5 * 60 * 1000, intervalMs: 4000 })
+        // Tighter polling cadence (4s → 2.5s). ZapCap renders typically
+        // finish in 30-90s; the previous 4s window gave us 1-2 wasted
+        // poll cycles per clip on average. 2.5s is comfortably above
+        // their rate-limit threshold and saves a few seconds per clip.
+        const zResult = await zapcapPollTask(zVideoId, zTaskId, { timeoutMs: 5 * 60 * 1000, intervalMs: 2500 })
         const downloadUrl = zResult.downloadUrl || zResult.video?.downloadUrl || zResult.url
         if (!downloadUrl) throw new Error('ZapCap task completed without a downloadUrl')
         finalBuf = await fetchToBuffer(downloadUrl)

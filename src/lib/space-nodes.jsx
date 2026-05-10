@@ -5913,10 +5913,31 @@ ${String(script).slice(0, 2000)}
       if (p.music_url) musicUrl = p.music_url
       // Also pluck a wired-in title from upstream caption_gen so it can
       // override the manually-typed prop without the user re-typing.
+      // Plus the source script when an upstream Text / script_gen /
+      // voice_gen is in the chain — auto-title can use that script
+      // directly and skip ElevenLabs Scribe transcription. Saves 5-15s
+      // per clip (the whole STT round-trip) when the script already
+      // exists in the canvas. Per-clip script for chunked audio comes
+      // later (paired by order in polishOne); upstreamScript here is
+      // the FULL script (single-clip) or fallback.
       let upstreamTitle = ''
+      let upstreamScript = ''
+      let upstreamChunkScripts = null  // [{ order, sentence }, …] from voice_gen randomize
       for (const v of arr) {
         if (!v || typeof v !== 'object') continue
         if (!upstreamTitle && typeof v.title === 'string') upstreamTitle = v.title
+        if (!upstreamScript) {
+          if (typeof v.script === 'string') upstreamScript = v.script
+          else if (typeof v.full_script === 'string') upstreamScript = v.full_script
+          else if (typeof v.text === 'string') upstreamScript = v.text
+          else if (typeof v.script_for_render === 'string') upstreamScript = v.script_for_render
+        }
+        if (!upstreamChunkScripts && Array.isArray(v.audio_chunks)) {
+          upstreamChunkScripts = v.audio_chunks
+            .map((c, i) => ({ order: c.order ?? i, sentence: String(c.sentence || '').trim() }))
+            .filter((c) => c.sentence)
+          if (!upstreamChunkScripts.length) upstreamChunkScripts = null
+        }
         if (!logoUrl) {
           if (v.brand?.logo_url) logoUrl = v.brand.logo_url
           else if (Array.isArray(v.images) && v.images[0]?.url) logoUrl = v.images[0].url
@@ -5961,7 +5982,21 @@ ${String(script).slice(0, 2000)}
         if (p.title_enabled !== false) {
           if ((p.title_mode || 'auto') === 'auto') {
             try {
-              reportProgress?.({ message: `Transcribing for auto-title${tag}…`, done: idx, total })
+              // Prefer per-clip chunk script, then full upstream script,
+              // and only fall through to ElevenLabs Scribe if neither
+              // exists. Saves 5-15s per clip when the script came from
+              // voice_gen / Text / script_gen — no transcription round
+              // trip needed.
+              let chunkScript = null
+              if (Array.isArray(upstreamChunkScripts)) {
+                const match = upstreamChunkScripts.find((c) => c.order === idx) || upstreamChunkScripts[idx]
+                if (match?.sentence) chunkScript = match.sentence
+              }
+              const transcriptHint = chunkScript || upstreamScript || null
+              reportProgress?.({
+                message: transcriptHint ? `Generating title${tag}…` : `Transcribing for auto-title${tag}…`,
+                done: idx, total,
+              })
               const ar = await fetch('/api/videos/auto-title', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
@@ -5969,6 +6004,9 @@ ${String(script).slice(0, 2000)}
                   profile_id: ctx.profileId,
                   video_url: videoUrl,
                   topic: (p.title_topic || '').trim() || undefined,
+                  // Bypass ElevenLabs Scribe when we already have the
+                  // script — saves the slowest part of auto-title.
+                  transcript: transcriptHint || undefined,
                 }),
               })
               const ab = await ar.json().catch(() => ({}))
@@ -6036,7 +6074,10 @@ ${String(script).slice(0, 2000)}
       const total = urls.length
       let done = 0
       reportProgress?.({ message: `Polishing 0 of ${total} clips…`, done: 0, total })
-      const CONCURRENCY = 3
+      // Polish clips are dominated by ZapCap wait time (network + their
+      // render queue), not local CPU. Bumping concurrency from 3 → 4
+      // is safe and trims wall time on N=8+ batches by ~25%.
+      const CONCURRENCY = 4
       const results = new Array(total)
       const failures = []
       let cursor = 0
