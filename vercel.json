@@ -15,7 +15,8 @@
     { "path": "/api/cron/credit-monthly-reset", "schedule": "0 6 * * *" },
     { "path": "/api/admin/affiliates-close",    "schedule": "0 7 * * *" },
     { "path": "/api/cron/sweep-stale-renders",  "schedule": "*/15 * * * *" },
-    { "path": "/api/cron/sync-scheduled-posts", "schedule": "*/10 * * * *" }
+    { "path": "/api/cron/sync-scheduled-posts", "schedule": "*/10 * * * *" },
+    { "path": "/api/cron/distill-brand-voice",  "schedule": "30 6 * * *" }
   ],
   "functions": {
     "api/videos/combine.js": {

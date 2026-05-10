@@ -541,6 +541,34 @@ function TextInputBody({ data, onPatch }) {
   )
 }
 
+// Module-level cache for the script_formats catalog. The list rarely
+// changes, so one fetch per session is fine. Each ScriptGenBody mount
+// just reads from the cache (or kicks off a fetch if cold).
+let _scriptFormatsCache = null
+let _scriptFormatsPromise = null
+function useScriptFormats() {
+  const [formats, setFormats] = useState(_scriptFormatsCache)
+  useEffect(() => {
+    if (_scriptFormatsCache) return
+    if (_scriptFormatsPromise) {
+      _scriptFormatsPromise.then(setFormats).catch(() => {})
+      return
+    }
+    _scriptFormatsPromise = (async () => {
+      const sess = (await supabase.auth.getSession()).data.session
+      const r = await fetch('/api/script-formats', {
+        headers: { Authorization: `Bearer ${sess?.access_token || ''}` },
+      })
+      const body = await r.json().catch(() => ({}))
+      const arr = Array.isArray(body?.formats) ? body.formats : []
+      _scriptFormatsCache = arr
+      return arr
+    })()
+    _scriptFormatsPromise.then(setFormats).catch(() => { _scriptFormatsPromise = null })
+  }, [])
+  return formats || []
+}
+
 // ─── 2. SCRIPT GENERATOR ────────────────────────────────────────────────────
 function ScriptGenBody({ data, onPatch }) {
   const format = data.props?.format || 'tiktok-script'
@@ -551,6 +579,8 @@ function ScriptGenBody({ data, onPatch }) {
   const showLengthPicker = format === 'tiktok-script' || format === 'youtube-short'
   const lenSecs = Number(data.props?.target_length_secs ?? 45)
   const profiles = data?._ctxProfiles || []
+  const structural = data.props?.structural_format || ''
+  const structuralFormats = useScriptFormats()
   const out = data.output
   const script = out?.script || out?.full_script || ''
   const [copied, setCopied] = useState(false)
@@ -626,6 +656,19 @@ function ScriptGenBody({ data, onPatch }) {
             <option value={60}>~60 sec</option>
           </select>
         )}
+        {/* Structural format picker. "Auto" lets Claude decide based on
+            topic + brand voice; the catalog options pin a specific shape. */}
+        <select
+          style={pillSelect}
+          value={structural}
+          onChange={(e) => onPatch({ structural_format: e.target.value || null })}
+          title="Pin a script shape (story / listicle / etc.) — leave on Auto to let the AI pick."
+        >
+          <option value="">Auto shape</option>
+          {structuralFormats.map((f) => (
+            <option key={f.key} value={f.key}>{f.label}</option>
+          ))}
+        </select>
       </div>
       {script && (
         <div style={{
@@ -3996,6 +4039,10 @@ export const NODE_REGISTRY = {
         body: JSON.stringify({
           profile_id: profileId,
           format: data.props?.format || 'tiktok-script',
+          // Optional: caller pinned a structural format (story / listicle /
+          // hot_take / etc.) from the script_formats catalog. Server reads
+          // the matching prompt_directive and adds it to the system prompt.
+          structural_format: data.props?.structural_format || null,
           topic,
           count: 1,
           target_length_secs: data.props?.target_length_secs || undefined,
