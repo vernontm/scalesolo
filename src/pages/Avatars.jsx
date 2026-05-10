@@ -573,11 +573,32 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
     return () => clearInterval(id)
   }, [renders, session])
 
+  // Storage's "object exceeded the maximum allowed size" surfaces when
+  // the bucket-level limit (currently 10MB) bites. We pre-compress
+  // anything bigger than ~8MB client-side so the upload always lands.
+  // Same helper the avatar-photo upload uses.
+  const STORAGE_TARGET_BYTES = 8 * 1024 * 1024
+  const STORAGE_HARD_LIMIT_BYTES = 10 * 1024 * 1024
+
+  // Compresses a file if it's over the target. Returns the file (or a
+  // smaller derivative) ready for uploadToStorage. Throws with a clear
+  // message if we can't get under the hard limit.
+  async function prepFileForStorage(file) {
+    if (!file) return file
+    if (file.size <= STORAGE_TARGET_BYTES) return file
+    const out = await compressImageIfLarge(file, { targetBytes: STORAGE_TARGET_BYTES })
+    if (out.size > STORAGE_HARD_LIMIT_BYTES) {
+      throw new Error(`Image is ${(file.size / 1024 / 1024).toFixed(1)}MB and we couldn't compress it under 10MB. Try a smaller source.`)
+    }
+    return out
+  }
+
   const uploadLook = async (file) => {
     if (!file) return
     setBusy(true); setError(null)
     try {
-      const photoUrl = await uploadToStorage(file, avatar.profile_id)
+      const prepped = await prepFileForStorage(file)
+      const photoUrl = await uploadToStorage(prepped, avatar.profile_id)
       const r = await fetch('/api/avatars/upload-look', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
@@ -595,7 +616,8 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
     setBusy(true); setError(null)
     try {
       for (const file of files) {
-        const url = await uploadToStorage(file, avatar.profile_id)
+        const prepped = await prepFileForStorage(file)
+        const url = await uploadToStorage(prepped, avatar.profile_id)
         await fetch('/api/avatars/look-images', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
