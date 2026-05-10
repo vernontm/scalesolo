@@ -31,6 +31,7 @@ import { createClient } from '@supabase/supabase-js'
 import { NotifyKind } from '../_lib/notify.js'
 import { zapcapAddVideoByUrl, zapcapCreateTask, zapcapPollTask } from '../_lib/zapcap.js'
 import { renderTitlePng } from '../_lib/title-svg.js'
+import { buildTimeline as buildShotstackTimeline, submitRender as submitShotstackRender, pollRender as pollShotstackRender } from '../_lib/shotstack.js'
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg'
 const ffmpegPath = ffmpegInstaller.path
 import { spawn } from 'node:child_process'
@@ -306,6 +307,150 @@ export default async function handler(req, res) {
       const pools = await supaFetch(`credit_pools?customer_id=eq.${customerId}&pool_type=eq.ai_tokens&select=balance`)
       if ((Number(pools?.[0]?.balance ?? 0)) < fee) {
         return res.status(402).json({ error: 'Insufficient AI tokens.', code: 'insufficient_credits' })
+      }
+    }
+
+    // Pre-compute the work flags + supabase client so the Shotstack and
+    // worker paths (which sit ahead of the local ffmpeg path) can share
+    // them without re-declaring further down.
+    const SUPABASE_URL_EARLY = process.env.SUPABASE_URL
+    const SERVICE_KEY_EARLY = process.env.SUPABASE_SERVICE_KEY
+    const supabaseEarly = (SUPABASE_URL_EARLY && SERVICE_KEY_EARLY)
+      ? createClient(SUPABASE_URL_EARLY, SERVICE_KEY_EARLY, { auth: { persistSession: false } })
+      : null
+    const effectiveLogoUrlEarly = watermark_image_url || logo_url
+    const wantsCaptionsEarly = !!(captions_enabled && caption_template_id)
+    const wantsFfmpegEarly = !!(title || (effectiveLogoUrlEarly && watermark_position !== 'none') || music_url)
+
+    // ─── Shotstack passthrough ─────────────────────────────────────────────
+    // When SHOTSTACK_API_KEY is set we run the composite on Shotstack's
+    // render farm instead of local ffmpeg. Vercel's job becomes: render
+    // the title PNG locally (~50ms via resvg), stage it to Storage so
+    // Shotstack can fetch it as an image asset, then submit/poll the
+    // timeline. ZapCap captions still chain after Shotstack returns.
+    // Falls back to worker / local ffmpeg on any Shotstack error so a
+    // bad render never breaks the user's run.
+    if (process.env.SHOTSTACK_API_KEY && wantsFfmpegEarly && supabaseEarly) {
+      try {
+        // Probe duration straight off the source URL — ffmpeg's HTTP
+        // input only reads metadata, no full download, so this is ~1s.
+        let videoLen
+        try { videoLen = await probeDurationSecs(video_url) }
+        catch (e) { throw new Error(`Could not probe source duration: ${e.message}`) }
+        if (!videoLen || videoLen < 0.5) throw new Error('Source video has no usable duration')
+
+        // Title PNG → Storage. Same renderer the ffmpeg path uses, so
+        // typography is pixel-identical across the two backends. We
+        // skip the title silently on render error rather than fail the
+        // whole polish.
+        let titlePngUrl = null
+        if (title) {
+          try {
+            const png = await renderTitlePng({
+              title: String(title).slice(0, 120),
+              font: ts.font, size: Number(ts.size ?? 72),
+              color: ts.color || '#ffffff', bg_color: ts.bg_color || '#e0467a',
+              bg_padding: Math.max(0, Number(ts.bg_padding ?? 28)),
+              uppercase: !!ts.uppercase, max_width: 1080,
+            })
+            if (png) {
+              const tPath = `${profile_id}/spaces/polished/title-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`
+              const { error } = await supabaseEarly.storage.from('landing-media').upload(tPath, png, {
+                contentType: 'image/png', upsert: false,
+              })
+              if (!error) {
+                titlePngUrl = supabaseEarly.storage.from('landing-media').getPublicUrl(tPath).data.publicUrl
+              }
+            }
+          } catch (e) {
+            console.warn('[polish:shotstack] title PNG step failed, continuing without title:', e.message)
+          }
+        }
+
+        const ssPayload = buildShotstackTimeline({
+          videoUrl: video_url,
+          videoLen,
+          titlePngUrl,
+          titleYpos: ts.y_pos,
+          logoUrl: effectiveLogoUrlEarly && watermark_position !== 'none' ? effectiveLogoUrlEarly : null,
+          watermarkPosition: watermark_position,
+          watermarkSizePct: watermark_size_pct,
+          musicUrl: music_url,
+          musicVolume: music_volume,
+          musicFadeSecs: music_fade_secs,
+          aspectRatio: req.body?.aspect_ratio || '9:16',
+          resolution:  req.body?.resolution  || '1080',
+        })
+
+        const renderId = await submitShotstackRender(ssPayload)
+        const { url: ssUrl } = await pollShotstackRender(renderId)
+
+        // ZapCap captions chain on after Shotstack — same dance as the
+        // local ffmpeg path, just feeding the Shotstack output URL.
+        let zapcapMeta = null
+        let captionedUrl = ssUrl
+        if (wantsCaptionsEarly) {
+          try {
+            const zVideoId = await zapcapAddVideoByUrl(ssUrl, { ttl: '1d' })
+            const zTaskId = await zapcapCreateTask(zVideoId, { templateId: caption_template_id, autoApprove: true })
+            const zResult = await zapcapPollTask(zVideoId, zTaskId, { timeoutMs: 180_000, intervalMs: 2500 })
+            captionedUrl = zResult.downloadUrl || zResult.video?.downloadUrl || zResult.url || ssUrl
+            zapcapMeta = { template_id: caption_template_id, video_id: zVideoId, task_id: zTaskId }
+          } catch (e) {
+            // Captions failure → keep the Shotstack composite, surface
+            // a warning. Same forgiving behavior as the ffmpeg path.
+            console.warn('[polish:shotstack] ZapCap failed, returning composite-only:', e.message)
+            zapcapMeta = { error: e.message }
+          }
+        }
+
+        // Mirror the final asset to our own Storage so the canvas has
+        // a stable URL (Shotstack's CDN URLs expire after ~24h on free
+        // plans). Mirror failure isn't fatal — we just fall back to
+        // returning the upstream URL with a warning.
+        let finalUrl = captionedUrl
+        let bytes = 0
+        try {
+          const buf = await fetchToBuffer(captionedUrl)
+          bytes = buf.byteLength
+          const outPath = `${profile_id}/spaces/polished/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`
+          const { error } = await supabaseEarly.storage.from('landing-media').upload(outPath, buf, {
+            contentType: 'video/mp4', upsert: false,
+          })
+          if (!error) {
+            finalUrl = supabaseEarly.storage.from('landing-media').getPublicUrl(outPath).data.publicUrl
+          }
+        } catch (e) {
+          console.warn('[polish:shotstack] could not mirror to Storage, using upstream URL:', e.message)
+        }
+
+        if (customerId) {
+          try {
+            await supaFetch('rpc/consume_credits', {
+              method: 'POST',
+              body: {
+                p_customer_id: customerId, p_pool_type: 'ai_tokens', p_amount: fee,
+                p_action: 'consume:video-polish', p_profile_id: profile_id,
+                p_metadata: { via: 'shotstack', video_url, has_title: !!title, has_captions: wantsCaptionsEarly, zapcap: zapcapMeta, bytes },
+              },
+            })
+          } catch (e) {
+            console.error('video-polish (shotstack): consume_credits threw', e?.message)
+          }
+        }
+
+        NotifyKind.renderDone({
+          user_id: auth.user.id,
+          profile_id,
+          video_url: finalUrl,
+        }).catch(() => {})
+
+        return res.status(200).json({ video_url: finalUrl, bytes, zapcap: zapcapMeta, via: 'shotstack' })
+      } catch (e) {
+        // Any failure in the Shotstack path → fall through to the
+        // worker / local-ffmpeg paths below. The user still gets a
+        // polish; we just lose the speed benefit for this one run.
+        console.warn('[polish] Shotstack path failed, falling back:', e.message)
       }
     }
 
