@@ -133,13 +133,13 @@ export async function withCreditReservation({
   if (!userId || !action) throw new Error('userId + action required')
   if (!Number.isFinite(amount) || amount <= 0) {
     // Free action — just run.
-    return await fn({ customerId: null, refundIfFailed: async () => {} })
+    return await fn({ customerId: null, refundIfFailed: async () => {}, tagMetadata: async () => {} })
   }
 
   const customerId = await customerIdForUser(userId)
   if (!customerId) {
     console.warn('withCreditReservation: no billing_customer for user, running uncharged', { userId, action, amount })
-    return await fn({ customerId: null, refundIfFailed: async () => {} })
+    return await fn({ customerId: null, refundIfFailed: async () => {}, tagMetadata: async () => {} })
   }
 
   // Reserve atomically. consume_credits is FOR UPDATE inside the
