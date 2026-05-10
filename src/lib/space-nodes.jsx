@@ -557,7 +557,15 @@ ${chunkSentences.map((c) => `--- segment ${c.idx} ---\n${c.text.slice(0, 800)}`)
   // string indices because JSON serialisation can flip them.
   const editedCaptions = edits?.edited_captions || {}
   const captions = chunkSentences.map((c, i) => {
-    const s = byIdx.get(c.idx) || {}
+    // Pair AI output to our segment with three fall-backs:
+    //   1. explicit idx match — Claude obeyed and stamped {idx: c.idx}
+    //   2. array-position match — Claude returned sets[] in the same
+    //      order we sent segments (the common case when chunkSentences
+    //      has gappy idx like [0,3] after some clips failed transcribe).
+    //   3. empty placeholder.
+    // Without (2) we silently produced blank captions any time
+    // chunkSentences.idx didn't line up with 0..N-1.
+    const s = byIdx.get(c.idx) || sets[i] || {}
     const ue = editedCaptions[i] || editedCaptions[String(i)] || {}
     return {
       order: c.order,
@@ -1400,6 +1408,18 @@ function CaptionGenBody({ data, onPatch }) {
             }}
             title="Next clip"
           >▶</button>
+        </div>
+      )}
+      {hasOutput && isMulti && captions?.[safeIdx]?.transcript_failed && (
+        <div className="nodrag" style={{
+          padding: '8px 10px', marginBottom: 8,
+          background: 'rgba(239,68,68,0.10)',
+          border: '1px solid rgba(239,68,68,0.35)',
+          borderRadius: 6, fontSize: 11, color: 'var(--red)',
+          lineHeight: 1.4,
+        }}>
+          <strong>Couldn't transcribe this clip.</strong> {captions[safeIdx].error || 'No audio detected.'}
+          {' '}You can type the caption manually below, or re-record this clip with clearer audio and re-run.
         </div>
       )}
       {hasOutput && (
@@ -5572,19 +5592,52 @@ export const NODE_REGISTRY = {
               return { idx: i, order: i, text: '', source_url: url, error: e?.message || String(e) }
             }
           }))
-          const valid = transcripts.filter((c) => c.text.length > 30)
+          // Lower threshold than 30 chars — catches short clips like
+          // "Hey, watch this." that previous code silently dropped.
+          // Anything under 10 is probably audio-less / noise-only and
+          // wouldn't give Claude enough to work with.
+          const valid = transcripts.filter((c) => c.text.length >= 10)
           if (!valid.length) {
             const errs = transcripts.map((c) => c.error).filter(Boolean).slice(0, 2).join('; ')
             throw new Error(`No usable transcripts from ${videoUrls.length} videos${errs ? ` — ${errs}` : ''}.`)
           }
-          // Single video → use the transcript as a script and continue
-          // through the existing single-caption path so the user gets
-          // the canonical { title, caption, hashtags, first_comment }
-          // shape. Multiple videos → fan out per video.
-          if (valid.length === 1) {
+          // Single-video shortcut: only when there's literally one video
+          // in the bag (not "1 valid out of 5") — otherwise we'd hide
+          // the failed clips from the user.
+          if (valid.length === 1 && videoUrls.length === 1) {
             return attachVideos(await runSingleCaptionFromScript({ ctx, profileId, script: valid[0].text, edits: data.props }))
           }
-          return attachVideos(await runMultiCaption({ ctx, profileId, chunkSentences: valid, edits: data.props }))
+          // Run Claude on the valid set, then pad captions[] back to
+          // videoUrls.length with placeholders for the failed ones.
+          // Without this padding the body pagination + schedule_post
+          // clip↔caption matching would silently shrink to the valid
+          // count (e.g. uploaded 5 → only 2 had usable transcripts →
+          // body shows "CLIP 2 OF 2", schedule_post posts 2 of 5).
+          const aiResult = await runMultiCaption({ ctx, profileId, chunkSentences: valid, edits: data.props })
+          const aiByIdx = new Map((aiResult.captions || []).map((c) => [c.idx, c]))
+          const fullCaptions = transcripts.map((t) => {
+            const ai = aiByIdx.get(t.idx)
+            if (ai) return { ...ai, source_url: t.source_url }
+            return {
+              order: t.order,
+              idx: t.idx,
+              title: '',
+              caption: '',
+              hashtags: '',
+              first_comment: '',
+              source_url: t.source_url,
+              transcript_failed: true,
+              error: t.error || 'No usable transcript (too short or no audio)',
+            }
+          })
+          return attachVideos({
+            ...aiResult,
+            captions: fullCaptions,
+            chunk_count: fullCaptions.length,
+            partial_failures: fullCaptions.filter((c) => c.transcript_failed).map((c) => ({
+              clip_index: c.idx, source_url: c.source_url, error: c.error,
+            })),
+          })
         }
         throw new Error('Wire a script (Text / script_gen / voice_gen) or videos (Upload media / Collection / avatar_render) into "in".')
       }
