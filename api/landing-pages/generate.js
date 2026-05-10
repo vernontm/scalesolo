@@ -4,6 +4,7 @@
 //   ready to drop into landing_pages.sections.
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { message } from '../_lib/anthropic.js'
+import { loadBrandContext, renderBrandContextMarkdown } from '../_lib/brand-context.js'
 
 const SECTION_TYPES = ['hero','features','testimonials','pricing','faq','cta','about','stats','logos','video','gallery','form']
 
@@ -50,18 +51,26 @@ export default async function handler(req, res) {
     if (!profile_id || !description) return res.status(400).json({ error: 'profile_id + description required' })
     await assertProfileAccess(auth.user.id, profile_id)
 
-    const profRows = await supaFetch(`profiles?id=eq.${profile_id}&select=business_name,brand_bible,target_audience,preferred_tone`)
-    const profile = profRows?.[0] || {}
+    // Brand context — same source as the script generator. Includes
+    // bible + voice summary + hard rules so generated landing copy
+    // respects do_not_say / always_include just like a generated
+    // script would. Skip exemplars and hooks — they're shaped for
+    // social copy, not landing pages.
+    const ctx = await loadBrandContext(profile_id, { skip: ['exemplars', 'hooks', 'disliked'] })
+    const profile = ctx.profile || {}
+    const brandBlocks = renderBrandContextMarkdown(ctx, {
+      include: ['bible', 'summary', 'rules'],
+      bibleCharLimit: 2500,
+    })
+
+    const identityHeader =
+      `## Brand\n${profile.business_name || ''}` +
+      (profile.preferred_tone ? `\nVoice: ${profile.preferred_tone}` : '') +
+      (profile.target_audience ? `\nAudience: ${profile.target_audience}` : '')
 
     const systemPrompt = `${SYSTEM}
 
-## Brand
-${profile.business_name || ''}
-${profile.preferred_tone ? `Voice: ${profile.preferred_tone}` : ''}
-${profile.target_audience ? `Audience: ${profile.target_audience}` : ''}
-
-## Brand bible
-${(profile.brand_bible || '').slice(0, 2500)}`
+${identityHeader}${brandBlocks}`
 
     const resp = await message({
       system: systemPrompt,

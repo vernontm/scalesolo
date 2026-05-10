@@ -5,6 +5,7 @@
 
 import { embedOne } from '../_lib/openai.js'
 import { streamMessage } from '../_lib/anthropic.js'
+import { loadBrandContext, renderBrandContextMarkdown } from '../_lib/brand-context.js'
 import { retrieveKnowledge } from '../_lib/embeddings.js'
 
 export const config = { runtime: 'edge' }
@@ -55,11 +56,16 @@ async function assertProfileAccess(userId, profileId) {
 
 // ── Build the system prompt: profile context + pinned facts + retrieved chunks ─
 async function buildSystemPrompt(profileId, queryEmbedding) {
-  const [profileRows, pinnedRows] = await Promise.all([
-    supa(`profiles?id=eq.${profileId}&select=business_name,industry,brand_bible,target_audience,preferred_tone,agent_aggressiveness`),
+  // loadBrandContext() pulls every brand-voice signal in one parallel
+  // pass — same source the script generator uses, so the AI CEO sees
+  // the same do/don't rules, voice summary, and rated exemplars users
+  // gave the writer. Pinned facts + retrieved chunks (RAG) layer on
+  // top because they're agent-specific.
+  const [ctx, pinnedRows] = await Promise.all([
+    loadBrandContext(profileId, { skip: ['exemplars'] }),
     supa(`agent_pinned_facts?profile_id=eq.${profileId}&order=created_at.asc&select=fact`),
   ])
-  const profile = profileRows?.[0]
+  const profile = ctx.profile
   if (!profile) throw Object.assign(new Error('Profile not found'), { status: 404 })
 
   const chunks = queryEmbedding ? await retrieveKnowledge(profileId, queryEmbedding, { matchCount: 5 }) : []
@@ -88,11 +94,15 @@ async function buildSystemPrompt(profileId, queryEmbedding) {
     for (const p of pinnedRows) lines.push(`- ${p.fact}`)
   }
 
-  if (profile.brand_bible) {
-    lines.push('', '## Brand bible summary (excerpt)')
-    // Cap at ~1200 chars in the system prompt; full bible is in the retrieval index.
-    lines.push(profile.brand_bible.slice(0, 1200) + (profile.brand_bible.length > 1200 ? '\n[...]' : ''))
-  }
+  // Bible + voice summary + good/bad hook patterns + hard rules — all
+  // rendered through the shared helper. We skip exemplars because the
+  // agent's job is conversation, not writing scripts; the rated
+  // examples don't help here and they bloat the prompt.
+  const brandBlocks = renderBrandContextMarkdown(ctx, {
+    include: ['bible', 'summary', 'hooks', 'bad_patterns', 'rules'],
+    bibleCharLimit: 1200,
+  })
+  if (brandBlocks) lines.push(brandBlocks)
 
   if (chunks.length) {
     lines.push('', '## Retrieved relevant context')

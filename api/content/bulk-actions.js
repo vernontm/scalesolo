@@ -14,6 +14,8 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { findNextOpenSlot } from '../_lib/scheduling.js'
+import { message } from '../_lib/anthropic.js'
+import { loadBrandContext, renderBrandContextMarkdown } from '../_lib/brand-context.js'
 import {
   resolveUploadpostUser, uploadpostEnsureUserProfile,
 } from '../_lib/uploadpost.js'
@@ -50,8 +52,13 @@ export default async function handler(req, res) {
 async function generateCaptions({ res, profile_id, script_ids, user_id }) {
   if (!ANTHROPIC_API_KEY) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' })
 
-  const profileRows = await supaFetch(`profiles?id=eq.${profile_id}&select=*`)
-  const profile = profileRows?.[0]
+  // Brand context loaded through the shared helper so captions inherit
+  // the same do_not_say / always_include / brand_cta rules + voice
+  // summary the script generator uses. Skip exemplars (script-shaped
+  // examples are noise for caption work) but keep the rated hooks +
+  // bad-pattern blocks because openers carry over.
+  const ctx = await loadBrandContext(profile_id, { skip: ['exemplars'] })
+  const profile = ctx.profile
   if (!profile) return res.status(404).json({ error: 'Profile not found' })
 
   let q = `content_scripts?profile_id=eq.${profile_id}`
@@ -80,35 +87,29 @@ async function generateCaptions({ res, profile_id, script_ids, user_id }) {
     }
   }
 
-  // Build brand context the same way the rest of the app does.
-  const brandContext = [
-    profile.business_name && `Business: ${profile.business_name}`,
-    profile.industry && `Industry: ${profile.industry}`,
-    profile.target_audience && `Target audience: ${profile.target_audience}`,
-    profile.preferred_tone && `Tone: ${profile.preferred_tone}`,
-    profile.brand_bible && `Brand bible:\n${profile.brand_bible}`,
-    profile.core_hashtags && `MANDATORY core hashtags (always include first): ${profile.core_hashtags}`,
-  ].filter(Boolean).join('\n')
+  // System prompt: full brand context (bible + voice summary + good /
+  // bad hooks + hard rules) lives here so anthropic.js can auto-cache
+  // it. Per-call user content (the actual scripts + images) goes into
+  // the user message so it doesn't bust the cache. Same approach as
+  // the script generator.
+  const brandBlocks = renderBrandContextMarkdown(ctx, {
+    include: ['identity', 'bible', 'summary', 'hooks', 'bad_patterns', 'rules'],
+    bibleCharLimit: 2500,
+  })
+  const coreHashtagsLine = profile.core_hashtags
+    ? `\n\nMANDATORY core hashtags (always include first): ${profile.core_hashtags}`
+    : ''
+  const systemPrompt = `You are a social media caption writer for the brand below. For each script you receive a TITLE / KIND / SCRIPT block, and (when present) an IMAGE the post will publish with. Read the image visually — describe what's actually in it in the caption — combined with the brand context.
 
-  // Build a multimodal user message — text instructions + an image block
-  // for each image script so Claude can SEE the actual media when writing
-  // the caption. Video rows fall back to script-only because Claude's
-  // image API doesn't take video; brand_cta still flows through.
-  // Caps: 8 images per batch keeps the request small enough to land
-  // under the model's image limit + token budget; extra images get
-  // text-only treatment with a note.
+For each script return: title, caption, hashtags, first_comment.${brandBlocks}${coreHashtagsLine}`
+
+  // Multimodal user content — instructions + per-script blocks + image
+  // blocks. Caps: 8 images per batch keeps the request small enough
+  // to land under the model's image limit + token budget; extra
+  // images get text-only treatment with a note.
   const MAX_IMAGES_PER_BATCH = 8
   let imageBudget = MAX_IMAGES_PER_BATCH
   const userContent = []
-  const intro = `You are a social media caption writer for the brand below. For each script you are given a TITLE / KIND / SCRIPT block, and (when present) an IMAGE the post will publish with. Read the image visually — describe what's actually in it in the caption — combined with the brand context.
-
-<brand_context>
-${brandContext}
-${profile.brand_cta ? `\nBrand call-to-action (use as the first_comment when nothing better fits): ${profile.brand_cta}` : ''}
-</brand_context>
-
-For each script return: title, caption, hashtags, first_comment.`
-  userContent.push({ type: 'text', text: intro })
 
   scripts.forEach((s, i) => {
     const header = `--- SCRIPT ${i} ---\nTITLE: ${s.title || 'Untitled'}\nKIND: ${s.media_type || 'unknown'}\nSCRIPT: ${(s.full_script || s.hook || s.title || 'No script text').slice(0, 1500)}`
@@ -137,24 +138,22 @@ Return ONLY a JSON array, one object per script, in the order given:
 ]
 No markdown, no preamble.` })
 
-  const aiRes = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 8000,
+  // Switched from raw fetch to the anthropic.js helper. The helper
+  // wraps the system prompt in cache_control: ephemeral when long
+  // enough, which gives us the 90% prompt-caching discount on the
+  // brand-context block across consecutive caption batches.
+  let aiData
+  try {
+    aiData = await message({
+      system: systemPrompt,
       messages: [{ role: 'user', content: userContent }],
-    }),
-  })
-  if (!aiRes.ok) {
-    const txt = await aiRes.text().catch(() => '')
-    return res.status(502).json({ error: `AI caption generation failed: ${aiRes.status}`, detail: txt.slice(0, 300) })
+      max_tokens: 8000,
+    })
+  } catch (e) {
+    return res.status(e?.status === 401 ? 401 : 502).json({
+      error: `AI caption generation failed: ${e?.message || e}`,
+    })
   }
-  const aiData = await aiRes.json()
   let parsed = null
   try {
     const raw = aiData?.content?.[0]?.text || ''
