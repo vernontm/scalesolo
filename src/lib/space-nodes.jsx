@@ -14,7 +14,7 @@ import {
   Type, Wand2, Captions, UserCircle2, Save, Image as ImageIcon,
   ListChecks, FileVideo, Upload, Loader2, Maximize2, ArrowUpRight,
   Download, Trash2, Building2, Repeat, Play, Pause, Combine as CombineIcon,
-  Mic, Sparkles, Send, Copy, X, Lock,
+  Mic, Sparkles, Send, Copy, X, Lock, Link2, AlertCircle, ExternalLink,
 } from 'lucide-react'
 import { supabase } from './supabase.js'
 import MusicMixPreview from '../components/MusicMixPreview.jsx'
@@ -697,6 +697,57 @@ function ExpandedTextEditor({ value, onCommit, onClose, title = 'Text editor' })
   )
 }
 
+// ─── Reference URL body ─────────────────────────────────────────────────────
+// Paste a URL, click Run, get a transcript output. Body shows the
+// resolved creator handle + a transcript preview after a successful
+// run so the user knows what's downstream.
+function UrlReferenceBody({ data, onPatch }) {
+  const out = data.output
+  const url = data.props?.source_url || ''
+  return (
+    <>
+      <div style={{ position: 'relative' }}>
+        <Link2 size={11} style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
+        <input
+          className="nodrag"
+          style={{ ...tinyInput, width: '100%', paddingLeft: 26 }}
+          placeholder="https://www.tiktok.com/@user/video/123…"
+          value={url}
+          onChange={(e) => onPatch({ source_url: e.target.value })}
+        />
+      </div>
+      {data.status === 'running' && <ProgressPill progress={data.progress} fallback="Transcribing…" />}
+      {data.status === 'failed' && <NodePreview status="failed" error={data.error} />}
+      {out?.transcript && (
+        <div style={{ marginTop: 8 }}>
+          {out.creator_handle && (
+            <div style={{ fontSize: 11, color: 'var(--text-soft)', marginBottom: 4 }}>
+              <strong>@{out.creator_handle}</strong>
+              {out.duration_secs ? ` · ${out.duration_secs}s` : ''}
+              {out.source_url && (
+                <a href={out.source_url} target="_blank" rel="noopener noreferrer" style={{ marginLeft: 6, color: 'var(--muted)' }}>
+                  <ExternalLink size={9} />
+                </a>
+              )}
+            </div>
+          )}
+          <details>
+            <summary style={{ cursor: 'pointer', fontSize: 10.5, color: 'var(--muted)' }}>
+              Transcript ({out.transcript.length.toLocaleString()} chars)
+            </summary>
+            <div style={{
+              marginTop: 4, padding: 8, borderRadius: 6,
+              background: 'var(--surface-2)', border: '1px solid var(--border)',
+              fontSize: 11, color: 'var(--text-soft)', lineHeight: 1.5,
+              maxHeight: 140, overflowY: 'auto', whiteSpace: 'pre-wrap',
+            }}>{out.transcript}</div>
+          </details>
+        </div>
+      )}
+    </>
+  )
+}
+
 // Module-level cache for the script_formats catalog. The list rarely
 // changes, so one fetch per session is fine. Each ScriptGenBody mount
 // just reads from the cache (or kicks off a fetch if cold).
@@ -764,12 +815,51 @@ function ScriptGenBody({ data, onPatch }) {
     } catch {}
   }
 
+  const mode = data.props?.mode === 'remix' ? 'remix' : 'original'
+
   return (
     <>
+      {/* Mode selector — Original (topic-driven, default) vs Remix
+          (rewrites an upstream Reference URL transcript in the user's
+          voice). Wire a Reference URL node into the input handle when
+          using Remix. */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 6, padding: 3, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 7 }}>
+        {[
+          { id: 'original', label: 'Original',  hint: 'Write from a topic / hook.' },
+          { id: 'remix',    label: 'Remix URL', hint: 'Rewrite an upstream Reference URL in your voice.' },
+        ].map((m) => (
+          <button
+            key={m.id}
+            type="button" className="nodrag"
+            onClick={(e) => { e.stopPropagation(); onPatch({ mode: m.id }) }}
+            title={m.hint}
+            style={{
+              flex: 1, padding: '5px 8px', borderRadius: 5,
+              background: mode === m.id ? 'var(--surface)' : 'transparent',
+              border: mode === m.id ? '1px solid var(--border)' : '1px solid transparent',
+              color: mode === m.id ? 'var(--text)' : 'var(--text-soft)',
+              fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 10.5,
+              cursor: 'pointer', letterSpacing: '0.04em',
+            }}
+          >{m.label}</button>
+        ))}
+      </div>
+
+      {mode === 'remix' ? (
+        <div style={{
+          padding: 8, borderRadius: 6,
+          background: 'rgba(236,72,153,0.10)', border: '1px solid rgba(236,72,153,0.30)',
+          fontSize: 10.5, color: 'var(--text-soft)', lineHeight: 1.45, marginBottom: 6,
+        }}>
+          <Link2 size={10} style={{ verticalAlign: '-1px', marginRight: 4, color: '#f472b6' }} />
+          Wire a <strong>Reference URL</strong> into the input. The transcript gets rewritten in your brand voice. The topic field below is optional — set it to nudge the angle.
+        </div>
+      ) : null}
+
       <MentionPrompt
         value={data.props?.topic || ''}
         onChange={(v) => onPatch({ topic: v })}
-        placeholder="Topic or hook. Type @ to tag a brand profile."
+        placeholder={mode === 'remix' ? 'Optional: angle hint for the rewrite (e.g. "lean into the pain point").' : 'Topic or hook. Type @ to tag a brand profile.'}
         minHeight={70}
         brands={profiles}
       />
@@ -4522,6 +4612,51 @@ export const NODE_REGISTRY = {
     run: async ({ data }) => ({ text: data.props?.text || '' }),
   },
 
+  // Reference URL → transcript. Pastes a TikTok / Reel / YouTube URL,
+  // resolves to a direct MP4, transcribes via ElevenLabs Scribe, and
+  // outputs the transcript so downstream nodes (script_gen mode=remix)
+  // can rewrite it in the user's voice. The first run hits the network;
+  // subsequent runs return the cached transcript instantly because the
+  // /api/reference-videos POST is upsert-on-(profile,url) — same URL
+  // never re-transcribes.
+  url_reference: {
+    label: 'Reference URL',
+    description: 'Paste a TikTok / Reel / YouTube URL. We transcribe with ElevenLabs Scribe, then downstream nodes (Script generator → Remix) can rewrite the script in your voice. Output: { text: transcript, source_url, creator_handle }.',
+    icon: Link2, category: 'inputs', color: '#ec4899',
+    inputs: [], outputs: [{ id: 'out', label: 'Out' }],
+    initialProps: { source_url: '' },
+    Body: UrlReferenceBody,
+    run: async ({ data, ctx }) => {
+      const url = (data.props?.source_url || '').trim()
+      if (!url) throw new Error('Paste a TikTok / Reel / YouTube URL.')
+      if (!/^https?:\/\//i.test(url)) throw new Error('URL must start with http(s)://')
+      const r = await fetch('/api/reference-videos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
+        body: JSON.stringify({
+          profile_id: ctx.profileId,
+          source_url: url,
+          mode: 'remix_source',
+        }),
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body.error || `Reference-video failed (${r.status})`)
+      const v = body.video
+      if (!v?.transcript) throw new Error('Transcription returned no text. The video may be silent or the URL may not be public.')
+      return {
+        // text + transcript both populated so pickScript() picks it up
+        // automatically when feeding script_gen as a generic input.
+        text: v.transcript,
+        transcript: v.transcript,
+        source_url: v.source_url,
+        creator_handle: v.creator_handle || null,
+        thumbnail_url: v.thumbnail_url || null,
+        duration_secs: v.duration_secs || null,
+        reference_video_id: v.id,
+      }
+    },
+  },
+
   audio_upload: {
     free: true,
     label: 'Audio', description: 'Upload an audio file (MP3 / WAV / M4A) to use as the voice track for an avatar render. Wire its "out" into Avatar render in place of (or alongside) a script.',
@@ -4631,32 +4766,61 @@ export const NODE_REGISTRY = {
     icon: Wand2, category: 'generators', color: '#ef4444',
     inputs: [{ id: 'in', label: 'In (topic / brand)' }],
     outputs: [{ id: 'out', label: 'Out' }],
-    initialProps: { format: 'tiktok-script', topic: '', target_length_secs: 45 },
+    initialProps: { format: 'tiktok-script', topic: '', target_length_secs: 45, mode: 'original' },
     Body: ScriptGenBody,
     run: async ({ data, inputs, inputsByName, ctx }) => {
       const incoming = inputs?.in
       const brand = pickBrand(incoming)
-      let topic = (data.props?.topic || '').trim() || pickScript(incoming)
-      if (!topic) throw new Error('No topic / text provided')
-      topic = expandMentions(topic, inputsByName)
+      const mode = data.props?.mode === 'remix' ? 'remix' : 'original'
+
+      // Remix mode: an upstream Reference URL node provided a transcript
+      // we rewrite in the user's voice. Look for it in the inputs and
+      // pass alongside the rest of the call so the server can flip to
+      // the remix system prompt.
+      let referenceTranscript = null
+      let referenceMeta = null
+      if (mode === 'remix') {
+        for (const x of (Array.isArray(incoming) ? incoming : [incoming])) {
+          if (x && typeof x === 'object' && x.transcript) {
+            referenceTranscript = x.transcript
+            referenceMeta = {
+              source_url: x.source_url || null,
+              creator_handle: x.creator_handle || null,
+              reference_video_id: x.reference_video_id || null,
+            }
+            break
+          }
+        }
+        if (!referenceTranscript) {
+          throw new Error('Remix mode needs a Reference URL node wired in. Drop one upstream and run it first.')
+        }
+      }
+
+      let topic = (data.props?.topic || '').trim() || (mode === 'remix' ? '' : pickScript(incoming))
+      if (mode !== 'remix' && !topic) throw new Error('No topic / text provided')
+      if (topic) topic = expandMentions(topic, inputsByName)
       // @brand-mention takes priority — wires the script gen to that brand
       // profile's bible/voice without needing a brand_profile node.
-      const mentioned = resolveBrandMention(topic, ctx.profiles)
+      const mentioned = resolveBrandMention(topic || '', ctx.profiles)
       const profileId = mentioned?.id || brand?.profile_id || ctx.profileId
-      topic = stripBrandMentions(topic, ctx.profiles)
+      if (topic) topic = stripBrandMentions(topic, ctx.profiles)
+
       const r = await fetch('/api/content/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
         body: JSON.stringify({
           profile_id: profileId,
           format: data.props?.format || 'tiktok-script',
-          // Optional: caller pinned a structural format (story / listicle /
-          // hot_take / etc.) from the script_formats catalog. Server reads
-          // the matching prompt_directive and adds it to the system prompt.
           structural_format: data.props?.structural_format || null,
-          topic,
+          topic: topic || (mode === 'remix' ? `Remix of ${referenceMeta?.creator_handle ? `@${referenceMeta.creator_handle}` : 'reference video'}` : ''),
           count: 1,
           target_length_secs: data.props?.target_length_secs || undefined,
+          // Remix payload — server reads these when mode='remix' and
+          // swaps to the rewrite system prompt that targets the user's
+          // brand voice while preserving the source's hook + structure.
+          mode,
+          reference_transcript: referenceTranscript || undefined,
+          reference_meta: referenceMeta || undefined,
         }),
       })
       const body = await r.json()

@@ -46,8 +46,18 @@ export default async function handler(req, res) {
   if (!auth) return
 
   try {
-    const { profile_id, format, topic, count = 1, platforms, target_length_secs, dry_run, structural_format, voice_model_id, avatar_id } = req.body || {}
-    if (!profile_id || !topic) return res.status(400).json({ error: 'profile_id + topic required' })
+    const {
+      profile_id, format, topic, count = 1, platforms, target_length_secs, dry_run,
+      structural_format, voice_model_id, avatar_id,
+      // Remix mode — when set with reference_transcript, the system
+      // prompt swaps from "write a fresh script on this topic" to
+      // "rewrite this reference in the user's brand voice". Topic
+      // becomes an optional angle hint.
+      mode, reference_transcript, reference_meta,
+    } = req.body || {}
+    const isRemix = mode === 'remix' && typeof reference_transcript === 'string' && reference_transcript.trim().length > 30
+    if (!profile_id) return res.status(400).json({ error: 'profile_id required' })
+    if (!isRemix && !topic) return res.status(400).json({ error: 'topic required' })
     if (!FORMAT_HINT[format]) return res.status(400).json({ error: `Unknown format: ${format}` })
     if (count < 1 || count > 10) return res.status(400).json({ error: 'count must be 1..10' })
 
@@ -250,9 +260,35 @@ DO NOT:
       `## Brand: ${profile.business_name || 'this brand'}` +
       (profile.preferred_tone ? `\nVoice: ${profile.preferred_tone}` : '') +
       (profile.target_audience ? `\nAudience: ${profile.target_audience}` : '')
+    // Remix mode adds a directive that flips the model's job from
+    // "write fresh on a topic" to "rewrite this transcript in the
+    // user's voice while preserving its hook + structure". The full
+    // brand context block above still applies — that's what makes
+    // the remix sound like the user, not a generic adaptation.
+    const remixBlock = isRemix
+      ? `\n\n## Remix mode (RE-WRITE, do not invent)
+A reference transcript is provided in the user message. Your job is
+to rewrite it in this brand's voice. Preserve:
+  - the original hook archetype (if it works for this brand)
+  - the structural beats (same number of beats, same ordering)
+  - the CTA shape
+
+Replace:
+  - vocabulary that doesn't match this brand
+  - examples that don't fit the brand's audience
+  - any phrasing that violates the brand rules above
+  - the language register (formal/casual/etc.) when it clashes with the brand's tone
+
+The output must read as if THIS brand wrote it from scratch — not as
+a translation, not as a parody. If a beat in the original directly
+contradicts the brand's voice or rules, drop or rework it. Quote the
+original's hook archetype label in your reasoning if helpful, but
+NOT in the output.`
+      : ''
+
     const systemPrompt = `${SYSTEM}
 
-${identityHeader}${brandBibleAndVoiceBlocks}${structuralBlock}${v3TagsBlock}
+${identityHeader}${brandBibleAndVoiceBlocks}${structuralBlock}${v3TagsBlock}${remixBlock}
 
 ## Format
 ${FORMAT_HINT[format]}${lengthDirective}${avoidBlock}
@@ -285,9 +321,23 @@ opener in the "Previously written for this brand" list.`
       // batch of 10 doesn't all converge on the same hook shape. The
       // archetype list is in the system prompt; pick by index here.
       const archetypeIdx = i % 10
-      const userPrompt = count === 1
-        ? `Topic: ${topic}\n\nFor THIS script, use opener archetype #${archetypeIdx + 1} from the list. Write the hook in that shape.`
-        : `Topic: ${topic}\n\nThis is variation ${i + 1} of ${count}. Use opener archetype #${archetypeIdx + 1} from the list — every variation in this batch must use a DIFFERENT archetype. Make the script substantively distinct from the others (different angle, different example, different lesson — not just different words).`
+      // Remix mode: the reference transcript carries the substance;
+      // topic (when set) is just an angle hint. Stuff the transcript
+      // in a fenced block so prompt injection inside it lands as
+      // data, not instructions.
+      const remixHeader = isRemix
+        ? `Reference transcript${reference_meta?.creator_handle ? ` (from @${reference_meta.creator_handle})` : ''}:\n"""\n${String(reference_transcript).slice(0, 6000)}\n"""\n\n${topic ? `Angle hint from the user: ${topic}\n\n` : ''}`
+        : ''
+      const variationLine = count === 1
+        ? (isRemix
+            ? `Rewrite the reference above in this brand's voice. Use opener archetype #${archetypeIdx + 1} from the list.`
+            : `For THIS script, use opener archetype #${archetypeIdx + 1} from the list. Write the hook in that shape.`)
+        : (isRemix
+            ? `This is variation ${i + 1} of ${count} of the same remix. Use opener archetype #${archetypeIdx + 1} — every variation must use a DIFFERENT archetype.`
+            : `This is variation ${i + 1} of ${count}. Use opener archetype #${archetypeIdx + 1} from the list — every variation in this batch must use a DIFFERENT archetype. Make the script substantively distinct from the others (different angle, different example, different lesson — not just different words).`)
+      const userPrompt = isRemix
+        ? `${remixHeader}${variationLine}`
+        : `Topic: ${topic}\n\n${variationLine}`
       return message({
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }],

@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react'
 import {
   Mic, ChevronRight, ThumbsUp, ThumbsDown, Trash2, Plus, X, Sparkles,
-  AlertCircle, MessageSquare,
+  AlertCircle, MessageSquare, Link2, Wand2, Check, Loader2, ExternalLink,
 } from 'lucide-react'
 
 async function authedFetch(path, token, init = {}) {
@@ -48,6 +48,8 @@ export default function VoiceTrainingSection({ profileId, session, doNotSay, alw
 
       {open && (
         <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <ReferenceVideosPanel profileId={profileId} session={session} />
+          <InsightsPanel profileId={profileId} session={session} />
           <ScriptsPanel profileId={profileId} session={session} />
           <HooksPanel profileId={profileId} session={session} />
           <RulesPanel
@@ -59,6 +61,355 @@ export default function VoiceTrainingSection({ profileId, session, doNotSay, alw
       )}
     </div>
   )
+}
+
+// ── Reference videos ────────────────────────────────────────────────────────
+// Paste a TikTok / Reel / YouTube URL → server resolves + transcribes
+// via ElevenLabs Scribe → appears in the list. Hit Analyze on any
+// transcribed row to have Claude extract patterns into the Insights
+// panel below for review.
+function ReferenceVideosPanel({ profileId, session }) {
+  const [items, setItems] = useState(null)
+  const [url, setUrl] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [analyzingId, setAnalyzingId] = useState(null)
+  const [error, setError] = useState(null)
+  const token = session?.access_token
+
+  const refresh = async () => {
+    if (!token) return
+    try {
+      const r = await authedFetch(`/api/reference-videos?profile_id=${profileId}`, token)
+      const body = await r.json()
+      if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
+      setItems(body.videos || [])
+      setError(null)
+    } catch (e) { setError(e.message); setItems([]) }
+  }
+  useEffect(() => { refresh() /* eslint-disable-next-line */ }, [profileId, token])
+
+  const submit = async () => {
+    if (!url.trim() || !token) return
+    setBusy(true); setError(null)
+    try {
+      const r = await authedFetch('/api/reference-videos', token, {
+        method: 'POST',
+        body: JSON.stringify({ profile_id: profileId, source_url: url.trim() }),
+      })
+      const body = await r.json()
+      if (!r.ok) {
+        if (r.status === 402) throw new Error(body.error || 'Monthly transcription limit reached.')
+        throw new Error(body.error || `Failed (${r.status})`)
+      }
+      setUrl('')
+      await refresh()
+    } catch (e) { setError(e.message) }
+    finally { setBusy(false) }
+  }
+
+  const analyze = async (id) => {
+    setAnalyzingId(id); setError(null)
+    try {
+      const r = await authedFetch('/api/reference-videos/analyze', token, {
+        method: 'POST',
+        body: JSON.stringify({ id }),
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body.error || `Analyze failed (${r.status})`)
+      // No state to update here — InsightsPanel below polls on its own
+      // tab opening, but in case the user has it expanded already we
+      // hint that fresh insights are available.
+      window.dispatchEvent(new CustomEvent('voice-training:insights-changed', { detail: { profileId } }))
+    } catch (e) { setError(e.message) }
+    finally { setAnalyzingId(null) }
+  }
+
+  const remove = async (id) => {
+    if (!confirm('Delete this reference video and its insights?')) return
+    try {
+      await authedFetch(`/api/reference-videos?id=${id}`, token, { method: 'DELETE' })
+      setItems((arr) => (arr || []).filter((r) => r.id !== id))
+    } catch (e) { setError(e.message) }
+  }
+
+  return (
+    <Section
+      title="Reference videos"
+      hint="Paste TikTok / Reel / YouTube URLs of creators you want to learn from. We transcribe with ElevenLabs Scribe; Claude extracts pattern insights you can approve below."
+    >
+      <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+        <div style={{ position: 'relative', flex: 1 }}>
+          <Link2 size={12} style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
+          <input
+            className="input"
+            placeholder="https://www.tiktok.com/@user/video/123… or any direct video URL"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') submit() }}
+            style={{ width: '100%', paddingLeft: 28, fontSize: 12 }}
+          />
+        </div>
+        <button
+          type="button"
+          onClick={submit}
+          disabled={!url.trim() || busy}
+          style={{
+            padding: '8px 12px', borderRadius: 8,
+            background: busy ? 'var(--surface-2)' : 'linear-gradient(135deg, var(--red), var(--red-dark))',
+            color: busy ? 'var(--text-soft)' : '#fff',
+            border: 'none', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 12,
+            cursor: busy ? 'wait' : 'pointer',
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}
+        >
+          {busy ? <Loader2 size={12} className="spin" /> : <Plus size={12} />} Add
+        </button>
+      </div>
+
+      {error && <ErrorPill message={error} />}
+
+      {!items ? <Loading /> : items.length === 0 ? (
+        <Empty msg="No references yet. Paste a URL above to add the first." />
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {items.map((r) => (
+            <ReferenceVideoRow
+              key={r.id}
+              row={r}
+              onAnalyze={() => analyze(r.id)}
+              onDelete={() => remove(r.id)}
+              busy={analyzingId === r.id}
+            />
+          ))}
+        </div>
+      )}
+    </Section>
+  )
+}
+
+function ReferenceVideoRow({ row, onAnalyze, onDelete, busy }) {
+  const [showTranscript, setShowTranscript] = useState(false)
+  const status = row.status
+  const ready = status === 'ready' && row.transcript
+  return (
+    <div style={{
+      padding: 10, borderRadius: 8,
+      background: 'var(--surface)', border: '1px solid var(--border)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        {row.thumbnail_url ? (
+          <img src={row.thumbnail_url} alt="" style={{ width: 48, height: 48, borderRadius: 6, objectFit: 'cover', flexShrink: 0 }} />
+        ) : (
+          <div style={{ width: 48, height: 48, borderRadius: 6, background: 'var(--surface-2)', display: 'grid', placeItems: 'center', flexShrink: 0, color: 'var(--muted)' }}>
+            <Link2 size={14} />
+          </div>
+        )}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 12, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }}>
+            {row.creator_handle ? <strong>@{row.creator_handle}</strong> : <span style={{ color: 'var(--muted)' }}>—</span>}
+            <a href={row.source_url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--muted)' }} title="Open original">
+              <ExternalLink size={10} />
+            </a>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
+            <StatusBadge status={status} error={row.error} />
+            {row.duration_secs ? ` · ${row.duration_secs}s` : ''}
+            {row.transcript_lang ? ` · ${row.transcript_lang.toUpperCase()}` : ''}
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          {ready && (
+            <button type="button" onClick={onAnalyze} disabled={busy} title="Analyze with Claude → write insights" style={btnSmall}>
+              {busy ? <Loader2 size={11} className="spin" /> : <Wand2 size={11} />}
+              Analyze
+            </button>
+          )}
+          <IconBtn onClick={onDelete} title="Delete"><Trash2 size={11} /></IconBtn>
+        </div>
+      </div>
+
+      {ready && (
+        <div style={{ marginTop: 8 }}>
+          <button
+            type="button"
+            onClick={() => setShowTranscript((v) => !v)}
+            style={{
+              background: 'transparent', border: 'none',
+              color: 'var(--muted)', fontSize: 10.5, cursor: 'pointer',
+              padding: 0,
+            }}
+          >
+            {showTranscript ? '▾' : '▸'} Transcript ({row.transcript.length.toLocaleString()} chars)
+          </button>
+          {showTranscript && (
+            <div style={{
+              marginTop: 6, padding: 10, borderRadius: 6,
+              background: 'var(--surface-2)', border: '1px solid var(--border)',
+              fontSize: 11.5, color: 'var(--text-soft)', lineHeight: 1.55,
+              maxHeight: 200, overflowY: 'auto', whiteSpace: 'pre-wrap',
+            }}>{row.transcript}</div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Insights review queue ───────────────────────────────────────────────────
+// Lists pending insights from brand_bible_insights. Approve merges the
+// insight into the right voice-training table; Reject discards it.
+// Listens for a custom event from ReferenceVideosPanel so a fresh
+// analyze refreshes this list immediately without a polling loop.
+function InsightsPanel({ profileId, session }) {
+  const [items, setItems] = useState(null)
+  const [busyId, setBusyId] = useState(null)
+  const [error, setError] = useState(null)
+  const token = session?.access_token
+
+  const refresh = async () => {
+    if (!token) return
+    try {
+      const r = await authedFetch(`/api/insights?profile_id=${profileId}`, token)
+      const body = await r.json()
+      if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
+      setItems(body.insights || [])
+      setError(null)
+    } catch (e) { setError(e.message); setItems([]) }
+  }
+  useEffect(() => { refresh() /* eslint-disable-next-line */ }, [profileId, token])
+
+  // Refresh whenever ReferenceVideosPanel signals a new analyze.
+  useEffect(() => {
+    const onChanged = (e) => {
+      if (e.detail?.profileId === profileId) refresh()
+    }
+    window.addEventListener('voice-training:insights-changed', onChanged)
+    return () => window.removeEventListener('voice-training:insights-changed', onChanged)
+    /* eslint-disable-next-line */
+  }, [profileId, token])
+
+  const act = async (id, action) => {
+    setBusyId(id); setError(null)
+    try {
+      const r = await authedFetch('/api/insights', token, {
+        method: 'PATCH',
+        body: JSON.stringify({ id, action }),
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
+      setItems((arr) => (arr || []).filter((x) => x.id !== id))
+    } catch (e) { setError(e.message) }
+    finally { setBusyId(null) }
+  }
+
+  return (
+    <Section
+      title="Insights to review"
+      hint="Patterns Claude extracted from your reference videos. Approve to merge into hooks / scripts / voice summary; reject to drop."
+    >
+      {error && <ErrorPill message={error} />}
+      {!items ? <Loading /> : items.length === 0 ? (
+        <Empty msg="No pending insights. Add a reference video above and click Analyze." />
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {items.map((i) => (
+            <InsightRow
+              key={i.id}
+              row={i}
+              busy={busyId === i.id}
+              onApprove={() => act(i.id, 'approve')}
+              onReject={() => act(i.id, 'reject')}
+            />
+          ))}
+        </div>
+      )}
+    </Section>
+  )
+}
+
+function InsightRow({ row, busy, onApprove, onReject }) {
+  const t = row.insight_type
+  const fit = row.payload?.fit || 'medium'
+  const fitColor = fit === 'high' ? '#2ecc71' : fit === 'low' ? 'var(--muted)' : 'var(--amber)'
+  return (
+    <div style={{ padding: 10, borderRadius: 8, background: 'var(--surface)', border: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 4 }}>
+        <Pill style={pillForType(t)}>{t.replace(/_/g, ' ')}</Pill>
+        <span style={{ fontSize: 9.5, color: fitColor, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          fit: {fit}
+        </span>
+      </div>
+      <div style={{ fontSize: 13, color: 'var(--text)', fontFamily: 'var(--font-display)', fontWeight: 700, marginBottom: 4 }}>
+        {row.title || '(untitled)'}
+      </div>
+      {row.payload?.description && (
+        <div style={{ fontSize: 11.5, color: 'var(--text-soft)', lineHeight: 1.5, marginBottom: 6 }}>
+          {row.payload.description}
+        </div>
+      )}
+      {row.payload?.example && (
+        <div style={{
+          fontSize: 11.5, color: 'var(--text)', lineHeight: 1.5,
+          padding: '6px 10px', background: 'var(--surface-2)', borderLeft: '2px solid var(--red)',
+          borderRadius: 4, marginBottom: 8, fontStyle: 'italic',
+        }}>"{row.payload.example}"</div>
+      )}
+      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+        <button type="button" onClick={onReject} disabled={busy} style={btnSmallGhost}>
+          {busy ? <Loader2 size={11} className="spin" /> : <X size={11} />} Reject
+        </button>
+        <button type="button" onClick={onApprove} disabled={busy} style={btnSmallPrimary}>
+          {busy ? <Loader2 size={11} className="spin" /> : <Check size={11} />} Approve
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function StatusBadge({ status, error }) {
+  const map = {
+    pending:      { color: 'var(--muted)', label: 'queued' },
+    transcribing: { color: 'var(--amber)', label: 'transcribing…' },
+    ready:        { color: '#2ecc71',     label: 'ready' },
+    failed:       { color: 'var(--red)',  label: 'failed' },
+  }
+  const m = map[status] || { color: 'var(--muted)', label: status }
+  return (
+    <span title={error || ''} style={{ color: m.color, fontWeight: 700, textTransform: 'uppercase', fontSize: 9.5, letterSpacing: '0.06em' }}>
+      {m.label}
+    </span>
+  )
+}
+
+function pillForType(t) {
+  const colors = {
+    hook_pattern:      { bg: 'rgba(245,158,11,0.16)', fg: '#f59e0b' },
+    structural_beat:   { bg: 'rgba(96,165,250,0.16)', fg: '#60a5fa' },
+    vocabulary:        { bg: 'rgba(168,85,247,0.16)', fg: '#a78bfa' },
+    pacing:            { bg: 'rgba(46,204,113,0.16)', fg: '#2ecc71' },
+    cta_pattern:       { bg: 'rgba(236,72,153,0.16)', fg: '#f472b6' },
+    audience_signal:   { bg: 'rgba(34,211,238,0.16)', fg: '#22d3ee' },
+    adaptable_element: { bg: 'rgba(46,204,113,0.20)', fg: '#2ecc71' },
+    conflict:          { bg: 'rgba(239,68,68,0.18)',  fg: 'var(--red)' },
+  }
+  return colors[t] || {}
+}
+
+const btnSmall = {
+  display: 'inline-flex', alignItems: 'center', gap: 4,
+  padding: '4px 8px', borderRadius: 6,
+  background: 'var(--surface-2)', border: '1px solid var(--border)',
+  color: 'var(--text)', fontSize: 11, fontWeight: 600,
+  cursor: 'pointer', fontFamily: 'inherit',
+}
+const btnSmallPrimary = {
+  ...btnSmall,
+  background: 'linear-gradient(135deg, #2ecc71, #1ea860)',
+  color: '#fff', borderColor: 'transparent',
+}
+const btnSmallGhost = {
+  ...btnSmall,
+  background: 'transparent', color: 'var(--muted)',
 }
 
 // ── Reference scripts ────────────────────────────────────────────────────────
