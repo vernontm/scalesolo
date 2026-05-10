@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Sparkles, Zap, ClipboardCheck, ArrowRight, Boxes, Calendar, BookOpen, CheckCircle2, Circle, Eye, Heart, MessageCircle, Share2, FileText, FilePlus2 } from 'lucide-react'
+import { Sparkles, Zap, ClipboardCheck, ArrowRight, Boxes, Calendar, BookOpen, CheckCircle2, Circle, Eye, Heart, MessageCircle, Share2, FileText, FilePlus2, TrendingUp, TrendingDown, Minus, Users } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import CreditsPanel from '../components/CreditsPanel.jsx'
@@ -142,6 +142,190 @@ function StatTile({ icon: Icon, label, value, color }) {
   )
 }
 
+// Platform display names + brand colors. Falls back to capitalize+grey
+// for any platform Upload-Post adds that we haven't styled yet.
+const PLATFORM_META = {
+  tiktok:    { label: 'TikTok',    color: '#000000' },
+  instagram: { label: 'Instagram', color: '#e1306c' },
+  youtube:   { label: 'YouTube',   color: '#ff0000' },
+  facebook:  { label: 'Facebook',  color: '#1877f2' },
+  threads:   { label: 'Threads',   color: '#000000' },
+  linkedin:  { label: 'LinkedIn',  color: '#0a66c2' },
+  x:         { label: 'X',         color: '#000000' },
+  twitter:   { label: 'X',         color: '#000000' },
+  pinterest: { label: 'Pinterest', color: '#e60023' },
+}
+const platformMeta = (id) => PLATFORM_META[id] || {
+  label: id ? id[0].toUpperCase() + id.slice(1) : 'Unknown',
+  color: '#64748b',
+}
+
+// Render a delta as "+12% · +3" or "−8% · −1". Renders "new" when
+// previous value was zero and current > 0 (the pct math would divide
+// by zero so the API returns null there).
+function DeltaBadge({ delta, suffix = '' }) {
+  if (!delta) return <span style={{ color: 'var(--muted)' }}>—</span>
+  const { abs, pct } = delta
+  const isNew = pct == null && abs > 0
+  const isFlat = abs === 0
+  const isUp   = abs > 0
+  const Icon = isFlat ? Minus : isUp ? TrendingUp : TrendingDown
+  const color = isFlat ? 'var(--muted)' : isUp ? '#2ecc71' : '#ef4444'
+  const label = isNew
+    ? 'new'
+    : (pct == null ? `${abs >= 0 ? '+' : ''}${abs}${suffix}` : `${pct >= 0 ? '+' : ''}${pct.toFixed(pct % 1 === 0 ? 0 : 1)}%`)
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 3,
+      fontSize: 11.5, fontWeight: 700, color,
+      fontFamily: 'var(--font-display)',
+    }}>
+      <Icon size={11} strokeWidth={2.6} />
+      {label}
+    </span>
+  )
+}
+
+// MoM growth card. Pulls from /api/social/growth and shows headline
+// month-vs-month deltas + a tile per connected platform. Hidden when
+// the user has no connected accounts so a blank-slate brand doesn't
+// see an empty card screaming about zero engagement.
+function SocialGrowthCard({ data, onOpen }) {
+  const tm = data.this_month || {}
+  const lm = data.last_month || {}
+  const platforms = data.per_platform || {}
+  const platformIds = Object.keys(platforms).filter((id) => platforms[id]?.connected || (platforms[id]?.this_month?.posts ?? 0) > 0)
+  const fmt = (n) => n == null ? '—' : Number(n).toLocaleString()
+  return (
+    <div style={{
+      background: 'linear-gradient(135deg, rgba(34,197,94,0.10), rgba(34,197,94,0.02))',
+      border: '1px solid rgba(34,197,94,0.30)',
+      borderRadius: 14, padding: 18,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 14 }}>
+        <div>
+          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 14, color: 'var(--text)' }}>
+            {tm.label} vs {lm.label}
+          </div>
+          <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 2 }}>
+            Month over month — posts published + estimated impressions
+          </div>
+        </div>
+        <button onClick={onOpen} style={{
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+          padding: '7px 12px', borderRadius: 8,
+          background: 'var(--surface)', border: '1px solid var(--border)',
+          color: 'var(--text)', fontSize: 12, fontFamily: 'var(--font-display)', fontWeight: 700,
+          cursor: 'pointer',
+        }}>Details <ArrowRight size={12} /></button>
+      </div>
+
+      {/* Headline row: posts + impressions deltas across the whole profile. */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginBottom: 14 }}>
+        <div style={{
+          background: 'var(--surface)', border: '1px solid var(--border)',
+          borderRadius: 10, padding: '10px 12px',
+        }}>
+          <div style={{ fontSize: 10.5, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
+            Posts shipped
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, fontVariantNumeric: 'tabular-nums', color: 'var(--text)' }}>
+              {fmt(tm.posts)}
+            </span>
+            <DeltaBadge delta={data.deltas?.posts} />
+          </div>
+          <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 2 }}>vs {fmt(lm.posts)} last month</div>
+        </div>
+        <div style={{
+          background: 'var(--surface)', border: '1px solid var(--border)',
+          borderRadius: 10, padding: '10px 12px',
+        }}>
+          <div style={{ fontSize: 10.5, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
+            Impressions
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, fontVariantNumeric: 'tabular-nums', color: 'var(--text)' }}>
+              {fmt(tm.impressions)}
+            </span>
+            <DeltaBadge delta={data.deltas?.impressions} />
+          </div>
+          <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 2 }}>vs {fmt(lm.impressions)} last month</div>
+        </div>
+      </div>
+
+      {/* Per-platform tiles. */}
+      {platformIds.length > 0 && (
+        <>
+          <div style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700, marginBottom: 8 }}>
+            By platform
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8 }}>
+            {platformIds.map((id) => {
+              const p = platforms[id] || {}
+              const meta = platformMeta(id)
+              return (
+                <div key={id} style={{
+                  background: 'var(--surface)', border: '1px solid var(--border)',
+                  borderRadius: 10, padding: '10px 12px',
+                  opacity: p.connected ? 1 : 0.55,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <span style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                      fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 12.5, color: 'var(--text)',
+                    }}>
+                      <span style={{
+                        width: 8, height: 8, borderRadius: 999, background: meta.color,
+                        display: 'inline-block',
+                      }} />
+                      {meta.label}
+                    </span>
+                    {!p.connected && (
+                      <span style={{
+                        fontSize: 9.5, padding: '2px 6px', borderRadius: 999,
+                        background: 'var(--surface-2)', color: 'var(--muted)',
+                        fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '0.04em',
+                      }}>NOT LINKED</span>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                    <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 18, fontVariantNumeric: 'tabular-nums', color: 'var(--text)' }}>
+                      {fmt(p.this_month?.posts)}
+                    </span>
+                    <span style={{ fontSize: 10.5, color: 'var(--muted)' }}>posts</span>
+                    <DeltaBadge delta={p.delta?.posts} />
+                  </div>
+                  {(p.followers != null || p.impressions != null) && (
+                    <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 4, display: 'flex', gap: 10 }}>
+                      {p.followers != null && (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                          <Users size={10} /> {fmt(p.followers)} followers
+                        </span>
+                      )}
+                      {p.impressions != null && (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                          <Eye size={10} /> {fmt(p.impressions)}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </>
+      )}
+
+      {platformIds.length === 0 && (
+        <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
+          Connect a social account on the <a href="/schedule" style={{ color: 'var(--red)', fontWeight: 700 }}>Schedule</a> page to start tracking growth.
+        </div>
+      )}
+    </div>
+  )
+}
+
 // Aggregate engagement card — sums the post-level metrics returned by
 // /api/analytics so the user sees a single line ("X views, Y likes, …")
 // without us having to plumb totals through the analytics endpoint.
@@ -237,6 +421,7 @@ export default function Dashboard() {
   const [shippedThisMonth, setShippedThisMonth] = useState(null)
   const [stats, setStats] = useState(null)
   const [social, setSocial] = useState(null)
+  const [growth, setGrowth] = useState(null)
   // Onboarding survey: 'unknown' until we've checked, then 'show' or
   // 'hide'. Blocks the dashboard with a full-screen popup until the
   // 6 questions are answered. Skipped if the user already finished —
@@ -279,7 +464,7 @@ export default function Dashboard() {
   // joins — relies on the existing /api/content listing.
   useEffect(() => {
     if (!session || !selectedProfileId) {
-      setPendingApprovals(0); setShippedThisMonth(null); setStats(null); setSocial(null)
+      setPendingApprovals(0); setShippedThisMonth(null); setStats(null); setSocial(null); setGrowth(null)
       return
     }
     // Counters: created/shipped/scheduled/drafts/pending. Single round-trip.
@@ -308,6 +493,16 @@ export default function Dashboard() {
       .then((r) => r.json())
       .then((b) => setSocial(b && !b.error ? b : null))
       .catch(() => setSocial(null))
+
+    // MoM growth — dedicated endpoint that compares this calendar
+    // month against last. Independent of /api/analytics so a slow
+    // Upload-Post analytics call doesn't block the growth card.
+    fetch(`/api/social/growth?profile_id=${selectedProfileId}`, {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    })
+      .then((r) => r.json())
+      .then((b) => setGrowth(b && !b.error ? b : null))
+      .catch(() => setGrowth(null))
   }, [session, selectedProfileId])
 
   const greeting = (() => {
@@ -415,6 +610,21 @@ export default function Dashboard() {
             <StatTile icon={FileText} label="Drafts"   value={stats.drafts}            color="#94a3b8" />
             <StatTile icon={Sparkles} label="Shipped"  value={stats.shipped_month}     color="#2ecc71" />
           </div>
+        </>
+      )}
+
+      {/* Month-over-month growth. Renders whenever the user has either
+          connected accounts OR has shipped at least one post in either
+          month — that way a brand-new brand still sees the card prompt
+          them to connect, instead of an awkward blank space. */}
+      {selectedProfile && growth && (
+        (growth.connected?.length || 0) > 0 ||
+        (growth.this_month?.posts || 0) > 0 ||
+        (growth.last_month?.posts || 0) > 0
+      ) && (
+        <>
+          <div style={sectionLabel}><span>Social growth</span></div>
+          <SocialGrowthCard data={growth} onOpen={() => navigate('/analytics')} />
         </>
       )}
 
