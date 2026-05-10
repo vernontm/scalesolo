@@ -1680,8 +1680,21 @@ function ImageGenBody({ data, onPatch }) {
 export function readImageItems(props) {
   const arr = Array.isArray(props?.urls) ? props.urls : []
   return arr.map((x, i) => {
-    if (typeof x === 'string') return { url: x, name: `image ${i + 1}` }
-    if (x && typeof x === 'object' && x.url) return { url: x.url, name: x.name || `image ${i + 1}` }
+    if (typeof x === 'string') {
+      // Detect kind from file extension when given a bare string —
+      // legacy / pasted-URL path. Without this every string-shaped
+      // url gets tagged as 'image' even when it's an .mp4.
+      const kind = /\.(mp4|mov|webm|m4v)(\?|#|$)/i.test(x) ? 'video' : 'image'
+      return { kind, url: x, name: `${kind} ${i + 1}` }
+    }
+    if (x && typeof x === 'object' && x.url) {
+      // Preserve kind from the stored object (ImageUploadBody.onPick
+      // sets it to 'video' explicitly when a video file is uploaded).
+      // Without this every uploaded video was being tagged 'image'
+      // downstream, which broke wiring Upload media into Finish video.
+      const kind = x.kind || (/\.(mp4|mov|webm|m4v)(\?|#|$)/i.test(x.url) ? 'video' : 'image')
+      return { kind, url: x.url, name: x.name || `${kind} ${i + 1}` }
+    }
     return null
   }).filter(Boolean)
 }
