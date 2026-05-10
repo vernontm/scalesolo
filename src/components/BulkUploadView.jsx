@@ -234,8 +234,32 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   // Tracks "we're running the auto-pipeline right now" so the toolbar
   // shows the right status banner instead of a silent spinner.
   const [autoStage, setAutoStage] = useState(null) // null | 'captions' | 'schedule'
+  // Default platforms for newly-uploaded rows — sourced from the
+  // profile's uploadpost_platforms (set during onboarding / Profiles
+  // editor). Empty until the fetch lands; filtered per row by media
+  // kind support (TikTok/YouTube reject images, etc.).
+  const [defaultPlatforms, setDefaultPlatforms] = useState([])
   const dropRef = useRef(null)
   const fileRef = useRef(null)
+
+  // Fetch the profile's preferred platforms once per profile change so
+  // we can pre-fill new rows on upload without round-tripping per file.
+  useEffect(() => {
+    if (!profileId || !token) { setDefaultPlatforms([]); return }
+    let cancelled = false
+    fetch(`/api/profiles`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((b) => {
+        if (cancelled) return
+        const p = (b?.profiles || []).find((x) => x.id === profileId)
+        const arr = Array.isArray(p?.uploadpost_platforms) ? p.uploadpost_platforms : []
+        setDefaultPlatforms(arr)
+      })
+      .catch(() => { if (!cancelled) setDefaultPlatforms([]) })
+    return () => { cancelled = true }
+  }, [profileId, token])
 
   // Esc closes the preview overlay.
   useEffect(() => {
@@ -280,6 +304,15 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         setUploads((u) => u.map((x) => x.id === job.id ? { ...x, progress: 30 } : x))
         const url = await uploadFileToBucket(job.file, profileId, job.kind)
         setUploads((u) => u.map((x) => x.id === job.id ? { ...x, progress: 70 } : x))
+        // Pre-select the profile's preferred platforms, filtered to ones
+        // that actually accept this media kind (TikTok/YouTube reject
+        // images, for example). The PlatformsCell still lets the user
+        // override per row.
+        const compatibleByKind = new Set(
+          ROW_PLATFORMS.filter((p) => p.kinds.includes(job.kind)).map((p) => p.id)
+        )
+        const platforms = defaultPlatforms.filter((p) => compatibleByKind.has(p))
+
         // Create the content_scripts row.
         const r = await fetch('/api/content', {
           method: 'POST',
@@ -290,6 +323,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
             media_urls: [url], media_type: job.kind,
             post_type: job.kind === 'video' ? 'video' : 'post',
             status: 'draft', generated_by: 'bulk',
+            platforms: platforms.length ? platforms : null,
           }),
         })
         const body = await r.json()
