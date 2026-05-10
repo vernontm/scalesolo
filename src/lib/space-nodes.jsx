@@ -5128,6 +5128,16 @@ export const NODE_REGISTRY = {
       const brand = pickBrand(incoming)
       const profileId = brand?.profile_id || ctx.profileId
 
+      // Forward whatever videos came in upstream so downstream nodes
+      // (schedule_post, polish) can still find them via pickAllVideoUrls.
+      // Without this, wiring Upload media → caption_gen → schedule_post
+      // bombs with "Wire a video into in" because caption_gen would
+      // otherwise strip everything but the caption text fields.
+      const upstreamVideoUrls = pickAllVideoUrls(asArr(incoming))
+      const attachVideos = (result) => upstreamVideoUrls.length
+        ? { ...result, videos: upstreamVideoUrls.map((url, i) => ({ video_url: url, idx: i })) }
+        : result
+
       // Detect a multi-clip source — voice_gen randomize emits
       // audio_chunks[{ sentence, image_url, order }]. Each chunk's
       // sentence is what gets spoken in that clip, which is exactly
@@ -5143,7 +5153,7 @@ export const NODE_REGISTRY = {
         }
       }
       if (chunkSentences) {
-        return await runMultiCaption({ ctx, profileId, chunkSentences, edits: data.props })
+        return attachVideos(await runMultiCaption({ ctx, profileId, chunkSentences, edits: data.props }))
       }
 
       // Script-bearing input wins over raw videos when both are
@@ -5194,16 +5204,16 @@ export const NODE_REGISTRY = {
           // the canonical { title, caption, hashtags, first_comment }
           // shape. Multiple videos → fan out per video.
           if (valid.length === 1) {
-            return await runSingleCaptionFromScript({ ctx, profileId, script: valid[0].text, edits: data.props })
+            return attachVideos(await runSingleCaptionFromScript({ ctx, profileId, script: valid[0].text, edits: data.props }))
           }
-          return await runMultiCaption({ ctx, profileId, chunkSentences: valid, edits: data.props })
+          return attachVideos(await runMultiCaption({ ctx, profileId, chunkSentences: valid, edits: data.props }))
         }
         throw new Error('Wire a script (Text / script_gen / voice_gen) or videos (Upload media / Collection / avatar_render) into "in".')
       }
 
       // Single-script path — extracted into runSingleCaptionFromScript
       // so video-only callers (above) can reuse it for the 1-video case.
-      return await runSingleCaptionFromScript({ ctx, profileId, script, edits: data.props })
+      return attachVideos(await runSingleCaptionFromScript({ ctx, profileId, script, edits: data.props }))
     },
   },
 
