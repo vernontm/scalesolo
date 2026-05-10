@@ -9,6 +9,7 @@ import { useProfile } from '../context/ProfileContext.jsx'
 import { useCredits } from '../context/CreditsContext.jsx'
 import { supabase } from '../lib/supabase.js'
 import { toast, confirmDialog } from '../components/Toast.jsx'
+import { compressImageIfLarge } from '../lib/image-compress.js'
 
 // Upload a File directly to Supabase Storage (avatar-media bucket) and return
 // the public URL. Bypasses Vercel's ~4.5MB request body limit entirely.
@@ -107,23 +108,59 @@ function CreateAvatarModal({ profileId, models, onClose, onCreated }) {
   const [photoFile, setPhotoFile] = useState(null)
   const [previewUrl, setPreviewUrl] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [compressing, setCompressing] = useState(false)
+  const [compressionInfo, setCompressionInfo] = useState(null) // {originalMB, finalMB} after a successful compress
   const [error, setError] = useState(null)
 
   // Revoke object URL when the modal unmounts.
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl) }, [])
   // (We intentionally don't depend on previewUrl — the swap-revoke happens in onFile.)
 
+  // HeyGen / Storage cap. Anything over this gets auto-compressed
+  // client-side via canvas re-encode before we even hit the upload
+  // path. 10MB is the hard server-side limit; we aim for 8MB to leave
+  // headroom for the multipart envelope.
+  const HARD_LIMIT_BYTES = 10 * 1024 * 1024
+  const TARGET_BYTES = 8 * 1024 * 1024
+
   const onFile = async (file) => {
     if (!file) return
-    if (file.size > 10 * 1024 * 1024) {
-      setError('Image must be under 10MB.')
-      return
-    }
     setError(null)
-    setPhotoFile(file)
+    setCompressionInfo(null)
+
+    let working = file
+    if (file.size > TARGET_BYTES) {
+      setCompressing(true)
+      try {
+        const compressed = await compressImageIfLarge(file, { targetBytes: TARGET_BYTES })
+        // If we still couldn't get under the hard limit (e.g. user
+        // dropped a 60MB RAW file), refuse the upload — better to
+        // surface clearly than silently send a too-big payload.
+        if (compressed.size > HARD_LIMIT_BYTES) {
+          setError(`Image is ${(file.size / 1024 / 1024).toFixed(1)}MB and we couldn't compress it under 10MB. Try a smaller source.`)
+          setCompressing(false)
+          return
+        }
+        working = compressed
+        if (compressed.size < file.size) {
+          setCompressionInfo({
+            originalMB: (file.size / 1024 / 1024).toFixed(1),
+            finalMB: (compressed.size / 1024 / 1024).toFixed(1),
+          })
+        }
+      } catch (e) {
+        setError(`Couldn't process image: ${e.message}`)
+        setCompressing(false)
+        return
+      } finally {
+        setCompressing(false)
+      }
+    }
+
+    setPhotoFile(working)
     // Revoke any previous object URL before creating a new one (avoid memory leak).
     if (previewUrl) URL.revokeObjectURL(previewUrl)
-    setPreviewUrl(URL.createObjectURL(file))
+    setPreviewUrl(URL.createObjectURL(working))
   }
 
   const create = async () => {
@@ -191,11 +228,31 @@ function CreateAvatarModal({ profileId, models, onClose, onCreated }) {
                 Click or drop a photo
               </div>
               <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-                JPG / PNG / WebP, max 10MB. Single face, well-lit, looking at the camera works best.
+                JPG / PNG / WebP. Bigger files auto-compress to under 10MB. Single face, well-lit, looking at the camera works best.
               </div>
             </label>
           )}
         </div>
+
+        {compressing && (
+          <div style={{
+            background: 'rgba(96,165,250,0.10)', color: '#60a5fa',
+            border: '1px solid rgba(96,165,250,0.30)',
+            padding: '10px 14px', borderRadius: 10, fontSize: 13, marginBottom: 14,
+            display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <span className="spinner" /> Compressing image…
+          </div>
+        )}
+        {compressionInfo && !compressing && (
+          <div style={{
+            background: 'rgba(46,204,113,0.10)', color: '#2ecc71',
+            border: '1px solid rgba(46,204,113,0.30)',
+            padding: '10px 14px', borderRadius: 10, fontSize: 13, marginBottom: 14,
+          }}>
+            Compressed {compressionInfo.originalMB} MB → {compressionInfo.finalMB} MB.
+          </div>
+        )}
 
         {error && <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '10px 14px', borderRadius: 10, fontSize: 13, marginBottom: 14 }}>
           <AlertCircle size={14} style={{ verticalAlign: '-2px' }} /> {error}
