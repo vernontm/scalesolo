@@ -3285,15 +3285,73 @@ function VideoPolishBody({ data, onPatch }) {
   // preview on top of it is wrong (double title, double watermark,
   // wrong scale). Fall back to the rendered MediaItem; switch back
   // to the live preview when the user edits or re-runs.
-  const hasRenderedVideo = !!out?.video_url
+  //
+  // Multi-clip mode: polish fan-out emits output.videos[] with one
+  // entry per polished clip. Paginate through them with prev/next
+  // controls so the user can review every rendered clip.
+  const polishedClips = Array.isArray(out?.videos) && out.videos.length > 0 ? out.videos : null
+  const isMultiClip = !!(polishedClips && polishedClips.length > 1)
+  const totalClips = polishedClips ? polishedClips.length : 1
+  const [clipIdx, setClipIdx] = useState(0)
+  const safeIdx = Math.max(0, Math.min(clipIdx, totalClips - 1))
+  const currentClipUrl = polishedClips
+    ? polishedClips[safeIdx]?.video_url
+    : (out?.video_url || null)
+  const currentClipTitle = polishedClips
+    ? (polishedClips[safeIdx]?.title || data.name || 'polished')
+    : (out?.title || data.name || 'polished')
+  const hasRenderedVideo = !!currentClipUrl
   return (
     <>
       {hasRenderedVideo ? (
         <>
-          <MediaItem url={out.video_url} type="video" from={data.name || 'polished'} aspectRatio="9/16" />
+          {isMultiClip && (
+            <div className="nodrag" style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '6px 8px', marginBottom: 6,
+              background: 'rgba(14,165,233,0.10)',
+              border: '1px solid rgba(14,165,233,0.35)',
+              borderRadius: 6, fontSize: 11.5,
+            }}>
+              <button
+                type="button"
+                className="nodrag"
+                onClick={(e) => { e.stopPropagation(); setClipIdx((i) => Math.max(0, i - 1)) }}
+                disabled={safeIdx === 0}
+                style={{
+                  background: 'transparent', border: 'none',
+                  cursor: safeIdx === 0 ? 'not-allowed' : 'pointer',
+                  color: safeIdx === 0 ? 'var(--muted)' : '#0ea5e9',
+                  padding: 4, opacity: safeIdx === 0 ? 0.4 : 1,
+                }}
+                title="Previous clip"
+              >◀</button>
+              <span style={{ fontWeight: 700, fontFamily: 'var(--font-display)', letterSpacing: '0.04em', color: '#0ea5e9' }}>
+                CLIP {safeIdx + 1} OF {totalClips}
+              </span>
+              <button
+                type="button"
+                className="nodrag"
+                onClick={(e) => { e.stopPropagation(); setClipIdx((i) => Math.min(totalClips - 1, i + 1)) }}
+                disabled={safeIdx === totalClips - 1}
+                style={{
+                  background: 'transparent', border: 'none',
+                  cursor: safeIdx === totalClips - 1 ? 'not-allowed' : 'pointer',
+                  color: safeIdx === totalClips - 1 ? 'var(--muted)' : '#0ea5e9',
+                  padding: 4, opacity: safeIdx === totalClips - 1 ? 0.4 : 1,
+                }}
+                title="Next clip"
+              >▶</button>
+            </div>
+          )}
+          <MediaItem key={currentClipUrl} url={currentClipUrl} type="video" from={currentClipTitle} aspectRatio="9/16" />
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); downloadUrl(out.video_url, `${(data.name || 'polished').replace(/\W+/g, '-')}.mp4`) }}
+            onClick={(e) => {
+              e.stopPropagation()
+              const fname = `${(currentClipTitle || 'polished').replace(/\W+/g, '-')}${isMultiClip ? `-clip${safeIdx + 1}` : ''}.mp4`
+              downloadUrl(currentClipUrl, fname)
+            }}
             style={{
               marginTop: 8, width: '100%', padding: '6px 8px', fontSize: 11,
               background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 6,
@@ -3301,7 +3359,7 @@ function VideoPolishBody({ data, onPatch }) {
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
               marginBottom: 6,
             }}
-          ><Download size={11} /> Download polished video</button>
+          ><Download size={11} /> Download {isMultiClip ? `clip ${safeIdx + 1}` : 'polished video'}</button>
         </>
       ) : (
         <>
