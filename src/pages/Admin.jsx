@@ -6,6 +6,7 @@ import AdminTemplates from './AdminTemplates.jsx'
 import AdminUsage from './AdminUsage.jsx'
 import AdminUsers from './AdminUsers.jsx'
 import AdminAffiliates from './AdminAffiliates.jsx'
+import AdminOps from './AdminOps.jsx'
 
 // Admin home + nested admin routes. The Sidebar only shows the link to
 // admins, but we also gate at the route level so a non-admin who guesses
@@ -48,6 +49,12 @@ const cards = [
     body: 'Approve applications, promote tier (Starter / Pro / Elite), and record manual PayPal payouts.',
     Icon: Sparkles,
   },
+  {
+    to: '/admin/ops',
+    title: 'System ops',
+    body: 'Every-morning dashboard. Stuck rows, failed webhooks, refund spikes, cron health. Maps to RUNBOOK.md.',
+    Icon: Activity,
+  },
 ]
 
 function AdminHome() {
@@ -83,6 +90,7 @@ export default function Admin() {
         <Route path="/usage" element={<AdminUsage />} />
         <Route path="/users" element={<AdminUsers />} />
         <Route path="/affiliates" element={<AdminAffiliates />} />
+        <Route path="/ops" element={<AdminOps />} />
       </Routes>
     </AdminGate>
   )

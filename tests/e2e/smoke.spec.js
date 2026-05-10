@@ -45,7 +45,15 @@ test.describe('public surface', () => {
   })
 })
 
-test.describe('health endpoint', () => {
+// API endpoints are only reachable when running against a deployed
+// Vercel host (npm run preview only serves the Vite static bundle —
+// it does NOT run the api/ serverless functions). Gate these tests
+// on a non-localhost BASE_URL so CI's local preview server doesn't
+// fail them.
+const isRemoteTarget = !(process.env.BASE_URL || '').startsWith('http://localhost')
+test.describe('health endpoint (remote-only)', () => {
+  test.skip(!isRemoteTarget, 'BASE_URL is local; api/ functions only run on Vercel.')
+
   test('liveness check returns 200', async ({ request }) => {
     const r = await request.get('/api/health')
     expect(r.status()).toBe(200)
@@ -56,7 +64,6 @@ test.describe('health endpoint', () => {
 
   test('deep health check returns subcheck booleans', async ({ request }) => {
     const r = await request.get('/api/health?deep=1')
-    // 200 if everything green, 503 if any subcheck fails.
     expect([200, 503]).toContain(r.status())
     const body = await r.json()
     expect(body.checks).toBeDefined()
