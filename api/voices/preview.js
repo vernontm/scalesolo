@@ -88,7 +88,7 @@ export default async function handler(req, res) {
     // user has no billing_customer.
     await chargeTtsCredits({
       userId: auth.user.id,
-      profileId,
+      profileId: profile_id,           // snake_case from req.body
       modelId: opts.model_id,
       charCount: sample.length,
       kind: 'preview',
