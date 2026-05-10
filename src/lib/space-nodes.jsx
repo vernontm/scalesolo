@@ -2490,32 +2490,25 @@ function VoiceGenBody({ data, onPatch }) {
   const out = data.output
   const audio = out?.audio
   const chunks = Array.isArray(out?.audio_chunks) ? out.audio_chunks : null
-  const voiceUsed = out?.voice_used || {}
   const [previewIdx, setPreviewIdx] = useState(0)
 
-  // Local draft of voice settings — initialized from whatever was used
-  // for the synth we just heard, persisted into props on change.
-  const stored = data.props?.voice_settings_override || voiceUsed.voice_settings || null
-  const [draftSettings, setDraftSettings] = useState(stored || {
+  // Read voice settings DIRECTLY from props — single source of truth.
+  // Previously this was mirrored into local useState which got re-
+  // initialized on canvas re-mount (zoom/virtualization/scope reset),
+  // wiping the user's settings between Run clicks. Props persist
+  // through every re-mount path the canvas takes.
+  const VOICE_DEFAULTS = {
     stability: 0.5, similarity_boost: 0.85, style: 0.2, use_speaker_boost: true, speed: 1.0,
-  })
-  const [draftModel, setDraftModel] = useState(
-    data.props?.voice_model_id_override || voiceUsed.model_id || 'eleven_turbo_v2_5'
-  )
-  const [draftLanguage, setDraftLanguage] = useState(
-    data.props?.voice_language_override || voiceUsed.language_code || 'en'
-  )
-  // Persist tuning -> props so a re-run picks them up automatically.
-  useEffect(() => {
-    onPatch?.({
-      voice_settings_override: draftSettings,
-      voice_model_id_override: draftModel,
-      voice_language_override: draftLanguage,
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftSettings, draftModel, draftLanguage])
+  }
+  const draftSettings = { ...VOICE_DEFAULTS, ...(data.props?.voice_settings_override || {}) }
+  const draftModel = data.props?.voice_model_id_override || 'eleven_turbo_v2_5'
+  const draftLanguage = data.props?.voice_language_override || 'en'
 
-  const fieldSet = (k, v) => setDraftSettings((d) => ({ ...d, [k]: v }))
+  const fieldSet = (k, v) => {
+    onPatch?.({ voice_settings_override: { ...draftSettings, [k]: v } })
+  }
+  const setDraftModel = (v) => onPatch?.({ voice_model_id_override: v })
+  const setDraftLanguage = (v) => onPatch?.({ voice_language_override: v })
 
   return (
     <>
@@ -3240,24 +3233,68 @@ function PolishSection({ icon: Icon, title, children, defaultOpen = true }) {
 // title/captions/logo placement instantly without needing a render.
 function VideoPolishPreview({ videoUrl, props, logoUrl }) {
   const titleEnabled = props.title_enabled !== false && !!props.title
+  // Detect the actual aspect ratio of the loaded video instead of
+  // assuming 9:16. Avatar renders ARE 9:16, but combine_videos can
+  // produce horizontal or square depending on what fed it. Without
+  // detection we'd object-cover-crop horizontal sources into a tall
+  // frame, which is exactly what "looks small" feels like.
+  const [aspect, setAspect] = useState('9/16')
+  const [expanded, setExpanded] = useState(false)
+  const onMeta = (e) => {
+    const w = e?.target?.videoWidth || 0
+    const h = e?.target?.videoHeight || 0
+    if (w > 0 && h > 0) setAspect(`${w}/${h}`)
+  }
   return (
-    <div style={{
-      position: 'relative', width: '100%', aspectRatio: '9/16',
-      background: '#000', borderRadius: 10, overflow: 'hidden',
-      border: '1px solid var(--border)',
-    }}>
-      {videoUrl ? (
-        <video
-          src={videoUrl}
-          muted playsInline preload="metadata"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
-        />
-      ) : (
-        <div style={{
-          position: 'absolute', inset: 0, display: 'grid', placeItems: 'center',
-          color: 'var(--muted)', fontSize: 11, padding: 12, textAlign: 'center',
-        }}>Run an upstream node once to see the preview frame.</div>
-      )}
+    <>
+      <div style={{
+        position: 'relative', width: '100%',
+        // Fall back to 9:16 if the video hasn't loaded metadata yet.
+        // Once onLoadedMetadata fires the container resizes to the real
+        // aspect — vertical clips stay 9:16, horizontal clips show
+        // wide-and-short, square shows square.
+        aspectRatio: aspect,
+        background: '#000', borderRadius: 10, overflow: 'hidden',
+        border: '1px solid var(--border)',
+      }}>
+        {videoUrl ? (
+          <video
+            src={videoUrl}
+            muted playsInline preload="metadata"
+            onLoadedMetadata={onMeta}
+            // contain (not cover) so horizontal clips aren't cropped to
+            // fit a portrait container. With aspect-ratio detection the
+            // container matches the video so contain ≈ cover but
+            // contain handles slow/missing metadata gracefully.
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain' }}
+          />
+        ) : (
+          <div style={{
+            position: 'absolute', inset: 0, display: 'grid', placeItems: 'center',
+            color: 'var(--muted)', fontSize: 11, padding: 12, textAlign: 'center', lineHeight: 1.45,
+          }}>
+            <div>
+              <div style={{ marginBottom: 4 }}>No video to preview yet.</div>
+              <div style={{ fontSize: 10 }}>Wire an Avatar video or Combine videos into <code>in</code>, then run that upstream node once.</div>
+            </div>
+          </div>
+        )}
+        {videoUrl && (
+          <button
+            type="button" className="nodrag"
+            onClick={(e) => { e.stopPropagation(); setExpanded(true) }}
+            title="Expand preview"
+            style={{
+              position: 'absolute', top: 6, right: 6,
+              padding: 5, borderRadius: 6,
+              background: 'rgba(0,0,0,0.55)',
+              border: '1px solid rgba(255,255,255,0.10)',
+              color: '#fff', cursor: 'pointer',
+              display: 'inline-flex', alignItems: 'center',
+              zIndex: 5,
+            }}
+          ><Maximize2 size={11} /></button>
+        )}
       {/* Title overlay */}
       {titleEnabled && (() => {
         const f = polishFontCss(props.title_font || 'Montserrat ExtraBold')
@@ -3321,7 +3358,38 @@ function VideoPolishPreview({ videoUrl, props, logoUrl }) {
           }}>logo</div>
         )
       )}
-    </div>
+      </div>
+      {/* Fullscreen preview overlay — opens when the user clicks the
+          maximize button. Click outside or hit Esc closes. The video
+          plays inline with controls so the user can scrub a frame. */}
+      {expanded && videoUrl && (
+        <div
+          onClick={() => setExpanded(false)}
+          role="dialog" aria-modal="true"
+          style={{
+            position: 'fixed', inset: 0, zIndex: 9999,
+            background: 'rgba(0,0,0,0.92)', backdropFilter: 'blur(6px)',
+            display: 'grid', placeItems: 'center', padding: 24, cursor: 'zoom-out',
+          }}
+        >
+          <button
+            aria-label="Close preview"
+            onClick={(e) => { e.stopPropagation(); setExpanded(false) }}
+            style={{
+              position: 'absolute', top: 18, right: 18,
+              width: 36, height: 36, borderRadius: 999,
+              background: 'rgba(255,255,255,0.10)', border: 'none', color: '#fff',
+              cursor: 'pointer', display: 'grid', placeItems: 'center', fontSize: 16,
+            }}
+          >×</button>
+          <video
+            src={videoUrl} controls autoPlay muted
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '92vw', maxHeight: '88vh', borderRadius: 8, background: '#000' }}
+          />
+        </div>
+      )}
+    </>
   )
 }
 
@@ -5668,7 +5736,24 @@ ${String(script).slice(0, 2000)}
       // single render output, randomize videos[] arrays, combine_videos
       // playlist fallback, and collection items[] grids.
       const videoUrl = pickFirstVideoUrl(arr)
-      if (!videoUrl) throw new Error('Wire a video into "in" (avatar_render or combine_videos).')
+      if (!videoUrl) {
+        // Tell the user what they DID wire in so they can fix it.
+        // Common confusion: voice_gen output is audio, not video.
+        const shapes = arr.map((v) => {
+          if (!v || typeof v !== 'object') return typeof v
+          if (v.audio?.url) return 'audio'
+          if (Array.isArray(v.audio_chunks)) return 'audio chunks'
+          if (v.brand?.profile_id) return 'brand'
+          if (v.script || v.text) return 'script/text'
+          if (Array.isArray(v.images)) return 'images'
+          return Object.keys(v).slice(0, 3).join(',') || 'empty'
+        })
+        const got = shapes.length ? shapes.join(' + ') : 'nothing'
+        throw new Error(
+          `Wire a VIDEO into "in" — got ${got} instead. ` +
+          'Video has to come from Avatar video, Combine videos, or another video-producing node.'
+        )
+      }
 
       // Resolve the title:
       // 1. If title_mode === 'auto' → call /api/videos/auto-title to
