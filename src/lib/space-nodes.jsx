@@ -2442,6 +2442,10 @@ function AudioReviewPanel({ data, onPatch }) {
   )
   const [busy, setBusy] = useState(null) // 'synth' | 'render' | null
   const [err, setErr] = useState(null)
+  // Multi-clip progress during randomize approve. Null when single
+  // mode or idle. { done, total } so the body can show "Rendering 3
+  // of 6 clips" while parallel HeyGen jobs settle.
+  const [renderProgress, setRenderProgress] = useState(null)
 
   // Persist draft -> props on change so a re-run picks the last edits.
   useEffect(() => {
@@ -2491,63 +2495,174 @@ function AudioReviewPanel({ data, onPatch }) {
     }
   }
 
-  // Approve: kick off HeyGen with the audio we already have. We POST
-  // to photo-render with audio_url (no script), so it skips synth and
-  // goes straight to the render. Single-image only for v1; for
-  // randomize/cycle the body falls back to telling the user to
-  // disable audio review.
+  // Approve: kick off HeyGen with the exact audio the user just heard.
+  // Two paths, picked by the avatar mode resolved at synth time:
+  //   • single image  → one photo-render with audio_url
+  //   • randomize/cycle (or single-mode without a specific image_id
+  //                       on a multi-image look — the same auto-
+  //                       randomize the run() function does):
+  //                       slice the audio via audio-chunks, then fire
+  //                       N parallel photo-renders, one per look image.
+  // Either way HeyGen never re-synthesizes — it lip-syncs to the
+  // exact audio file we already have.
+  const renderSingle = async (sess, photoUrl) => {
+    const r = await fetch('/api/avatars/photo-render', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sess?.access_token || ''}` },
+      body: JSON.stringify({
+        profile_id: profileId,
+        photo_url: photoUrl,
+        audio_url: pending.audio_url,
+        avatar_id: avatarConfig.avatar_id,
+      }),
+    })
+    const body = await r.json()
+    if (!r.ok) throw new Error(body.error || `Render submit failed (${r.status})`)
+    const videoId = body.video_id
+    if (!videoId) throw new Error('No video id returned')
+    const start = Date.now()
+    while (Date.now() - start < 480_000) {
+      await new Promise((res) => setTimeout(res, 6000))
+      const sR = await fetch(`/api/avatars/photo-render-status?video_id=${encodeURIComponent(videoId)}`, {
+        headers: { Authorization: `Bearer ${sess?.access_token || ''}` },
+      })
+      const s = await sR.json()
+      if (!sR.ok) throw new Error(s.error || `Status check failed (${sR.status})`)
+      if (s.state === 'success') return { video_url: s.video_url, video_id: videoId }
+      if (s.state === 'failed') throw new Error(s.error || 'Render failed')
+    }
+    throw new Error('Render timed out')
+  }
+
   const approve = async () => {
     if (!profileId || !avatarConfig || !pending?.audio_url) return
-    if (avatarConfig.mode === 'randomize' || (avatarConfig.mode === 'single' && !avatarConfig.image_id && avatarConfig.look_id)) {
-      setErr('Audio review currently supports single-image renders only. Pick a specific image in the avatar node, or turn off Audio review for randomize/cycle.')
-      return
-    }
-    if (!avatarConfig.image_url) {
-      setErr('Avatar node has no image picked. Open the Avatar picker and choose one.')
-      return
-    }
     setBusy('render'); setErr(null)
+    setRenderProgress(null)
     try {
       const sess = (await supabase.auth.getSession()).data.session
-      const r = await fetch('/api/avatars/photo-render', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sess?.access_token || ''}` },
-        body: JSON.stringify({
-          profile_id: profileId,
-          photo_url: avatarConfig.image_url,
-          audio_url: pending.audio_url,
-          avatar_id: avatarConfig.avatar_id,
-        }),
-      })
-      const body = await r.json()
-      if (!r.ok) throw new Error(body.error || `Render submit failed (${r.status})`)
-      const videoId = body.video_id
-      if (!videoId) throw new Error('No video id returned')
-      // Poll for completion. Same cadence the run() function uses.
-      const start = Date.now()
-      while (Date.now() - start < 480_000) {
-        await new Promise((res) => setTimeout(res, 6000))
-        const sR = await fetch(`/api/avatars/photo-render-status?video_id=${encodeURIComponent(videoId)}`, {
-          headers: { Authorization: `Bearer ${sess?.access_token || ''}` },
-        })
-        const s = await sR.json()
-        if (!sR.ok) throw new Error(s.error || `Status check failed (${sR.status})`)
-        if (s.state === 'success') {
-          // Replace the entire output: drop pending, surface the video.
+      const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${sess?.access_token || ''}` }
+
+      // Mode resolution mirrors the run() function so behavior is
+      // identical whether audio review is on or off.
+      const wantsRandomize = avatarConfig.mode === 'randomize'
+      const couldAutoRandomize = avatarConfig.mode === 'single' && !avatarConfig.image_id && avatarConfig.look_id
+
+      if (wantsRandomize || couldAutoRandomize) {
+        if (!avatarConfig.look_id) throw new Error('Randomize mode needs a look. Pick one in the Avatar picker.')
+        const imgR = await fetch(`/api/avatars/look-images?look_id=${avatarConfig.look_id}`, { headers })
+        const imgB = await imgR.json()
+        if (!imgR.ok) throw new Error(imgB.error || 'Could not fetch look images')
+        const images = (imgB.images || []).slice().sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
+        if (!images.length) throw new Error('Look has no images')
+
+        // Single-image look — just render one clip directly.
+        if (images.length === 1) {
+          const r = await renderSingle(sess, images[0].image_url)
           window.__spacePatchOutput?.(data.__id, {
-            video: { video_url: s.video_url, media_type: 'video' },
-            video_url: s.video_url,
+            video: { video_url: r.video_url, media_type: 'video' },
+            video_url: r.video_url,
             media_type: 'video',
           })
           return
         }
-        if (s.state === 'failed') throw new Error(s.error || 'Render failed')
+
+        // Slice the synthesized audio into N chunks (same logic the
+        // run() audio-driven path uses). One MP3 per look image.
+        const TARGET_CLIP_SECS = 7
+        const totalSecs = Number(pending?.voice_used?.duration_secs) || images.length * TARGET_CLIP_SECS
+        const clipsCount = Math.min(12, Math.max(images.length, Math.ceil(totalSecs / TARGET_CLIP_SECS)))
+        const cR = await fetch('/api/avatars/audio-chunks', {
+          method: 'POST', headers,
+          body: JSON.stringify({
+            audio_url: pending.audio_url,
+            look_count: clipsCount,
+            profile_id: profileId,
+          }),
+        })
+        const cBody = await cR.json()
+        if (!cR.ok) throw new Error(cBody.error || `Audio chunking failed (${cR.status})`)
+        const chunks = Array.isArray(cBody.chunks) ? cBody.chunks : []
+        if (!chunks.length) throw new Error('Audio chunking produced 0 slices.')
+
+        const assignments = chunks.map((c, i) => ({
+          chunk: c, image: images[i % images.length], order: i,
+        }))
+        const total = assignments.length
+        let done = 0
+        setRenderProgress({ done: 0, total })
+
+        const settled = await Promise.allSettled(assignments.map(async (a) => {
+          // Each chunk renders against its assigned look image. Same
+          // photo-render call as single — just the audio is a slice
+          // and the photo varies per clip.
+          const r = await fetch('/api/avatars/photo-render', {
+            method: 'POST', headers,
+            body: JSON.stringify({
+              profile_id: profileId,
+              photo_url: a.image.image_url,
+              audio_url: a.chunk.audio_url,
+              avatar_id: avatarConfig.avatar_id,
+            }),
+          })
+          const body = await r.json()
+          if (!r.ok) throw new Error(body.error || `Submit failed (${r.status})`)
+          const videoId = body.video_id
+          if (!videoId) throw new Error('No video id')
+          const start = Date.now()
+          while (Date.now() - start < 480_000) {
+            await new Promise((res) => setTimeout(res, 6000))
+            const sR = await fetch(`/api/avatars/photo-render-status?video_id=${encodeURIComponent(videoId)}`, { headers })
+            const s = await sR.json()
+            if (!sR.ok) throw new Error(s.error || `Status failed (${sR.status})`)
+            if (s.state === 'success') {
+              done += 1
+              setRenderProgress({ done, total })
+              return {
+                video_url: s.video_url,
+                order: a.order,
+                image_url: a.image.image_url,
+                sentence: a.chunk.sentence || '',
+                audio_chunk_url: a.chunk.audio_url,
+              }
+            }
+            if (s.state === 'failed') throw new Error(s.error || 'Render failed')
+          }
+          throw new Error('Render timed out')
+        }))
+        const clips = []
+        const failures = []
+        for (let i = 0; i < settled.length; i++) {
+          const s = settled[i]
+          if (s.status === 'fulfilled') clips.push(s.value)
+          else failures.push({ clip_index: i, error: s.reason?.message || String(s.reason) })
+        }
+        if (!clips.length) throw new Error(`All ${assignments.length} clips failed. First error: ${failures[0]?.error || 'unknown'}`)
+        window.__spacePatchOutput?.(data.__id, {
+          videos: clips,
+          media_type: 'video',
+          is_clip_set: true,
+          ...(failures.length ? { partial_failures: failures } : {}),
+        })
+        return
       }
-      throw new Error('Render timed out')
+
+      // Single-image path — pick the explicit image_url off the
+      // avatar config and render directly.
+      const photoUrl = avatarConfig.image_url
+      if (!photoUrl) {
+        throw new Error('Avatar node has no image picked. Open the Avatar picker and choose one, or switch to Randomize.')
+      }
+      const r = await renderSingle(sess, photoUrl)
+      window.__spacePatchOutput?.(data.__id, {
+        video: { video_url: r.video_url, media_type: 'video' },
+        video_url: r.video_url,
+        media_type: 'video',
+      })
     } catch (e) {
       setErr(e.message)
     } finally {
       setBusy(null)
+      setRenderProgress(null)
     }
   }
 
@@ -2636,6 +2751,17 @@ function AudioReviewPanel({ data, onPatch }) {
           {busy === 'render' ? <Loader2 size={11} className="spin" /> : <Play size={11} fill="currentColor" />} Approve & render
         </button>
       </div>
+      {renderProgress && renderProgress.total > 1 && (
+        <div style={{ marginTop: 6, fontSize: 10.5, color: 'var(--amber)' }}>
+          Rendering {renderProgress.done} of {renderProgress.total} clips…
+          <div style={{ marginTop: 4, height: 3, background: 'var(--surface-2)', borderRadius: 999, overflow: 'hidden' }}>
+            <div style={{
+              width: `${Math.round((renderProgress.done / renderProgress.total) * 100)}%`,
+              height: '100%', background: 'var(--amber)', transition: 'width 250ms ease',
+            }} />
+          </div>
+        </div>
+      )}
       <button
         type="button" className="nodrag"
         onClick={(e) => { e.stopPropagation(); cancel() }}
