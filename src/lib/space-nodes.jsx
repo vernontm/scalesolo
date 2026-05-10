@@ -2901,7 +2901,6 @@ function VoiceGenBody({ data, onPatch }) {
   const chunks = Array.isArray(out?.audio_chunks) ? out.audio_chunks : null
   const voiceUsed = out?.voice_used || {}
   const [previewIdx, setPreviewIdx] = useState(0)
-  const [showTuning, setShowTuning] = useState(false)
 
   // Local draft of voice settings — initialized from whatever was used
   // for the synth we just heard, persisted into props on change.
@@ -2929,21 +2928,74 @@ function VoiceGenBody({ data, onPatch }) {
 
   return (
     <>
-      {data.status !== 'done' && data.status !== 'failed' && data.status !== 'running' && (
-        <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>Connect a script + avatar input.</div>
-      )}
       {data.status === 'failed' && <NodePreview status="failed" error={data.error} />}
       {data.status === 'running' && <ProgressPill progress={data.progress} fallback="Synthesizing audio…" />}
 
+      {/* Voice tuning panel — ALWAYS visible. The whole point of this
+          node is to give the user direct control over the voice; hiding
+          the knobs behind a disclosure defeats the purpose. Changes
+          persist into props on every keystroke and apply on the next
+          Run. */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 10.5,
+          letterSpacing: '0.06em', textTransform: 'uppercase', color: '#22d3ee',
+        }}>
+          <Mic size={10} /> Voice tuning
+          <span style={{ flex: 1 }} />
+          <span style={{ fontSize: 9.5, color: 'var(--muted)', fontWeight: 700 }}>
+            {data.status === 'done' ? 'applies on next run' : ''}
+          </span>
+        </div>
+        <MiniSlider label="Stability"   min={0} max={1} step={0.05} value={draftSettings.stability}        onChange={(v) => fieldSet('stability', v)} />
+        <MiniSlider label="Similarity"  min={0} max={1} step={0.05} value={draftSettings.similarity_boost} onChange={(v) => fieldSet('similarity_boost', v)} />
+        <MiniSlider label="Style"       min={0} max={1} step={0.05} value={draftSettings.style}            onChange={(v) => fieldSet('style', v)} />
+        <MiniSlider label="Speed"       min={0.7} max={1.2} step={0.05} value={draftSettings.speed}        onChange={(v) => fieldSet('speed', v)} format={(v) => `${Number(v).toFixed(2)}×`} />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-soft)' }}>
+          <input
+            type="checkbox" className="nodrag"
+            checked={!!draftSettings.use_speaker_boost}
+            onChange={(e) => fieldSet('use_speaker_boost', e.target.checked)}
+          /> Speaker boost
+        </label>
+        <label style={{ fontSize: 10, color: 'var(--muted)' }}>
+          Model
+          <select className="nodrag" value={draftModel} onChange={(e) => setDraftModel(e.target.value)} style={{ ...tinyInput, fontSize: 11, marginTop: 2 }}>
+            <option value="eleven_turbo_v2_5">Turbo v2.5 (1× tokens)</option>
+            <option value="eleven_multilingual_v2">Multilingual v2 (3× tokens)</option>
+            <option value="eleven_v3">v3 (5× tokens, expression tags)</option>
+          </select>
+        </label>
+        <label style={{ fontSize: 10, color: 'var(--muted)' }}>
+          Language
+          <select className="nodrag" value={draftLanguage} onChange={(e) => setDraftLanguage(e.target.value)} style={{ ...tinyInput, fontSize: 11, marginTop: 2 }}>
+            <option value="en">English</option><option value="es">Spanish</option>
+            <option value="fr">French</option><option value="de">German</option>
+            <option value="pt">Portuguese</option><option value="it">Italian</option>
+            <option value="nl">Dutch</option><option value="pl">Polish</option>
+            <option value="tr">Turkish</option><option value="ru">Russian</option>
+            <option value="ja">Japanese</option><option value="zh">Chinese</option>
+            <option value="ko">Korean</option><option value="hi">Hindi</option>
+            <option value="ar">Arabic</option>
+          </select>
+        </label>
+      </div>
+
+      {data.status !== 'done' && data.status !== 'failed' && data.status !== 'running' && (
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 10, padding: 8, background: 'var(--surface-2)', borderRadius: 6, border: '1px dashed var(--border)' }}>
+          Connect a script + avatar, then hit Run to synth.
+        </div>
+      )}
+
       {data.status === 'done' && (audio?.url || chunks) && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
           {/* Single audio: one player. */}
           {audio?.url && !chunks && (
             <audio controls className="nodrag" src={audio.url} style={{ width: '100%' }} />
           )}
 
-          {/* Chunked audio: previewer that lets the user step through
-              clips before the avatar render runs. */}
+          {/* Chunked audio: scrub through slices. */}
           {chunks && (
             <>
               <div style={{ fontSize: 10.5, color: 'var(--muted)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -2969,43 +3021,6 @@ function VoiceGenBody({ data, onPatch }) {
               </div>
             </>
           )}
-
-          <details>
-            <summary style={{ cursor: 'pointer', fontSize: 10.5, color: 'var(--muted)' }}>
-              Voice tuning (this run only)
-            </summary>
-            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <MiniSlider label="Stability"   min={0} max={1} step={0.05} value={draftSettings.stability}        onChange={(v) => fieldSet('stability', v)} />
-              <MiniSlider label="Similarity"  min={0} max={1} step={0.05} value={draftSettings.similarity_boost} onChange={(v) => fieldSet('similarity_boost', v)} />
-              <MiniSlider label="Style"       min={0} max={1} step={0.05} value={draftSettings.style}            onChange={(v) => fieldSet('style', v)} />
-              <MiniSlider label="Speed"       min={0.7} max={1.2} step={0.05} value={draftSettings.speed}        onChange={(v) => fieldSet('speed', v)} format={(v) => `${Number(v).toFixed(2)}×`} />
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-soft)' }}>
-                <input
-                  type="checkbox" className="nodrag"
-                  checked={!!draftSettings.use_speaker_boost}
-                  onChange={(e) => fieldSet('use_speaker_boost', e.target.checked)}
-                /> Speaker boost
-              </label>
-              <select className="nodrag" value={draftModel} onChange={(e) => setDraftModel(e.target.value)} style={{ ...tinyInput, fontSize: 11 }}>
-                <option value="eleven_turbo_v2_5">Turbo v2.5 (1× tokens)</option>
-                <option value="eleven_multilingual_v2">Multilingual v2 (3× tokens)</option>
-                <option value="eleven_v3">v3 (5× tokens, expression tags)</option>
-              </select>
-              <select className="nodrag" value={draftLanguage} onChange={(e) => setDraftLanguage(e.target.value)} style={{ ...tinyInput, fontSize: 11 }}>
-                <option value="en">English</option><option value="es">Spanish</option>
-                <option value="fr">French</option><option value="de">German</option>
-                <option value="pt">Portuguese</option><option value="it">Italian</option>
-                <option value="nl">Dutch</option><option value="pl">Polish</option>
-                <option value="tr">Turkish</option><option value="ru">Russian</option>
-                <option value="ja">Japanese</option><option value="zh">Chinese</option>
-                <option value="ko">Korean</option><option value="hi">Hindi</option>
-                <option value="ar">Arabic</option>
-              </select>
-              <div style={{ fontSize: 10, color: 'var(--muted)' }}>
-                Changes here apply on the next Run. Click the node's Run button to re-synth.
-              </div>
-            </div>
-          </details>
 
           <div style={{ fontSize: 10, color: 'var(--muted)', textAlign: 'center' }}>
             {chunks
