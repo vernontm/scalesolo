@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Sparkles, Zap, ClipboardCheck, ArrowRight, Boxes, Calendar, BookOpen, CheckCircle2, Circle } from 'lucide-react'
+import { Sparkles, Zap, ClipboardCheck, ArrowRight, Boxes, Calendar, BookOpen, CheckCircle2, Circle, Eye, Heart, MessageCircle, Share2, FileText, FilePlus2 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import CreditsPanel from '../components/CreditsPanel.jsx'
 import OnboardingSurvey from '../components/OnboardingSurvey.jsx'
+import VoiceSummaryCard from '../components/VoiceSummaryCard.jsx'
 
 // ScaleSolo's wedge: automated content workflows in your brand voice.
 // The dashboard's job is to reflect that — one big "shipped while you
@@ -115,6 +116,91 @@ function BrandCompletenessCard({ profile, onEdit }) {
   )
 }
 
+// Compact metric tile for the pipeline row. Number + label + colored icon.
+function StatTile({ icon: Icon, label, value, color }) {
+  return (
+    <div style={{
+      background: 'var(--surface)', border: '1px solid var(--border)',
+      borderRadius: 12, padding: '14px 16px',
+      display: 'flex', alignItems: 'center', gap: 12,
+    }}>
+      <div style={{
+        width: 34, height: 34, borderRadius: 9,
+        display: 'grid', placeItems: 'center',
+        background: `${color}22`, color,
+      }}>
+        <Icon size={15} strokeWidth={2.2} />
+      </div>
+      <div>
+        <div style={{
+          fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22,
+          fontVariantNumeric: 'tabular-nums', color: 'var(--text)', lineHeight: 1.05,
+        }}>{Number.isFinite(value) ? value : '—'}</div>
+        <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 2 }}>{label}</div>
+      </div>
+    </div>
+  )
+}
+
+// Aggregate engagement card — sums the post-level metrics returned by
+// /api/analytics so the user sees a single line ("X views, Y likes, …")
+// without us having to plumb totals through the analytics endpoint.
+function SocialSignalCard({ data, onOpen }) {
+  const totals = (data?.recent_post_metrics || []).reduce((acc, p) => {
+    acc.views    += Number(p.views || 0)
+    acc.likes    += Number(p.likes || 0)
+    acc.comments += Number(p.comments || 0)
+    acc.shares   += Number(p.shares || 0)
+    return acc
+  }, { views: 0, likes: 0, comments: 0, shares: 0 })
+  const tImpressions = data?.uploadpost_total_impressions?.total || data?.uploadpost_total_impressions?.impressions
+  const fmt = (n) => Number(n).toLocaleString()
+  return (
+    <div style={{
+      background: 'linear-gradient(135deg, rgba(59,130,246,0.10), rgba(59,130,246,0.02))',
+      border: '1px solid rgba(59,130,246,0.30)',
+      borderRadius: 14, padding: 18,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
+        <SignalStat icon={Eye}            label="Views"    value={tImpressions || totals.views} />
+        <SignalStat icon={Heart}          label="Likes"    value={totals.likes} />
+        <SignalStat icon={MessageCircle}  label="Comments" value={totals.comments} />
+        <SignalStat icon={Share2}         label="Shares"   value={totals.shares} />
+        <div style={{ flex: 1 }} />
+        <button onClick={onOpen} style={{
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+          padding: '8px 14px', borderRadius: 10,
+          background: 'var(--surface)', border: '1px solid var(--border)',
+          color: 'var(--text)', fontSize: 12.5, fontFamily: 'var(--font-display)', fontWeight: 700,
+          cursor: 'pointer',
+        }}>
+          See full analytics <ArrowRight size={13} />
+        </button>
+      </div>
+      {(data?.recent_post_metrics?.length || 0) === 0 && (
+        <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 10 }}>
+          Metrics warm up after Upload-Post syncs your first round of posts (typically within an hour of publish).
+        </div>
+      )}
+    </div>
+  )
+  function SignalStat({ icon: Icon, label, value }) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ width: 32, height: 32, borderRadius: 9, background: 'rgba(59,130,246,0.18)', color: '#3b82f6', display: 'grid', placeItems: 'center' }}>
+          <Icon size={14} strokeWidth={2.2} />
+        </div>
+        <div>
+          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 18, fontVariantNumeric: 'tabular-nums', color: 'var(--text)', lineHeight: 1.05 }}>
+            {fmt(value)}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{label}</div>
+        </div>
+      </div>
+    )
+  }
+}
+
 // Quick links shaped to the focused product — Spaces, Schedule, Avatars.
 function QuickAction({ icon: Icon, label, hint, to, color }) {
   const navigate = useNavigate()
@@ -149,6 +235,8 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const [pendingApprovals, setPendingApprovals] = useState(0)
   const [shippedThisMonth, setShippedThisMonth] = useState(null)
+  const [stats, setStats] = useState(null)
+  const [social, setSocial] = useState(null)
   // Onboarding survey: 'unknown' until we've checked, then 'show' or
   // 'hide'. Blocks the dashboard with a full-screen popup until the
   // 6 questions are answered. Skipped if the user already finished —
@@ -190,29 +278,36 @@ export default function Dashboard() {
   // manual) inside the current calendar month. Single GET, no expensive
   // joins — relies on the existing /api/content listing.
   useEffect(() => {
-    if (!session || !selectedProfileId) { setPendingApprovals(0); setShippedThisMonth(null); return }
-    fetch(`/api/content?profile_id=${selectedProfileId}&filter=approvals`, {
-      headers: { Authorization: `Bearer ${session.access_token}` },
-    })
-      .then((r) => r.json())
-      .then((b) => setPendingApprovals((b.items || []).length))
-      .catch(() => {})
-
-    fetch(`/api/content?profile_id=${selectedProfileId}&filter=posted`, {
+    if (!session || !selectedProfileId) {
+      setPendingApprovals(0); setShippedThisMonth(null); setStats(null); setSocial(null)
+      return
+    }
+    // Counters: created/shipped/scheduled/drafts/pending. Single round-trip.
+    fetch(`/api/content/stats?profile_id=${selectedProfileId}`, {
       headers: { Authorization: `Bearer ${session.access_token}` },
     })
       .then((r) => r.json())
       .then((b) => {
-        const items = b.items || []
-        const start = new Date()
-        start.setDate(1); start.setHours(0, 0, 0, 0)
-        const count = items.filter((it) => {
-          const t = new Date(it.updated_at || it.scheduled_datetime || it.created_at).getTime()
-          return t >= start.getTime()
-        }).length
-        setShippedThisMonth(count)
+        if (b?.error) throw new Error(b.error)
+        setStats(b)
+        setShippedThisMonth(b.shipped_month ?? 0)
+        setPendingApprovals(b.pending_approval ?? 0)
       })
-      .catch(() => setShippedThisMonth(0))
+      .catch(() => {
+        setShippedThisMonth(0)
+        setStats(null)
+      })
+
+    // Social engagement summary — best-effort. /api/analytics already
+    // owns the Upload-Post fan-out + cache so we just hand it the
+    // profile + 30d window and pluck the totals it returns. If
+    // Upload-Post isn't wired or the call fails we render nothing.
+    fetch(`/api/analytics?profile_id=${selectedProfileId}&window=30d`, {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    })
+      .then((r) => r.json())
+      .then((b) => setSocial(b && !b.error ? b : null))
+      .catch(() => setSocial(null))
   }, [session, selectedProfileId])
 
   const greeting = (() => {
@@ -306,6 +401,39 @@ export default function Dashboard() {
           Open Spaces <ArrowRight size={13} />
         </button>
       </div>
+
+      {/* Content pipeline — created vs shipped vs queued. Gives the
+          user a sense of how much work the workflows are turning out
+          and how much is sitting in approval / draft state. */}
+      {selectedProfile && stats && (
+        <>
+          <div style={sectionLabel}><span>Content pipeline this month</span></div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
+            <StatTile icon={FilePlus2} label="Created"  value={stats.created_month}    color="#a855f7" />
+            <StatTile icon={ClipboardCheck} label="Awaiting approval" value={stats.pending_approval} color="#f59e0b" />
+            <StatTile icon={Calendar} label="Scheduled" value={stats.scheduled}        color="#3b82f6" />
+            <StatTile icon={FileText} label="Drafts"   value={stats.drafts}            color="#94a3b8" />
+            <StatTile icon={Sparkles} label="Shipped"  value={stats.shipped_month}     color="#2ecc71" />
+          </div>
+        </>
+      )}
+
+      {/* Social engagement — pulled from Upload-Post via /api/analytics.
+          Renders nothing if Upload-Post isn't wired or the cache is empty. */}
+      {selectedProfile && social && (social.uploadpost_total_impressions || social.recent_post_metrics) && (
+        <>
+          <div style={sectionLabel}><span>Social signal (last 30 days)</span></div>
+          <SocialSignalCard data={social} onOpen={() => navigate('/analytics')} />
+        </>
+      )}
+
+      {/* What the AI has learned about the brand voice. */}
+      {selectedProfile && session?.access_token && (
+        <>
+          <div style={sectionLabel}><span>Voice intelligence</span></div>
+          <VoiceSummaryCard profileId={selectedProfileId} session={session} compact />
+        </>
+      )}
 
       {/* Brand completeness — drives the "make my voice work" loop. */}
       {selectedProfile && (

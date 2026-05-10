@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { supabase } from '../lib/supabase.js'
 import VoiceTrainingSection from '../components/VoiceTrainingSection.jsx'
+import VoiceSummaryCard from '../components/VoiceSummaryCard.jsx'
 
 const grid = {
   display: 'grid',
@@ -284,6 +285,15 @@ function ProfileEditor({ profile, onClose, onSaved }) {
               alwaysInclude={Array.isArray(form.always_include) ? form.always_include : []}
               onRulesChange={(key, arr) => set(key, arr)}
             />
+          </div>
+        )}
+
+        {/* Auto-learned voice summary — written by the daily distill cron
+            from like/dislike feedback, editable here so users keep
+            direct control if the auto-distillation drifts. */}
+        {profile?.id && (
+          <div style={{ marginTop: 14 }}>
+            <VoiceSummaryCard profileId={profile.id} session={session} />
           </div>
         )}
 

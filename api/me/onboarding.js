@@ -40,13 +40,16 @@ export default async function handler(req, res) {
         'monthlySpend',
         'currentTools', 'currentToolsOther',
         'howHeard', 'howHeardOther',
+        // brand_setup step — captured for analytics. The actual brand
+        // profile is created via /api/profiles in the same submit.
+        'brandBusinessName', 'brandBible',
       ])
       const data = {}
       for (const [k, v] of Object.entries(incoming)) {
         if (!ALLOWED.has(k)) continue
         // String fields — cap length so a malicious client can't bloat
         // the row. Arrays are kept as-is (multi-select).
-        if (typeof v === 'string') data[k] = v.slice(0, 500)
+        if (typeof v === 'string') data[k] = v.slice(0, k === 'brandBible' ? 12000 : 500)
         else if (Array.isArray(v)) data[k] = v.slice(0, 30).map((x) => String(x).slice(0, 200))
         else if (v == null) data[k] = null
       }
