@@ -5561,37 +5561,82 @@ export const NODE_REGISTRY = {
 
       // Video-only fallback: if no script / chunks but we DO have
       // videos in the bag (Upload media output, Collection of videos,
-      // avatar_render output), transcribe each in parallel via the
-      // auto-title endpoint with transcript_only=true, then route
-      // through the same multi-caption fan-out.
+      // avatar_render output), transcribe each via the auto-title
+      // endpoint with transcript_only=true, then route through the
+      // same multi-caption fan-out.
+      //
+      // Concurrency 2 (not all-N-parallel). Each auto-title call
+      // downloads the video bytes + hits ElevenLabs Scribe — both
+      // memory-hungry and bandwidth-hungry. Running 5+ in parallel
+      // empirically OOMs the Vercel function or trips Scribe's
+      // per-key rate limit, surfacing as a 500 with empty body.
       if (!script) {
         const videoUrls = pickAllVideoUrls(asArr(incoming))
         if (videoUrls.length > 0) {
           reportProgress?.({ message: `Transcribing ${videoUrls.length} video${videoUrls.length === 1 ? '' : 's'}…`, done: 0, total: videoUrls.length })
           const sess = ctx.token
           let done = 0
-          const transcripts = await Promise.all(videoUrls.map(async (url, i) => {
-            try {
-              const r = await fetch('/api/videos/auto-title', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sess}` },
-                body: JSON.stringify({
-                  profile_id: profileId,
-                  video_url: url,
-                  transcript_only: true,
-                }),
-              })
-              const body = await r.json().catch(() => ({}))
-              done += 1
-              reportProgress?.({ message: `Transcribed ${done} of ${videoUrls.length}`, done, total: videoUrls.length })
-              if (!r.ok) return { idx: i, order: i, text: '', source_url: url, error: body?.error || `Transcribe ${r.status}` }
-              return { idx: i, order: i, text: String(body?.transcript || '').trim(), source_url: url }
-            } catch (e) {
-              done += 1
-              reportProgress?.({ message: `Transcribed ${done} of ${videoUrls.length}`, done, total: videoUrls.length })
-              return { idx: i, order: i, text: '', source_url: url, error: e?.message || String(e) }
+
+          // Single-attempt fetch with full error capture. Reads body
+          // as text first so we can surface HTML/empty-body Vercel
+          // intercepts ("FUNCTION_INVOCATION_TIMEOUT" pages) instead
+          // of swallowing them into a bare 500.
+          const transcribeOnce = async (url, i) => {
+            const r = await fetch('/api/videos/auto-title', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sess}` },
+              body: JSON.stringify({
+                profile_id: profileId,
+                video_url: url,
+                transcript_only: true,
+              }),
+            })
+            const txt = await r.text()
+            let body = null
+            try { body = txt ? JSON.parse(txt) : null } catch {}
+            if (!r.ok) {
+              // Body parse failed → surface raw status text. Vercel
+              // timeout pages are HTML so JSON.parse drops them.
+              const msg = body?.error
+                || (txt && txt.length < 200 ? txt.trim() : null)
+                || `HTTP ${r.status}${r.statusText ? ' ' + r.statusText : ''}`
+              const err = new Error(msg)
+              err.status = r.status
+              throw err
             }
-          }))
+            return { idx: i, order: i, text: String(body?.transcript || '').trim(), source_url: url }
+          }
+
+          // Concurrency 2 + retry-once on 5xx. The retry helps the
+          // Scribe-cold-start case where the FIRST hit times out but
+          // a follow-up 3s later succeeds.
+          const transcribeWithRetry = async (url, i) => {
+            try { return await transcribeOnce(url, i) }
+            catch (e) {
+              if (e?.status && e.status >= 500) {
+                await new Promise((res) => setTimeout(res, 2500))
+                try { return await transcribeOnce(url, i) }
+                catch (e2) {
+                  return { idx: i, order: i, text: '', source_url: url, error: e2?.message || String(e2) }
+                }
+              }
+              return { idx: i, order: i, text: '', source_url: url, error: e?.message || String(e) }
+            } finally {
+              done += 1
+              reportProgress?.({ message: `Transcribed ${done} of ${videoUrls.length}`, done, total: videoUrls.length })
+            }
+          }
+
+          const TRANSCRIBE_CONCURRENCY = 2
+          const transcripts = new Array(videoUrls.length)
+          let tCursor = 0
+          const tWorkers = Array.from({ length: Math.min(TRANSCRIBE_CONCURRENCY, videoUrls.length) }, async () => {
+            while (tCursor < videoUrls.length) {
+              const i = tCursor++
+              transcripts[i] = await transcribeWithRetry(videoUrls[i], i)
+            }
+          })
+          await Promise.all(tWorkers)
           // Lower threshold than 30 chars — catches short clips like
           // "Hey, watch this." that previous code silently dropped.
           // Anything under 10 is probably audio-less / noise-only and
