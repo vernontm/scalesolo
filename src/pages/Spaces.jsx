@@ -269,14 +269,15 @@ function SpaceNode({ id, data, selected }) {
             }}
           ><SettingsIcon size={12} /></button>
         )}
-        {/* Hide the Run button on input nodes that have no work to do —
-            text_input just emits its prop verbatim, so the runner already
-            auto-executes it as a free node. The button was misleading
-            (clicking it acted as a no-op for users) and added visual
-            noise next to a one-line text field. Other free inputs
-            (audio_upload, image upload, brand_profile, auto_run) still
-            show Run because they validate / fetch / kick off side work. */}
-        {data.type !== 'collection' && data.type !== 'text_input' && (
+        {/* Hide the Run button on pure data emitters — input nodes with
+            no upstream work to re-execute. Clicking Run on these is a
+            no-op that just re-emits cached data, which confused users
+            who expected something to happen. The runner already
+            auto-executes free emitters when downstream nodes need them.
+            auto_run is the exception: its Run button toggles the
+            scheduler state. collection is passive too. */}
+        {data.type !== 'collection' && data.type !== 'text_input'
+          && !((!def.inputs || def.inputs.length === 0) && data.type !== 'auto_run') && (
           <button
             type="button"
             className="nodrag space-node-runbtn"

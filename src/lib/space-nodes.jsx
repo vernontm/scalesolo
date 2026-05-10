@@ -551,15 +551,21 @@ ${chunkSentences.map((c) => `--- segment ${c.idx} ---\n${c.text.slice(0, 800)}`)
     const idx = Number.isFinite(s?.idx) ? s.idx : i
     byIdx.set(idx, s)
   })
-  const captions = chunkSentences.map((c) => {
+  // Per-clip user edits stored from previous runs (set by the body's
+  // pagination editor). Apply them on top of the AI output so re-runs
+  // preserve manual tweaks. Key lookup tolerates both numeric and
+  // string indices because JSON serialisation can flip them.
+  const editedCaptions = edits?.edited_captions || {}
+  const captions = chunkSentences.map((c, i) => {
     const s = byIdx.get(c.idx) || {}
+    const ue = editedCaptions[i] || editedCaptions[String(i)] || {}
     return {
       order: c.order,
       idx: c.idx,
-      title:         String(s.title || '').slice(0, 200),
-      caption:       String(s.caption || '').slice(0, 2000),
-      hashtags:      String(s.hashtags || ''),
-      first_comment: String(s.first_comment || '').slice(0, 400),
+      title:         String(ue.title         ?? s.title         ?? '').slice(0, 200),
+      caption:       String(ue.caption       ?? s.caption       ?? '').slice(0, 2000),
+      hashtags:      String(ue.hashtags      ?? s.hashtags      ?? ''),
+      first_comment: String(ue.first_comment ?? s.first_comment ?? '').slice(0, 400),
       source_text:   c.text.slice(0, 240),
     }
   })
@@ -1212,8 +1218,22 @@ function CaptionGenBody({ data, onPatch }) {
   // Single canonical title + caption + hashtags + first_comment. The
   // platform layer (schedule_post + /api/social/upload-post) maps these
   // to per-platform Upload-Post fields with proper char-limit handling.
+  //
+  // Multi-clip mode: when caption_gen ran in fan-out mode (videos or
+  // voice_gen audio_chunks upstream), data.output.captions[] holds one
+  // set per clip. We paginate through them and edit each independently.
+  // Edits land in props.edited_captions[idx] for re-run, AND mirror into
+  // data.output.captions[idx] so schedule_post picks them up without a
+  // caption_gen re-run.
   const out = data.output
   const hasOutput = !!out
+  const captions = Array.isArray(out?.captions) ? out.captions : null
+  const isMulti = !!(captions && captions.length > 1)
+  const totalClips = isMulti ? captions.length : 1
+
+  const [clipIdx, setClipIdx] = useState(0)
+  const safeIdx = Math.max(0, Math.min(clipIdx, totalClips - 1))
+
   // Backward compat: legacy outputs stored per_platform variants. If the
   // canonical fields are empty but variants exist, fall back to the
   // first variant that has a caption.
@@ -1221,20 +1241,107 @@ function CaptionGenBody({ data, onPatch }) {
   const fallback = variants.instagram?.caption ? variants.instagram
     : variants.tiktok?.caption ? variants.tiktok
     : Object.values(variants).find((v) => v?.caption) || {}
-  const editedTitle        = data.props?.edited_title        ?? null
-  const editedCaption      = data.props?.edited_caption      ?? null
-  const editedHashtags     = data.props?.edited_hashtags     ?? null
-  const editedFirstComment = data.props?.edited_first_comment ?? null
-  const title        = editedTitle        ?? (out?.title         || fallback.title         || '')
-  const caption      = editedCaption      ?? (out?.caption       || fallback.caption       || '')
-  const hashtags     = editedHashtags     ?? (out?.hashtags      || fallback.hashtags      || '')
-  const firstComment = editedFirstComment ?? (out?.first_comment || fallback.first_comment || '')
+
+  // Edits storage:
+  //   single-clip → props.edited_title / edited_caption / edited_hashtags / edited_first_comment
+  //   multi-clip  → props.edited_captions[idx].{ title, caption, hashtags, first_comment }
+  const editedCaptions = data.props?.edited_captions || {}
+  let source, clipEdits
+  if (isMulti) {
+    source = captions[safeIdx] || {}
+    clipEdits = editedCaptions[safeIdx] || {}
+  } else {
+    source = { ...fallback, ...out }
+    clipEdits = {
+      title:         data.props?.edited_title,
+      caption:       data.props?.edited_caption,
+      hashtags:      data.props?.edited_hashtags,
+      first_comment: data.props?.edited_first_comment,
+    }
+  }
+  const title        = clipEdits.title         ?? (source.title         || '')
+  const caption      = clipEdits.caption       ?? (source.caption       || '')
+  const hashtags     = clipEdits.hashtags      ?? (source.hashtags      || '')
+  const firstComment = clipEdits.first_comment ?? (source.first_comment || '')
+
+  // patchEdit handles BOTH halves of an edit:
+  //   1. write to props (so re-running caption_gen preserves edits via
+  //      the run function's edited_* / edited_captions read)
+  //   2. mirror into data.output so downstream nodes consuming
+  //      caption_gen.output see edits live, no re-run required
+  const patchEdit = (field, value) => {
+    if (isMulti) {
+      const nextEdits = {
+        ...editedCaptions,
+        [safeIdx]: { ...editedCaptions[safeIdx], [field]: value },
+      }
+      onPatch({ edited_captions: nextEdits })
+      if (out && Array.isArray(captions)) {
+        const nextCaptions = captions.map((c, i) => i === safeIdx ? { ...c, [field]: value } : c)
+        // Mirror clip[0] edits onto the canonical fields so legacy
+        // single-clip consumers (or schedule_post fallback) still see
+        // the latest values for the lead clip.
+        const isLead = safeIdx === 0
+        const nextOutput = {
+          ...out,
+          captions: nextCaptions,
+          ...(isLead ? { [field]: value } : {}),
+        }
+        if (typeof window !== 'undefined' && window.__spacePatchOutput) {
+          window.__spacePatchOutput(data.__id, nextOutput)
+        }
+      }
+    } else {
+      onPatch({ [`edited_${field}`]: value })
+      if (out && typeof window !== 'undefined' && window.__spacePatchOutput) {
+        window.__spacePatchOutput(data.__id, { ...out, [field]: value })
+      }
+    }
+  }
 
   return (
     <>
       <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 8, lineHeight: 1.4 }}>
         Connect a script. Generates a <strong>title, caption, and 5 hashtags</strong> tuned for every platform.
       </div>
+      {hasOutput && isMulti && (
+        <div className="nodrag" style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '6px 8px', marginBottom: 8,
+          background: 'rgba(245, 158, 11, 0.10)',
+          border: '1px solid rgba(245, 158, 11, 0.35)',
+          borderRadius: 6, fontSize: 11.5,
+        }}>
+          <button
+            type="button"
+            className="nodrag"
+            onClick={(e) => { e.stopPropagation(); setClipIdx((i) => Math.max(0, i - 1)) }}
+            disabled={safeIdx === 0}
+            style={{
+              background: 'transparent', border: 'none', cursor: safeIdx === 0 ? 'not-allowed' : 'pointer',
+              color: safeIdx === 0 ? 'var(--muted)' : '#f59e0b',
+              padding: 4, opacity: safeIdx === 0 ? 0.4 : 1,
+            }}
+            title="Previous clip"
+          >◀</button>
+          <span style={{ fontWeight: 700, fontFamily: 'var(--font-display)', letterSpacing: '0.04em', color: '#f59e0b' }}>
+            CLIP {safeIdx + 1} OF {totalClips}
+          </span>
+          <button
+            type="button"
+            className="nodrag"
+            onClick={(e) => { e.stopPropagation(); setClipIdx((i) => Math.min(totalClips - 1, i + 1)) }}
+            disabled={safeIdx === totalClips - 1}
+            style={{
+              background: 'transparent', border: 'none',
+              cursor: safeIdx === totalClips - 1 ? 'not-allowed' : 'pointer',
+              color: safeIdx === totalClips - 1 ? 'var(--muted)' : '#f59e0b',
+              padding: 4, opacity: safeIdx === totalClips - 1 ? 0.4 : 1,
+            }}
+            title="Next clip"
+          >▶</button>
+        </div>
+      )}
       {hasOutput && (
         <>
           <NodeField label="Title">
@@ -1242,7 +1349,7 @@ function CaptionGenBody({ data, onPatch }) {
               className="nodrag"
               style={tinyInput}
               value={title}
-              onChange={(e) => { e.stopPropagation(); onPatch({ edited_title: e.target.value }) }}
+              onChange={(e) => { e.stopPropagation(); patchEdit('title', e.target.value) }}
               onClick={(e) => e.stopPropagation()}
               placeholder="Title"
             />
@@ -1250,7 +1357,7 @@ function CaptionGenBody({ data, onPatch }) {
           <NodeField label="Caption">
             <ExpandableTextarea
               value={caption}
-              onChange={(v) => onPatch({ edited_caption: v })}
+              onChange={(v) => patchEdit('caption', v)}
               placeholder="Caption"
               minHeight={70}
               title="Caption"
@@ -1262,7 +1369,7 @@ function CaptionGenBody({ data, onPatch }) {
               className="nodrag"
               style={tinyInput}
               value={hashtags}
-              onChange={(e) => { e.stopPropagation(); onPatch({ edited_hashtags: e.target.value }) }}
+              onChange={(e) => { e.stopPropagation(); patchEdit('hashtags', e.target.value) }}
               onClick={(e) => e.stopPropagation()}
               placeholder="#tag1 #tag2"
             />
@@ -1270,7 +1377,7 @@ function CaptionGenBody({ data, onPatch }) {
           <NodeField label="First comment">
             <ExpandableTextarea
               value={firstComment}
-              onChange={(v) => onPatch({ edited_first_comment: v })}
+              onChange={(v) => patchEdit('first_comment', v)}
               placeholder="Engagement question or value-add — lands as the first reply on the post."
               minHeight={50}
               title="First comment"
@@ -1278,7 +1385,9 @@ function CaptionGenBody({ data, onPatch }) {
             />
           </NodeField>
           <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 4, lineHeight: 1.4 }}>
-            Edits override the AI output for the next downstream step. Re-run to regenerate from the script.
+            {isMulti
+              ? `Per-clip edits override the AI output for that clip only. Edits flow into schedule_post immediately, no re-run needed.`
+              : `Edits override the AI output for the next downstream step. Re-run to regenerate from the script.`}
           </div>
         </>
       )}
