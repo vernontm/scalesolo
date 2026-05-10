@@ -49,7 +49,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { voice_id, profile_id, text, byok, voice_settings, model_id } = req.body || {}
+    const { voice_id, profile_id, text, byok, voice_settings, model_id, language_code } = req.body || {}
     if (!voice_id) return res.status(400).json({ error: 'voice_id required' })
     // profile_id is optional — preview works without one (admin / new
     // user) but if provided we verify access so a stranger can't
@@ -71,6 +71,14 @@ export default async function handler(req, res) {
     }
     if (typeof model_id === 'string' && model_id.trim()) {
       opts.model_id = model_id.trim()
+    }
+    // Caller passes the avatar's voice_language so previews sound the
+    // same as actual renders. Default to English so the panel never
+    // surprises the user with model auto-detect drift.
+    if (typeof language_code === 'string' && language_code.trim()) {
+      opts.language_code = language_code.trim().slice(0, 8)
+    } else {
+      opts.language_code = 'en'
     }
     const url = await synthesizeToPublicUrl(voice_id, sample, profile_id || 'previews', opts)
     // Charge tokens for the preview synth, scaled by model. BYOK

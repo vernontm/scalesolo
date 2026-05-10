@@ -157,6 +157,11 @@ export default async function handler(req, res) {
         if (typeof avatar.voice_model_id === 'string' && avatar.voice_model_id.trim()) {
           tuningOpts.model_id = avatar.voice_model_id.trim()
         }
+        // Default to English when the avatar hasn't been explicitly
+        // set so older renders don't keep drifting. Migration 0026
+        // backfilled existing rows; this protects new ones too.
+        const lang = (avatar.voice_language || 'en').trim()
+        if (lang) tuningOpts.language_code = lang
         resolvedAudioUrl = await synthesizeToPublicUrl(
           elevenLabsVoice, script, avatar.profile_id,
           { ...(apiKey ? { apiKey } : {}), ...tuningOpts },

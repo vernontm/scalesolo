@@ -134,6 +134,12 @@ export async function synthesizeMp3(voiceId, text, opts = {}) {
     body: JSON.stringify({
       text,
       model_id: opts.model_id || 'eleven_turbo_v2_5',
+      // Pin the language so the model doesn't auto-detect per chunk
+      // and drift mid-script (we've seen English avatars flip to
+      // Spanish on ambiguous tokens like brand names + numbers).
+      // BCP-47 ('en', 'es', 'fr', etc). Caller passes whatever the
+      // avatar has stored on voice_language.
+      ...(opts.language_code ? { language_code: String(opts.language_code).slice(0, 8) } : {}),
       voice_settings: opts.voice_settings || {
         stability: 0.5,
         similarity_boost: 0.85,

@@ -67,13 +67,15 @@ export default async function handler(req, res) {
       let voiceOwner = 'shared'  // 'shared' = master key; 'byok' = user's key
       let avatarVoiceSettings = null
       let avatarVoiceModelId = null
+      let avatarVoiceLanguage = null
       if (avatar_id) {
         try {
-          const aRows = await supaFetch(`avatars?id=eq.${avatar_id}&select=elevenlabs_voice_id,voice_owner,voice_settings,voice_model_id`)
+          const aRows = await supaFetch(`avatars?id=eq.${avatar_id}&select=elevenlabs_voice_id,voice_owner,voice_settings,voice_model_id,voice_language`)
           elevenLabsVoice = aRows?.[0]?.elevenlabs_voice_id || null
           voiceOwner = aRows?.[0]?.voice_owner || 'shared'
           avatarVoiceSettings = aRows?.[0]?.voice_settings || null
           avatarVoiceModelId  = aRows?.[0]?.voice_model_id || null
+          avatarVoiceLanguage = aRows?.[0]?.voice_language || null
         } catch {}
       }
       if (!elevenLabsVoice && explicitElevenLabs) elevenLabsVoice = voice_id
@@ -103,6 +105,10 @@ export default async function handler(req, res) {
           if (typeof avatarVoiceModelId === 'string' && avatarVoiceModelId.trim()) {
             tuningOpts.model_id = avatarVoiceModelId.trim()
           }
+          // Default English when avatar hasn't been set so v3 / multi-
+          // lingual models don't drift mid-script.
+          const lang = (avatarVoiceLanguage || 'en').trim()
+          if (lang) tuningOpts.language_code = lang
           resolvedAudioUrl = await synthesizeToPublicUrl(
             elevenLabsVoice, script, profile_id,
             { ...(apiKey ? { apiKey } : {}), ...tuningOpts },

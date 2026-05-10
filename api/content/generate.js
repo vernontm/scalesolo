@@ -53,17 +53,29 @@ export default async function handler(req, res) {
     // Spoken-script length sizing. Average TikTok / short-form delivery is
     // ~150 wpm = 2.5 wps. We give Claude a target word count so the script
     // actually fits the duration the user picked instead of free-running.
+    // Hard word-count ceilings per duration. We were overshooting the
+    // target window because the previous prompt softly aimed for
+    // "~150 wpm ± 12%", which gave the model permission to run long.
+    // Real-world delivery on TikTok / Shorts averages ~3.3 words/sec;
+    // the user wants clear caps, not a center-of-mass number:
+    //   15s → ≤50 words   (≈3.3 wps)
+    //   30s → ≤100 words  (≈3.3 wps)
+    //   60s → ≤200 words  (≈3.3 wps)
+    // Other durations slot proportionally.
     let lengthDirective = ''
     if ((format === 'tiktok-script' || format === 'youtube-short') && Number(target_length_secs) > 0) {
       const secs = Math.max(8, Math.min(180, Number(target_length_secs)))
-      const wpm = 150
-      const targetWords = Math.round((secs / 60) * wpm)
-      const tolerance = Math.max(8, Math.round(targetWords * 0.12))
-      lengthDirective = `\n\n## Target length\n` +
-        `Aim for roughly ${secs} seconds of spoken delivery. At ~${wpm} words/minute that's ` +
-        `**${targetWords} words ± ${tolerance}** in the full_script. ` +
-        `Do not pad with filler to hit the count and do not cut value to come in short — ` +
-        `pace the content (hook → 2-3 beats of substance → CTA) so it lands inside that window.`
+      // Anchor on the three explicit bands the user named, then fall
+      // back to the same 3.33 wps ratio for arbitrary durations.
+      const maxWords = secs <= 15 ? 50
+        : secs <= 30 ? 100
+        : secs <= 60 ? 200
+        : Math.round(secs * 3.33)
+      lengthDirective = `\n\n## Target length (HARD CAP)\n` +
+        `Aim for roughly ${secs} seconds of spoken delivery. ` +
+        `**The full_script must be ${maxWords} words OR LESS.** This is a ceiling, not a target — ` +
+        `coming in shorter is fine if the message is complete; going over is NOT allowed. ` +
+        `Pace the content (hook → 2-3 beats of substance → CTA) so it lands inside the window without padding.`
     }
 
     await assertProfileAccess(auth.user.id, profile_id)

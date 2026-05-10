@@ -958,6 +958,29 @@ const TUNING_MODELS = [
   { id: 'eleven_v3',             label: 'v3 (most expressive)', hint: 'Newest. Script generator adds inline emotion tags. 5× tokens.' },
 ]
 
+// Top BCP-47 ElevenLabs language codes. Trimmed to the markets we
+// actively support; users with niche needs can paste a code in via
+// the API directly. English is the default — we've seen multilingual
+// models drift to other languages on ambiguous tokens (numbers, brand
+// names, transliterated words) without a pinned language_code.
+const TUNING_LANGUAGES = [
+  { code: 'en', label: 'English' },
+  { code: 'es', label: 'Spanish' },
+  { code: 'fr', label: 'French' },
+  { code: 'de', label: 'German' },
+  { code: 'pt', label: 'Portuguese' },
+  { code: 'it', label: 'Italian' },
+  { code: 'nl', label: 'Dutch' },
+  { code: 'pl', label: 'Polish' },
+  { code: 'tr', label: 'Turkish' },
+  { code: 'ru', label: 'Russian' },
+  { code: 'ja', label: 'Japanese' },
+  { code: 'zh', label: 'Chinese' },
+  { code: 'ko', label: 'Korean' },
+  { code: 'hi', label: 'Hindi' },
+  { code: 'ar', label: 'Arabic' },
+]
+
 function AvatarVoiceTuningPanel({ avatar, session, profileId, onSave }) {
   // Local draft state so sliding doesn't fire a PATCH per pixel. We
   // commit on slider release / blur / model change. Falls back to the
@@ -965,6 +988,7 @@ function AvatarVoiceTuningPanel({ avatar, session, profileId, onSave }) {
   const stored = (avatar.voice_settings && typeof avatar.voice_settings === 'object') ? avatar.voice_settings : {}
   const [draft, setDraft] = useState({ ...TUNING_DEFAULTS, ...stored })
   const [modelId, setModelId] = useState(avatar.voice_model_id || TUNING_MODELS[0].id)
+  const [language, setLanguage] = useState(avatar.voice_language || 'en')
   // Live preview text — defaults to a friendly intro using the avatar's
   // own name so the user instantly hears how it'll sound *for this
   // avatar*. Editable in case they want to test their own line.
@@ -986,10 +1010,14 @@ function AvatarVoiceTuningPanel({ avatar, session, profileId, onSave }) {
 
   // PATCH on commit. Each setting writes the full voice_settings blob
   // so we don't end up with partial jsonb on the row.
-  const commitSettings = async (next, nextModel = modelId) => {
+  const commitSettings = async (next, nextModel = modelId, nextLang = language) => {
     setSavingFlash(true)
     try {
-      await onSave({ voice_settings: next, voice_model_id: nextModel || null })
+      await onSave({
+        voice_settings: next,
+        voice_model_id: nextModel || null,
+        voice_language: nextLang || null,
+      })
     } finally {
       setTimeout(() => setSavingFlash(false), 600)
     }
@@ -1003,7 +1031,8 @@ function AvatarVoiceTuningPanel({ avatar, session, profileId, onSave }) {
   const reset = () => {
     setDraft({ ...TUNING_DEFAULTS })
     setModelId(TUNING_MODELS[0].id)
-    commitSettings({ ...TUNING_DEFAULTS }, TUNING_MODELS[0].id)
+    setLanguage('en')
+    commitSettings({ ...TUNING_DEFAULTS }, TUNING_MODELS[0].id, 'en')
   }
 
   const playPreview = async () => {
@@ -1025,6 +1054,7 @@ function AvatarVoiceTuningPanel({ avatar, session, profileId, onSave }) {
           text: (previewText || defaultPreviewText).slice(0, 300),
           voice_settings: draft,
           model_id: modelId,
+          language_code: language || 'en',
         }),
       })
       const body = await r.json().catch(() => ({}))
@@ -1117,6 +1147,27 @@ function AvatarVoiceTuningPanel({ avatar, session, profileId, onSave }) {
         </select>
         <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 4 }}>
           {TUNING_MODELS.find((m) => m.id === modelId)?.hint}
+        </div>
+      </div>
+
+      <div style={{ marginTop: 12 }}>
+        <label className="label">Language</label>
+        <select
+          className="select"
+          value={language || 'en'}
+          onChange={(e) => {
+            const next = e.target.value
+            setLanguage(next)
+            commitSettings(draft, modelId, next)
+          }}
+          style={{ width: '100%', fontSize: 12 }}
+        >
+          {TUNING_LANGUAGES.map((l) => (
+            <option key={l.code} value={l.code}>{l.label}</option>
+          ))}
+        </select>
+        <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 4 }}>
+          Pinned per render so the voice doesn't drift mid-script.
         </div>
       </div>
 
