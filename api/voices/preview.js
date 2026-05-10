@@ -7,7 +7,7 @@
 // 3rd-party voice_id) before assigning it to an avatar.
 
 import { setCors, requireUser, assertProfileAccess } from '../_lib/supabase.js'
-import { synthesizeToPublicUrl, resolveByoApiKey, sanitizeVoiceSettings } from '../_lib/elevenlabs.js'
+import { synthesizeToPublicUrl, resolveByoApiKey, sanitizeVoiceSettings, chargeTtsCredits } from '../_lib/elevenlabs.js'
 
 const DEFAULT_PREVIEW_TEXT =
   "Hi, I'm your ScaleSolo avatar voice. This is a quick preview of how I sound."
@@ -73,6 +73,18 @@ export default async function handler(req, res) {
       opts.model_id = model_id.trim()
     }
     const url = await synthesizeToPublicUrl(voice_id, sample, profile_id || 'previews', opts)
+    // Charge tokens for the preview synth, scaled by model. BYOK
+    // previews still get charged because we're metering OUR pipeline
+    // (synthesis time, storage, bandwidth) — the BYOK key is theirs,
+    // but our infra processes the call. Skipped automatically when the
+    // user has no billing_customer.
+    await chargeTtsCredits({
+      userId: auth.user.id,
+      profileId,
+      modelId: opts.model_id,
+      charCount: sample.length,
+      kind: 'preview',
+    })
     return res.status(200).json({ audio_url: url })
   } catch (err) {
     console.error('voices/preview error:', err?.stack || err)

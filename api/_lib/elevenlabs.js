@@ -9,6 +9,77 @@ const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
 const TTS_BUCKET = 'landing-media'  // existing public bucket already used by image_mirror
 
+// Per-model TTS charging. ElevenLabs prices Turbo, Multilingual v2,
+// and v3 at very different rates per character — the token cost we
+// debit from the user's ai_tokens pool needs to mirror that ratio so
+// margin stays consistent regardless of which model the user picks.
+//
+// Calibrated against ElevenLabs Studio per-1k-char retail at our
+// $10/100K-token internal price ($0.0001/token). Turbo retail is the
+// cheapest (~$0.10 / 1k chars) so we charge ~1 token/char as the
+// baseline; Multilingual is ~3x; v3 is the most expressive and lands
+// at ~5x baseline.
+//
+// To change pricing, edit this map; everything downstream picks it up.
+export const TTS_MODELS = {
+  eleven_turbo_v2_5:      { label: 'Turbo v2.5',      tokens_per_char: 1, supports_tags: false },
+  eleven_multilingual_v2: { label: 'Multilingual v2', tokens_per_char: 3, supports_tags: false },
+  eleven_v3:              { label: 'v3',              tokens_per_char: 5, supports_tags: true  },
+}
+const DEFAULT_TTS_MODEL = 'eleven_turbo_v2_5'
+
+export function ttsModelInfo(modelId) {
+  return TTS_MODELS[modelId] || TTS_MODELS[DEFAULT_TTS_MODEL]
+}
+
+// Tokens to debit for a synth call. Caller passes the actual char
+// count of what got synthesized so charges are tied to real usage,
+// not pre-trim length. Floors at 1 so a successful synth always
+// records *something* in the ledger.
+export function tokensForTts(modelId, charCount) {
+  const m = ttsModelInfo(modelId)
+  const chars = Math.max(0, Number(charCount) || 0)
+  return Math.max(1, Math.ceil(chars * m.tokens_per_char))
+}
+
+// Best-effort consume after a successful synth. Skipped (no charge)
+// when userId is missing or the user has no billing_customer row,
+// matching the rest of our credit pattern. Logs and swallows on
+// failure so a billing hiccup never breaks a render — the consume
+// row is the source of truth for what got charged, missing rows
+// surface in admin usage as $0 and we follow up.
+export async function chargeTtsCredits({ userId, profileId, modelId, charCount, refTable = null, refId = null, kind = 'render' }) {
+  if (!userId) return { skipped: 'no-user' }
+  try {
+    const { supaFetch } = await import('./supabase.js')
+    const cust = await supaFetch(`billing_customers?user_id=eq.${userId}&select=id`).catch(() => [])
+    const customerId = cust?.[0]?.id
+    if (!customerId) return { skipped: 'no-customer' }
+    const tokens = tokensForTts(modelId, charCount)
+    const result = await supaFetch('rpc/consume_credits', {
+      method: 'POST',
+      body: {
+        p_customer_id: customerId,
+        p_pool_type: 'ai_tokens',
+        p_amount: tokens,
+        p_action: 'consume:tts-synthesis',
+        p_ref_table: refTable,
+        p_ref_id: refId,
+        p_profile_id: profileId || null,
+        p_metadata: {
+          model: modelId || DEFAULT_TTS_MODEL,
+          chars: Math.max(0, Number(charCount) || 0),
+          kind,                    // 'render' | 'preview' | 'photo-render'
+        },
+      },
+    })
+    return { tokens, result }
+  } catch (e) {
+    console.warn('chargeTtsCredits failed:', e?.message || e)
+    return { error: e?.message || String(e) }
+  }
+}
+
 // Clamp a voice_settings payload to the ranges ElevenLabs accepts so a
 // bad client (or a stale jsonb cell) can't push the synth into an
 // unsupported state. Drops unknown keys. Returns null when input is

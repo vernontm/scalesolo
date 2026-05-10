@@ -7,7 +7,7 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { generateVideoV2, generateVideoV3, MODELS, videoUnitsForModel, listLooksForGroup } from '../_lib/heygen.js'
-import { synthesizeToPublicUrl, looksLikeElevenLabsVoiceId, resolveByoApiKey, sanitizeVoiceSettings } from '../_lib/elevenlabs.js'
+import { synthesizeToPublicUrl, looksLikeElevenLabsVoiceId, resolveByoApiKey, sanitizeVoiceSettings, chargeTtsCredits } from '../_lib/elevenlabs.js'
 
 function estimateDurationSecs(script) {
   const words = (script || '').trim().split(/\s+/).filter(Boolean).length
@@ -161,6 +161,17 @@ export default async function handler(req, res) {
           elevenLabsVoice, script, avatar.profile_id,
           { ...(apiKey ? { apiKey } : {}), ...tuningOpts },
         )
+        // Charge TTS tokens scaled by model. Best-effort — any failure
+        // logs and swallows so a billing hiccup never breaks a render.
+        await chargeTtsCredits({
+          userId: auth.user.id,
+          profileId: avatar.profile_id,
+          modelId: avatar.voice_model_id,
+          charCount: script.length,
+          refTable: 'avatars',
+          refId: avatar.id,
+          kind: 'render',
+        })
       } catch (e) {
         return res.status(502).json({
           error: `ElevenLabs TTS failed: ${e.message}. Check that voice "${elevenLabsVoice}" exists in the ${avatar.voice_owner === 'byok' ? "user's connected" : 'shared'} ElevenLabs workspace.`,

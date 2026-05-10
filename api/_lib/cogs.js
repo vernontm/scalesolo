@@ -56,6 +56,23 @@ function heygenRenderCost(metadata = {}) {
 const ACTION_COGS = {
   // Image gen: KIE wholesale by model + quality + count.
   'consume:image-gen': (meta) => kieImageCost(meta),
+  // ElevenLabs TTS — real per-character retail by model. metadata.chars
+  // and metadata.model are recorded by chargeTtsCredits in elevenlabs.js.
+  // Rates calibrated to ElevenLabs Studio public pricing per 1k chars
+  // (Turbo cheapest, v3 most expensive). USD per character:
+  //   eleven_turbo_v2_5: $0.00010
+  //   eleven_multilingual_v2: $0.00030
+  //   eleven_v3: $0.00050
+  'consume:tts-synthesis': (meta) => {
+    const chars = Math.max(0, Number(meta?.chars) || 0)
+    const model = meta?.model || 'eleven_turbo_v2_5'
+    const ratePerChar = ({
+      eleven_turbo_v2_5:      0.00010,
+      eleven_multilingual_v2: 0.00030,
+      eleven_v3:              0.00050,
+    })[model] || 0.00015
+    return chars * ratePerChar
+  },
   // Avatar render: HeyGen per-second by model. Both the regular V3/V4/V5
   // talking-head path (consume:avatar-render) and the photo-avatar
   // instant path (consume:photo-avatar-render) bill the same way —

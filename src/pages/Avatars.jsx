@@ -949,10 +949,13 @@ const TUNING_DEFAULTS = {
   use_speaker_boost: true,
   speed: 1.0,
 }
+// Hint copy mirrors the per-model token rate in api/_lib/elevenlabs.js
+// (Turbo 1× / Multilingual 3× / v3 5×). Keeping this in sync with the
+// backend keeps users from being surprised by the bill.
 const TUNING_MODELS = [
-  { id: 'eleven_turbo_v2_5',     label: 'Turbo v2.5',          hint: 'Fast and cheap. Good baseline.' },
-  { id: 'eleven_multilingual_v2', label: 'Multilingual v2',     hint: 'Richer emotion. Best for storytelling.' },
-  { id: 'eleven_v3',             label: 'v3 (most expressive)', hint: 'Newest. Supports inline emotion tags.' },
+  { id: 'eleven_turbo_v2_5',     label: 'Turbo v2.5',          hint: 'Fast and cheap. Good baseline. 1× tokens.' },
+  { id: 'eleven_multilingual_v2', label: 'Multilingual v2',     hint: 'Richer emotion. Best for storytelling. 3× tokens.' },
+  { id: 'eleven_v3',             label: 'v3 (most expressive)', hint: 'Newest. Script generator adds inline emotion tags. 5× tokens.' },
 ]
 
 function AvatarVoiceTuningPanel({ avatar, session, profileId, onSave }) {
