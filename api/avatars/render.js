@@ -7,7 +7,7 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { generateVideoV2, generateVideoV3, MODELS, videoUnitsForModel, listLooksForGroup } from '../_lib/heygen.js'
-import { synthesizeToPublicUrl, looksLikeElevenLabsVoiceId, resolveByoApiKey } from '../_lib/elevenlabs.js'
+import { synthesizeToPublicUrl, looksLikeElevenLabsVoiceId, resolveByoApiKey, sanitizeVoiceSettings } from '../_lib/elevenlabs.js'
 
 function estimateDurationSecs(script) {
   const words = (script || '').trim().split(/\s+/).filter(Boolean).length
@@ -148,9 +148,18 @@ export default async function handler(req, res) {
             })
           }
         }
+        // Per-avatar voice tuning. avatar.voice_settings + voice_model_id
+        // come from the avatar editor's Voice section. sanitizeVoiceSettings
+        // clamps any out-of-range jsonb to ElevenLabs' supported ranges.
+        const tuningOpts = {}
+        const cleaned = sanitizeVoiceSettings(avatar.voice_settings)
+        if (cleaned) tuningOpts.voice_settings = cleaned
+        if (typeof avatar.voice_model_id === 'string' && avatar.voice_model_id.trim()) {
+          tuningOpts.model_id = avatar.voice_model_id.trim()
+        }
         resolvedAudioUrl = await synthesizeToPublicUrl(
           elevenLabsVoice, script, avatar.profile_id,
-          apiKey ? { apiKey } : undefined,
+          { ...(apiKey ? { apiKey } : {}), ...tuningOpts },
         )
       } catch (e) {
         return res.status(502).json({

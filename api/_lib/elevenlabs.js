@@ -9,6 +9,27 @@ const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
 const TTS_BUCKET = 'landing-media'  // existing public bucket already used by image_mirror
 
+// Clamp a voice_settings payload to the ranges ElevenLabs accepts so a
+// bad client (or a stale jsonb cell) can't push the synth into an
+// unsupported state. Drops unknown keys. Returns null when input is
+// not an object so callers can short-circuit.
+const VS_RANGES = {
+  stability:        [0, 1],
+  similarity_boost: [0, 1],
+  style:            [0, 1],
+  speed:            [0.7, 1.2],   // ElevenLabs Turbo v2.5 / v3 supported range
+}
+export function sanitizeVoiceSettings(raw) {
+  if (!raw || typeof raw !== 'object') return null
+  const out = {}
+  for (const [k, [lo, hi]] of Object.entries(VS_RANGES)) {
+    const v = Number(raw[k])
+    if (Number.isFinite(v)) out[k] = Math.min(hi, Math.max(lo, v))
+  }
+  if (typeof raw.use_speaker_boost === 'boolean') out.use_speaker_boost = raw.use_speaker_boost
+  return Object.keys(out).length ? out : null
+}
+
 // ElevenLabs voice IDs are 20-char alphanumeric (mixed case, no dashes).
 // HeyGen voice IDs are typically 32-char lowercase hex. This is a fast
 // heuristic for callers that have a single voice_id field but need to

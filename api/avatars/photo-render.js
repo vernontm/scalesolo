@@ -9,7 +9,7 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { createPhotoAvatarV3, generateVideoV3, MODELS, videoUnitsForModel } from '../_lib/heygen.js'
-import { synthesizeToPublicUrl, looksLikeElevenLabsVoiceId, resolveByoApiKey } from '../_lib/elevenlabs.js'
+import { synthesizeToPublicUrl, looksLikeElevenLabsVoiceId, resolveByoApiKey, sanitizeVoiceSettings } from '../_lib/elevenlabs.js'
 
 function estimateDurationSecs(script) {
   const words = (script || '').trim().split(/\s+/).filter(Boolean).length
@@ -65,11 +65,15 @@ export default async function handler(req, res) {
     if (!resolvedAudioUrl) {
       const explicitElevenLabs = voice_id && looksLikeElevenLabsVoiceId(voice_id)
       let voiceOwner = 'shared'  // 'shared' = master key; 'byok' = user's key
+      let avatarVoiceSettings = null
+      let avatarVoiceModelId = null
       if (avatar_id) {
         try {
-          const aRows = await supaFetch(`avatars?id=eq.${avatar_id}&select=elevenlabs_voice_id,voice_owner`)
+          const aRows = await supaFetch(`avatars?id=eq.${avatar_id}&select=elevenlabs_voice_id,voice_owner,voice_settings,voice_model_id`)
           elevenLabsVoice = aRows?.[0]?.elevenlabs_voice_id || null
           voiceOwner = aRows?.[0]?.voice_owner || 'shared'
+          avatarVoiceSettings = aRows?.[0]?.voice_settings || null
+          avatarVoiceModelId  = aRows?.[0]?.voice_model_id || null
         } catch {}
       }
       if (!elevenLabsVoice && explicitElevenLabs) elevenLabsVoice = voice_id
@@ -89,9 +93,19 @@ export default async function handler(req, res) {
               })
             }
           }
+          // Layer the per-avatar voice tuning on top of the BYOK key
+          // (if any). sanitizeVoiceSettings clamps anything outside
+          // ElevenLabs' supported range so a stale jsonb can't blow
+          // up the synth.
+          const tuningOpts = {}
+          const cleaned = sanitizeVoiceSettings(avatarVoiceSettings)
+          if (cleaned) tuningOpts.voice_settings = cleaned
+          if (typeof avatarVoiceModelId === 'string' && avatarVoiceModelId.trim()) {
+            tuningOpts.model_id = avatarVoiceModelId.trim()
+          }
           resolvedAudioUrl = await synthesizeToPublicUrl(
             elevenLabsVoice, script, profile_id,
-            apiKey ? { apiKey } : undefined,
+            { ...(apiKey ? { apiKey } : {}), ...tuningOpts },
           )
         } catch (e) {
           return res.status(502).json({

@@ -4,6 +4,8 @@ import { MODELS } from './_lib/heygen.js'
 
 const ALLOWED = new Set([
   'name','heygen_group_id','elevenlabs_voice_id','voice_owner','model_version',
+  // ElevenLabs voice tuning — see migration 0024.
+  'voice_settings','voice_model_id',
   'talking_photo_id','photo_url','thumbnail_url','training_status','training_error',
   'logo_url','logo_position','logo_size_pct','caption_style','title_style',
   'default_music_url','default_volume','default_fade_secs',

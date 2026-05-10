@@ -797,6 +797,18 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
             }
           />
 
+          {/* Voice tuning — only visible once a voice is assigned. The
+              sliders + model dropdown PATCH back to avatars.voice_settings
+              and avatars.voice_model_id and feed every render. */}
+          {avatar.elevenlabs_voice_id && (
+            <AvatarVoiceTuningPanel
+              avatar={avatar}
+              session={session}
+              profileId={selectedProfileId}
+              onSave={(patch) => updateAvatar(patch)}
+            />
+          )}
+
           <button className="btn-ghost" style={{ color: 'var(--red)', width: '100%', justifyContent: 'center' }} onClick={deleteAvatar}>
             <Trash2 size={13} /> Delete avatar
           </button>
@@ -920,6 +932,261 @@ function AvatarVoiceSection({ avatar, session, profileId, onChange }) {
           onClose={() => setPickerOpen(false)}
         />
       )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Voice tuning panel — sliders for stability / similarity / style /
+// speed, a speaker-boost toggle, model dropdown, and a Preview button
+// that renders a one-line intro in the current settings so users can
+// audition before saving. Settings PATCH back to avatars.voice_settings
+// and avatars.voice_model_id and flow through every render.
+const TUNING_DEFAULTS = {
+  stability: 0.5,
+  similarity_boost: 0.85,
+  style: 0.2,
+  use_speaker_boost: true,
+  speed: 1.0,
+}
+const TUNING_MODELS = [
+  { id: 'eleven_turbo_v2_5',     label: 'Turbo v2.5',          hint: 'Fast and cheap. Good baseline.' },
+  { id: 'eleven_multilingual_v2', label: 'Multilingual v2',     hint: 'Richer emotion. Best for storytelling.' },
+  { id: 'eleven_v3',             label: 'v3 (most expressive)', hint: 'Newest. Supports inline emotion tags.' },
+]
+
+function AvatarVoiceTuningPanel({ avatar, session, profileId, onSave }) {
+  // Local draft state so sliding doesn't fire a PATCH per pixel. We
+  // commit on slider release / blur / model change. Falls back to the
+  // ElevenLabs defaults so users always have something to start from.
+  const stored = (avatar.voice_settings && typeof avatar.voice_settings === 'object') ? avatar.voice_settings : {}
+  const [draft, setDraft] = useState({ ...TUNING_DEFAULTS, ...stored })
+  const [modelId, setModelId] = useState(avatar.voice_model_id || TUNING_MODELS[0].id)
+  // Live preview text — defaults to a friendly intro using the avatar's
+  // own name so the user instantly hears how it'll sound *for this
+  // avatar*. Editable in case they want to test their own line.
+  const defaultPreviewText = `Hey, my name is ${avatar.name || 'your avatar'}. This is an example of what your voice will sound like on your avatar.`
+  const [previewText, setPreviewText] = useState(defaultPreviewText)
+  const [previewing, setPreviewing] = useState(false)
+  const [savingFlash, setSavingFlash] = useState(false)
+  const audioRef = useRef(null)
+
+  // If the avatar's name changes (rename), refresh the default preview
+  // text but only if the user hadn't customized it yet.
+  useEffect(() => {
+    setPreviewText((cur) => {
+      const prev = `Hey, my name is .*?\\. This is an example of what your voice will sound like on your avatar\\.`
+      return new RegExp(prev).test(cur) ? defaultPreviewText : cur
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [avatar.name])
+
+  // PATCH on commit. Each setting writes the full voice_settings blob
+  // so we don't end up with partial jsonb on the row.
+  const commitSettings = async (next, nextModel = modelId) => {
+    setSavingFlash(true)
+    try {
+      await onSave({ voice_settings: next, voice_model_id: nextModel || null })
+    } finally {
+      setTimeout(() => setSavingFlash(false), 600)
+    }
+  }
+  const setField = (k, v) => setDraft((d) => ({ ...d, [k]: v }))
+  const commitField = (k, v) => {
+    const next = { ...draft, [k]: v }
+    setDraft(next)
+    commitSettings(next)
+  }
+  const reset = () => {
+    setDraft({ ...TUNING_DEFAULTS })
+    setModelId(TUNING_MODELS[0].id)
+    commitSettings({ ...TUNING_DEFAULTS }, TUNING_MODELS[0].id)
+  }
+
+  const playPreview = async () => {
+    if (!session?.access_token || !avatar.elevenlabs_voice_id) return
+    if (previewing && audioRef.current) {
+      audioRef.current.pause()
+      setPreviewing(false)
+      return
+    }
+    setPreviewing(true)
+    try {
+      const r = await fetch('/api/voices/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({
+          voice_id: avatar.elevenlabs_voice_id,
+          profile_id: profileId,
+          byok: avatar.voice_owner === 'byok',
+          text: (previewText || defaultPreviewText).slice(0, 300),
+          voice_settings: draft,
+          model_id: modelId,
+        }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(body?.error || 'Preview failed')
+      const a = audioRef.current || new Audio()
+      audioRef.current = a
+      a.src = body.audio_url
+      a.onended = () => setPreviewing(false)
+      a.onerror = () => setPreviewing(false)
+      await a.play()
+    } catch (e) {
+      toast?.({ kind: 'error', message: e.message }) || alert(e.message)
+      setPreviewing(false)
+    }
+  }
+
+  return (
+    <div style={{
+      marginTop: 4, marginBottom: 14,
+      padding: 12, borderRadius: 10,
+      background: 'var(--surface)', border: '1px solid var(--border)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
+        <Mic size={12} style={{ color: 'var(--muted)', marginRight: 6 }} />
+        <label className="label" style={{ flex: 1, marginBottom: 0 }}>Voice tuning</label>
+        <span style={{
+          fontSize: 10, color: savingFlash ? '#2ecc71' : 'var(--muted)',
+          fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '0.04em',
+          transition: 'color 0.15s',
+        }}>{savingFlash ? 'SAVED' : 'AUTOSAVE'}</span>
+      </div>
+
+      <Slider
+        label="Stability"
+        hint="Lower = more variation per take. Higher = more consistent."
+        min={0} max={1} step={0.05}
+        value={draft.stability}
+        onInput={(v) => setField('stability', v)}
+        onCommit={(v) => commitField('stability', v)}
+      />
+      <Slider
+        label="Similarity"
+        hint="How tightly the model sticks to the source voice."
+        min={0} max={1} step={0.05}
+        value={draft.similarity_boost}
+        onInput={(v) => setField('similarity_boost', v)}
+        onCommit={(v) => commitField('similarity_boost', v)}
+      />
+      <Slider
+        label="Style"
+        hint="Style exaggeration. 0 = flat, 1 = theatrical."
+        min={0} max={1} step={0.05}
+        value={draft.style}
+        onInput={(v) => setField('style', v)}
+        onCommit={(v) => commitField('style', v)}
+      />
+      <Slider
+        label="Speed"
+        hint="0.7 = slow, 1.0 = natural, 1.2 = fast."
+        min={0.7} max={1.2} step={0.05}
+        value={draft.speed}
+        format={(v) => `${Number(v).toFixed(2)}×`}
+        onInput={(v) => setField('speed', v)}
+        onCommit={(v) => commitField('speed', v)}
+      />
+
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-soft)', cursor: 'pointer', marginTop: 8 }}>
+        <input
+          type="checkbox" checked={!!draft.use_speaker_boost}
+          onChange={(e) => commitField('use_speaker_boost', e.target.checked)}
+        />
+        Speaker boost
+        <span style={{ fontSize: 10.5, color: 'var(--muted)' }}>(emphasises voice character)</span>
+      </label>
+
+      <div style={{ marginTop: 12 }}>
+        <label className="label">Model</label>
+        <select
+          className="select"
+          value={modelId}
+          onChange={(e) => {
+            setModelId(e.target.value)
+            commitSettings(draft, e.target.value)
+          }}
+          style={{ width: '100%', fontSize: 12 }}
+        >
+          {TUNING_MODELS.map((m) => (
+            <option key={m.id} value={m.id}>{m.label}</option>
+          ))}
+        </select>
+        <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 4 }}>
+          {TUNING_MODELS.find((m) => m.id === modelId)?.hint}
+        </div>
+      </div>
+
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+        <label className="label">Preview script</label>
+        <textarea
+          className="textarea"
+          value={previewText}
+          onChange={(e) => setPreviewText(e.target.value)}
+          rows={2}
+          style={{ width: '100%', fontSize: 11.5, lineHeight: 1.4 }}
+          placeholder={defaultPreviewText}
+        />
+        <button
+          type="button"
+          onClick={playPreview}
+          disabled={!avatar.elevenlabs_voice_id}
+          style={{
+            marginTop: 8, width: '100%',
+            padding: '8px 12px', borderRadius: 8,
+            background: previewing ? 'var(--surface-2)' : 'linear-gradient(135deg, var(--red), var(--red-dark))',
+            color: previewing ? 'var(--text)' : '#fff',
+            border: previewing ? '1px solid var(--border)' : 'none',
+            fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 12,
+            cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+          }}
+        >
+          {previewing
+            ? <><Loader2 size={12} className="spin" /> Stop preview</>
+            : <><Play size={12} fill="currentColor" /> Preview voice</>}
+        </button>
+      </div>
+
+      <button
+        type="button" onClick={reset}
+        style={{
+          marginTop: 10, width: '100%', padding: '6px 10px', borderRadius: 8,
+          background: 'transparent', border: '1px solid var(--border)',
+          color: 'var(--muted)', fontSize: 11, cursor: 'pointer',
+          fontFamily: 'inherit',
+        }}
+      >Reset to defaults</button>
+    </div>
+  )
+}
+
+// Compact slider with header + value chip + native range input. Calls
+// onInput while dragging (cheap, local state only) and onCommit on
+// release so we don't fire a network PATCH per pixel.
+function Slider({ label, hint, min, max, step, value, onInput, onCommit, format }) {
+  const v = Number(value ?? 0)
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', marginBottom: 2 }}>
+        <span style={{ fontSize: 11.5, color: 'var(--text-soft)', fontWeight: 600, flex: 1 }}>{label}</span>
+        <span style={{
+          fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 11.5,
+          fontVariantNumeric: 'tabular-nums', color: 'var(--text)',
+          background: 'var(--surface-2)', padding: '1px 8px', borderRadius: 999,
+        }}>
+          {format ? format(v) : v.toFixed(2)}
+        </span>
+      </div>
+      <input
+        type="range"
+        min={min} max={max} step={step} value={v}
+        onChange={(e) => onInput?.(parseFloat(e.target.value))}
+        onMouseUp={(e) => onCommit?.(parseFloat(e.target.value))}
+        onTouchEnd={(e) => onCommit?.(parseFloat(e.target.value))}
+        onKeyUp={(e) => onCommit?.(parseFloat(e.target.value))}
+        style={{ width: '100%', accentColor: 'var(--red)' }}
+      />
+      {hint && <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 2 }}>{hint}</div>}
     </div>
   )
 }
