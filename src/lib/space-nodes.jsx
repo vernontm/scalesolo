@@ -3036,10 +3036,17 @@ function ZapcapTemplatePicker({ selectedId, onChange }) {
     return <div style={{ fontSize: 10.5, color: 'var(--muted)' }}>No templates returned by ZapCap.</div>
   }
 
-  // Pick the most useful preview: prefer a poster IMAGE (no playback noise),
-  // then fall back to a video URL we render *paused* with `preload=metadata`
-  // so only the first frame loads (no auto-looping wall of demo footage).
+  // Pick the most useful preview. Priority:
+  //   1. preview_gif_url from public.zapcap_template_previews — the
+  //      admin-curated caption-only GIF served from Supabase Storage.
+  //   2. ZapCap's own thumbnail / poster image.
+  //   3. ZapCap's preview video, rendered paused with preload=metadata
+  //      so only the first frame loads (no auto-looping demo wall).
   const pickPreview = (t) => {
+    if (t.preview_gif_url) {
+      const isVideo = /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(t.preview_gif_url)
+      return { kind: isVideo ? 'video' : 'image', src: t.preview_gif_url }
+    }
     const candidates = [t.thumbnailUrl, t.thumbnail, t.posterUrl, t.poster, t.previewImageUrl, t.previewImage, t.imageUrl, t.image]
     for (const c of candidates) if (c) return { kind: 'image', src: c }
     const vidCandidates = [t.previewUrl, t.preview, t.videoUrl]

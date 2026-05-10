@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { Link, Routes, Route, useNavigate } from 'react-router-dom'
-import { ShieldCheck, LayoutGrid, ArrowRight, Activity, Users, Sparkles, BookOpen } from 'lucide-react'
+import { ShieldCheck, LayoutGrid, ArrowRight, Activity, Users, Sparkles, BookOpen, Captions } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import AdminTemplates from './AdminTemplates.jsx'
 import AdminUsage from './AdminUsage.jsx'
@@ -8,6 +8,7 @@ import AdminUsers from './AdminUsers.jsx'
 import AdminAffiliates from './AdminAffiliates.jsx'
 import AdminOps from './AdminOps.jsx'
 import AdminViralLibrary from './AdminViralLibrary.jsx'
+import AdminZapcapTemplates from './AdminZapcapTemplates.jsx'
 
 // Admin home + nested admin routes. The Sidebar only shows the link to
 // admins, but we also gate at the route level so a non-admin who guesses
@@ -62,6 +63,12 @@ const cards = [
     body: 'Curate viral hooks, scripts, and formats. Every entry trains the platform across all brand profiles.',
     Icon: BookOpen,
   },
+  {
+    to: '/admin/zapcap-templates',
+    title: 'Caption templates',
+    body: 'Sync ZapCap caption styles and attach a Supabase Storage GIF to each so users see clean previews instead of demo footage.',
+    Icon: Captions,
+  },
 ]
 
 function AdminHome() {
@@ -99,6 +106,7 @@ export default function Admin() {
         <Route path="/affiliates" element={<AdminAffiliates />} />
         <Route path="/ops" element={<AdminOps />} />
         <Route path="/viral-library" element={<AdminViralLibrary />} />
+        <Route path="/zapcap-templates" element={<AdminZapcapTemplates />} />
       </Routes>
     </AdminGate>
   )
