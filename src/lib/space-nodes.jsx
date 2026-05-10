@@ -4634,6 +4634,10 @@ export const NODE_REGISTRY = {
             name: 'voice_gen.mp3',
             duration_secs: null,  // Not measured server-side; downstream estimates from duration if needed.
           },
+          // Forward the avatar config so a Voice gen → Avatar video wire
+          // is sufficient — the user doesn't have to ALSO run a second
+          // wire from Avatar straight to Avatar video.
+          avatar,
           voice_used: synthBody.voice_used || null,
           script_chars: synthBody.chars || script.length,
         }
@@ -4659,6 +4663,7 @@ export const NODE_REGISTRY = {
             name: 'voice_gen.mp3',
             duration_secs: null,
           },
+          avatar,
           voice_used: synthBody.voice_used || null,
           script_chars: synthBody.chars || script.length,
         }
@@ -4690,6 +4695,9 @@ export const NODE_REGISTRY = {
         _fp: fingerprint,
         audio_chunks,
         full_audio_url: synthBody.audio_url,
+        // Forward the avatar config so downstream Avatar video can
+        // resolve voice/owner/avatar_id without a second wire.
+        avatar,
         voice_used: synthBody.voice_used || null,
         script_chars: synthBody.chars || script.length,
         chunk_count: audio_chunks.length,
