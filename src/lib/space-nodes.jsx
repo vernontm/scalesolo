@@ -760,15 +760,75 @@ async function uploadImageToBucket(file, profileId) {
 // but blows up on multi-MB videos hitting Vercel's body cap). Going
 // straight to Supabase storage is faster and dodges that wall.
 async function uploadVideoToBucket(file, profileId) {
+  return uploadVideoWithProgress(file, profileId, null)
+}
+
+// XHR-backed video upload that fires per-byte progress callbacks. The
+// supabase-js client wraps fetch, which doesn't expose upload progress
+// events, so we bypass it and POST directly to the Storage REST API —
+// same auth, same endpoint shape, plus a working onprogress handler.
+//
+//   onProgress({ loaded, total, pct })  — fires repeatedly during upload.
+//
+// Returns the public URL on success, throws on failure. Honors AbortSignal.
+async function uploadVideoWithProgress(file, profileId, onProgress, { signal } = {}) {
   const ext = (file.name?.split('.').pop() || 'mp4').toLowerCase()
   const safeExt = ['mp4', 'mov', 'webm', 'm4v'].includes(ext) ? ext : 'mp4'
   const path = `${profileId || 'shared'}/uploads/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`
-  const { error } = await supabase.storage.from('landing-media').upload(path, file, {
-    contentType: file.type || 'video/mp4', upsert: false,
+  const bucket = 'landing-media'
+  const session = (await supabase.auth.getSession()).data.session
+  const token = session?.access_token
+  if (!token) throw new Error('Not authenticated')
+
+  // The Supabase Storage REST API. supabase-js uses the same shape under
+  // the hood; we just trade `body: file` for an XHR send so progress is
+  // observable. apikey + bearer both required for authenticated uploads.
+  const supabaseUrl = supabase.supabaseUrl || ''
+  const supabaseKey = supabase.supabaseKey || ''
+  if (!supabaseUrl) throw new Error('Supabase URL not configured')
+  const url = `${supabaseUrl}/storage/v1/object/${bucket}/${encodeURIComponent(path).replace(/%2F/g, '/')}`
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', url, true)
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+    if (supabaseKey) xhr.setRequestHeader('apikey', supabaseKey)
+    xhr.setRequestHeader('Content-Type', file.type || 'video/mp4')
+    // Match supabase-js default. upsert=true would let re-uploads
+    // overwrite; we want a fresh random path so collisions are
+    // impossible, hence false.
+    xhr.setRequestHeader('x-upsert', 'false')
+
+    xhr.upload.onprogress = (e) => {
+      if (!onProgress || !e.lengthComputable) return
+      onProgress({
+        loaded: e.loaded,
+        total: e.total,
+        pct: e.total > 0 ? Math.min(100, (e.loaded / e.total) * 100) : 0,
+      })
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        const { data } = supabase.storage.from(bucket).getPublicUrl(path)
+        resolve(data.publicUrl)
+      } else {
+        let msg = `Upload failed (${xhr.status})`
+        try {
+          const body = JSON.parse(xhr.responseText)
+          if (body?.message) msg = body.message
+          else if (body?.error) msg = body.error
+        } catch {}
+        reject(new Error(msg))
+      }
+    }
+    xhr.onerror = () => reject(new Error('Upload network error'))
+    xhr.onabort = () => reject(new Error('Upload cancelled'))
+    if (signal) {
+      if (signal.aborted) { xhr.abort(); return }
+      signal.addEventListener('abort', () => xhr.abort(), { once: true })
+    }
+    xhr.send(file)
   })
-  if (error) throw new Error(`Video upload failed: ${error.message}`)
-  const { data } = supabase.storage.from('landing-media').getPublicUrl(path)
-  return data.publicUrl
 }
 
 // Off-DOM probe: load video metadata + first frame, return
@@ -2059,6 +2119,10 @@ function ImageUploadBody({ data, onPatch }) {
   const [err, setErr] = useState(null)
   const [editingIdx, setEditingIdx] = useState(-1)
   const [draftName, setDraftName] = useState('')
+  // Per-file upload progress. Map of localId → { name, kind, size, pct,
+  // status, error }. Lives only during the active upload — cleared once
+  // all files settle so the panel disappears.
+  const [uploads, setUploads] = useState([])
   // The node's data shape used to be just images. Now it carries
   // mixed media — each item has `url`, `name` (alt tag), and `kind`
   // ('image' | 'video'). Old saved spaces have no kind field; treat
@@ -2070,33 +2134,104 @@ function ImageUploadBody({ data, onPatch }) {
     const files = Array.from(e.target.files || [])
     if (!files.length || !profileId) return
     setBusy(true); setErr(null)
-    try {
-      const next = [...items]
-      for (const f of files) {
-        const isVideo = (f.type || '').startsWith('video/') || /\.(mp4|mov|webm|m4v)$/i.test(f.name || '')
-        if (isVideo) {
-          // Vertical-only enforcement: avatar render + finish video both
-          // assume 9:16 throughout, so reject anything substantially off.
-          const meta = await probeVideoMeta(f).catch(() => null)
-          if (meta && meta.width && meta.height) {
-            const aspect = meta.width / meta.height
-            if (aspect > 0.65) {
-              throw new Error(`Vertical (9:16) video required — yours is ${meta.width}×${meta.height}. Re-export from your editor as 1080×1920.`)
-            }
+
+    // Initial upload state — one entry per file with status='queued'.
+    // We use a stable local id so updates target the right row even
+    // when files share a name.
+    const initial = files.map((f, i) => {
+      const isVideo = (f.type || '').startsWith('video/') || /\.(mp4|mov|webm|m4v)$/i.test(f.name || '')
+      return {
+        localId: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+        name: f.name,
+        size: f.size,
+        kind: isVideo ? 'video' : 'image',
+        pct: 0,
+        status: 'queued', // queued | uploading | done | failed
+        error: null,
+      }
+    })
+    setUploads(initial)
+    const updateOne = (localId, patch) => setUploads((prev) =>
+      prev.map((u) => u.localId === localId ? { ...u, ...patch } : u)
+    )
+
+    // Per-file uploader. Returns the new item record on success, throws on
+    // failure (caller catches into the row's `error` field).
+    const uploadOne = async (f, row, namedCount) => {
+      const isVideo = row.kind === 'video'
+      updateOne(row.localId, { status: 'uploading' })
+      if (isVideo) {
+        // Vertical-only enforcement before we burn bandwidth uploading.
+        const meta = await probeVideoMeta(f).catch(() => null)
+        if (meta && meta.width && meta.height) {
+          const aspect = meta.width / meta.height
+          if (aspect > 0.65) {
+            throw new Error(`Vertical (9:16) required — got ${meta.width}×${meta.height}`)
           }
-          const url = await uploadVideoToBucket(f, profileId)
-          next.push({ kind: 'video', url, name: `video ${next.filter((x) => x.kind === 'video').length + 1}` })
-        } else {
-          const u = await uploadImageToBucket(f, profileId)
-          next.push({ kind: 'image', url: u, name: `image ${next.filter((x) => x.kind !== 'video').length + 1}` })
+        }
+        const url = await uploadVideoWithProgress(f, profileId, (p) => {
+          updateOne(row.localId, { pct: p.pct })
+        })
+        updateOne(row.localId, { status: 'done', pct: 100 })
+        return { kind: 'video', url, name: `video ${namedCount.video}` }
+      } else {
+        // Images go through the JSON+base64 reference-image API. We
+        // don't get byte-level progress from that path, but image
+        // uploads are small (downscaled to JPEG) so a binary
+        // "uploading → done" is honest enough.
+        const u = await uploadImageToBucket(f, profileId)
+        updateOne(row.localId, { status: 'done', pct: 100 })
+        return { kind: 'image', url: u, name: `image ${namedCount.image}` }
+      }
+    }
+
+    // Per-kind naming counter so "video 1, video 2" doesn't repeat when
+    // we add to an existing items list. Lock this in BEFORE the parallel
+    // run so concurrent uploads don't all claim the same index.
+    const counters = {
+      video: items.filter((x) => x.kind === 'video').length,
+      image: items.filter((x) => x.kind !== 'video').length,
+    }
+    const assigned = files.map((f, i) => {
+      const row = initial[i]
+      counters[row.kind] += 1
+      return { f, row, idx: { video: counters.video, image: counters.image } }
+    })
+
+    // Concurrency 3. Higher saturates the user's upstream and starves
+    // foreground UI; lower wastes their bandwidth. 3 keeps the network
+    // pipe busy with one big video, while images interleave fast.
+    const CONCURRENCY = 3
+    const results = new Array(assigned.length)
+    let cursor = 0
+    const workers = Array.from({ length: Math.min(CONCURRENCY, assigned.length) }, async () => {
+      while (cursor < assigned.length) {
+        const i = cursor++
+        const { f, row, idx } = assigned[i]
+        try {
+          results[i] = await uploadOne(f, row, idx)
+        } catch (e) {
+          updateOne(row.localId, { status: 'failed', error: e?.message || String(e) })
+          results[i] = null
         }
       }
-      onPatch({ urls: next })
-    } catch (e) {
-      setErr(e.message)
-    } finally {
-      setBusy(false)
-      if (inpRef.current) inpRef.current.value = ''
+    })
+    await Promise.all(workers)
+
+    // Stitch successful uploads into the items list. Failures stay
+    // visible in the upload panel so the user can see what didn't make
+    // it and re-pick those files.
+    const additions = results.filter(Boolean)
+    if (additions.length) onPatch({ urls: [...items, ...additions] })
+    const anyFailed = results.some((r) => r === null)
+    if (anyFailed) setErr(`${results.filter((r) => r === null).length} file(s) failed — see panel below.`)
+
+    setBusy(false)
+    if (inpRef.current) inpRef.current.value = ''
+    // Auto-clear the progress panel a beat after success so the node
+    // shape doesn't stay tall. Failures linger so the user notices.
+    if (!anyFailed) {
+      setTimeout(() => setUploads([]), 800)
     }
   }
   function remove(idx) {
@@ -2156,6 +2291,68 @@ function ImageUploadBody({ data, onPatch }) {
                     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   }}
                 >@{it.name.replace(/\s+/g, '')}</div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {/* Per-file upload progress panel. Visible during an active
+          upload + briefly after for the success flash; lingers on
+          failures so the user can see what didn't make it. */}
+      {uploads.length > 0 && (
+        <div className="nodrag" style={{
+          marginBottom: 8, padding: 8, borderRadius: 6,
+          background: 'var(--surface-2)', border: '1px solid var(--border)',
+          display: 'flex', flexDirection: 'column', gap: 5,
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            fontSize: 10.5, fontFamily: 'var(--font-display)', fontWeight: 700,
+            letterSpacing: '0.04em', color: 'var(--muted)', textTransform: 'uppercase',
+          }}>
+            <span>Uploading {uploads.filter((u) => u.status === 'done').length} / {uploads.length}</span>
+            <span style={{ color: '#0ea5e9' }}>
+              {Math.round(uploads.reduce((s, u) => s + u.pct, 0) / uploads.length)}%
+            </span>
+          </div>
+          {uploads.map((u) => (
+            <div key={u.localId} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10.5 }}>
+                <span style={{
+                  flexShrink: 0, width: 14, height: 14, borderRadius: 999,
+                  display: 'grid', placeItems: 'center', fontSize: 9, fontWeight: 700,
+                  background: u.status === 'done' ? 'rgba(46,204,113,0.2)'
+                            : u.status === 'failed' ? 'rgba(239,68,68,0.2)'
+                            : 'rgba(14,165,233,0.2)',
+                  color: u.status === 'done' ? '#2ecc71'
+                       : u.status === 'failed' ? '#ef4444'
+                       : '#0ea5e9',
+                }}>
+                  {u.status === 'done' ? '✓' : u.status === 'failed' ? '!' : (u.kind === 'video' ? 'V' : 'I')}
+                </span>
+                <span style={{
+                  flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  color: u.status === 'failed' ? 'var(--red)' : 'var(--text-soft)',
+                }} title={u.name}>{u.name}</span>
+                <span style={{ flexShrink: 0, color: 'var(--muted)', fontVariantNumeric: 'tabular-nums', fontSize: 10 }}>
+                  {u.status === 'failed' ? 'failed'
+                    : u.status === 'done' ? 'done'
+                    : u.status === 'queued' ? '…'
+                    : `${Math.round(u.pct)}%`}
+                </span>
+              </div>
+              {u.status !== 'failed' && (
+                <div style={{ height: 3, borderRadius: 999, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+                  <div style={{
+                    height: '100%',
+                    width: `${u.status === 'done' ? 100 : u.pct}%`,
+                    background: u.status === 'done' ? '#2ecc71' : '#0ea5e9',
+                    transition: 'width 0.18s ease',
+                  }} />
+                </div>
+              )}
+              {u.status === 'failed' && u.error && (
+                <div style={{ fontSize: 9.5, color: 'var(--red)', marginLeft: 20 }}>{u.error}</div>
               )}
             </div>
           ))}
