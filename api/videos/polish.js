@@ -247,7 +247,13 @@ function probeDurationSecs(filePath) {
   })
 }
 
-function runFFmpeg(args, timeoutMs = 270_000) {
+// Tightened budget so ffmpeg + ZapCap fits comfortably under Vercel's
+// 300s gateway timeout. A 60s vertical clip with title+watermark+music
+// composites in ~20-45s; 90s gives safety margin without risking a
+// Vercel kill. Above this we return a real error the user can retry,
+// not a 502 from the gateway.
+const FFMPEG_TIMEOUT_MS = 90_000
+function runFFmpeg(args, timeoutMs = FFMPEG_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] })
     let stderr = ''
@@ -255,7 +261,7 @@ function runFFmpeg(args, timeoutMs = 270_000) {
     proc.stdout.on('data', () => {}) // drain
     const timer = setTimeout(() => {
       proc.kill('SIGKILL')
-      reject(new Error('ffmpeg timed out'))
+      reject(new Error(`ffmpeg timed out after ${Math.round(timeoutMs / 1000)}s. The source video is likely longer than 60s or has unusually heavy filtering. Try a shorter clip or fewer overlays.`))
     }, timeoutMs)
     proc.on('error', (err) => { clearTimeout(timer); reject(err) })
     proc.on('close', (code) => {
@@ -587,11 +593,14 @@ export default async function handler(req, res) {
       try {
         const zVideoId = await zapcapAddVideoByUrl(intermediateUrl, { ttl: '1d' })
         const zTaskId = await zapcapCreateTask(zVideoId, { templateId: caption_template_id, autoApprove: true })
-        // Tighter polling cadence (4s → 2.5s). ZapCap renders typically
-        // finish in 30-90s; the previous 4s window gave us 1-2 wasted
-        // poll cycles per clip on average. 2.5s is comfortably above
-        // their rate-limit threshold and saves a few seconds per clip.
-        const zResult = await zapcapPollTask(zVideoId, zTaskId, { timeoutMs: 5 * 60 * 1000, intervalMs: 2500 })
+        // ZapCap budget: 180s. With ffmpeg capped at 90s and ~30s of
+        // I/O (download / upload), this fits inside Vercel's 300s
+        // gateway timeout with breathing room. 99% of ZapCap renders
+        // for 30-60s clips finish within 90s; 180s catches the long
+        // tail. If even that fails the polish surfaces a clear error
+        // instead of a 502 from the gateway.
+        // Polling at 2.5s — well above ZapCap's rate limit.
+        const zResult = await zapcapPollTask(zVideoId, zTaskId, { timeoutMs: 180_000, intervalMs: 2500 })
         const downloadUrl = zResult.downloadUrl || zResult.video?.downloadUrl || zResult.url
         if (!downloadUrl) throw new Error('ZapCap task completed without a downloadUrl')
         finalBuf = await fetchToBuffer(downloadUrl)

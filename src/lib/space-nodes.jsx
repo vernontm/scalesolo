@@ -6074,10 +6074,12 @@ ${String(script).slice(0, 2000)}
       const total = urls.length
       let done = 0
       reportProgress?.({ message: `Polishing 0 of ${total} clips…`, done: 0, total })
-      // Polish clips are dominated by ZapCap wait time (network + their
-      // render queue), not local CPU. Bumping concurrency from 3 → 4
-      // is safe and trims wall time on N=8+ batches by ~25%.
-      const CONCURRENCY = 4
+      // Concurrency = 3. We tried 4 briefly but it nudged Vercel's
+      // 300s gateway timeout for individual polishes — concurrent
+      // calls can compete for ffmpeg CPU on the same function pool.
+      // 3 fits cleanly within budget; the per-call speedups (script
+      // bypass + tighter ZapCap poll) more than make up the wall time.
+      const CONCURRENCY = 3
       const results = new Array(total)
       const failures = []
       let cursor = 0
