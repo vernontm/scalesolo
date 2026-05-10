@@ -117,11 +117,15 @@ export default async function handler(req, res) {
     let videos = []
     if (profileIds.length) {
       const sinceClause = since ? `&created_at=gte.${encodeURIComponent(since)}` : ''
+      // NOTE the column names: avatar_renders has `final_video_url`
+      // (not `video_url`) and no `thumbnail_url`. Selecting non-existent
+      // columns makes PostgREST 400 the request, which our .catch then
+      // swallows into an empty array — silent "0 renders" bug.
       const renders = await supaFetch(
         `avatar_renders?profile_id=in.(${profileIds.map((p) => encodeURIComponent(p)).join(',')})${sinceClause}` +
-        `&select=id,profile_id,avatar_id,status,created_at,model_version,duration_secs,heygen_video_id,video_url,thumbnail_url` +
+        `&select=id,profile_id,avatar_id,status,created_at,model_version,duration_secs,heygen_video_id,final_video_url,video_units_charged` +
         `&order=created_at.desc&limit=500`
-      ).catch(() => [])
+      ).catch((e) => { console.warn('user-detail renders fetch failed:', e?.message); return [] })
 
       // Resolve avatar names in one shot.
       const avatarIds = Array.from(new Set((renders || []).map((r) => r.avatar_id).filter(Boolean)))
@@ -135,6 +139,20 @@ export default async function handler(req, res) {
 
       videos = (renders || []).map((r) => {
         const cost = renderCostByRefId.get(r.id) || { units: 0, est_usd: 0 }
+        // Belt-and-suspenders: when a render has duration_secs +
+        // model_version on the row but the consume row never recorded
+        // them in metadata (older rows), fall back to computing the
+        // HeyGen cost from the avatar_renders row directly so the
+        // dashboard never shows $0 on a real render.
+        if ((!cost.est_usd || cost.est_usd === 0) && r.duration_secs && r.model_version) {
+          const fallback = estimateCogsUsd({
+            action: 'consume:avatar-render',
+            pool_type: 'video_units',
+            delta: -(Number(r.video_units_charged) || 1),
+            metadata: { duration_secs: r.duration_secs, model_version: r.model_version },
+          })
+          if (fallback > 0) cost.est_usd = fallback
+        }
         return {
           render_id: r.id,
           status: r.status,
@@ -142,8 +160,7 @@ export default async function handler(req, res) {
           model_version: r.model_version,
           duration_secs: r.duration_secs,
           heygen_video_id: r.heygen_video_id,
-          video_url: r.video_url,
-          thumbnail_url: r.thumbnail_url,
+          video_url: r.final_video_url,
           avatar_id: r.avatar_id,
           avatar_name: avatarById.get(r.avatar_id)?.name || null,
           profile_id: r.profile_id,
