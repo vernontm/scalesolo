@@ -5339,6 +5339,21 @@ ${String(script).slice(0, 2000)}
       // Pre-recorded audio (audio file wired in) skips review by design
       // since there's nothing to synth or tune.
       if (data.props?.audio_review_enabled && script && !audio) {
+        // Idempotency for re-runs (Run All, Auto-run cadence, Run-this-
+        // node-only): if the same script already has a pending_audio
+        // from a previous run, return it verbatim instead of paying
+        // for another synth and overwriting the user's review state.
+        // The user's tuning + the audio they're listening to stay put
+        // until they explicitly click Re-synth, Approve, or Cancel.
+        const cached = data.output?.pending_audio
+        const cachedScript = data.output?.script_for_render
+        if (cached?.audio_url && cachedScript === script) {
+          return {
+            pending_audio: cached,
+            avatar_config: avatar,
+            script_for_render: script,
+          }
+        }
         const r = await fetch('/api/avatars/synth-script', {
           method: 'POST', headers,
           body: JSON.stringify({
