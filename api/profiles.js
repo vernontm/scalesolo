@@ -21,15 +21,33 @@ export default async function handler(req, res) {
     if (req.method === 'POST') {
       const body = req.body || {}
       if (!body.business_name) return res.status(400).json({ error: 'business_name required' })
+      // Whitelist what we let through on create. Mirrors PATCH so the
+      // onboarding survey can hand us a brand_bible / target_audience /
+      // tone all at once and have them stick. Anything else is dropped.
+      const ALLOWED = new Set([
+        'business_name','industry','business_type','website_url','owner_name',
+        'brand_bible','brand_bible_summary','brand_cta',
+        'brand_primary_color','brand_secondary_color','logo_url',
+        'preferred_tone','target_audience','core_hashtags',
+        'do_not_say','always_include','default_formats',
+        'timezone','synced_platforms','posting_schedule',
+        'instagram_handle','tiktok_handle','facebook_handle','threads_handle',
+        'youtube_handle','linkedin_handle','x_handle',
+        'instagram_id','tiktok_id','facebook_id','threads_id','youtube_id','linkedin_id',
+        'uploadpost_user','uploadpost_platforms',
+      ])
+      const insertRow = { is_active: true }
+      for (const [k, v] of Object.entries(body)) {
+        if (ALLOWED.has(k) && v !== undefined) insertRow[k] = v
+      }
+      // Cap brand_bible to 60k chars defensively. The column is text
+      // (no hard limit) but a runaway paste shouldn't bloat the row.
+      if (typeof insertRow.brand_bible === 'string') {
+        insertRow.brand_bible = insertRow.brand_bible.slice(0, 60000)
+      }
       const created = await supaFetch('profiles', {
         method: 'POST',
-        body: {
-          business_name: body.business_name,
-          industry: body.industry || null,
-          owner_name: body.owner_name || null,
-          brand_primary_color: body.brand_primary_color || null,
-          is_active: true,
-        },
+        body: insertRow,
       })
       const profile = Array.isArray(created) ? created[0] : created
       await supaFetch('profile_access', {
@@ -41,6 +59,14 @@ export default async function handler(req, res) {
           allowed_pages: ['*'],
         },
       })
+      // Kick off the brand-bible embedding index in the background so
+      // the AI can semantically pull the right chunk into prompts. Don't
+      // block the response — best-effort, retriable via /api/agent/index-brand-bible.
+      if (insertRow.brand_bible) {
+        indexBrandBible(profile.id, insertRow.brand_bible).catch((err) => {
+          console.warn('[profiles] new-profile brand bible index failed:', err.message)
+        })
+      }
       return res.status(201).json({ profile })
     }
 
