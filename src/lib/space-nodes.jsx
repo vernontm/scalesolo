@@ -2539,17 +2539,45 @@ function VoiceGenBody({ data, onPatch }) {
             {data.status === 'done' ? 'applies on next run' : ''}
           </span>
         </div>
-        <MiniSlider label="Stability"   min={0} max={1} step={0.05} value={draftSettings.stability}        onChange={(v) => fieldSet('stability', v)} />
-        <MiniSlider label="Similarity"  min={0} max={1} step={0.05} value={draftSettings.similarity_boost} onChange={(v) => fieldSet('similarity_boost', v)} />
-        <MiniSlider label="Style"       min={0} max={1} step={0.05} value={draftSettings.style}            onChange={(v) => fieldSet('style', v)} />
-        <MiniSlider label="Speed"       min={0.7} max={1.2} step={0.05} value={draftSettings.speed}        onChange={(v) => fieldSet('speed', v)} format={(v) => `${Number(v).toFixed(2)}×`} />
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-soft)' }}>
+        <MiniSlider
+          label="Stability" min={0} max={1} step={0.05}
+          value={draftSettings.stability}
+          onChange={(v) => fieldSet('stability', v)}
+          hint="Lower = more variation between takes (more emotion). Higher = consistent + flat. 0.3–0.5 is the natural-performance band."
+        />
+        <MiniSlider
+          label="Similarity" min={0} max={1} step={0.05}
+          value={draftSettings.similarity_boost}
+          onChange={(v) => fieldSet('similarity_boost', v)}
+          hint="How tightly the model sticks to the source voice's timbre. High = locked-in clone. Lower lets the model interpret."
+        />
+        <MiniSlider
+          label="Style" min={0} max={1} step={0.05}
+          value={draftSettings.style}
+          onChange={(v) => fieldSet('style', v)}
+          hint="Style exaggeration. 0 = flat read. 1 = theatrical. Most useful on Multilingual v2 / v3."
+        />
+        <MiniSlider
+          label="Speed" min={0.7} max={1.2} step={0.05}
+          value={draftSettings.speed}
+          onChange={(v) => fieldSet('speed', v)}
+          format={(v) => `${Number(v).toFixed(2)}×`}
+          hint="Playback speed. 0.7 = slow, 1.0 = natural, 1.2 = fast. Outside this range distorts."
+        />
+        <label
+          title="Emphasises the speaker's voice character. Slightly higher latency. Default on."
+          style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-soft)' }}
+        >
           <input
             type="checkbox" className="nodrag"
             checked={!!draftSettings.use_speaker_boost}
             onChange={(e) => fieldSet('use_speaker_boost', e.target.checked)}
           /> Speaker boost
+          <span style={{ fontSize: 9.5, color: 'var(--muted)', marginLeft: 'auto' }}>
+            emphasises voice character
+          </span>
         </label>
+
         <label style={{ fontSize: 10, color: 'var(--muted)' }}>
           Model
           <select className="nodrag" value={draftModel} onChange={(e) => setDraftModel(e.target.value)} style={{ ...tinyInput, fontSize: 11, marginTop: 2 }}>
@@ -2557,7 +2585,13 @@ function VoiceGenBody({ data, onPatch }) {
             <option value="eleven_multilingual_v2">Multilingual v2 (3× tokens)</option>
             <option value="eleven_v3">v3 (5× tokens, expression tags)</option>
           </select>
+          <div style={{ fontSize: 9.5, color: 'var(--muted)', marginTop: 2, lineHeight: 1.35 }}>
+            {draftModel === 'eleven_turbo_v2_5' && 'Fast and cheap. Good baseline for short-form social.'}
+            {draftModel === 'eleven_multilingual_v2' && 'Richer emotion + better non-English. Best for storytelling.'}
+            {draftModel === 'eleven_v3' && 'Most expressive. Script generator adds inline emotion tags ([sighs], [whispers]) when this is selected.'}
+          </div>
         </label>
+
         <label style={{ fontSize: 10, color: 'var(--muted)' }}>
           Language
           <select className="nodrag" value={draftLanguage} onChange={(e) => setDraftLanguage(e.target.value)} style={{ ...tinyInput, fontSize: 11, marginTop: 2 }}>
@@ -2570,6 +2604,9 @@ function VoiceGenBody({ data, onPatch }) {
             <option value="ko">Korean</option><option value="hi">Hindi</option>
             <option value="ar">Arabic</option>
           </select>
+          <div style={{ fontSize: 9.5, color: 'var(--muted)', marginTop: 2, lineHeight: 1.35 }}>
+            Pinned per render so the voice doesn't drift mid-script (multilingual models auto-detect by default and can flip languages on numbers / brand names).
+          </div>
         </label>
       </div>
 
@@ -2625,8 +2662,10 @@ function VoiceGenBody({ data, onPatch }) {
 }
 
 // Compact slider used inside the review panel (the avatar editor uses
-// its own bigger slider). Format opt formats the value chip.
-function MiniSlider({ label, min, max, step, value, onChange, format }) {
+// its own bigger slider). Format opt formats the value chip; optional
+// hint renders as a one-line description below the slider so users
+// understand what each knob actually does without hovering.
+function MiniSlider({ label, min, max, step, value, onChange, format, hint }) {
   const v = Number(value ?? 0)
   return (
     <label style={{ display: 'block', fontSize: 10.5, color: 'var(--muted)' }}>
@@ -2640,8 +2679,13 @@ function MiniSlider({ label, min, max, step, value, onChange, format }) {
         type="range" className="nodrag"
         min={min} max={max} step={step} value={v}
         onChange={(e) => onChange(parseFloat(e.target.value))}
-        style={{ width: '100%', accentColor: '#f59e0b' }}
+        style={{ width: '100%', accentColor: '#22d3ee' }}
       />
+      {hint && (
+        <div style={{ fontSize: 9.5, color: 'var(--muted)', marginTop: 2, lineHeight: 1.35 }}>
+          {hint}
+        </div>
+      )}
     </label>
   )
 }
