@@ -383,6 +383,37 @@ function pickFirstVideoUrl(arr) {
   return null
 }
 
+// Collects EVERY video URL from the upstream bag, deduped, in encounter
+// order. Used by Finish video to fan out across a Collection or a
+// multi-clip avatar_render output. Same shape coverage as
+// pickFirstVideoUrl — just exhaustive instead of first-match.
+function pickAllVideoUrls(arr) {
+  const seen = new Set()
+  const out = []
+  const push = (u) => { if (u && !seen.has(u)) { seen.add(u); out.push(u) } }
+  for (const v of asArr(arr)) {
+    if (!v || typeof v !== 'object') continue
+    if (v.video?.video_url) push(v.video.video_url)
+    if (v.video_url) push(v.video_url)
+    if (Array.isArray(v.videos)) {
+      for (const c of v.videos) {
+        if (c?.video_url) push(c.video_url)
+        else if (c?.url && /\.(mp4|mov|webm|m4v)(\?|#|$)/i.test(c.url)) push(c.url)
+      }
+    }
+    if (Array.isArray(v.images)) {
+      for (const c of v.images) {
+        const u = c?.url || (typeof c === 'string' ? c : null)
+        if (u && /\.(mp4|mov|webm|m4v)(\?|#|$)/i.test(u)) push(u)
+      }
+    }
+    if (Array.isArray(v.items)) {
+      for (const it of v.items) if (it?.kind === 'video' && it.url) push(it.url)
+    }
+  }
+  return out
+}
+
 function pickImageUrls(v) {
   const out = []
   for (const x of asArr(v)) {
@@ -5773,13 +5804,14 @@ ${String(script).slice(0, 2000)}
           else if (v.url && /\.(mp3|wav|m4a|aac)(\?|$)/i.test(v.url)) musicUrl = v.url
         }
       }
-      // Shared helper picks first video from any upstream shape — handles
-      // single render output, randomize videos[] arrays, combine_videos
-      // playlist fallback, and collection items[] grids.
-      const videoUrl = pickFirstVideoUrl(arr)
-      if (!videoUrl) {
-        // Tell the user what they DID wire in so they can fix it.
-        // Common confusion: voice_gen output is audio, not video.
+      // Collect EVERY video URL from upstream — supports a Collection
+      // wired in as well as multi-clip avatar_render randomize output.
+      // Single-video case (one URL) preserves the existing flat output
+      // shape so downstream nodes (schedule_post, captions, etc.) keep
+      // working without changes. Multi-video case fans out and emits
+      // a videos[] array.
+      const urls = pickAllVideoUrls(arr)
+      if (urls.length === 0) {
         const shapes = arr.map((v) => {
           if (!v || typeof v !== 'object') return typeof v
           if (v.audio?.url) return 'audio'
@@ -5796,87 +5828,123 @@ ${String(script).slice(0, 2000)}
         )
       }
 
-      // Resolve the title:
-      // 1. If title_mode === 'auto' → call /api/videos/auto-title to
-      //    transcribe + generate. The optional title_topic prop steers
-      //    the angle. Falls back to upstream/manual on failure so a
-      //    hiccup in STT/Claude doesn't kill the render.
-      // 2. Otherwise prefer an upstream caption_gen title, then the
-      //    manually-typed prop.
-      let resolvedTitle = ''
-      if (p.title_enabled !== false) {
-        if ((p.title_mode || 'auto') === 'auto') {
-          reportProgress?.({ message: 'Transcribing for auto-title…' })
-          try {
-            const ar = await fetch('/api/videos/auto-title', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
-              body: JSON.stringify({
-                profile_id: ctx.profileId,
-                video_url: videoUrl,
-                topic: (p.title_topic || '').trim() || undefined,
-              }),
-            })
-            const ab = await ar.json().catch(() => ({}))
-            if (ar.ok && ab?.title) resolvedTitle = ab.title
-          } catch (e) {
-            // fall through to manual / upstream below
-            console.warn('auto-title failed, falling back —', e?.message || e)
+      // Per-video work: resolve title (with auto-title transcribe when
+      // mode=auto) then call /api/videos/polish. Extracted so we can
+      // call it once (single video) or N times in parallel.
+      const polishOne = async (videoUrl, idx, total) => {
+        const tag = total > 1 ? ` (clip ${idx + 1}/${total})` : ''
+        let resolvedTitle = ''
+        if (p.title_enabled !== false) {
+          if ((p.title_mode || 'auto') === 'auto') {
+            try {
+              reportProgress?.({ message: `Transcribing for auto-title${tag}…`, done: idx, total })
+              const ar = await fetch('/api/videos/auto-title', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
+                body: JSON.stringify({
+                  profile_id: ctx.profileId,
+                  video_url: videoUrl,
+                  topic: (p.title_topic || '').trim() || undefined,
+                }),
+              })
+              const ab = await ar.json().catch(() => ({}))
+              if (ar.ok && ab?.title) resolvedTitle = ab.title
+            } catch (e) {
+              console.warn('auto-title failed, falling back —', e?.message || e)
+            }
+            if (!resolvedTitle) resolvedTitle = upstreamTitle || (p.title || '').trim()
+          } else {
+            resolvedTitle = upstreamTitle || (p.title || '').trim()
           }
-          if (!resolvedTitle) resolvedTitle = upstreamTitle || (p.title || '').trim()
-        } else {
-          resolvedTitle = upstreamTitle || (p.title || '').trim()
+        }
+        const titleOn = (p.title_enabled !== false) && !!resolvedTitle
+
+        reportProgress?.({ message: `Compositing${tag}…`, done: idx, total })
+        const r = await fetch('/api/videos/polish', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
+          body: JSON.stringify({
+            profile_id: ctx.profileId,
+            video_url: videoUrl,
+            logo_url: logoUrl || undefined,
+            watermark_image_url: p.watermark_image_url || undefined,
+            music_url: musicUrl || undefined,
+            title: titleOn ? resolvedTitle : undefined,
+            title_style: titleOn ? {
+              font: p.title_font, color: p.title_color, bg_color: p.title_bg_color,
+              size: p.title_size, bg_padding: p.title_bg_padding, y_pos: p.title_y_pos,
+              uppercase: p.title_uppercase,
+            } : undefined,
+            captions_enabled: p.captions_enabled !== false,
+            caption_template_id: p.caption_template_id || undefined,
+            caption_language:    p.caption_language    || undefined,
+            watermark_position: p.watermark_position || 'br',
+            watermark_size_pct: p.watermark_size_pct ?? 25,
+            music_volume: p.music_volume ?? 0.15,
+            music_fade_secs: p.music_fade_secs ?? 1.0,
+          }),
+        })
+        const body = await r.json().catch(() => ({}))
+        if (!r.ok || !body?.video_url) {
+          const msg = body?.error || `Polish failed (${r.status})`
+          const detail = body?.ffmpeg_error ? `\n\nffmpeg: ${body.ffmpeg_error}` : ''
+          throw new Error(msg + detail)
+        }
+        return { video_url: body.video_url, title: titleOn ? resolvedTitle : undefined, source_url: videoUrl }
+      }
+
+      // Single-video → flat output shape (unchanged).
+      if (urls.length === 1) {
+        const out = await polishOne(urls[0], 0, 1)
+        return {
+          video: { video_url: out.video_url },
+          video_url: out.video_url,
+          media_type: 'video',
+          title: out.title,
+          polished: true,
         }
       }
-      const titleOn = (p.title_enabled !== false) && !!resolvedTitle
 
-      reportProgress?.({ message: 'Compositing overlays + music…' })
-      const r = await fetch('/api/videos/polish', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
-        body: JSON.stringify({
-          profile_id: ctx.profileId,
-          video_url: videoUrl,
-          logo_url: logoUrl || undefined,
-          watermark_image_url: p.watermark_image_url || undefined,
-          music_url: musicUrl || undefined,
-          // Title overlay
-          title: titleOn ? resolvedTitle : undefined,
-          title_style: titleOn ? {
-            font: p.title_font, color: p.title_color, bg_color: p.title_bg_color,
-            size: p.title_size, bg_padding: p.title_bg_padding, y_pos: p.title_y_pos,
-            uppercase: p.title_uppercase,
-          } : undefined,
-          // Finish Video now owns the ZapCap caption pass directly — the
-          // legacy captions node was hidden when finish_video shipped, so
-          // burn-in only happens if we forward these flags.
-          captions_enabled: p.captions_enabled !== false,
-          caption_template_id: p.caption_template_id || undefined,
-          caption_language:    p.caption_language    || undefined,
-          // Logo / watermark
-          watermark_position: p.watermark_position || 'br',
-          watermark_size_pct: p.watermark_size_pct ?? 25,
-          // Music
-          music_volume: p.music_volume ?? 0.15,
-          music_fade_secs: p.music_fade_secs ?? 1.0,
-        }),
+      // Multi-video → fan out. Limit concurrency to 3 so we don't blow
+      // through ffmpeg compute time / Vercel concurrency. A single
+      // polish takes ~30-60s; 3 in parallel keeps total wall clock
+      // reasonable on a list of 10 without overwhelming the platform.
+      const total = urls.length
+      let done = 0
+      reportProgress?.({ message: `Polishing 0 of ${total} clips…`, done: 0, total })
+      const CONCURRENCY = 3
+      const results = new Array(total)
+      const failures = []
+      let cursor = 0
+      const workers = Array.from({ length: Math.min(CONCURRENCY, total) }, async () => {
+        while (cursor < total) {
+          const i = cursor++
+          try {
+            results[i] = await polishOne(urls[i], i, total)
+          } catch (e) {
+            failures.push({ clip_index: i, source_url: urls[i], error: e?.message || String(e) })
+          } finally {
+            done += 1
+            reportProgress?.({ message: `Polished ${done} of ${total} clips`, done, total })
+          }
+        }
       })
-      const body = await r.json().catch(() => ({}))
-      if (!r.ok || !body?.video_url) {
-        // Surface ffmpeg detail when present so the user can see which
-        // overlay/filter blew up (font path, overlay coords, etc.).
-        const msg = body?.error || `Polish failed (${r.status})`
-        const detail = body?.ffmpeg_error ? `\n\nffmpeg: ${body.ffmpeg_error}` : ''
-        throw new Error(msg + detail)
+      await Promise.all(workers)
+      const polished = results.filter(Boolean).map((r, i) => ({
+        video_url: r.video_url,
+        title: r.title,
+        source_url: r.source_url,
+        order: i,
+      }))
+      if (!polished.length) {
+        throw new Error(`All ${total} clips failed. First error: ${failures[0]?.error || 'unknown'}`)
       }
       return {
-        video: { video_url: body.video_url },
-        video_url: body.video_url,
+        videos: polished,
         media_type: 'video',
-        // Surface the title so downstream nodes (schedule_post, save_library)
-        // can show / use the auto-generated title without re-transcribing.
-        title: titleOn ? resolvedTitle : undefined,
+        is_clip_set: true,
         polished: true,
+        ...(failures.length ? { partial_failures: failures } : {}),
       }
     },
   },
@@ -5977,10 +6045,12 @@ ${String(script).slice(0, 2000)}
           }
         }
       }
-      // Use the shared video-shape resolver: handles single render output,
-      // randomize videos[] arrays, combine_videos playlist fallback, and
-      // collection items[] grids in one place.
-      const videoUrl = pickFirstVideoUrl(arr)
+      // Multi-video support: gather every video URL upstream so we can
+      // fan out one scheduled post per clip when polish (or any other
+      // node) emits a videos[] array. Single-video case behaves
+      // exactly as before.
+      const allVideoUrls = pickAllVideoUrls(arr)
+      const videoUrl = allVideoUrls[0] || pickFirstVideoUrl(arr) || null
 
       const platforms = Array.isArray(data.props?.platforms) ? data.props.platforms : []
       if (!platforms.length) throw new Error('Pick at least one platform.')
@@ -6060,48 +6130,81 @@ ${String(script).slice(0, 2000)}
         || (caption ? String(caption).split(/[.!?\n]/)[0].trim().slice(0, 90) : '')
         || 'Untitled')
 
-      const r = await fetch('/api/social/upload-post', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
-        body: JSON.stringify({
-          profile_id: ctx.profileId,
-          // upload_post_user omitted — server derives it from profile_id.
+      // Per-clip submit. Same payload shape as before; just pulled out
+      // so we can call it once (single video / image bundle) or N
+      // times (multi-clip polish output, randomize avatar render, etc).
+      const submitOne = async (singleVideoUrl) => {
+        const r = await fetch('/api/social/upload-post', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
+          body: JSON.stringify({
+            profile_id: ctx.profileId,
+            platforms,
+            video_url: singleVideoUrl || undefined,
+            photo_urls: !singleVideoUrl && photoUrls.length ? photoUrls : undefined,
+            description,
+            title: resolvedTitle,
+            caption: caption || null,
+            hashtags: hashtags || null,
+            script: script || null,
+            first_comment: firstComment || (data._ctxBrandCTA || '').trim() || hashtags || null,
+            // For multi-clip fan-out, ALWAYS use auto so each post lands
+            // in the next open slot of the brand's posting schedule.
+            // Sequential submits cascade: each call sees the previous
+            // post's reservation and books the slot after it.
+            scheduling_mode: allVideoUrls.length > 1 ? 'auto' : schedulingMode,
+            scheduled_iso: allVideoUrls.length > 1 ? null : scheduledIso,
+            timezone: data.props?.timezone || undefined,
+          }),
+        })
+        const body = await r.json().catch(() => ({}))
+        if (!r.ok) throw new Error(body?.error || `Upload-Post failed (${r.status})`)
+        return {
+          request_id: body?.request_id || null,
+          scheduled_iso: body?.scheduled_iso || scheduledIso,
+          source_url: singleVideoUrl,
+        }
+      }
+
+      // Single video / image bundle → existing flat output shape.
+      if (allVideoUrls.length <= 1) {
+        const out = await submitOne(videoUrl)
+        return {
+          request_id: out.request_id,
           platforms,
-          video_url: videoUrl || undefined,
-          photo_urls: !videoUrl && photoUrls.length ? photoUrls : undefined,
-          // Description is what Upload-Post actually publishes on each
-          // platform — it concatenates caption + hashtags. We still send
-          // it for Upload-Post compatibility, BUT we also pass the
-          // distinct fields below so the persistence layer can write them
-          // into their own columns instead of dumping everything into
-          // full_script.
-          description,
-          // YouTube REQUIRES a title. Always send something.
-          title: resolvedTitle,
-          // Distinct copy fields so /api/social/upload-post can persist
-          // them into content_scripts.{caption, hashtags, first_comment,
-          // full_script} instead of mashing them all into full_script.
-          caption: caption || null,
-          hashtags: hashtags || null,
-          script: script || null,
-          // Prefer the AI-generated first_comment from caption_gen, fall
-          // back to the brand profile's CTA (so every post gets a
-          // consistent call-to-action), then to hashtags as a last resort.
-          first_comment: firstComment || (data._ctxBrandCTA || '').trim() || hashtags || null,
+          scheduled_iso: out.scheduled_iso,
           scheduling_mode: schedulingMode,
-          scheduled_iso: scheduledIso,
-          timezone: data.props?.timezone || undefined,
-        }),
-      })
-      const body = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(body?.error || `Upload-Post failed (${r.status})`)
+          kind: detectedKind,
+          submitted: true,
+        }
+      }
+
+      // Multi-clip fan-out: schedule each clip into the next open slot
+      // of the profile's posting schedule. Sequential so each submit
+      // sees the prior reservation. Force scheduling_mode='auto' even
+      // if the user picked 'now' or a fixed date — fan-out only makes
+      // sense with auto-scheduling.
+      const submitted = []
+      const failures = []
+      for (let i = 0; i < allVideoUrls.length; i++) {
+        try {
+          const out = await submitOne(allVideoUrls[i])
+          submitted.push({ ...out, order: i })
+        } catch (e) {
+          failures.push({ clip_index: i, source_url: allVideoUrls[i], error: e?.message || String(e) })
+        }
+      }
+      if (!submitted.length) {
+        throw new Error(`All ${allVideoUrls.length} posts failed. First error: ${failures[0]?.error || 'unknown'}`)
+      }
       return {
-        request_id: body?.request_id || null,
+        submissions: submitted,
         platforms,
-        scheduled_iso: body?.scheduled_iso || scheduledIso,
-        scheduling_mode: schedulingMode,
+        scheduling_mode: 'auto',
         kind: detectedKind,
         submitted: true,
+        clip_count: submitted.length,
+        ...(failures.length ? { partial_failures: failures } : {}),
       }
     },
   },
