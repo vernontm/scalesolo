@@ -20,7 +20,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Upload, Loader2, Sparkles, CalendarClock, Send, Download, Trash2,
-  Check, X, AlertCircle, Image as ImageIcon, Video as VideoIcon, ChevronDown,
+  Check, X, AlertCircle, Image as ImageIcon, Video as VideoIcon, ChevronDown, Zap,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase.js'
 import { toast, confirmDialog } from './Toast.jsx'
@@ -219,6 +219,21 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   const [busyAction, setBusyAction] = useState(null) // 'captions' | 'schedule' | 'publish'
   const [uploads, setUploads] = useState([]) // {id, name, kind, progress, error?}
   const [previewItem, setPreviewItem] = useState(null) // { url, type, title } for fullscreen media preview
+  // When ON, every uploaded file fans out into:
+  //   1. POST /api/content/bulk-actions?action=generate-captions  → fills title/caption/hashtags/first_comment
+  //   2. POST /api/content/bulk-actions?action=auto-schedule       → assigns the next open slot from the profile's posting schedule
+  // The toggle is sticky per browser via localStorage so the preference
+  // matches what the user expects on every visit.
+  const [autoProcess, setAutoProcess] = useState(() => {
+    try { return localStorage.getItem('scalesolo:bulk:autoProcess') !== 'off' } catch { return true }
+  })
+  const setAutoProcessSticky = (v) => {
+    setAutoProcess(v)
+    try { localStorage.setItem('scalesolo:bulk:autoProcess', v ? 'on' : 'off') } catch {}
+  }
+  // Tracks "we're running the auto-pipeline right now" so the toolbar
+  // shows the right status banner instead of a silent spinner.
+  const [autoStage, setAutoStage] = useState(null) // null | 'captions' | 'schedule'
   const dropRef = useRef(null)
   const fileRef = useRef(null)
 
@@ -255,6 +270,11 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     }))
     setUploads((u) => [...u, ...queue])
 
+    // Collect IDs of newly-created content_scripts rows so we can hand
+    // them to the auto-process pipeline below. Failed uploads aren't in
+    // here; they show as red rows in the upload list and the user can
+    // retry manually.
+    const createdIds = []
     for (const job of queue) {
       try {
         setUploads((u) => u.map((x) => x.id === job.id ? { ...x, progress: 30 } : x))
@@ -274,6 +294,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         })
         const body = await r.json()
         if (!r.ok) throw new Error(body?.error || `Create row failed (${r.status})`)
+        if (body?.item?.id) createdIds.push(body.item.id)
         setUploads((u) => u.map((x) => x.id === job.id ? { ...x, progress: 100 } : x))
         // Drop completed entries after a brief beat.
         setTimeout(() => setUploads((u) => u.filter((x) => x.id !== job.id)), 800)
@@ -283,6 +304,64 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     }
     refresh()
     onChange?.()
+
+    // Auto-pipeline: caption + auto-schedule the rows we just created.
+    // Both endpoints already exist and gate on credits; we just chain
+    // them and surface a single toast when the whole run finishes.
+    if (autoProcess && createdIds.length > 0) {
+      await runAutoPipeline(createdIds)
+    }
+  }
+
+  // Two-step background pipeline triggered after a bulk upload:
+  //   1. generate-captions → Claude reads each row's media + brand bible,
+  //      writes title/caption/hashtags/first_comment, flips status to
+  //      caption_ready.
+  //   2. auto-schedule → walks the profile's posting_schedule and
+  //      assigns the next open slot to each new row, status=scheduled.
+  // Both run server-side, so the user gets a coffee while it works.
+  const runAutoPipeline = async (ids) => {
+    try {
+      setAutoStage('captions')
+      const c = await fetch(`/api/content/bulk-actions?action=generate-captions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ profile_id: profileId, script_ids: ids }),
+      })
+      const cb = await c.json().catch(() => ({}))
+      if (!c.ok) {
+        if (c.status === 402) {
+          toast({ kind: 'error', message: 'Auto-caption skipped: not enough AI credits. Add credits, then click Generate Captions.' })
+        } else {
+          toast({ kind: 'error', message: `Auto-caption failed: ${cb?.error || c.status}. Rows are saved as drafts.` })
+        }
+        return
+      }
+      setAutoStage('schedule')
+      const s = await fetch(`/api/content/bulk-actions?action=auto-schedule`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ profile_id: profileId, script_ids: ids }),
+      })
+      const sb = await s.json().catch(() => ({}))
+      if (!s.ok) {
+        toast({ kind: 'error', message: `Auto-schedule failed: ${sb?.error || s.status}. Rows are caption-ready; click Auto Schedule to retry.` })
+        return
+      }
+      const captioned = cb.updated ?? ids.length
+      const scheduled = sb.scheduled ?? 0
+      const skipped = sb.skipped ?? 0
+      toast({
+        kind: 'success',
+        message: `Auto-processed ${ids.length}: ${captioned} captioned, ${scheduled} scheduled${skipped ? `, ${skipped} skipped (no open slots — set a posting schedule on the profile)` : ''}.`,
+      })
+    } catch (e) {
+      toast({ kind: 'error', message: `Auto-process failed: ${e.message}` })
+    } finally {
+      setAutoStage(null)
+      refresh()
+      onChange?.()
+    }
   }
 
   // ── drag/drop wiring ──────────────────────────────────────────────────────
@@ -456,13 +535,48 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           color: '#fff', display: 'grid', placeItems: 'center', flexShrink: 0,
         }}><VideoIcon size={22} /></div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15, marginBottom: 2 }}>
-            Bulk Media Upload
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15 }}>
+              Bulk Media Upload
+            </div>
+            {autoProcess && (
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                padding: '2px 8px', borderRadius: 999,
+                background: 'rgba(46,204,113,0.16)', color: '#2ecc71',
+                fontSize: 10.5, fontFamily: 'var(--font-display)', fontWeight: 700,
+                letterSpacing: '0.04em',
+              }}>
+                <Zap size={10} /> AUTOPILOT ON
+              </span>
+            )}
           </div>
           <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.45 }}>
-            Drag &amp; drop videos or images here. Each upload becomes a draft row below — title, caption, hashtags &amp; first comment auto-generate from your brand bible when you click <strong>Generate Captions</strong>.
+            {autoProcess
+              ? <>Drag &amp; drop videos or images. Captions, hashtags, titles &amp; first comments are written automatically from your brand bible, then each post is slotted into the next open time on your <strong>posting schedule</strong>.</>
+              : <>Drag &amp; drop videos or images. Rows save as drafts — click <strong>Generate Captions</strong> and <strong>Auto Schedule</strong> when ready.</>
+            }
           </div>
         </div>
+        <label
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            fontSize: 11.5, color: 'var(--text-soft)',
+            cursor: 'pointer', userSelect: 'none',
+            padding: '6px 10px', borderRadius: 8,
+            background: 'var(--surface-2)', border: '1px solid var(--border)',
+          }}
+          title="Toggle automatic caption + scheduling on uploads"
+        >
+          <input
+            type="checkbox"
+            checked={autoProcess}
+            onChange={(e) => setAutoProcessSticky(e.target.checked)}
+            style={{ accentColor: '#2ecc71' }}
+          />
+          Autopilot
+        </label>
         <button
           className="btn-secondary"
           onClick={(e) => { e.stopPropagation(); fileRef.current?.click() }}
@@ -477,6 +591,23 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           onChange={(e) => { onFiles(e.target.files); e.target.value = '' }}
         />
       </div>
+
+      {/* Autopilot status — fires while the bulk-actions endpoints run
+          server-side. Hidden when idle. */}
+      {autoStage && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          padding: '10px 14px', borderRadius: 10, marginBottom: 14,
+          background: 'rgba(46,204,113,0.08)',
+          border: '1px solid rgba(46,204,113,0.30)',
+          fontSize: 12.5, color: 'var(--text-soft)',
+        }}>
+          <Loader2 size={14} className="spin" style={{ color: '#2ecc71' }} />
+          <strong style={{ color: 'var(--text)' }}>Autopilot:</strong>
+          {autoStage === 'captions' && 'writing captions, hashtags & first comments…'}
+          {autoStage === 'schedule' && 'slotting posts into your schedule…'}
+        </div>
+      )}
 
       {/* Active uploads */}
       {uploads.length > 0 && (
