@@ -11,9 +11,18 @@
 // Saves are inline (PATCH on blur) so the workflow is "click cell, paste,
 // tab away" — no save button to forget.
 
-import { useEffect, useState } from 'react'
-import { Captions, Loader2, RefreshCw, Eye, EyeOff, Trash2, AlertCircle, Check } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Captions, Loader2, RefreshCw, Eye, EyeOff, Trash2, AlertCircle, Check, Upload } from 'lucide-react'
 import { supabase } from '../lib/supabase.js'
+
+// Bucket + folder for the curated caption-style preview assets. The
+// public bucket is already in use across the app for logos / bulk
+// uploads, so we slot zapcap previews under a dedicated subfolder
+// (no need for a new bucket + RLS rollout).
+const PREVIEW_BUCKET = 'landing-media'
+const PREVIEW_FOLDER = 'zapcap-templates'
+const ACCEPT_EXTS = ['gif', 'mp4', 'webm', 'mov', 'm4v', 'png', 'jpg', 'jpeg', 'webp']
+const ACCEPT_MIME = 'image/gif,image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime'
 
 async function authedFetch(path, init = {}) {
   const sess = (await supabase.auth.getSession()).data.session
@@ -107,7 +116,7 @@ export default function AdminZapcapTemplates() {
         <div style={{ flex: 1 }}>
           <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22 }}>ZapCap caption templates</div>
           <div style={{ fontSize: 13, color: 'var(--text-soft)', marginTop: 2 }}>
-            Sync IDs and titles from ZapCap. Drop a Supabase Storage GIF in the Preview column; users see it in the captions picker instead of ZapCap's demo footage.
+            Sync IDs and titles from ZapCap, then <strong>drop a GIF straight onto the Preview cell</strong> — it auto-uploads to Supabase Storage. Users see your curated previews in the captions picker instead of ZapCap's demo footage.
           </div>
         </div>
         <button
@@ -172,7 +181,10 @@ export default function AdminZapcapTemplates() {
                 {rows.map((r) => (
                   <tr key={r.template_id} style={{ borderTop: '1px solid var(--border)' }}>
                     <td style={{ padding: 8 }}>
-                      <PreviewCell url={r.preview_gif_url} />
+                      <PreviewCell
+                        row={r}
+                        onUploaded={(url) => patch(r.template_id, { preview_gif_url: url })}
+                      />
                     </td>
                     <td style={{ padding: 8 }}>
                       <InlineInput
@@ -238,26 +250,111 @@ export default function AdminZapcapTemplates() {
   )
 }
 
-function PreviewCell({ url }) {
-  if (!url) {
-    return (
-      <div style={{
-        width: 64, height: 64, borderRadius: 6,
-        background: 'var(--surface-2)', border: '1px dashed var(--border)',
-        display: 'grid', placeItems: 'center', color: 'var(--muted)', fontSize: 10,
-      }}>none</div>
-    )
+// Drag-and-drop preview cell. Accepts a GIF / MP4 / image, uploads to
+// landing-media/zapcap-templates/{template_id}.{ext}, then PATCHes the
+// row to point at the new public URL. Click to open the file picker;
+// drop a file to upload directly. Shows the current preview when one
+// is set, with a hover overlay offering replace/remove.
+function PreviewCell({ row, onUploaded }) {
+  const fileRef = useRef(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+  const [dragging, setDragging] = useState(false)
+
+  const isVideo = row?.preview_gif_url ? /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(row.preview_gif_url) : false
+
+  const handleFile = async (file) => {
+    if (!file) return
+    setErr(null)
+    // Type guard.
+    const ext = (file.name.split('.').pop() || '').toLowerCase()
+    if (!ACCEPT_EXTS.includes(ext)) {
+      setErr(`${ext || 'file'} not supported. Use GIF, MP4, WebM, PNG, JPG, or WebP.`)
+      return
+    }
+    if (file.size > 25 * 1024 * 1024) {
+      setErr(`File too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Cap is 25MB.`)
+      return
+    }
+    setBusy(true)
+    try {
+      // Stable path keyed on template_id so re-uploads overwrite the
+      // previous preview cleanly. cache-bust via the timestamp query
+      // string — Storage's CDN otherwise serves the old asset.
+      const path = `${PREVIEW_FOLDER}/${row.template_id}.${ext}`
+      const { error: upErr } = await supabase.storage.from(PREVIEW_BUCKET).upload(path, file, {
+        contentType: file.type || undefined,
+        upsert: true,
+      })
+      if (upErr) throw new Error(upErr.message)
+      const { data } = supabase.storage.from(PREVIEW_BUCKET).getPublicUrl(path)
+      const finalUrl = `${data.publicUrl}?v=${Date.now()}`
+      await onUploaded(finalUrl)
+    } catch (e) {
+      setErr(e.message)
+    } finally {
+      setBusy(false)
+    }
   }
-  const isVideo = /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(url)
+
+  const onDrop = (e) => {
+    e.preventDefault()
+    setDragging(false)
+    const f = e.dataTransfer?.files?.[0]
+    if (f) handleFile(f)
+  }
+  const onDragOver = (e) => { e.preventDefault(); setDragging(true) }
+  const onDragLeave = () => setDragging(false)
+
+  const cellStyle = {
+    width: 80, height: 80, borderRadius: 8,
+    border: dragging
+      ? '2px dashed var(--red)'
+      : (row?.preview_gif_url ? '1px solid var(--border)' : '1px dashed var(--border)'),
+    background: row?.preview_gif_url ? '#000' : 'var(--surface-2)',
+    overflow: 'hidden', position: 'relative',
+    cursor: busy ? 'wait' : 'pointer',
+    transition: 'border-color 0.12s, background 0.12s',
+  }
+
   return (
-    <div style={{
-      width: 64, height: 64, borderRadius: 6,
-      background: '#000', border: '1px solid var(--border)', overflow: 'hidden',
-    }}>
-      {isVideo
-        ? <video src={url} muted loop autoPlay playsInline style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-        : <img src={url} alt="preview" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-      }
+    <div>
+      <div
+        onClick={() => !busy && fileRef.current?.click()}
+        onDrop={onDrop}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        title={row?.preview_gif_url ? 'Click or drop a file to replace' : 'Click or drop a file to upload'}
+        style={cellStyle}
+      >
+        {busy ? (
+          <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,0.55)', color: '#fff', zIndex: 2 }}>
+            <Loader2 size={16} className="spin" />
+          </div>
+        ) : null}
+        {row?.preview_gif_url ? (
+          isVideo
+            ? <video src={row.preview_gif_url} muted loop autoPlay playsInline style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+            : <img src={row.preview_gif_url} alt="preview" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+        ) : (
+          <div style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center', color: 'var(--muted)', fontSize: 10, textAlign: 'center', padding: 6, lineHeight: 1.3 }}>
+            <div>
+              <Upload size={14} style={{ display: 'block', margin: '0 auto 4px', opacity: 0.7 }} />
+              Drop GIF
+            </div>
+          </div>
+        )}
+        <input
+          ref={fileRef}
+          type="file"
+          accept={ACCEPT_MIME}
+          style={{ display: 'none' }}
+          onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) handleFile(f) }}
+        />
+      </div>
+      {err && (
+        <div style={{ fontSize: 10, color: 'var(--red)', marginTop: 4, maxWidth: 200 }}>{err}</div>
+      )}
     </div>
   )
 }

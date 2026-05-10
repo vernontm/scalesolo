@@ -528,69 +528,90 @@ function probeVideoMeta(file) {
 
 // ─── 1. TEXT INPUT ──────────────────────────────────────────────────────────
 function TextInputBody({ data, onPatch }) {
-  // Scroll + selection inside React Flow nodes only works if the input
-  // opts out of pan + wheel-zoom. `nodrag` keeps highlighting and
-  // cursor-positioning intact when you click-drag inside the textarea.
-  // `nowheel` lets you scroll long content without zooming the canvas.
-  // `resize: vertical` lets users grow the box inline; the expand
-  // button below opens a fullscreen editor for serious writing.
-  const [expanded, setExpanded] = useState(false)
   const value = data.props?.text || ''
   const charCount = value.length
   return (
     <>
-      <div style={{ position: 'relative' }}>
-        <textarea
-          className="nodrag nowheel"
-          style={{
-            ...tinyInput,
-            minHeight: 110, maxHeight: 260,
-            resize: 'vertical', fontFamily: 'inherit',
-            paddingRight: 30,                // breathing room for the expand button
-          }}
-          placeholder='Try "Happy dog with sunglasses and floating ring"'
-          value={value}
-          onChange={(e) => onPatch({ text: e.target.value })}
-        />
-        <button
-          type="button"
-          className="nodrag"
-          onClick={(e) => { e.stopPropagation(); setExpanded(true) }}
-          title="Expand editor"
-          aria-label="Expand text editor"
-          style={{
-            position: 'absolute', top: 4, right: 4,
-            padding: 4, borderRadius: 6,
-            background: 'rgba(0,0,0,0.5)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            color: 'var(--text-soft)', cursor: 'pointer',
-            display: 'inline-flex',
-          }}
-        >
-          <Maximize2 size={11} />
-        </button>
-      </div>
+      <ExpandableTextarea
+        value={value}
+        onChange={(v) => onPatch({ text: v })}
+        placeholder='Try "Happy dog with sunglasses and floating ring"'
+        minHeight={110}
+        title="Text editor"
+      />
       {charCount > 0 && (
         <div style={{ fontSize: 9.5, color: 'var(--muted)', marginTop: 4, textAlign: 'right' }}>
           {charCount.toLocaleString()} chars
         </div>
       )}
       <NodePreview status={data.status} output={data.output} error={data.error} />
-      {expanded && (
-        <ExpandedTextEditor
-          value={value}
-          onCommit={(next) => { onPatch({ text: next }); setExpanded(false) }}
-          onClose={() => setExpanded(false)}
-        />
-      )}
     </>
   )
 }
 
-// Fullscreen text editor for the Text node. Opens above the canvas
-// (z-index well above React Flow), portals to the body so node
+// Reusable: textarea + corner expand button + fullscreen editor modal.
+// Drop in anywhere inside a node body that has a meaningful text field
+// (caption, first comment, transcript, etc.) so the user can pop out
+// to a real editor instead of squinting at a 70px-tall box.
+//   - `nodrag nowheel` so highlighting / inner scroll work in React Flow.
+//   - `resize: vertical` for inline grow.
+//   - `onChange` fires on every keystroke so parent state stays in sync;
+//     modal Save commits on click and closes.
+function ExpandableTextarea({
+  value, onChange, placeholder, minHeight = 70, maxHeight = 260,
+  title = 'Text editor', onClick,
+}) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <div style={{ position: 'relative' }}>
+      <textarea
+        className="nodrag nowheel"
+        style={{
+          ...tinyInput,
+          minHeight, maxHeight,
+          resize: 'vertical', fontFamily: 'inherit',
+          paddingRight: 30,
+          width: '100%',
+        }}
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => { e.stopPropagation(); onChange(e.target.value) }}
+        onClick={onClick}
+      />
+      <button
+        type="button"
+        className="nodrag"
+        onClick={(e) => { e.stopPropagation(); setExpanded(true) }}
+        title="Expand editor"
+        aria-label="Expand text editor"
+        style={{
+          position: 'absolute', top: 4, right: 4,
+          padding: 4, borderRadius: 6,
+          background: 'rgba(0,0,0,0.5)',
+          border: '1px solid rgba(255,255,255,0.08)',
+          color: 'var(--text-soft)', cursor: 'pointer',
+          display: 'inline-flex',
+        }}
+      >
+        <Maximize2 size={11} />
+      </button>
+      {expanded && (
+        <ExpandedTextEditor
+          title={title}
+          value={value}
+          onCommit={(next) => { onChange(next); setExpanded(false) }}
+          onClose={() => setExpanded(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+// Fullscreen text editor used by ExpandableTextarea (Text node body,
+// CaptionGen caption + first-comment fields, etc.). Opens above the
+// canvas (z-index well above React Flow), portals to the body so node
 // transforms don't clip it, captures Esc, and commits on Save.
-function ExpandedTextEditor({ value, onCommit, onClose }) {
+function ExpandedTextEditor({ value, onCommit, onClose, title = 'Text editor' }) {
   const [draft, setDraft] = useState(value || '')
   const taRef = useRef(null)
   useEffect(() => {
@@ -638,7 +659,7 @@ function ExpandedTextEditor({ value, onCommit, onClose }) {
         }}>
           <Type size={16} style={{ color: 'var(--text-soft)' }} />
           <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14, flex: 1 }}>
-            Text editor
+            {title}
           </div>
           <div style={{ fontSize: 11, color: 'var(--muted)' }}>
             {draft.length.toLocaleString()} chars · ⌘↵ to save
@@ -879,13 +900,13 @@ function CaptionGenBody({ data, onPatch }) {
             />
           </NodeField>
           <NodeField label="Caption">
-            <textarea
-              className="nodrag nowheel"
-              style={{ ...tinyInput, minHeight: 70, resize: 'vertical', fontFamily: 'inherit' }}
+            <ExpandableTextarea
               value={caption}
-              onChange={(e) => { e.stopPropagation(); onPatch({ edited_caption: e.target.value }) }}
-              onClick={(e) => e.stopPropagation()}
+              onChange={(v) => onPatch({ edited_caption: v })}
               placeholder="Caption"
+              minHeight={70}
+              title="Caption"
+              onClick={(e) => e.stopPropagation()}
             />
           </NodeField>
           <NodeField label="Hashtags">
@@ -899,13 +920,13 @@ function CaptionGenBody({ data, onPatch }) {
             />
           </NodeField>
           <NodeField label="First comment">
-            <textarea
-              className="nodrag nowheel"
-              style={{ ...tinyInput, minHeight: 50, resize: 'vertical', fontFamily: 'inherit' }}
+            <ExpandableTextarea
               value={firstComment}
-              onChange={(e) => { e.stopPropagation(); onPatch({ edited_first_comment: e.target.value }) }}
-              onClick={(e) => e.stopPropagation()}
+              onChange={(v) => onPatch({ edited_first_comment: v })}
               placeholder="Engagement question or value-add — lands as the first reply on the post."
+              minHeight={50}
+              title="First comment"
+              onClick={(e) => e.stopPropagation()}
             />
           </NodeField>
           <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 4, lineHeight: 1.4 }}>
