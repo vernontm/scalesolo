@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Plus, Building2, Edit3, Trash2, X, Save, Sparkles, Check, Crown,
   Upload, ClipboardCopy, MessageSquare, Wand2, Loader2, ChevronRight,
+  CircleDashed, CheckCircle2, Mic, Calendar, Share2, Palette, ChevronDown,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
@@ -69,6 +70,60 @@ function initialsOf(name) {
   return (name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((s) => s[0]?.toUpperCase()).join('') || '?'
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Section schema. Each section reports completion via a fn that takes the
+// current form. The sidebar uses these to show "X of Y" + a green check
+// when fully filled. Order = display order in the rail.
+// ────────────────────────────────────────────────────────────────────────────
+const SECTIONS = [
+  {
+    id: 'identity',
+    label: 'Identity',
+    icon: Building2,
+    description: "The basics. Name, what you do, where you live online.",
+    isComplete: (f) => !!(f.business_name && f.industry && f.website_url),
+    completionFields: ['business_name', 'industry', 'website_url'],
+  },
+  {
+    id: 'brand',
+    label: 'Brand',
+    icon: Palette,
+    description: 'Colors, logo. How posts look when ScaleSolo composes them.',
+    isComplete: (f) => !!(f.brand_primary_color && f.logo_url),
+    completionFields: ['brand_primary_color', 'logo_url'],
+  },
+  {
+    id: 'voice',
+    label: 'Voice',
+    icon: Mic,
+    description: 'How posts sound. The bible feeds every script and caption.',
+    isComplete: (f) => !!(f.preferred_tone && f.target_audience && (f.brand_bible || '').length > 200),
+    completionFields: ['preferred_tone', 'target_audience', 'brand_bible'],
+  },
+  {
+    id: 'training',
+    label: 'Voice training',
+    icon: Sparkles,
+    description: 'Reference scripts, hooks, and rules. The AI learns from this.',
+    isComplete: () => true,                  // optional power-user section
+    requiresSavedProfile: true,
+  },
+  {
+    id: 'schedule',
+    label: 'Schedule',
+    icon: Calendar,
+    description: "When auto-runs are allowed to publish. Skip if you don't auto-post.",
+    isComplete: (f) => !!(f.timezone && Array.isArray(f.posting_schedule?.times) && f.posting_schedule.times.length > 0),
+  },
+  {
+    id: 'handles',
+    label: 'Social handles',
+    icon: Share2,
+    description: "Where you post. Used for @mentions, hashtags, and links.",
+    isComplete: (f) => !!(f.instagram_handle || f.tiktok_handle || f.youtube_handle || f.linkedin_handle || f.threads_handle || f.x_handle),
+  },
+]
+
 function ProfileEditor({ profile, onClose, onSaved }) {
   const { session } = useAuth()
   const isNew = !profile?.id
@@ -76,11 +131,10 @@ function ProfileEditor({ profile, onClose, onSaved }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [helper, setHelper] = useState(null)  // 'paste' | 'prompt' | 'interview' | null
+  const [activeSection, setActiveSection] = useState('identity')
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
 
-  // Merge a parsed-fields object from any of the three helpers into the
-  // current form. Empty/null values from the helper don't overwrite.
   const mergeFields = (fields) => {
     if (!fields || typeof fields !== 'object') return
     setForm((f) => {
@@ -96,14 +150,22 @@ function ProfileEditor({ profile, onClose, onSaved }) {
     setHelper(null)
   }
 
+  // Overall completion across required-ish sections (excludes optional
+  // training section). Used for the title-bar progress bar.
+  const completion = useMemo(() => {
+    const required = SECTIONS.filter((s) => s.id !== 'training')
+    const done = required.filter((s) => s.isComplete(form)).length
+    return { done, total: required.length, pct: Math.round((done / required.length) * 100) }
+  }, [form])
+
   const save = async () => {
     if (!form.business_name?.trim()) {
       setError('Business name is required.')
+      setActiveSection('identity')
       return
     }
     setBusy(true); setError(null)
     try {
-      // Strip context-side helpers + read-only columns before sending.
       const STRIP = new Set([
         '_role', '_allowed_pages', 'role', 'allowed_pages',
         'created_at', 'updated_at',
@@ -121,224 +183,99 @@ function ProfileEditor({ profile, onClose, onSaved }) {
     finally { setBusy(false) }
   }
 
-  // Portal the modal to document.body so it can't be clipped or constrained
-  // by any ancestor (overflow, transform, contain, backdrop-filter, etc.).
+  const sectionsForRender = SECTIONS.filter((s) => !s.requiresSavedProfile || profile?.id)
+  const activeMeta = sectionsForRender.find((s) => s.id === activeSection) || sectionsForRender[0]
+
   return createPortal((
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-card modal-card-xl" onClick={(e) => e.stopPropagation()} style={{ minHeight: '60vh' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, flex: 1 }}>
-            {isNew ? 'Create a brand profile' : 'Edit brand profile'}
-          </h3>
-          <button aria-label="Close" onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6, borderRadius: 6 }}><X size={20} /></button>
-        </div>
+      <div
+        className="modal-card modal-card-xl"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          padding: 0,
+          width: 'min(1080px, calc(100vw - 32px))',
+          height: 'min(820px, calc(100vh - 32px))',
+          display: 'flex', flexDirection: 'column',
+          overflow: 'hidden',
+        }}
+      >
+        {/* Title bar with brand preview + progress bar. */}
+        <EditorTitleBar
+          form={form}
+          isNew={isNew}
+          completion={completion}
+          onClose={onClose}
+        />
 
-        {/* Bible-import shortcuts. All three feed back into the same form
-            via mergeFields() so users can review before saving. */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>
-          <button type="button" className="btn-ghost" onClick={() => setHelper('paste')} style={{ fontSize: 12 }}>
-            <Upload size={13} /> Import bible (paste)
-          </button>
-          <button type="button" className="btn-ghost" onClick={() => setHelper('prompt')} style={{ fontSize: 12 }}>
-            <ClipboardCopy size={13} /> Get extraction prompt
-          </button>
-          <button type="button" className="btn-ghost" onClick={() => setHelper('interview')} style={{ fontSize: 12 }}>
-            <MessageSquare size={13} /> Brand interview
-          </button>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-          <Field label="Business name" required>
-            <input className="input" value={form.business_name} onChange={(e) => set('business_name', e.target.value)} placeholder="ScaleSolo" autoFocus />
-          </Field>
-          <Field label="Industry">
-            <input className="input" value={form.industry || ''} onChange={(e) => set('industry', e.target.value)} placeholder="Coaching, e-commerce, etc." />
-          </Field>
-          <Field label="Business type">
-            <select className="select" value={form.business_type || ''} onChange={(e) => set('business_type', e.target.value)}>
-              <option value="">Choose…</option>
-              <option value="creator">Creator</option>
-              <option value="coach">Coach</option>
-              <option value="consultant">Consultant</option>
-              <option value="ecommerce">E-commerce</option>
-              <option value="freelancer">Freelancer</option>
-              <option value="other">Other</option>
-            </select>
-          </Field>
-          <Field label="Website">
-            <input className="input" value={form.website_url || ''} onChange={(e) => set('website_url', e.target.value)} placeholder="https://yourbrand.com" />
-          </Field>
-          <Field label="Preferred tone">
-            <input className="input" value={form.preferred_tone || ''} onChange={(e) => set('preferred_tone', e.target.value)} placeholder="Direct, candid, action-oriented" />
-          </Field>
-          <Field label="Target audience">
-            <input className="input" value={form.target_audience || ''} onChange={(e) => set('target_audience', e.target.value)} placeholder="Solopreneurs scaling past $10k/mo" />
-          </Field>
-          <Field label="Brand primary color">
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <input type="color" value={form.brand_primary_color || '#ef4444'} onChange={(e) => set('brand_primary_color', e.target.value)} style={{ width: 44, height: 40, border: '1px solid var(--border)', borderRadius: 8, background: 'transparent', padding: 0, cursor: 'pointer' }} />
-              <input className="input" value={form.brand_primary_color || ''} onChange={(e) => set('brand_primary_color', e.target.value)} placeholder="#ef4444" />
-            </div>
-          </Field>
-          <Field label="Brand secondary color">
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <input
-                type="color"
-                value={form.brand_secondary_color || '#b91c1c'}
-                onChange={(e) => set('brand_secondary_color', e.target.value)}
-                style={{ width: 44, height: 40, border: '1px solid var(--border)', borderRadius: 8, background: 'transparent', padding: 0, cursor: 'pointer' }}
-              />
-              <input
-                className="input"
-                value={form.brand_secondary_color || ''}
-                onChange={(e) => set('brand_secondary_color', e.target.value)}
-                placeholder="#b91c1c"
-              />
-            </div>
-          </Field>
-          <Field label="Brand logo">
-            <LogoUpload
-              value={form.logo_url || ''}
-              profileId={profile?.id}
-              onChange={(url) => set('logo_url', url)}
-            />
-          </Field>
-        </div>
-
-        <div style={{ marginTop: 14 }}>
-          <Field label={
-            <span style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'space-between', width: '100%' }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                Brand bible
-                <span className="pill pill-muted" style={{ marginLeft: 6 }}><Sparkles size={10} /> Embedded for AI CEO</span>
-              </span>
-              <label
-                className="btn-secondary"
-                style={{ fontSize: 11.5, padding: '4px 10px', cursor: 'pointer' }}
-                title="Upload a .txt or .md file to fill this field"
-              >
-                Upload file
-                <input
-                  type="file"
-                  accept=".txt,.md,text/plain,text/markdown"
-                  style={{ display: 'none' }}
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0]
-                    if (!file) return
-                    if (file.size > 1_000_000) {
-                      alert('File too large. Max 1MB. For PDFs/DOCX, paste the text instead.')
-                      e.target.value = ''
-                      return
-                    }
-                    try {
-                      const text = await file.text()
-                      const existing = form.brand_bible || ''
-                      const next = existing.trim() ? `${existing}\n\n${text}` : text
-                      set('brand_bible', next)
-                    } catch (err) {
-                      alert('Could not read file: ' + (err?.message || err))
-                    } finally {
-                      e.target.value = ''
-                    }
-                  }}
-                />
-              </label>
-            </span>
-          }>
-            <textarea
-              className="textarea"
-              style={{ minHeight: 260, width: '100%' }}
-              value={form.brand_bible || ''}
-              onChange={(e) => set('brand_bible', e.target.value)}
-              placeholder={`Voice: direct, candid, never preachy.\nAudience: solopreneurs scaling past $10k/mo.\nOffer: AI-native operating system.\nDo-not-say: "synergy", "leverage" as a verb.\nSignature phrases: "ship it", "10x the brand".`}
-            />
-          </Field>
-        </div>
-
-        <div style={{ marginTop: 14 }}>
-          <Field label={
-            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              Brand call-to-action
-              <span className="pill pill-muted" style={{ marginLeft: 6 }}>Auto-fills first comment on posts</span>
-            </span>
-          }>
-            <textarea
-              className="textarea"
-              style={{ minHeight: 70, width: '100%' }}
-              value={form.brand_cta || ''}
-              onChange={(e) => set('brand_cta', e.target.value)}
-              placeholder={`e.g. Free workflow library → scalesolo.ai/free`}
-            />
-          </Field>
-        </div>
-
-        {/* Voice training — paste reference scripts + opener hooks +
-            hard rules per profile. Generation pulls the liked items as
-            few-shot examples. The whole section is opt-in (collapsed
-            initially) so existing profiles aren't overwhelmed. */}
-        {profile?.id && (
-          <div style={{ marginTop: 14 }}>
-            <VoiceTrainingSection
-              profileId={profile.id}
-              session={session}
-              doNotSay={Array.isArray(form.do_not_say) ? form.do_not_say : []}
-              alwaysInclude={Array.isArray(form.always_include) ? form.always_include : []}
-              onRulesChange={(key, arr) => set(key, arr)}
-            />
-          </div>
-        )}
-
-        {/* Auto-learned voice summary — written by the daily distill cron
-            from like/dislike feedback, editable here so users keep
-            direct control if the auto-distillation drifts. */}
-        {profile?.id && (
-          <div style={{ marginTop: 14 }}>
-            <VoiceSummaryCard profileId={profile.id} session={session} />
-          </div>
-        )}
-
-        <div style={{ marginTop: 14 }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>
-            Posting schedule
-          </div>
-          <PostingScheduleEditor
-            timezone={form.timezone}
-            onTimezoneChange={(tz) => set('timezone', tz)}
-            synced={Array.isArray(form.synced_platforms) ? form.synced_platforms : []}
-            onSyncedChange={(arr) => set('synced_platforms', arr)}
-            schedule={form.posting_schedule || { days: [1,2,3,4,5], times: ['09:00','14:00'] }}
-            onScheduleChange={(s) => set('posting_schedule', s)}
+        {/* Two-column layout: rail + content. The rail collapses to a
+            scrollable horizontal tab bar under 720px. */}
+        <div className="profile-editor-body" style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+          <SectionRail
+            sections={sectionsForRender}
+            active={activeSection}
+            form={form}
+            onChange={setActiveSection}
           />
-        </div>
 
-        <div style={{ marginTop: 14 }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>
-            Social handles (without @)
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+            <div style={{
+              flex: 1, overflowY: 'auto',
+              padding: '24px 28px 8px',
+            }}>
+              <SectionHeader meta={activeMeta} setHelper={setHelper} />
+
+              {activeSection === 'identity' && (
+                <IdentitySection form={form} set={set} />
+              )}
+              {activeSection === 'brand' && (
+                <BrandSection form={form} set={set} profile={profile} />
+              )}
+              {activeSection === 'voice' && (
+                <VoiceSection form={form} set={set} setHelper={setHelper} />
+              )}
+              {activeSection === 'training' && profile?.id && (
+                <TrainingSection
+                  profile={profile}
+                  session={session}
+                  form={form}
+                  set={set}
+                />
+              )}
+              {activeSection === 'schedule' && (
+                <PostingScheduleEditor
+                  timezone={form.timezone}
+                  onTimezoneChange={(tz) => set('timezone', tz)}
+                  synced={Array.isArray(form.synced_platforms) ? form.synced_platforms : []}
+                  onSyncedChange={(arr) => set('synced_platforms', arr)}
+                  schedule={form.posting_schedule || { days: [1,2,3,4,5], times: ['09:00','14:00'] }}
+                  onScheduleChange={(s) => set('posting_schedule', s)}
+                />
+              )}
+              {activeSection === 'handles' && (
+                <HandlesSection form={form} set={set} />
+              )}
+            </div>
+
+            {/* Sticky footer keeps Save in view as the user scrolls. */}
+            <div style={editorFooter}>
+              {error && (
+                <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, flex: 1, marginRight: 12 }}>
+                  {error}
+                </div>
+              )}
+              <div style={{ flex: error ? 0 : 1, fontSize: 11.5, color: 'var(--muted)' }}>
+                {!error && (isNew
+                  ? 'Required: business name. Everything else can be filled in over time.'
+                  : <>Last saved {profile?.updated_at ? new Date(profile.updated_at).toLocaleDateString() : '—'}</>
+                )}
+              </div>
+              <button className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
+              <button className="btn-primary" onClick={save} disabled={busy}>
+                {busy ? <Loader2 size={14} className="spin" /> : <Save size={14} />}
+                {isNew ? 'Create profile' : 'Save changes'}
+              </button>
+            </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
-            {[
-              ['instagram_handle', 'Instagram'],
-              ['tiktok_handle',    'TikTok'],
-              ['youtube_handle',   'YouTube'],
-              ['linkedin_handle',  'LinkedIn'],
-              ['threads_handle',   'Threads'],
-              ['x_handle',         'X / Twitter'],
-            ].map(([key, label]) => (
-              <Field key={key} label={label}>
-                <input className="input" value={form[key] || ''} onChange={(e) => set(key, e.target.value)} placeholder="handle" />
-              </Field>
-            ))}
-          </div>
-        </div>
-
-        {error && <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '10px 14px', borderRadius: 10, fontSize: 13, marginTop: 14 }}>{error}</div>}
-
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 22 }}>
-          <button className="btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" onClick={save} disabled={busy}>
-            {busy ? <span className="spinner" /> : <Save size={14} />}
-            {isNew ? 'Create profile' : 'Save changes'}
-          </button>
         </div>
       </div>
 
@@ -364,6 +301,413 @@ function ProfileEditor({ profile, onClose, onSaved }) {
       )}
     </div>
   ), document.body)
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Title bar — brand chip preview + progress bar + close.
+// ────────────────────────────────────────────────────────────────────────────
+function EditorTitleBar({ form, isNew, completion, onClose }) {
+  const gradient = form.brand_primary_color
+    ? `linear-gradient(135deg, ${form.brand_primary_color}, ${form.brand_secondary_color || form.brand_primary_color})`
+    : null
+  return (
+    <div style={{
+      padding: '18px 24px 14px',
+      borderBottom: '1px solid var(--border)',
+      background: 'linear-gradient(180deg, var(--surface-2), var(--surface))',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+        <div style={initialsStyle(gradient)}>
+          {form.logo_url
+            ? <img src={form.logo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 12 }} />
+            : initialsOf(form.business_name || (isNew ? '+' : '?'))
+          }
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 18,
+            color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
+            {form.business_name || (isNew ? 'Create a brand profile' : 'Untitled brand')}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
+            <div style={{ flex: 1, maxWidth: 280, height: 5, background: 'var(--surface-2)', borderRadius: 999, overflow: 'hidden' }}>
+              <div style={{
+                width: `${completion.pct}%`, height: '100%',
+                background: completion.pct === 100 ? '#2ecc71' : 'linear-gradient(90deg, var(--red), var(--red-dark))',
+                transition: 'width 0.25s var(--ease)',
+              }} />
+            </div>
+            <div style={{ fontSize: 11.5, color: 'var(--muted)', fontFamily: 'var(--font-display)', fontWeight: 700 }}>
+              {completion.done} of {completion.total} sections complete
+            </div>
+          </div>
+        </div>
+        <button aria-label="Close" onClick={onClose}
+          style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 8, borderRadius: 8 }}>
+          <X size={18} />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Section rail — vertical at ≥720px, horizontal scroll-tabs below.
+// ────────────────────────────────────────────────────────────────────────────
+function SectionRail({ sections, active, form, onChange }) {
+  return (
+    <nav className="profile-editor-rail" style={railStyle}>
+      {sections.map((s) => {
+        const Icon = s.icon
+        const isActive = s.id === active
+        const done = s.isComplete(form)
+        return (
+          <button
+            key={s.id}
+            type="button"
+            onClick={() => onChange(s.id)}
+            style={railItem(isActive)}
+          >
+            <div style={{ display: 'grid', placeItems: 'center', width: 28, height: 28, borderRadius: 8, background: isActive ? 'rgba(239,68,68,0.16)' : 'transparent', color: isActive ? 'var(--red)' : 'var(--muted)', flexShrink: 0 }}>
+              <Icon size={15} strokeWidth={2.2} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13.5, color: isActive ? 'var(--text)' : 'var(--text-soft)' }}>
+                {s.label}
+              </div>
+            </div>
+            {done
+              ? <CheckCircle2 size={14} style={{ color: '#2ecc71', flexShrink: 0 }} />
+              : <CircleDashed size={14} style={{ color: 'var(--muted)', flexShrink: 0 }} />}
+          </button>
+        )
+      })}
+    </nav>
+  )
+}
+
+// Section header inside the right pane: name, description, optional
+// import-shortcuts dropdown (only on the Voice section).
+function SectionHeader({ meta, setHelper }) {
+  if (!meta) return null
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 20, color: 'var(--text)', letterSpacing: '-0.01em' }}>
+          {meta.label}
+        </div>
+        <div style={{ flex: 1 }} />
+        {meta.id === 'voice' && <ImportShortcuts setHelper={setHelper} />}
+      </div>
+      {meta.description && (
+        <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 4, lineHeight: 1.5 }}>
+          {meta.description}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Lightweight dropdown that lives in the Voice section header. Hides
+// the bible-import shortcuts away from users who don't need them while
+// keeping them one click away.
+function ImportShortcuts({ setHelper }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [open])
+  const pick = (kind) => { setOpen(false); setHelper(kind) }
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button type="button" onClick={() => setOpen((v) => !v)} style={importBtn}>
+        <Wand2 size={13} /> Import bible <ChevronDown size={12} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+      </button>
+      {open && (
+        <div style={importMenu}>
+          <button type="button" onClick={() => pick('paste')} style={importItem}>
+            <Upload size={13} />
+            <div>
+              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13 }}>Paste your bible</div>
+              <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 2 }}>Drop in a doc, AI extracts every field.</div>
+            </div>
+          </button>
+          <button type="button" onClick={() => pick('prompt')} style={importItem}>
+            <ClipboardCopy size={13} />
+            <div>
+              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13 }}>Get extraction prompt</div>
+              <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 2 }}>Run it elsewhere, paste the JSON back.</div>
+            </div>
+          </button>
+          <button type="button" onClick={() => pick('interview')} style={importItem}>
+            <MessageSquare size={13} />
+            <div>
+              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13 }}>Brand interview</div>
+              <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 2 }}>8 short questions. We build it for you.</div>
+            </div>
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Per-section bodies. Each takes form + setter and renders only its own
+// fields. Keeps the parent ProfileEditor declarative.
+// ────────────────────────────────────────────────────────────────────────────
+function IdentitySection({ form, set }) {
+  return (
+    <div style={twoColGrid}>
+      <Field label="Business name" required>
+        <input className="input" value={form.business_name} onChange={(e) => set('business_name', e.target.value)} placeholder="ScaleSolo" autoFocus />
+      </Field>
+      <Field label="Website">
+        <input className="input" value={form.website_url || ''} onChange={(e) => set('website_url', e.target.value)} placeholder="https://yourbrand.com" />
+      </Field>
+      <Field label="Industry">
+        <input className="input" value={form.industry || ''} onChange={(e) => set('industry', e.target.value)} placeholder="Coaching, e-commerce, agency…" />
+      </Field>
+      <Field label="Business type">
+        <select className="select" value={form.business_type || ''} onChange={(e) => set('business_type', e.target.value)}>
+          <option value="">Choose…</option>
+          <option value="creator">Creator</option>
+          <option value="coach">Coach</option>
+          <option value="consultant">Consultant</option>
+          <option value="ecommerce">E-commerce</option>
+          <option value="freelancer">Freelancer</option>
+          <option value="other">Other</option>
+        </select>
+      </Field>
+    </div>
+  )
+}
+
+function BrandSection({ form, set, profile }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <Field label="Brand logo">
+        <LogoUpload
+          value={form.logo_url || ''}
+          profileId={profile?.id}
+          onChange={(url) => set('logo_url', url)}
+        />
+      </Field>
+      <div style={twoColGrid}>
+        <Field label="Primary color">
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input type="color" value={form.brand_primary_color || '#ef4444'} onChange={(e) => set('brand_primary_color', e.target.value)} style={swatchStyle} />
+            <input className="input" value={form.brand_primary_color || ''} onChange={(e) => set('brand_primary_color', e.target.value)} placeholder="#ef4444" />
+          </div>
+        </Field>
+        <Field label="Secondary color">
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input type="color" value={form.brand_secondary_color || '#b91c1c'} onChange={(e) => set('brand_secondary_color', e.target.value)} style={swatchStyle} />
+            <input className="input" value={form.brand_secondary_color || ''} onChange={(e) => set('brand_secondary_color', e.target.value)} placeholder="#b91c1c" />
+          </div>
+        </Field>
+      </div>
+    </div>
+  )
+}
+
+function VoiceSection({ form, set, setHelper }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div style={twoColGrid}>
+        <Field label="Tone">
+          <input className="input" value={form.preferred_tone || ''} onChange={(e) => set('preferred_tone', e.target.value)} placeholder="Direct, candid, action-oriented" />
+        </Field>
+        <Field label="Target audience">
+          <input className="input" value={form.target_audience || ''} onChange={(e) => set('target_audience', e.target.value)} placeholder="Solopreneurs scaling past $10k/mo" />
+        </Field>
+      </div>
+
+      <Field label={
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'space-between', width: '100%' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            Brand bible
+            <span className="pill pill-muted" style={{ marginLeft: 6 }}><Sparkles size={10} /> Embedded into every script</span>
+          </span>
+          <label style={{ fontSize: 11.5, padding: '4px 10px', cursor: 'pointer', borderRadius: 6, border: '1px solid var(--border)', color: 'var(--text-soft)' }} title="Upload a .txt or .md file">
+            <Upload size={11} style={{ marginRight: 4, verticalAlign: '-1px' }} /> Upload .txt/.md
+            <input
+              type="file"
+              accept=".txt,.md,text/plain,text/markdown"
+              style={{ display: 'none' }}
+              onChange={async (e) => {
+                const file = e.target.files?.[0]
+                if (!file) return
+                if (file.size > 1_000_000) {
+                  alert('File too large. Max 1MB. For PDFs/DOCX, use the Import bible button above.')
+                  e.target.value = ''
+                  return
+                }
+                try {
+                  const text = await file.text()
+                  const existing = form.brand_bible || ''
+                  const next = existing.trim() ? `${existing}\n\n${text}` : text
+                  set('brand_bible', next)
+                } catch (err) {
+                  alert('Could not read file: ' + (err?.message || err))
+                } finally {
+                  e.target.value = ''
+                }
+              }}
+            />
+          </label>
+        </span>
+      }>
+        <textarea
+          className="textarea"
+          style={{ minHeight: 220, width: '100%' }}
+          value={form.brand_bible || ''}
+          onChange={(e) => set('brand_bible', e.target.value)}
+          placeholder={`Voice: direct, candid, never preachy.\nAudience: solopreneurs scaling past $10k/mo.\nOffer: AI-native operating system.\nDo-not-say: "synergy", "leverage" as a verb.\nSignature phrases: "ship it", "10x the brand".`}
+        />
+        <div style={{ marginTop: 4, fontSize: 11.5, color: 'var(--muted)' }}>
+          {(form.brand_bible || '').length.toLocaleString()} chars · 200+ recommended
+        </div>
+      </Field>
+
+      <Field label={
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          Default call-to-action
+          <span className="pill pill-muted" style={{ marginLeft: 6 }}>Auto-fills first comment</span>
+        </span>
+      }>
+        <textarea
+          className="textarea"
+          style={{ minHeight: 60, width: '100%' }}
+          value={form.brand_cta || ''}
+          onChange={(e) => set('brand_cta', e.target.value)}
+          placeholder="e.g. Free workflow library → scalesolo.ai/free"
+        />
+      </Field>
+    </div>
+  )
+}
+
+function TrainingSection({ profile, session, form, set }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <VoiceTrainingSection
+        profileId={profile.id}
+        session={session}
+        doNotSay={Array.isArray(form.do_not_say) ? form.do_not_say : []}
+        alwaysInclude={Array.isArray(form.always_include) ? form.always_include : []}
+        onRulesChange={(key, arr) => set(key, arr)}
+      />
+      <VoiceSummaryCard profileId={profile.id} session={session} />
+    </div>
+  )
+}
+
+function HandlesSection({ form, set }) {
+  return (
+    <div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+        {[
+          ['instagram_handle', 'Instagram'],
+          ['tiktok_handle',    'TikTok'],
+          ['youtube_handle',   'YouTube'],
+          ['linkedin_handle',  'LinkedIn'],
+          ['threads_handle',   'Threads'],
+          ['x_handle',         'X / Twitter'],
+        ].map(([key, label]) => (
+          <Field key={key} label={label}>
+            <div style={{ position: 'relative' }}>
+              <span style={atPrefix}>@</span>
+              <input
+                className="input"
+                value={form[key] || ''}
+                onChange={(e) => set(key, e.target.value.replace(/^@/, ''))}
+                placeholder="handle"
+                style={{ paddingLeft: 26 }}
+              />
+            </div>
+          </Field>
+        ))}
+      </div>
+      <Field label="Core hashtags" style={{ marginTop: 18 }}>
+        <input
+          className="input"
+          value={form.core_hashtags || ''}
+          onChange={(e) => set('core_hashtags', e.target.value)}
+          placeholder="#scalesolo #aitools"
+        />
+      </Field>
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Editor styles. Kept inline so the file stays self-contained.
+// ────────────────────────────────────────────────────────────────────────────
+const railStyle = {
+  width: 220, flexShrink: 0,
+  borderRight: '1px solid var(--border)',
+  background: 'var(--surface-2)',
+  padding: '16px 10px',
+  display: 'flex', flexDirection: 'column', gap: 2,
+  overflowY: 'auto',
+}
+const railItem = (active) => ({
+  display: 'flex', alignItems: 'center', gap: 10,
+  padding: '9px 10px', borderRadius: 9,
+  cursor: 'pointer', textAlign: 'left',
+  background: active ? 'var(--surface)' : 'transparent',
+  border: active ? '1px solid var(--border)' : '1px solid transparent',
+  fontFamily: 'inherit',
+  transition: 'background 0.12s',
+})
+const editorFooter = {
+  display: 'flex', alignItems: 'center', gap: 10,
+  padding: '14px 24px',
+  borderTop: '1px solid var(--border)',
+  background: 'var(--surface)',
+}
+const twoColGrid = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+  gap: 14,
+}
+const swatchStyle = {
+  width: 44, height: 40, padding: 0,
+  border: '1px solid var(--border)', borderRadius: 8,
+  background: 'transparent', cursor: 'pointer', flexShrink: 0,
+}
+const importBtn = {
+  display: 'inline-flex', alignItems: 'center', gap: 6,
+  padding: '7px 12px', borderRadius: 8,
+  background: 'var(--surface-2)', border: '1px solid var(--border)',
+  color: 'var(--text)', fontSize: 12.5, fontWeight: 600,
+  fontFamily: 'inherit', cursor: 'pointer',
+}
+const importMenu = {
+  position: 'absolute', right: 0, top: 'calc(100% + 6px)',
+  width: 280, padding: 6,
+  background: 'var(--surface)', border: '1px solid var(--border)',
+  borderRadius: 10, boxShadow: '0 16px 40px rgba(0,0,0,0.35)',
+  zIndex: 5,
+}
+const importItem = {
+  display: 'flex', alignItems: 'flex-start', gap: 10,
+  padding: 10, borderRadius: 8,
+  background: 'transparent', border: 'none', width: '100%',
+  textAlign: 'left', cursor: 'pointer', color: 'var(--text)',
+  fontFamily: 'inherit',
+}
+const atPrefix = {
+  position: 'absolute', left: 12, top: '50%',
+  transform: 'translateY(-50%)',
+  color: 'var(--muted)', fontSize: 13,
+  fontFamily: 'var(--font-display)', fontWeight: 700,
+  pointerEvents: 'none',
 }
 
 // ─── Bible paste modal — paste raw text, Claude parses, preview & apply ────
@@ -839,9 +1183,9 @@ function PostingScheduleEditor({ timezone, onTimezoneChange, synced, onSyncedCha
   )
 }
 
-function Field({ label, required, children }) {
+function Field({ label, required, children, style }) {
   return (
-    <div>
+    <div style={style}>
       <label className="label">{label}{required && <span style={{ color: 'var(--red)' }}> *</span>}</label>
       {children}
     </div>

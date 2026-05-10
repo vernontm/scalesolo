@@ -1285,4 +1285,25 @@ a:focus-visible {
 .modal-card-sm  { max-width: 460px; }
 .modal-card-md  { max-width: 560px; }
 .modal-card-lg  { max-width: 720px; }
-.modal-card-xl  { max-width: 920px; }
+.modal-card-xl  { max-width: 1080px; }
+
+/* Profile editor rail collapses to a horizontal scroll-tab strip on
+   narrow screens. The inline width/border-right come from the rail
+   style object; this query overrides them for mobile. */
+@media (max-width: 720px) {
+  .profile-editor-body { flex-direction: column !important; }
+  .profile-editor-rail {
+    width: auto !important;
+    border-right: none !important;
+    border-bottom: 1px solid var(--border) !important;
+    flex-direction: row !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    padding: 10px !important;
+    gap: 6px !important;
+    flex-shrink: 0;
+  }
+  .profile-editor-rail > button {
+    flex-shrink: 0;
+  }
+}
