@@ -383,6 +383,106 @@ function pickFirstVideoUrl(arr) {
   return null
 }
 
+// Multi-clip caption generator. Given N script chunks (typically
+// voice_gen audio_chunks' sentence text), asks Claude for N caption
+// sets in a single call. Returns the canonical single-caption shape
+// (first chunk's caption) PLUS a captions[] array indexed by chunk
+// order so schedule_post can match clip[i] → captions[i].
+//
+// One call instead of N is cheaper, faster, AND keeps voice
+// consistent across the batch.
+async function runMultiCaption({ ctx, profileId, chunkSentences, edits }) {
+  const intro = `From the ${chunkSentences.length} short script segments below, write ${chunkSentences.length} INDEPENDENT caption sets — one per segment. Each segment becomes its own social post (different clip, different audience scroll), so each set must stand on its own.
+
+Per-set rules (apply to EVERY set):
+- title: ≤ 80 chars, click-worthy, no number prefix.
+- caption: ≤ 1500 chars. Strong hook in the first sentence. Reads naturally on every platform (TikTok / IG / YouTube / Facebook / X / LinkedIn / Threads).
+- hashtags: EXACTLY 5, space-separated, each starting with #. Lead with the brand's core hashtags.
+- first_comment: ≤ 220 chars. Engagement driver, not a duplicate of the caption, no hashtags.
+
+Across-the-batch rules:
+- Each set must be DIFFERENT — different hook, different angle, different vocabulary. Don't write 6 captions about the same insight phrased 6 ways.
+- Match each segment's actual content. The hook of caption #3 should reflect what segment #3 says, not segment #1.
+- Voice stays consistent (same brand bible) but the substance varies per segment.
+
+Voice: NEVER use em dashes. Use commas, periods, or colons.
+
+Return ONLY valid JSON, no preamble, no markdown fences. Exact shape:
+{
+  "sets": [
+    { "idx": 0, "title": "", "caption": "", "hashtags": "#a #b #c #d #e", "first_comment": "" }
+  ]
+}
+
+Segments:
+${chunkSentences.map((c) => `--- segment ${c.idx} ---\n${c.text.slice(0, 800)}`).join('\n\n')}`
+
+  const r = await fetch('/api/content/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
+    body: JSON.stringify({
+      profile_id: profileId,
+      format: 'ig-post',
+      topic: intro,
+      count: 1,
+      dry_run: true,
+    }),
+  })
+  const body = await r.json()
+  if (!r.ok) throw new Error(body.error || `Caption fan-out failed (${r.status})`)
+  const item = body.items?.[0] || {}
+  const raw = item.full_script || item.caption || ''
+  let parsed = {}
+  try {
+    const cleaned = String(raw).replace(/```json\s*|```\s*/gi, '').trim()
+    const m = cleaned.match(/\{[\s\S]*\}/)
+    parsed = JSON.parse(m ? m[0] : cleaned)
+  } catch { parsed = {} }
+
+  const sets = Array.isArray(parsed.sets) ? parsed.sets : []
+  if (!sets.length) {
+    throw new Error('Caption fan-out returned no sets. The model may have malformed JSON; try Re-run.')
+  }
+
+  // Re-pair to chunk order (Claude usually keeps order but doesn't
+  // guarantee it). Falls back to array index when idx is missing.
+  const byIdx = new Map()
+  sets.forEach((s, i) => {
+    const idx = Number.isFinite(s?.idx) ? s.idx : i
+    byIdx.set(idx, s)
+  })
+  const captions = chunkSentences.map((c) => {
+    const s = byIdx.get(c.idx) || {}
+    return {
+      order: c.order,
+      idx: c.idx,
+      title:         String(s.title || '').slice(0, 200),
+      caption:       String(s.caption || '').slice(0, 2000),
+      hashtags:      String(s.hashtags || ''),
+      first_comment: String(s.first_comment || '').slice(0, 400),
+      source_text:   c.text.slice(0, 240),
+    }
+  })
+
+  // Canonical single-caption fields = first set, with user edits
+  // overlaid (the body still shows one editable set; downstream uses
+  // captions[] for per-clip).
+  const first = captions[0]
+  const userTitle    = edits?.edited_title
+  const userCaption  = edits?.edited_caption
+  const userHashtags = edits?.edited_hashtags
+  const userFirstComment = edits?.edited_first_comment
+  return {
+    captions,                                    // ← per-clip array
+    title:         (userTitle        ?? first.title)         || '',
+    caption:       (userCaption      ?? first.caption)       || '',
+    hashtags:      (userHashtags     ?? first.hashtags)      || '',
+    first_comment: (userFirstComment ?? first.first_comment) || '',
+    is_clip_set:   true,
+    chunk_count:   captions.length,
+  }
+}
+
 // Collects EVERY video URL from the upstream bag, deduped, in encounter
 // order. Used by Finish video to fan out across a Collection or a
 // multi-clip avatar_render output. Same shape coverage as
@@ -4917,18 +5017,42 @@ export const NODE_REGISTRY = {
   },
 
   caption_gen: {
-    label: 'Title + caption + hashtags', description: 'Generates a click-worthy title, a platform-tuned caption, and 5 hashtags for EVERY platform (TikTok, Instagram, YouTube, X, LinkedIn) in one AI call. schedule_post automatically picks the right variant. Hashtag count is locked at 5.',
+    label: 'Title + caption + hashtags', description: 'Generates a click-worthy title, a platform-tuned caption, and 5 hashtags. With a single script in: one canonical set. With multi-clip audio (voice_gen randomize): one independent set per clip in one Claude call. schedule_post matches clip[i] → captions[i] automatically.',
     icon: Captions, category: 'generators', color: '#f59e0b',
-    inputs: [{ id: 'in', label: 'In (script / brand)' }],
+    inputs: [{ id: 'in', label: 'In (script / chunks / brand)' }],
     outputs: [{ id: 'out', label: 'Out' }],
     initialProps: {},
     Body: CaptionGenBody,
     run: async ({ data, inputs, ctx }) => {
       const incoming = inputs?.in
-      const script = pickScript(incoming)
-      if (!script) throw new Error('No script provided')
       const brand = pickBrand(incoming)
       const profileId = brand?.profile_id || ctx.profileId
+
+      // Detect a multi-clip source — voice_gen randomize emits
+      // audio_chunks[{ sentence, image_url, order }]. Each chunk's
+      // sentence is what gets spoken in that clip, which is exactly
+      // what we need for per-clip captions. One Claude call generates
+      // N caption sets (cheaper than N separate calls and the model
+      // keeps a more consistent voice across the batch).
+      let chunkSentences = null
+      for (const v of asArr(incoming)) {
+        if (v && Array.isArray(v.audio_chunks) && v.audio_chunks.length > 1) {
+          const arr = v.audio_chunks
+            .map((c, i) => ({ idx: i, order: c.order ?? i, text: String(c.sentence || '').trim() }))
+            .filter((c) => c.text)
+          if (arr.length > 1) { chunkSentences = arr; break }
+        }
+      }
+
+      // Fan-out path: one prompt that asks for N caption sets, returned
+      // as a JSON array. Falls back to single-caption path on parse
+      // failure so a malformed response doesn't break the canvas.
+      if (chunkSentences) {
+        return await runMultiCaption({ ctx, profileId, chunkSentences, edits: data.props })
+      }
+
+      const script = pickScript(incoming)
+      if (!script) throw new Error('No script provided')
 
       // ONE canonical version of every copy field. schedule_post + the
       // /api/social/upload-post endpoint handle per-platform character
@@ -6024,6 +6148,10 @@ ${String(script).slice(0, 2000)}
       let script = ''
       let title = ''
       let perPlatform = null
+      // Per-clip captions array from caption_gen multi-clip mode. When
+      // present AND we're in multi-video fan-out, each video gets its
+      // own caption set instead of the single shared one.
+      let perClipCaptions = null
       const photoUrls = []
       for (const v of arr) {
         if (!v) continue
@@ -6035,6 +6163,9 @@ ${String(script).slice(0, 2000)}
         if (!hashtags && v.hashtags) hashtags = v.hashtags
         if (!firstComment && v.first_comment) firstComment = v.first_comment
         if (!perPlatform && v.per_platform && typeof v.per_platform === 'object') perPlatform = v.per_platform
+        if (!perClipCaptions && Array.isArray(v.captions) && v.captions.length > 0) {
+          perClipCaptions = v.captions
+        }
         // Image collection / explicit images array.
         if (Array.isArray(v.images)) for (const im of v.images) { if (im?.url) photoUrls.push(im.url) }
         else if (v.url && /\.(png|jpe?g|webp)(\?|$)/i.test(v.url)) photoUrls.push(v.url)
@@ -6130,10 +6261,16 @@ ${String(script).slice(0, 2000)}
         || (caption ? String(caption).split(/[.!?\n]/)[0].trim().slice(0, 90) : '')
         || 'Untitled')
 
-      // Per-clip submit. Same payload shape as before; just pulled out
-      // so we can call it once (single video / image bundle) or N
-      // times (multi-clip polish output, randomize avatar render, etc).
-      const submitOne = async (singleVideoUrl) => {
+      // Per-clip submit. Accepts an optional captionOverride so multi-
+      // clip fan-out can use per-clip captions from caption_gen.
+      const submitOne = async (singleVideoUrl, captionOverride = null) => {
+        const useTitle    = captionOverride?.title         || resolvedTitle
+        const useCaption  = captionOverride?.caption       ?? caption
+        const useHashtags = captionOverride?.hashtags      ?? hashtags
+        const useFirstC   = captionOverride?.first_comment ?? firstComment
+        const useDescription = captionOverride
+          ? [useCaption, useHashtags].filter(Boolean).join('\n\n').trim() || description
+          : description
         const r = await fetch('/api/social/upload-post', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
@@ -6142,12 +6279,12 @@ ${String(script).slice(0, 2000)}
             platforms,
             video_url: singleVideoUrl || undefined,
             photo_urls: !singleVideoUrl && photoUrls.length ? photoUrls : undefined,
-            description,
-            title: resolvedTitle,
-            caption: caption || null,
-            hashtags: hashtags || null,
+            description: useDescription,
+            title: useTitle,
+            caption: useCaption || null,
+            hashtags: useHashtags || null,
             script: script || null,
-            first_comment: firstComment || (data._ctxBrandCTA || '').trim() || hashtags || null,
+            first_comment: useFirstC || (data._ctxBrandCTA || '').trim() || useHashtags || null,
             // For multi-clip fan-out, ALWAYS use auto so each post lands
             // in the next open slot of the brand's posting schedule.
             // Sequential submits cascade: each call sees the previous
@@ -6163,6 +6300,7 @@ ${String(script).slice(0, 2000)}
           request_id: body?.request_id || null,
           scheduled_iso: body?.scheduled_iso || scheduledIso,
           source_url: singleVideoUrl,
+          caption_used: captionOverride ? { title: useTitle, caption: useCaption, hashtags: useHashtags } : null,
         }
       }
 
@@ -6184,11 +6322,22 @@ ${String(script).slice(0, 2000)}
       // sees the prior reservation. Force scheduling_mode='auto' even
       // if the user picked 'now' or a fixed date — fan-out only makes
       // sense with auto-scheduling.
+      // Per-clip captions: when caption_gen ran in fan-out mode, it
+      // emitted captions[]. We match captions[i] → video[i] by order.
+      // If caption_gen is single-mode (or absent), every clip uses the
+      // shared caption fields.
       const submitted = []
       const failures = []
       for (let i = 0; i < allVideoUrls.length; i++) {
+        // Find the matching caption set: prefer order match, fall back
+        // to array index. Some pipelines might re-shuffle order (e.g.
+        // partial render failures), so order match wins.
+        let perClip = null
+        if (perClipCaptions) {
+          perClip = perClipCaptions.find((c) => c.order === i) || perClipCaptions[i] || null
+        }
         try {
-          const out = await submitOne(allVideoUrls[i])
+          const out = await submitOne(allVideoUrls[i], perClip)
           submitted.push({ ...out, order: i })
         } catch (e) {
           failures.push({ clip_index: i, source_url: allVideoUrls[i], error: e?.message || String(e) })
