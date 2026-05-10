@@ -4583,19 +4583,25 @@ export const NODE_REGISTRY = {
         vm: data.props?.voice_model_id_override || null,
         vl: data.props?.voice_language_override || null,
       })
+      // Cache hit paths return the cached audio but ALWAYS augment with
+      // the current avatar config — older cached outputs (from before
+      // the avatar-passthrough fix) don't have the field, and downstream
+      // avatar_render needs it. Spreading data.output last would let a
+      // stale missing-avatar field win; spreading first means the
+      // explicit avatar key always lands.
       if (
         data.output?.audio?.url &&
         data.output?._fp === fingerprint &&
         avatar.mode !== 'randomize'
       ) {
-        return data.output
+        return { ...data.output, avatar }
       }
       if (
         Array.isArray(data.output?.audio_chunks) &&
         data.output.audio_chunks.length > 0 &&
         data.output?._fp === fingerprint
       ) {
-        return data.output
+        return { ...data.output, avatar }
       }
 
       reportProgress?.({ message: `Synthesizing audio (${script.length.toLocaleString()} chars)…` })
