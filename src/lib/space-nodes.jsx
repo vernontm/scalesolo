@@ -4868,7 +4868,7 @@ export const NODE_REGISTRY = {
   image_upload: {
     free: true,
     label: 'Upload media',
-    description: 'Upload reference images or vertical (9:16) videos. Each item gets an alt tag — reference one in any generator prompt with @altTag, or wire a video into Finish video to add captions / overlays / music to your own footage.',
+    description: 'Upload reference images or vertical (9:16) videos. Each item gets an alt tag — reference one in any generator prompt with @altTag. Wire videos into Finish video to add captions / overlays / music to your own footage; multiple videos fan out automatically (one polished output per clip), then Schedule post can publish each into the next open slot of your brand schedule.',
     icon: Upload, category: 'inputs', color: '#0ea5e9',
     inputs: [], outputs: [{ id: 'out', label: 'Out' }],
     initialProps: { urls: [] },
