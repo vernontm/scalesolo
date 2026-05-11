@@ -871,7 +871,10 @@ export async function runWorkflow({ graph, userId, profileId, internalSecret, lo
       const out = await runner({ node, inputs: inputBag, ctx, log: (m) => log?.(`  ${m}`) })
       outputs.set(id, out || {})
       log?.(`[done] ${id}`)
-      try { await onProgress?.(id, { status: 'success', finished_at: new Date().toISOString() }) } catch {}
+      // Send the output too so the browser can hydrate node.data.output
+      // and let the user re-run downstream nodes (e.g., re-polish with
+      // a different title) without redoing the upstream chain.
+      try { await onProgress?.(id, { status: 'success', finished_at: new Date().toISOString(), output: out || {} }) } catch {}
     } catch (err) {
       errors[id] = err.message || String(err)
       log?.(`[fail] ${id} (${type}): ${errors[id]}`)

@@ -2035,7 +2035,14 @@ function SpaceBuilder({ space, onSave, onClose }) {
         // hydrate it. Statuses alone are enough for the highlight.
         for (const [nodeId, prog] of Object.entries(np)) {
           if (!prog?.status) continue
-          patchNode(nodeId, { status: prog.status, error: prog.error || null })
+          // Hydrate node.data.output from the worker's serialized result
+          // so per-node Run buttons (re-polish, re-caption, etc.) work
+          // after a server-side run. Without this, downstream nodes
+          // can't see upstream outputs and the user has to re-run the
+          // whole graph just to tweak one step.
+          const patch = { status: prog.status, error: prog.error || null }
+          if (prog.output && typeof prog.output === 'object') patch.output = prog.output
+          patchNode(nodeId, patch)
         }
       } else {
         // Run finalized. Final patch of each node to its terminal
@@ -2043,7 +2050,14 @@ function SpaceBuilder({ space, onSave, onClose }) {
         const np = row.node_progress || {}
         for (const [nodeId, prog] of Object.entries(np)) {
           if (!prog?.status) continue
-          patchNode(nodeId, { status: prog.status, error: prog.error || null })
+          // Hydrate node.data.output from the worker's serialized result
+          // so per-node Run buttons (re-polish, re-caption, etc.) work
+          // after a server-side run. Without this, downstream nodes
+          // can't see upstream outputs and the user has to re-run the
+          // whole graph just to tweak one step.
+          const patch = { status: prog.status, error: prog.error || null }
+          if (prog.output && typeof prog.output === 'object') patch.output = prog.output
+          patchNode(nodeId, patch)
         }
         setServerRun(null)
       }
