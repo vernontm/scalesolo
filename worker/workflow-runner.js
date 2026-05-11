@@ -703,7 +703,7 @@ ${String(script).slice(0, 2000)}
     // Server runs use the FIRST video only — fan-out across multiple
     // clips can be added later. Most automation cases (script →
     // voiceover → 1 b-roll) hit this single-clip path anyway.
-    const body = await callApi('/api/videos/polish', {
+    let body = await callApi('/api/videos/polish', {
       profile_id: ctx.profileId,
       video_url: videoUrls[0],
       logo_url: logoUrl || undefined,
@@ -719,6 +719,52 @@ ${String(script).slice(0, 2000)}
       music_volume: p.music_volume ?? 0.15,
       music_fade_secs: p.music_fade_secs ?? 1.0,
     }, ctx.headers)
+
+    // Long jobs: when polish exceeds Vercel's 250s in-flight window the
+    // /api/videos/polish endpoint returns 202 { polling: true,
+    // worker_job_id, poll_url } and the worker keeps processing in
+    // the background. We need to keep polling here OR the runner hands
+    // schedule_post an undefined video_url and the whole workflow
+    // bombs with "needs upstream video or images" — which is exactly
+    // what was happening on Sanabreh runs that exceeded 5 min.
+    if (body?.polling && body.worker_job_id) {
+      const POLL_DEADLINE_MS = 18 * 60_000  // 18 min — well under worker's 20-min ffmpeg cap
+      const POLL_INTERVAL_MS = 5_000
+      const start = Date.now()
+      while (Date.now() - start < POLL_DEADLINE_MS) {
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
+        // GET, not POST — callApi only does POST so we hit fetch
+        // directly here. Same impersonation headers so requireUser
+        // accepts the call.
+        const sUrl = `${PORTABLE_BASE}/api/videos/polish-status?job_id=${encodeURIComponent(body.worker_job_id)}`
+        const status = await fetch(sUrl, { headers: ctx.headers })
+          .then(async (r) => {
+            const text = await r.text()
+            let parsed = null
+            try { parsed = text ? JSON.parse(text) : null } catch {}
+            if (!r.ok) return { status: 'error', error: parsed?.error || `polish-status ${r.status}` }
+            return parsed
+          })
+          .catch((e) => ({ status: 'error', error: e.message }))
+        if (status?.status === 'done' && status.result?.video_url) {
+          body = status.result
+          break
+        }
+        if (status?.status === 'failed' || status?.status === 'error') {
+          throw new Error(status.error || 'polish worker reported failure')
+        }
+        // queued / running — keep polling
+      }
+      if (!body?.video_url) {
+        throw new Error(`polish timed out (>${(POLL_DEADLINE_MS / 60_000)|0}m of polling)`)
+      }
+    }
+    if (!body?.video_url) {
+      // Defense in depth: the sync path can also return without
+      // video_url if Vercel's polish.js drops the response shape on a
+      // partial error.
+      throw new Error('polish returned no video_url')
+    }
     return {
       video: { video_url: body.video_url },
       video_url: body.video_url,
