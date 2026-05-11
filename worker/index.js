@@ -360,6 +360,30 @@ app.post('/jobs/run-workflow', requireSecret, async (req, res) => {
       meta: { schedule_id, space_id: body.space_id },
     })
 
+    // Record a space_runs row so the server run shows up in the
+    // canvas Run history alongside browser-side runs. Without this
+    // the user only sees zombie / failed browser rows in history
+    // and has no idea their server runs are succeeding. We insert
+    // status='running' first, then patch with the final status +
+    // duration when runWorkflow returns. Failures are non-fatal —
+    // history is best-effort.
+    let spaceRunId = null
+    if (supabase) {
+      try {
+        const inserted = await supabase.from('space_runs').insert([{
+          space_id: body.space_id,
+          profile_id,
+          triggered_by: 'server_cron',
+          status: 'running',
+          node_count: Array.isArray(graph?.nodes) ? graph.nodes.length : 0,
+          started_at: new Date().toISOString(),
+        }]).select('id').single()
+        spaceRunId = inserted?.data?.id || null
+      } catch (e) {
+        console.warn(`[wf ${schedule_id}] space_runs insert failed:`, e?.message)
+      }
+    }
+
     try {
       const result = await runWorkflow({
         graph, userId: user_id, profileId: profile_id, internalSecret: internal_secret,
@@ -367,6 +391,23 @@ app.post('/jobs/run-workflow', requireSecret, async (req, res) => {
       })
       const errCount = Object.keys(result.errors).length
       console.log(`[wf ${schedule_id}] done ok=${result.ok} errors=${errCount} duration_ms=${Date.now() - startedAt}`)
+
+      // Finalize the space_runs row with completion state. status
+      // mirrors how the browser-side runs label themselves:
+      //   - 'success' if no errors
+      //   - 'partial' if some nodes errored but the run reached the end
+      //   - 'failed' is reserved for the run threw before completing
+      //     any node, which can't really happen here (we caught it
+      //     inside runWorkflow), so partial/success cover everything.
+      if (supabase && spaceRunId) {
+        const errorsArr = Object.entries(result.errors).map(([nodeId, msg]) => ({ nodeId, msg }))
+        await supabase.from('space_runs').update({
+          status: result.ok ? 'success' : 'partial',
+          finished_at: new Date().toISOString(),
+          duration_ms: Date.now() - startedAt,
+          errors: errorsArr,
+        }).eq('id', spaceRunId).then(() => {}, (e) => console.warn(`[wf ${schedule_id}] space_runs finish update failed:`, e?.message))
+      }
 
       if (supabase && !result.ok) {
         const summary = Object.entries(result.errors).map(([id, msg]) => `${id}: ${msg}`).join(' · ').slice(0, 500)
@@ -405,6 +446,17 @@ app.post('/jobs/run-workflow', requireSecret, async (req, res) => {
           .update({ last_error: String(err?.message || err).slice(0, 500), updated_at: new Date().toISOString() })
           .eq('id', schedule_id)
           .then(() => {}, () => {})
+        // Mark space_runs row as failed too so the canvas history
+        // doesn't leave it stuck on 'running' until the zombie sweeper
+        // catches it 15 min later.
+        if (spaceRunId) {
+          await supabase.from('space_runs').update({
+            status: 'failed',
+            finished_at: new Date().toISOString(),
+            duration_ms: Date.now() - startedAt,
+            errors: [{ msg: String(err?.message || err).slice(0, 500) }],
+          }).eq('id', spaceRunId).then(() => {}, () => {})
+        }
       }
       await notify({
         kind: 'workflow.failed',
