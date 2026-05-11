@@ -239,9 +239,19 @@ async function autoSchedule({ res, profile_id, script_ids }) {
   } else {
     q += '&status=in.(caption_ready,draft)'
   }
-  q += '&select=id&order=created_at.asc&limit=200'
-  const candidates = await supaFetch(q)
-  if (!candidates?.length) return res.status(200).json({ scheduled: 0 })
+  // media_urls needed so we can skip text-only rows below. Without
+  // this guard, bulk-auto-schedule was the main source of ghost
+  // queue entries: it'd parade every caption_ready / draft row into
+  // the calendar regardless of whether there was anything to publish.
+  q += '&select=id,media_urls&order=created_at.asc&limit=200'
+  const rawCandidates = await supaFetch(q)
+  if (!rawCandidates?.length) return res.status(200).json({ scheduled: 0, skipped_no_media: 0 })
+
+  const candidates = rawCandidates.filter((r) => {
+    return Array.isArray(r.media_urls) && r.media_urls.some((u) => typeof u === 'string' && u.trim())
+  })
+  const skippedNoMedia = rawCandidates.length - candidates.length
+  if (!candidates.length) return res.status(200).json({ scheduled: 0, skipped_no_media: skippedNoMedia })
 
   // Allocate slots sequentially so the schedule stays gap-free, but
   // execute the PATCHes in parallel — each row's payload is different
@@ -261,7 +271,11 @@ async function autoSchedule({ res, profile_id, script_ids }) {
     }).catch((e) => { console.warn('auto-schedule patch failed for', a.id, e.message); throw e })
   ))
   const scheduled = results.filter((r) => r.status === 'fulfilled').length
-  return res.status(200).json({ scheduled, skipped: candidates.length - scheduled })
+  return res.status(200).json({
+    scheduled,
+    skipped: candidates.length - scheduled,
+    skipped_no_media: skippedNoMedia,
+  })
 }
 
 // ── publish-selected ───────────────────────────────────────────────────────

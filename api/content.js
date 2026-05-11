@@ -114,6 +114,18 @@ function pickAllowed(obj) {
   return out
 }
 
+// Guard: only rows with real media attached are allowed in the scheduled
+// queue. Without this, text-only generations (script_gen / caption_gen
+// outputs that never got wired to a video or image upstream) silently
+// land in the calendar as ghosts, often duplicated when the workflow
+// re-runs. Returns true if media_urls is a non-empty array containing
+// at least one truthy string.
+function hasMedia(row) {
+  const urls = row?.media_urls
+  if (!Array.isArray(urls) || urls.length === 0) return false
+  return urls.some((u) => typeof u === 'string' && u.trim().length > 0)
+}
+
 export default async function handler(req, res) {
   setCors(req, res)
   if (req.method === 'OPTIONS') return res.status(204).end()
@@ -173,18 +185,23 @@ export default async function handler(req, res) {
           }
           // If approved-from-draft and the user didn't supply a time, find
           // the next open slot from the profile's posting_schedule and
-          // promote to scheduled in one step.
-          try {
-            const pr = await supaFetch(`profiles?id=eq.${item.profile_id}&select=timezone,posting_schedule`)
-            const taken = await supaFetch(
-              `content_scripts?profile_id=eq.${item.profile_id}&status=eq.scheduled&select=scheduled_datetime`
-            )
-            const slot = findNextOpenSlot(pr?.[0], (taken || []).map((t) => t.scheduled_datetime))
-            if (slot) {
-              updates.scheduled_datetime = slot
-              updates.status = 'scheduled'
-            }
-          } catch (e) { console.warn('auto-schedule on approve failed:', e.message) }
+          // promote to scheduled in one step. Gated on media: a row
+          // without media_urls stays as approved-draft until media is
+          // attached, otherwise it pollutes the calendar with text-only
+          // ghosts.
+          if (hasMedia(item)) {
+            try {
+              const pr = await supaFetch(`profiles?id=eq.${item.profile_id}&select=timezone,posting_schedule`)
+              const taken = await supaFetch(
+                `content_scripts?profile_id=eq.${item.profile_id}&status=eq.scheduled&select=scheduled_datetime`
+              )
+              const slot = findNextOpenSlot(pr?.[0], (taken || []).map((t) => t.scheduled_datetime))
+              if (slot) {
+                updates.scheduled_datetime = slot
+                updates.status = 'scheduled'
+              }
+            } catch (e) { console.warn('auto-schedule on approve failed:', e.message) }
+          }
         } else if (action === 'reject') {
           updates = {
             approval_status: 'rejected',
@@ -195,6 +212,15 @@ export default async function handler(req, res) {
           }
         } else if (action === 'schedule') {
           if (!req.body?.scheduled_datetime) return res.status(400).json({ error: 'scheduled_datetime required' })
+          // Block scheduling text-only rows. Caller has to attach a
+          // video or image upstream first — otherwise the post lands
+          // in the calendar with nothing to publish on the actual day.
+          if (!hasMedia(item)) {
+            return res.status(400).json({
+              error: 'Cannot schedule a post without media. Attach an image or video first.',
+              code: 'missing_media',
+            })
+          }
           updates = {
             scheduled_datetime: req.body.scheduled_datetime,
             status: 'scheduled',
@@ -240,8 +266,10 @@ export default async function handler(req, res) {
 
       // If the row arrives marked "Ready to schedule" (status=caption_ready),
       // pick the next open slot from the profile's posting_schedule and
-      // promote it to scheduled before insert.
-      if (row.status === 'caption_ready') {
+      // promote it to scheduled before insert. Gated on media: caption-
+      // ready rows without media stay caption_ready until the user
+      // attaches an image or video, otherwise they pollute the calendar.
+      if (row.status === 'caption_ready' && hasMedia(row)) {
         try {
           const profileRows = await supaFetch(`profiles?id=eq.${body.profile_id}&select=timezone,posting_schedule`)
           const profile = profileRows?.[0]
