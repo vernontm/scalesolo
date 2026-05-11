@@ -15,6 +15,7 @@ import {
   ListChecks, FileVideo, Upload, Loader2, Maximize2, ArrowUpRight,
   Download, Trash2, Building2, Repeat, Play, Pause, Combine as CombineIcon,
   Mic, Sparkles, Send, Copy, X, Lock, Link2, AlertCircle, ExternalLink,
+  Library as LibraryIcon,
 } from 'lucide-react'
 import { supabase } from './supabase.js'
 import MusicMixPreview from '../components/MusicMixPreview.jsx'
@@ -2175,6 +2176,8 @@ function ImageUploadBody({ data, onPatch }) {
   const [err, setErr] = useState(null)
   const [editingIdx, setEditingIdx] = useState(-1)
   const [draftName, setDraftName] = useState('')
+  // Library picker modal state — shown when the user clicks "From library".
+  const [libraryOpen, setLibraryOpen] = useState(false)
   // Per-file upload progress. Map of localId → { name, kind, size, pct,
   // status, error }. Lives only during the active upload — cleared once
   // all files settle so the panel disappears.
@@ -2423,24 +2426,241 @@ function ImageUploadBody({ data, onPatch }) {
           ))}
         </div>
       )}
-      <button
-        type="button"
-        onClick={() => inpRef.current?.click()}
-        disabled={busy}
-        style={{
-          ...tinyInput, cursor: 'pointer', display: 'flex',
-          alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px',
-          background: 'var(--surface-2)', borderStyle: 'dashed',
-        }}>
-        {busy ? <Loader2 size={13} className="spin" /> : <Upload size={13} />}
-        {busy ? 'Uploading…' : items.length ? 'Add more media' : 'Upload images or 9:16 video'}
-      </button>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button
+          type="button"
+          onClick={() => inpRef.current?.click()}
+          disabled={busy}
+          style={{
+            ...tinyInput, cursor: 'pointer', display: 'flex', flex: 1,
+            alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px',
+            background: 'var(--surface-2)', borderStyle: 'dashed',
+          }}>
+          {busy ? <Loader2 size={13} className="spin" /> : <Upload size={13} />}
+          {busy ? 'Uploading…' : items.length ? 'Add more' : 'Upload media'}
+        </button>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setLibraryOpen(true) }}
+          disabled={busy}
+          title="Add an item from this brand's library"
+          style={{
+            ...tinyInput, cursor: 'pointer', display: 'flex',
+            alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 14px',
+            background: 'var(--surface-2)',
+          }}>
+          <LibraryIcon size={13} /> From library
+        </button>
+      </div>
       <div style={{ marginTop: 4, fontSize: 10, color: 'var(--muted)', lineHeight: 1.4 }}>
         Each item gets an alt tag. Reference one in any generator prompt with @altTag (e.g. "she's holding @logo").
       </div>
       <input ref={inpRef} type="file" multiple accept="image/*,video/mp4,video/quicktime,video/webm" onChange={onPick} style={{ display: 'none' }} />
       {err && <div style={{ marginTop: 6, color: 'var(--red)', fontSize: 11 }}>{err}</div>}
+      {libraryOpen && (
+        <LibraryPickerModal
+          profileId={profileId}
+          token={data?._ctxToken || null}
+          onClose={() => setLibraryOpen(false)}
+          onPick={(picks) => {
+            if (!picks?.length) { setLibraryOpen(false); return }
+            // Each pick is { kind, url, name }. Names get a "lib"
+            // prefix so they don't collide with directly-uploaded items
+            // and the user can tell at a glance which came from where.
+            const counters = {
+              video: items.filter((x) => x.kind === 'video').length,
+              image: items.filter((x) => x.kind !== 'video').length,
+            }
+            const additions = picks.map((p) => {
+              counters[p.kind === 'video' ? 'video' : 'image'] += 1
+              const base = p.kind === 'video' ? 'video' : 'image'
+              return {
+                kind: p.kind === 'video' ? 'video' : 'image',
+                url: p.url,
+                name: p.name || `lib ${base} ${counters[p.kind === 'video' ? 'video' : 'image']}`,
+              }
+            })
+            onPatch({ urls: [...items, ...additions] })
+            setLibraryOpen(false)
+          }}
+        />
+      )}
     </>
+  )
+}
+
+// Library picker for the Upload media node. Lists every content_scripts
+// row with media_urls for the active brand profile, lets the user
+// multi-select, and returns the picks as { kind, url, name }.
+function LibraryPickerModal({ profileId, token, onClose, onPick }) {
+  const [items, setItems] = useState(null)  // null = loading
+  const [error, setError] = useState(null)
+  const [picked, setPicked] = useState(() => new Set())
+  const [kindFilter, setKindFilter] = useState('all')  // all | image | video
+  const [q, setQ] = useState('')
+  useEffect(() => {
+    if (!profileId || !token) { setItems([]); return }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const r = await fetch(`/api/content?profile_id=${profileId}&filter=library`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        const body = await r.json()
+        if (!r.ok) throw new Error(body?.error || `Failed (${r.status})`)
+        if (!cancelled) {
+          // Flatten to one row per media url. content_scripts rows can
+          // hold multiple urls (image carousels); each becomes its own
+          // pickable tile.
+          const flat = []
+          for (const it of (body.items || [])) {
+            const urls = Array.isArray(it.media_urls) ? it.media_urls : []
+            const kind = (it.media_type || 'image') === 'video' ? 'video' : 'image'
+            urls.forEach((u, i) => {
+              if (!u) return
+              flat.push({
+                id: `${it.id}:${i}`,
+                url: u,
+                kind,
+                title: it.title || '(untitled)',
+                created_at: it.created_at,
+              })
+            })
+          }
+          setItems(flat)
+        }
+      } catch (e) {
+        if (!cancelled) { setError(e.message); setItems([]) }
+      }
+    })()
+    return () => { cancelled = true }
+  }, [profileId, token])
+  const filtered = useMemo(() => {
+    if (!items) return null
+    let out = items
+    if (kindFilter !== 'all') out = out.filter((it) => it.kind === kindFilter)
+    const term = q.trim().toLowerCase()
+    if (term) out = out.filter((it) => (it.title || '').toLowerCase().includes(term))
+    return out
+  }, [items, kindFilter, q])
+  const toggle = (id) => setPicked((prev) => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    return next
+  })
+  const confirm = () => {
+    if (!items) return
+    const byId = new Map(items.map((it) => [it.id, it]))
+    const picks = Array.from(picked).map((id) => byId.get(id)).filter(Boolean).map((it) => ({
+      kind: it.kind, url: it.url, name: it.title.slice(0, 40),
+    }))
+    onPick(picks)
+  }
+  return (
+    <div
+      className="nodrag"
+      role="dialog" aria-modal="true"
+      onClick={onClose}
+      onMouseDown={(e) => e.stopPropagation()}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 100,
+        background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)',
+        display: 'grid', placeItems: 'center', padding: 24,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: '100%', maxWidth: 760, maxHeight: '84vh',
+          background: 'var(--surface)', border: '1px solid var(--border)',
+          borderRadius: 14, boxShadow: 'var(--shadow-pop)',
+          display: 'flex', flexDirection: 'column',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
+          <LibraryIcon size={16} style={{ color: 'var(--red)' }} />
+          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700, flex: 1 }}>From library</h3>
+          <button aria-label="Close" onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6, borderRadius: 6 }}>×</button>
+        </div>
+        <div style={{ display: 'flex', gap: 8, padding: '10px 16px', borderBottom: '1px solid var(--border)', alignItems: 'center', flexWrap: 'wrap' }}>
+          <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value)}
+            style={{ ...tinyInput, padding: '6px 10px', cursor: 'pointer' }}>
+            <option value="all">All assets</option>
+            <option value="image">Images only</option>
+            <option value="video">Videos only</option>
+          </select>
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search by title…"
+            style={{ ...tinyInput, padding: '6px 10px', flex: 1, minWidth: 140 }}
+          />
+        </div>
+        <div style={{ padding: 14, overflowY: 'auto', flex: 1 }}>
+          {filtered == null && <div style={{ textAlign: 'center', padding: 30 }}><Loader2 size={16} className="spin" /></div>}
+          {error && <div style={{ color: 'var(--red)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+          {filtered && filtered.length === 0 && (
+            <div style={{ color: 'var(--muted)', fontSize: 12.5, textAlign: 'center', padding: 30 }}>
+              No matching library assets for this brand profile.
+            </div>
+          )}
+          {filtered && filtered.length > 0 && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 10 }}>
+              {filtered.map((it) => {
+                const isPicked = picked.has(it.id)
+                return (
+                  <button
+                    key={it.id}
+                    type="button"
+                    onClick={() => toggle(it.id)}
+                    style={{
+                      position: 'relative', padding: 0,
+                      background: 'var(--surface-2)',
+                      border: `2px solid ${isPicked ? '#2ecc71' : 'var(--border)'}`,
+                      borderRadius: 8, cursor: 'pointer', overflow: 'hidden',
+                      display: 'flex', flexDirection: 'column',
+                      transition: 'border-color 0.15s',
+                    }}
+                  >
+                    <div style={{ position: 'relative', aspectRatio: '9 / 16', background: '#000' }}>
+                      {it.kind === 'video' ? (
+                        <video src={it.url} muted playsInline preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : (
+                        <img src={it.url} alt={it.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      )}
+                      {isPicked && (
+                        <div style={{
+                          position: 'absolute', top: 4, right: 4,
+                          background: '#2ecc71', color: '#000',
+                          fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 10,
+                          padding: '2px 6px', borderRadius: 999,
+                        }}>✓</div>
+                      )}
+                    </div>
+                    <div style={{
+                      padding: '6px 8px', fontSize: 10.5, color: 'var(--text-soft)',
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                      textAlign: 'left',
+                    }}>{it.title}</div>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+            {picked.size > 0 ? `${picked.size} selected` : 'Click tiles to pick'}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn-secondary" onClick={onClose} style={{ padding: '6px 12px', fontSize: 12 }}>Cancel</button>
+            <button className="btn-primary" onClick={confirm} disabled={picked.size === 0} style={{ padding: '6px 12px', fontSize: 12 }}>
+              Add {picked.size > 0 ? `${picked.size} ` : ''}to node
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 

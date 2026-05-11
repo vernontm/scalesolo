@@ -2924,7 +2924,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
       if (t === 'avatar_picker') return { ...n, data: { ...n.data, _ctxAvatars: avatars, _ctxPublicAvatars: publicAvatars } }
       if (t === 'avatar_render') return { ...n, data: { ...n.data, _ctxIsTrialing: subscriptionStatus === 'trialing' } }
       if (t === 'brand_profile') return { ...n, data: { ...n.data, _ctxProfiles: profiles } }
-      if (t === 'image_upload')  return { ...n, data: { ...n.data, _ctxProfileId: selectedProfileId } }
+      if (t === 'image_upload')  return { ...n, data: { ...n.data, _ctxProfileId: selectedProfileId, _ctxToken: session?.access_token || null } }
       if (t === 'captions') {
         // Inline preview frame in the captions body needs the closest
         // upstream rendered video URL without reaching into the graph
