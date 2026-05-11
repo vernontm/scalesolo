@@ -323,14 +323,13 @@ export default async function handler(req, res) {
     const wantsFfmpegEarly = !!(title || (effectiveLogoUrlEarly && watermark_position !== 'none') || music_url)
 
     // ─── Shotstack passthrough ─────────────────────────────────────────────
-    // When SHOTSTACK_API_KEY is set we run the composite on Shotstack's
-    // render farm instead of local ffmpeg. Vercel's job becomes: render
-    // the title PNG locally (~50ms via resvg), stage it to Storage so
-    // Shotstack can fetch it as an image asset, then submit/poll the
-    // timeline. ZapCap captions still chain after Shotstack returns.
-    // Falls back to worker / local ffmpeg on any Shotstack error so a
-    // bad render never breaks the user's run.
-    if (process.env.SHOTSTACK_API_KEY && wantsFfmpegEarly && supabaseEarly) {
+    // Fallback fast-path used when WORKER_URL is unset. With the Fly /
+    // Railway worker, the worker branch above wins because it runs
+    // ffmpeg natively (10-15s composite vs Shotstack's 20-60s queue).
+    // We still keep Shotstack here so accounts without a worker
+    // deployed get a hosted render path; local ffmpeg below is the
+    // last-resort fallback for accounts on neither.
+    if (process.env.SHOTSTACK_API_KEY && !process.env.WORKER_URL && wantsFfmpegEarly && supabaseEarly) {
       try {
         // No local duration probe — Shotstack resolves the video's
         // natural length server-side via `length: "auto"` on the clip
@@ -467,16 +466,22 @@ export default async function handler(req, res) {
     }
 
     // ─── Worker passthrough ────────────────────────────────────────────────
-    // If WORKER_URL is set the heavy ffmpeg work runs on Railway / Fly /
-    // wherever the worker lives. Vercel's job is then just: auth, credit
-    // check, forward, debit. This keeps polishes off the 60s function
-    // ceiling and uses the worker's pre-bundled fonts (no cold-start
-    // GitHub fetch). ZapCap captions still happen in the proxy below
-    // since they're a pure POST → poll loop with no media-bytes work.
+    // When WORKER_URL is set the heavy ffmpeg compositing runs on Fly /
+    // Railway / wherever the worker lives. Vercel's job is then just:
+    // forward to worker, optionally chain ZapCap captions, debit credits.
+    // No video bytes pass through Vercel anymore — solves the OOM that
+    // plagued the in-function ffmpeg path on big clips.
+    //
+    // Ordering: worker is the PREFERRED fast path. Shotstack (block above)
+    // is the fallback when WORKER_URL is unset OR the worker errors.
+    // Local ffmpeg is the last-resort fallback after both.
     const WORKER_URL = process.env.WORKER_URL
     const WORKER_SECRET = process.env.WORKER_SHARED_SECRET
-    if (WORKER_URL && !captions_enabled) {
+    if (WORKER_URL && wantsFfmpegEarly) {
       try {
+        // Step 1 — composite (title + logo + music) on the worker. The
+        // worker downloads, ffmpegs, uploads back to Supabase Storage,
+        // returns a public URL. ZapCap can fetch from there directly.
         const wRes = await fetch(`${WORKER_URL.replace(/\/$/, '')}/jobs/polish`, {
           method: 'POST',
           headers: {
@@ -493,6 +498,31 @@ export default async function handler(req, res) {
         const wBody = await wRes.json()
         if (!wRes.ok) throw new Error(wBody.error || `Worker ${wRes.status}`)
 
+        // Step 2 — chain ZapCap captions over the worker's composite
+        // URL. Same pattern Phase B uses for the local ffmpeg path
+        // below — single submit → poll → download. ZapCap failures
+        // are non-fatal: surface a warning and return the composite-
+        // only render rather than erroring the whole polish.
+        let finalUrl = wBody.video_url
+        let zapcapMeta = null
+        if (wantsCaptionsEarly) {
+          try {
+            const zVideoId = await zapcapAddVideoByUrl(wBody.video_url, { ttl: '1d' })
+            const zTaskId  = await zapcapCreateTask(zVideoId, { templateId: caption_template_id, autoApprove: true })
+            const zResult  = await zapcapPollTask(zVideoId, zTaskId, { timeoutMs: 180_000, intervalMs: 2500 })
+            const dlUrl    = zResult.downloadUrl || zResult.video?.downloadUrl || zResult.url
+            if (dlUrl) {
+              finalUrl = dlUrl
+              zapcapMeta = { template_id: caption_template_id, video_id: zVideoId, task_id: zTaskId }
+            } else {
+              zapcapMeta = { error: 'ZapCap returned no downloadUrl' }
+            }
+          } catch (e) {
+            console.warn('[polish:worker] ZapCap failed, returning composite-only:', e.message)
+            zapcapMeta = { error: e.message }
+          }
+        }
+
         // Debit credits after the worker confirms success. Atomic on
         // the DB side; we still surface failures so a tight race that
         // gifts a render shows up in logs instead of silently.
@@ -503,7 +533,7 @@ export default async function handler(req, res) {
               body: {
                 p_customer_id: customerId, p_pool_type: 'ai_tokens', p_amount: fee,
                 p_action: 'consume:video-polish', p_profile_id: profile_id,
-                p_metadata: { via: 'worker', video_url, has_title: !!title, bytes: wBody.bytes },
+                p_metadata: { via: 'worker', video_url, has_title: !!title, has_captions: wantsCaptionsEarly, zapcap: zapcapMeta, bytes: wBody.bytes },
               },
             })
             if (result && typeof result === 'object' && result.success === false) {
@@ -536,14 +566,14 @@ export default async function handler(req, res) {
         NotifyKind.renderDone({
           user_id: auth.user.id,
           profile_id,
-          video_url: wBody.video_url,
+          video_url: finalUrl,
         }).catch(() => {})
-        return res.status(200).json({ video_url: wBody.video_url, bytes: wBody.bytes, via: 'worker' })
+        return res.status(200).json({ video_url: finalUrl, bytes: wBody.bytes, zapcap: zapcapMeta, via: 'worker' })
       } catch (e) {
-        // Worker outage: fall through to the in-Vercel ffmpeg path so
-        // the user still gets a render. They'll see slower polishes
-        // until WORKER_URL / Railway is back.
-        console.warn('[polish] worker forward failed, falling back to in-function ffmpeg:', e.message)
+        // Worker outage / error: fall through to the Shotstack / local
+        // ffmpeg paths below so the user still gets a render. They'll
+        // see slower polishes until the worker is back.
+        console.warn('[polish] worker forward failed, falling back:', e.message)
       }
     }
 

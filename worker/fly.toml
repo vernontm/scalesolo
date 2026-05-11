@@ -1,0 +1,41 @@
+# Fly.io deploy config for the ScaleSolo render worker.
+#
+# Auto-detects worker/Dockerfile. After `fly launch` from this directory
+# you'll get a public URL — copy it into Vercel as WORKER_URL.
+#
+# The worker is stateless: ffmpeg jobs receive a video URL, composite,
+# upload back to Supabase Storage, return the result URL. Restarts /
+# crashes lose nothing, so auto_stop_machines is safe.
+
+app = "scalesolo-worker"
+primary_region = "iad"          # change to match your Vercel region
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  NODE_ENV = "production"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"   # idle → suspended, wakes on request (~2-3s)
+  auto_start_machines = true
+  min_machines_running = 0      # bump to 1 if you want zero cold-start
+  processes = ["app"]
+
+[[vm]]
+  # Composite jobs are CPU + memory bound. shared-cpu-2x with 2 GB handles
+  # a 60s 1080p clip + libx264 fast in ~10-15s with concurrency 1. Bump
+  # to performance-2x ($30/mo) if you start running multiple concurrent
+  # polishes per worker.
+  size = "shared-cpu-2x"
+  memory = "2gb"
+
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "30s"
+  method = "GET"
+  timeout = "5s"
+  path = "/healthz"
