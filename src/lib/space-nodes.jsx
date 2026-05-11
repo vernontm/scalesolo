@@ -3562,6 +3562,30 @@ function VideoPolishBody({ data, onPatch }) {
             </div>
           )}
           <MediaItem key={currentClipUrl} url={currentClipUrl} type="video" from={currentClipTitle} aspectRatio="9/16" />
+          {/* Partial-failure panel. Multi-clip fan-out drops failed
+              clips from videos[] and stashes them in partial_failures.
+              Without this panel the user can't tell why "5 in →
+              2 out" happened — each entry surfaces clip_index +
+              source_url + the actual error from the polish call. */}
+          {Array.isArray(out?.partial_failures) && out.partial_failures.length > 0 && (
+            <div className="nodrag" style={{
+              marginTop: 8, padding: '8px 10px',
+              background: 'rgba(239,68,68,0.10)',
+              border: '1px solid rgba(239,68,68,0.35)',
+              borderRadius: 6, fontSize: 11, color: 'var(--red)',
+              lineHeight: 1.4,
+            }}>
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                {out.partial_failures.length} of {(out.videos?.length || 0) + out.partial_failures.length} clips failed
+              </div>
+              {out.partial_failures.slice(0, 5).map((f, i) => (
+                <div key={i} style={{ fontSize: 10.5, marginTop: 3, opacity: 0.9 }}>
+                  <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700 }}>Clip {(f.clip_index ?? i) + 1}:</span>{' '}
+                  {f.error || 'Unknown error'}
+                </div>
+              ))}
+            </div>
+          )}
           <button
             type="button"
             onClick={(e) => {
