@@ -955,31 +955,13 @@ function SpaceCreditsPill() {
 // last error (if any). Polls /api/spaces/save-schedule?all=1 on mount
 // + every 30s. Hidden entirely when no schedules are active so we
 // don't clutter the toolbar.
-function ActiveSchedulesPill({ token, spaces, onOpenSpace }) {
-  const [schedules, setSchedules] = useState(null)
+function ActiveSchedulesPill({ schedules, spaces, onOpenSpace }) {
+  // Schedules now come in as a prop — SpacesList owns the fetch
+  // because the card grid also needs to know which spaces are
+  // scheduled. Sharing the data avoids two parallel fetches and
+  // keeps the pill + the per-card badges in lockstep.
   const [open, setOpen] = useState(false)
   const popRef = useRef(null)
-
-  // Load + refresh every 30s while mounted. Cheap GET, doesn't
-  // pressure anything.
-  useEffect(() => {
-    if (!token) { setSchedules(null); return }
-    let cancelled = false
-    const fetchOnce = async () => {
-      try {
-        const r = await fetch('/api/spaces/save-schedule?all=1', {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        const body = await r.json().catch(() => ({}))
-        if (!cancelled) setSchedules(Array.isArray(body.schedules) ? body.schedules : [])
-      } catch {
-        if (!cancelled) setSchedules([])
-      }
-    }
-    fetchOnce()
-    const t = setInterval(fetchOnce, 30_000)
-    return () => { cancelled = true; clearInterval(t) }
-  }, [token])
 
   // Click-outside to close.
   useEffect(() => {
@@ -1092,6 +1074,42 @@ function SpacesList({ spaces, onCreate, onOpen, onDelete, onHistory, onDuplicate
   const [tplError, setTplError] = useState(null)
   const [busyTplId, setBusyTplId] = useState(null)
 
+  // Active server schedules across all of this user's spaces.
+  // Used both by ActiveSchedulesPill (header dropdown) and by the
+  // card grid below (per-space "Scheduled" badge). Polls every 30s
+  // so the runs_used counts + next_fire_at countdowns stay current
+  // while the user is on this page.
+  const [schedules, setSchedules] = useState(null)
+  useEffect(() => {
+    if (!token) { setSchedules(null); return }
+    let cancelled = false
+    const fetchOnce = async () => {
+      try {
+        const r = await fetch('/api/spaces/save-schedule?all=1', {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        const body = await r.json().catch(() => ({}))
+        if (!cancelled) setSchedules(Array.isArray(body.schedules) ? body.schedules : [])
+      } catch {
+        if (!cancelled) setSchedules([])
+      }
+    }
+    fetchOnce()
+    const t = setInterval(fetchOnce, 30_000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [token])
+  // space_id → first matching active schedule. Lookup is O(1) on
+  // each card render. We pick the FIRST active schedule per space
+  // because a single space can technically have multiple auto_run
+  // nodes, but in practice ~one.
+  const scheduleBySpaceId = useMemo(() => {
+    const m = new Map()
+    for (const s of (schedules || [])) {
+      if (s.active && !m.has(s.space_id)) m.set(s.space_id, s)
+    }
+    return m
+  }, [schedules])
+
   // Lazy-load templates the first time the user clicks the tab.
   useEffect(() => {
     if (tab !== 'templates' || templates !== null || !token) return
@@ -1158,7 +1176,10 @@ function SpacesList({ spaces, onCreate, onOpen, onDelete, onHistory, onDuplicate
           {tabBtn('mine', `Your spaces${spaces?.length ? ` (${spaces.length})` : ''}`)}
           {tabBtn('templates', `Templates${templates ? ` (${templates.length})` : ''}`)}
         </div>
-        <ActiveSchedulesPill token={token} spaces={spaces} onOpenSpace={onOpen} />
+        <ActiveSchedulesPill schedules={schedules} spaces={spaces} onOpenSpace={(id) => {
+          const sp = (spaces || []).find((s) => s.id === id)
+          if (sp) onOpen(sp)
+        }} />
         <div style={{ flex: 1 }} />
         {tab === 'mine' && <button className="btn-primary" onClick={onCreate}><Plus size={14} /> New space</button>}
       </div>
@@ -1229,13 +1250,21 @@ function SpacesList({ spaces, onCreate, onOpen, onDelete, onHistory, onDuplicate
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
-          {spaces.map((s) => (
+          {spaces.map((s) => {
+            const activeSched = scheduleBySpaceId.get(s.id)
+            return (
             <div
               key={s.id} className="card"
               role="button" tabIndex={0}
               aria-label={`Open space ${s.name || 'untitled'}`}
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(s) } }}
-              style={{ cursor: 'pointer' }}
+              style={{
+                cursor: 'pointer',
+                // Scheduled spaces get a subtle green left border so
+                // they pop in the grid without needing the user to
+                // hunt for the badge.
+                ...(activeSched ? { borderLeft: '3px solid #2ecc71' } : {}),
+              }}
               onClick={() => onOpen(s)}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
@@ -1257,9 +1286,38 @@ function SpacesList({ spaces, onCreate, onOpen, onDelete, onHistory, onDuplicate
                     background: 'rgba(99,102,241,0.16)', color: '#a5b4fc',
                   }}>{s.template_category}</span>
                 )}
+                {/* Active server schedule indicator. Pulsing-dot pill
+                    so it reads as "currently live" not just "tagged". */}
+                {activeSched && (
+                  <span
+                    title={`Scheduled · next fire ${new Date(activeSched.next_fire_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} · runs ${activeSched.runs_used}/${activeSched.max_runs}`}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                      fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 9.5,
+                      letterSpacing: '0.06em', textTransform: 'uppercase',
+                      padding: '2px 7px', borderRadius: 999,
+                      background: 'rgba(46,204,113,0.16)', color: '#2ecc71',
+                      border: '1px solid rgba(46,204,113,0.45)',
+                    }}>
+                    <span style={{
+                      width: 5, height: 5, borderRadius: 999, background: '#2ecc71',
+                      display: 'inline-block', animation: 'pulse 2s ease-in-out infinite',
+                    }} />
+                    Scheduled
+                  </span>
+                )}
               </div>
               <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15, marginBottom: 4 }}>{s.name}</div>
               <div style={{ fontSize: 12, color: 'var(--muted)' }}>Updated {fmtUpdated(s.updated_at)}</div>
+              {/* When scheduled, show next fire time inline so the
+                  user doesn't have to open the popover or the space. */}
+              {activeSched?.next_fire_at && (
+                <div style={{ fontSize: 11, color: '#2ecc71', marginTop: 4 }}>
+                  Next fire: {new Date(activeSched.next_fire_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                  {' · '}
+                  Runs {activeSched.runs_used}/{activeSched.max_runs}
+                </div>
+              )}
               {s.created_at && (
                 <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>Created {fmtUpdated(s.created_at)}</div>
               )}
@@ -1275,7 +1333,8 @@ function SpacesList({ spaces, onCreate, onOpen, onDelete, onHistory, onDuplicate
                 </button>
               </div>
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>
