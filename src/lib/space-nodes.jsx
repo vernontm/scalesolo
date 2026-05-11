@@ -2748,6 +2748,7 @@ export const NODE_COST_HINT = {
   url_reference: 0,        // transcription is metered per-month, not credits
   collection:    0,
   combine_videos: 1500,
+  combine_av:     400,
   video_polish:  1500,
   captions:      2000,    // ZapCap caption render
   schedule_post: 100,
@@ -7007,7 +7008,7 @@ export const NODE_REGISTRY = {
   },
 
   combine_videos: {
-    label: 'Combine videos', description: 'Stitches a set of video clips end-to-end. If server-side ffmpeg is unavailable, the node falls back to a playlist: every clip is preserved individually so you can download or hand-edit them.',
+    label: 'Stitch videos', description: 'Joins a set of video clips end-to-end into a single longer video. If server-side ffmpeg is unavailable, the node falls back to a playlist: every clip is preserved individually so you can download or hand-edit them. (For merging a separate voiceover onto a silent clip, use the Combine node instead.)',
     icon: FileVideo, category: 'generators', color: '#0ea5e9',
     inputs: [{ id: 'in', label: 'In (videos)' }],
     outputs: [{ id: 'out', label: 'Out (video)' }],
@@ -7055,6 +7056,59 @@ export const NODE_REGISTRY = {
           is_clip_set: true,
           combine_unavailable: e.message,
         }
+      }
+    },
+  },
+
+  // ── COMBINE (audio + video mux) ─────────────────────────────────────
+  // Pre-polish step for b-roll workflows. Takes a silent (or noisy)
+  // video and a separate voiceover, produces ONE mp4 with the voice
+  // muxed as primary audio. -c:v copy on the worker side keeps this
+  // fast (network bound, no re-encode). After this the downstream
+  // Finish video / polish step looks identical to an avatar-render
+  // input — no audio chain complexity in polish itself.
+  combine_av: {
+    label: 'Combine',
+    description: 'Merges a video clip with a voiceover audio file. Loops the clip if it is shorter than the audio. Output goes into Finish video like any other clip. Use this for b-roll + voiceover flows (Upload media + voice_gen) so polish only handles overlays.',
+    icon: CombineIcon, category: 'generators', color: '#0ea5e9',
+    inputs: [{ id: 'in', label: 'In (video + audio)' }],
+    outputs: [{ id: 'out', label: 'Out (video)' }],
+    initialProps: { loop_video: true },
+    run: async ({ data, inputs, ctx }) => {
+      const arr = asArr(inputs?.in)
+      let videoUrl = null
+      let audioUrl = null
+      for (const v of arr) {
+        if (!v || typeof v !== 'object') continue
+        if (!videoUrl) {
+          if (v.video?.video_url) videoUrl = v.video.video_url
+          else if (v.video_url) videoUrl = v.video_url
+          else if (Array.isArray(v.videos) && v.videos[0]?.url) videoUrl = v.videos[0].url
+        }
+        if (!audioUrl) {
+          if (v.audio?.url) audioUrl = v.audio.url
+          else if (v.audio_url) audioUrl = v.audio_url
+        }
+      }
+      if (!videoUrl) throw new Error('Combine needs a video wired in (Upload media or another video-producing node).')
+      if (!audioUrl) throw new Error('Combine needs an audio file wired in (Voice gen output).')
+      const r = await fetch('/api/videos/combine-av', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
+        body: JSON.stringify({
+          profile_id: ctx.profileId,
+          video_url: videoUrl,
+          audio_url: audioUrl,
+          loop_video: data.props?.loop_video !== false,
+        }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(body?.error || `Combine failed (${r.status})`)
+      return {
+        video: { video_url: body.video_url },
+        video_url: body.video_url,
+        media_type: 'video',
+        combined: true,
       }
     },
   },

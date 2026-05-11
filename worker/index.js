@@ -832,6 +832,88 @@ async function polishCore(body) {
   }
 }
 
+// ── Combine audio + video (fast pre-polish step) ─────────────────────────
+// Body: { profile_id, video_url, audio_url, loop_video?: bool }
+// Returns: { video_url, bytes }
+//
+// Purpose: take a silent (or noisy) source clip + a separate voiceover
+// audio file and produce ONE mp4 with the voiceover muxed as the
+// primary audio. No re-encode of video (-c:v copy), so it's a network-
+// bound operation — typically 5-15s for a 30s clip.
+//
+// This is the new "Combine" node in the canvas. It exists so b-roll
+// workflows (Upload media → voice_gen → polish) can decouple audio
+// muxing from overlay rendering: the combined file goes into polish
+// the same way an avatar_render output does, simplifying polish's
+// filter graph dramatically.
+async function combineAvCore(body) {
+  const { profile_id, video_url, audio_url, loop_video = true } = body || {}
+  if (!profile_id || !video_url || !audio_url) throw new Error('profile_id + video_url + audio_url required')
+  if (!SUPABASE_URL || !SERVICE_KEY) throw new Error('Storage not configured on worker')
+
+  let workdir = null
+  try {
+    workdir = await mkdtemp(join(tmpdir(), 'av-'))
+    const vPath = join(workdir, 'in.mp4')
+    const aPath = join(workdir, 'voice.mp3')
+    const outPath = join(workdir, 'out.mp4')
+
+    // Parallel download — they're independent.
+    await Promise.all([
+      (async () => {
+        const r = await fetch(video_url)
+        if (!r.ok) throw new Error(`Video download ${r.status}`)
+        await writeFile(vPath, Buffer.from(await r.arrayBuffer()))
+      })(),
+      (async () => {
+        const r = await fetch(audio_url)
+        if (!r.ok) throw new Error(`Audio download ${r.status}`)
+        await writeFile(aPath, Buffer.from(await r.arrayBuffer()))
+      })(),
+    ])
+
+    // -c:v copy = no re-encode of video frames (fast, lossless).
+    // -c:a aac = re-encode the voiceover into a standard mp4 audio
+    //   codec; some upstream voice gen formats (Opus, weird mp3) won't
+    //   stream-copy cleanly into mp4.
+    // -map 0:v / -map 1:a = pull only the video stream from input 0
+    //   and only the audio from input 1 (drops any audio that came
+    //   with the source clip).
+    // -stream_loop -1 + -shortest = loop the video to match the
+    //   audio's length, then trim at the audio's natural end.
+    const args = ['-y']
+    if (loop_video) args.push('-stream_loop', '-1')
+    args.push('-i', vPath, '-i', aPath)
+    args.push('-map', '0:v:0', '-map', '1:a:0')
+    args.push('-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k')
+    args.push('-shortest', '-movflags', '+faststart')
+    args.push(outPath)
+    await runFFmpeg(args, 5 * 60_000)
+
+    const buf = await readFile(outPath)
+    const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
+    const path = `${profile_id}/spaces/combined/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`
+    const { error: upErr } = await supabase.storage.from('landing-media').upload(path, buf, {
+      contentType: 'video/mp4', upsert: false,
+    })
+    if (upErr) throw new Error(`Upload failed: ${upErr.message}`)
+    const { data: pub } = supabase.storage.from('landing-media').getPublicUrl(path)
+    return { video_url: pub.publicUrl, bytes: buf.byteLength }
+  } finally {
+    if (workdir) { try { await rm(workdir, { recursive: true, force: true }) } catch {} }
+  }
+}
+
+app.post('/jobs/combine-av', requireSecret, async (req, res) => {
+  try {
+    const result = await combineAvCore(req.body || {})
+    res.json(result)
+  } catch (err) {
+    console.error('combine-av job error:', err?.stack || err)
+    res.status(500).json({ error: String(err?.message || err) })
+  }
+})
+
 // Sync wrapper around polishCore. Kept for backward compat — small
 // clips (< ~60 MB) finish well within Vercel's 300s timeout via
 // this path. Larger clips should use /jobs/polish-async + status

@@ -657,6 +657,42 @@ ${String(script).slice(0, 2000)}
     }
   },
 
+  // Merge audio + video into a single mp4. Used to pre-merge b-roll
+  // uploads with voice_gen audio so polish gets a clean self-contained
+  // clip the way avatar_render output is self-contained. -c:v copy on
+  // the worker keeps this fast — typically 5-15s.
+  combine_av: async ({ node, inputs, ctx }) => {
+    const arr = asArr(inputs)
+    let videoUrl = null
+    let audioUrl = null
+    for (const v of arr) {
+      if (!v || typeof v !== 'object') continue
+      if (!videoUrl) {
+        if (v.video?.video_url) videoUrl = v.video.video_url
+        else if (v.video_url) videoUrl = v.video_url
+        else if (Array.isArray(v.videos) && v.videos[0]?.url) videoUrl = v.videos[0].url
+      }
+      if (!audioUrl) {
+        if (v.audio?.url) audioUrl = v.audio.url
+        else if (v.audio_url) audioUrl = v.audio_url
+      }
+    }
+    if (!videoUrl) throw new Error('combine_av needs a video wired in')
+    if (!audioUrl) throw new Error('combine_av needs an audio file wired in')
+    const body = await callApi('/api/videos/combine-av', {
+      profile_id: ctx.profileId,
+      video_url: videoUrl,
+      audio_url: audioUrl,
+      loop_video: node.data?.props?.loop_video !== false,
+    }, ctx.headers)
+    return {
+      video: { video_url: body.video_url },
+      video_url: body.video_url,
+      media_type: 'video',
+      combined: true,
+    }
+  },
+
   video_polish: async ({ node, inputs, ctx }) => {
     const p = node.data?.props || {}
     const videoUrls = pickAllVideoUrls(inputs)
