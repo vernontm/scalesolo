@@ -5524,6 +5524,15 @@ export function CaptionsEditor({ nodeId, data, onPatch, allNodes, allEdges }) {
 }
 
 // ── REGISTRY ────────────────────────────────────────────────────────────────
+//
+// ⚠️  WHEN ADDING A NEW NODE TYPE HERE:
+//     Also add a matching runner to NODE_RUNNERS in
+//     worker/workflow-runner.js using the SAME key. The server-side
+//     workflow executor (Vercel cron → Fly worker) walks the same
+//     graph the browser does; without a server runner the node fails
+//     on every auto_run server fire with "Server runs don't support
+//     node type X yet". Treat the browser run() and server runner
+//     as one contract — ship them together.
 export const NODE_REGISTRY = {
   text_input: {
     // Marked free=true: zero API/credit cost. The runner is safe to

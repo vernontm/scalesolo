@@ -6,6 +6,17 @@
 // nodes pick from upstream outputs via the same input-bag pattern the
 // browser canvas uses.
 //
+// ⚠️  WHEN ADDING A NEW NODE TYPE TO THE BROWSER CANVAS:
+//     Add a matching runner to NODE_RUNNERS below using the EXACT
+//     same key as the registry entry in src/lib/space-nodes.jsx. The
+//     runner's output shape must match the browser run() return so
+//     downstream nodes consume it the same way. Unsupported types
+//     fail gracefully with "Server runs don't support node type X
+//     yet" — visible in the user's bell + scheduled_workflows
+//     last_error — but the workflow can't complete until you add it.
+//     Server runners and browser run()s should be considered a
+//     single contract; ship them together.
+//
 // Design constraints:
 //   1. No React, no DOM. Just Node fetch.
 //   2. No source-of-truth duplication for prompts / model names —
@@ -15,11 +26,14 @@
 //      poison its descendants but doesn't abort the whole run. The
 //      cron caller stores the final error message on the schedule.
 //
-// Coverage:
-//   Supported node types: brand_profile, text_input, url_reference,
-//   collection, auto_run, script_gen, caption_gen, voice_gen,
-//   avatar_picker, avatar_render, image_gen, upload_media,
-//   video_polish, schedule_post, save_library.
+// Coverage (must mirror NODE_REGISTRY in src/lib/space-nodes.jsx):
+//   Inputs:      text_input, url_reference, brand_profile, auto_run,
+//                image_upload, audio_upload, collection,
+//                avatar_picker
+//   Generators:  script_gen, caption_gen, voice_gen, image_gen,
+//                avatar_render (single + randomize / chunked),
+//                combine_videos, captions (legacy), combine (legacy)
+//   Outputs:     video_polish, schedule_post, save_library
 //
 //   Unsupported: anything else throws "Server-runs don't support
 //   <type> yet". The graph still completes whatever's runnable.
@@ -114,16 +128,144 @@ const NODE_RUNNERS = {
     return { items }
   },
 
-  upload_media: ({ node }) => {
-    // Reads stored urls from props (uploaded earlier via the
-    // browser-only Upload media node — server can't accept new file
-    // uploads, but it can pass through what's already there).
+  // Registry key is `image_upload` (the "Upload media" UI node).
+  // Reads stored urls from props — files were uploaded earlier via
+  // the browser; server runs just pass the saved URLs through.
+  image_upload: ({ node }) => {
     const urls = Array.isArray(node.data?.props?.urls) ? node.data.props.urls : []
     const videos = urls.filter((u) => u.kind === 'video').map((u) => ({ url: u.url, name: u.name }))
     const images = urls.filter((u) => u.kind !== 'video').map((u) => ({ url: u.url, name: u.name }))
     const out = { images }
     if (videos.length) { out.videos = videos; out.video_url = videos[0].url }
     return out
+  },
+
+  // Audio file uploaded earlier; we just emit the stored URL with
+  // its duration so downstream avatar_render can size chunks.
+  audio_upload: ({ node }) => {
+    const url = node.data?.props?.url
+    if (!url) throw new Error('audio_upload: no file uploaded. Upload one in the browser first.')
+    return {
+      audio: {
+        url,
+        name: node.data?.props?.name || '',
+        duration_secs: Number(node.data?.props?.duration_secs || 0) || null,
+        // Top-level audio_url marker so this is recognized as
+        // MUSIC by polish (not as a voiceover, which uses
+        // audio.url). audio_upload is the music-overlay source;
+        // voice_gen is the voiceover source.
+        audio_url: url,
+      },
+    }
+  },
+
+  image_gen: async ({ node, inputs, ctx }) => {
+    const props = node.data?.props || {}
+    const brand = pickBrand(inputs)
+    const profileId = brand?.profile_id || ctx.profileId
+    const prompt = (props.prompt || '').trim() || pickScript(inputs)
+    if (!prompt) throw new Error('image_gen needs a prompt (either in the node prop or upstream text)')
+
+    // Reference images: collect every image URL from the upstream
+    // bag. The browser canvas runs a richer @mention resolution
+    // step — server runs use the simpler "everything upstream is
+    // a candidate ref" rule which covers 95% of real flows.
+    const refs = []
+    for (const v of asArr(inputs)) {
+      if (Array.isArray(v?.images)) for (const im of v.images) if (im?.url) refs.push(im.url)
+      else if (v?.url && /\.(png|jpe?g|webp)(\?|$)/i.test(v.url)) refs.push(v.url)
+    }
+
+    const count = Math.max(1, Math.min(8, Number(props.count) || 1))
+    // KIE returns 1 image per submit reliably regardless of
+    // num_images flag, so we fan out N parallel count=1 tasks
+    // and combine. Same pattern the browser uses.
+    const submitOne = async () => {
+      const sub = await callApi('/api/images/generate', {
+        profile_id: profileId,
+        prompt,
+        model: props.model || 'nano-banana',
+        count: 1,
+        aspect: props.aspect || '1:1',
+        quality: props.quality || '2K',
+        reference_urls: refs.length ? refs : undefined,
+        enhance_prompt: props.enhance_prompt ?? true,
+      }, ctx.headers)
+      const taskId = sub.taskId
+      if (!taskId) throw new Error('image_gen submit returned no taskId')
+      // Poll. 12-min ceiling matches the browser canvas. Most KIE
+      // renders complete in 20-60s.
+      const POLL_INTERVAL_MS = 4_000
+      const DEADLINE_MS = 12 * 60_000
+      const start = Date.now()
+      while (Date.now() - start < DEADLINE_MS) {
+        await new Promise((res) => setTimeout(res, POLL_INTERVAL_MS))
+        const r = await fetch(`${PORTABLE_BASE}/api/images/status?taskId=${encodeURIComponent(taskId)}`, { headers: ctx.headers })
+        const s = await r.json().catch(() => ({}))
+        if (!r.ok) throw new Error(s?.error || `image-status ${r.status}`)
+        if (s.state === 'success' && Array.isArray(s.images) && s.images.length) {
+          return s.images.map((im) => ({ url: im.url || im, name: '' }))
+        }
+        if (s.state === 'failed') throw new Error(s.error || 'Image gen failed')
+      }
+      throw new Error(`image_gen poll timed out after ${DEADLINE_MS / 60_000} min`)
+    }
+    const settled = await Promise.allSettled(Array.from({ length: count }, () => submitOne()))
+    const images = []
+    for (const s of settled) if (s.status === 'fulfilled') images.push(...s.value)
+    if (!images.length) {
+      const first = settled.find((s) => s.status === 'rejected')
+      throw new Error(`image_gen failed: ${first?.reason?.message || 'unknown'}`)
+    }
+    return { images, media_type: 'image' }
+  },
+
+  // Legacy ZapCap-only caption burner. Replaced by video_polish's
+  // built-in caption pass. We still ship a runner so older saved
+  // spaces don't break — just forward to /api/videos/polish with
+  // captions-only config.
+  captions: async ({ node, inputs, ctx }) => {
+    const p = node.data?.props || {}
+    const videoUrl = pickAllVideoUrls(inputs)[0]
+    if (!videoUrl) throw new Error('captions needs an upstream video')
+    if (!p.caption_template_id) throw new Error('captions: pick a ZapCap template in the node settings')
+    const body = await callApi('/api/videos/polish', {
+      profile_id: ctx.profileId,
+      video_url: videoUrl,
+      captions_enabled: true,
+      caption_template_id: p.caption_template_id,
+      caption_language: p.caption_language || undefined,
+    }, ctx.headers)
+    return {
+      video: { video_url: body.video_url },
+      video_url: body.video_url,
+      polished: true,
+    }
+  },
+
+  // Legacy hidden Combine node — replaced by combine_videos. Some
+  // saved spaces still have it. Treat as a pass-through aggregator
+  // so the run doesn't error out on something the user can't see
+  // in the palette anymore.
+  combine: ({ inputs }) => {
+    let videoUrl = null
+    const images = []
+    let script = '', caption = '', hashtags = ''
+    for (const v of asArr(inputs)) {
+      if (!v || typeof v !== 'object') continue
+      if (!videoUrl && (v.video?.video_url || v.video_url)) videoUrl = v.video?.video_url || v.video_url
+      if (Array.isArray(v.images)) for (const im of v.images) if (im?.url) images.push({ url: im.url })
+      if (!script && (v.script || v.full_script)) script = v.script || v.full_script
+      if (!caption && v.caption) caption = v.caption
+      if (!hashtags && v.hashtags) hashtags = v.hashtags
+    }
+    return {
+      bundle: true,
+      script, caption, hashtags,
+      video_url: videoUrl,
+      images: images.length ? images : undefined,
+      media_type: videoUrl ? 'video' : (images.length ? 'image' : 'text'),
+    }
   },
 
   avatar_picker: ({ node }) => ({ avatar: { ...node.data?.props } }),
