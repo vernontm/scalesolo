@@ -323,13 +323,15 @@ export default async function handler(req, res) {
     const wantsFfmpegEarly = !!(title || (effectiveLogoUrlEarly && watermark_position !== 'none') || music_url)
 
     // ─── Shotstack passthrough ─────────────────────────────────────────────
-    // Fallback fast-path used when WORKER_URL is unset. With the Fly /
-    // Railway worker, the worker branch above wins because it runs
-    // ffmpeg natively (10-15s composite vs Shotstack's 20-60s queue).
-    // We still keep Shotstack here so accounts without a worker
-    // deployed get a hosted render path; local ffmpeg below is the
-    // last-resort fallback for accounts on neither.
-    if (process.env.SHOTSTACK_API_KEY && !process.env.WORKER_URL && wantsFfmpegEarly && supabaseEarly) {
+    // Runs as a fallback after the worker branch above. Two scenarios:
+    //   1. WORKER_URL is unset — Shotstack is the primary fast path
+    //   2. WORKER_URL is set but the worker errored — fell through to
+    //      here so we still have a hosted-render option before the
+    //      local in-Vercel ffmpeg (which OOMs on big clips).
+    // Without this fallback, a worker outage would force every polish
+    // through the local ffmpeg path and hit the 500 / OOM crashes
+    // that caused the migration in the first place.
+    if (process.env.SHOTSTACK_API_KEY && wantsFfmpegEarly && supabaseEarly) {
       try {
         // No local duration probe — Shotstack resolves the video's
         // natural length server-side via `length: "auto"` on the clip
