@@ -1262,14 +1262,12 @@ function ScriptGenBody({ data, onPatch }) {
             style={pillSelect}
             value={lenSecs}
             onChange={(e) => onPatch({ target_length_secs: Number(e.target.value) })}
-            title="Target script length in seconds. 15-60s is the short-form sweet spot; 90-120s for longer formats."
+            title="Target script length in seconds (max 60 — short-form sweet spot). Voice gen has 3 min headroom if Claude slightly overshoots."
           >
             <option value={15}>~15 sec</option>
             <option value={30}>~30 sec</option>
             <option value={45}>~45 sec</option>
             <option value={60}>~60 sec</option>
-            <option value={90}>~90 sec</option>
-            <option value={120}>~120 sec</option>
           </select>
         )}
         {/* Structural format picker. "Auto" lets Claude decide based on
