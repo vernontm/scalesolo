@@ -2462,6 +2462,51 @@ export const AUTORUN_OPTIONS = [
   { id: '24h', label: 'Once a day',                ms: 86_400_000 },
 ]
 
+// "N runs per unit" is the new primary cadence input. Replaces the
+// fixed-cadence dropdown for new users — "2 per day" makes more sense
+// to creators than "every 12 hours". The legacy `cadence` prop is
+// still honored on existing nodes (autoRunIntervalMs prefers the new
+// runs_per_unit shape but falls back).
+export const AUTORUN_UNITS = [
+  { id: 'hour', label: 'per hour', ms: 3_600_000 },
+  { id: 'day',  label: 'per day',  ms: 86_400_000 },
+  { id: 'week', label: 'per week', ms: 604_800_000 },
+]
+
+// Compute the tick interval in milliseconds from a node's props. Handles
+// both the new (runs_per_unit + unit) and legacy (cadence) shapes.
+// Clamped to [60s, 7 days] so a user can't run themselves out of credits
+// in a tight loop or accidentally schedule a 6-month interval.
+export function autoRunIntervalMs(props) {
+  const MIN = 60_000
+  const MAX = 7 * 86_400_000
+  const runsPerUnit = Number(props?.runs_per_unit)
+  const unitId = props?.unit
+  if (Number.isFinite(runsPerUnit) && runsPerUnit >= 1 && unitId) {
+    const unit = AUTORUN_UNITS.find((u) => u.id === unitId)
+    if (unit) {
+      return Math.max(MIN, Math.min(MAX, Math.round(unit.ms / runsPerUnit)))
+    }
+  }
+  const opt = AUTORUN_OPTIONS.find((o) => o.id === props?.cadence) || AUTORUN_OPTIONS[2]
+  return Math.max(MIN, Math.min(MAX, opt.ms))
+}
+
+// Human-readable interval for the toggle label and helper text.
+// "2 per day" → "every 12 hr". "5 per hour" → "every 12 min".
+function intervalLabel(ms) {
+  if (ms >= 86_400_000) {
+    const d = ms / 86_400_000
+    return `${d % 1 === 0 ? d : d.toFixed(1)} day${d === 1 ? '' : 's'}`
+  }
+  if (ms >= 3_600_000) {
+    const h = ms / 3_600_000
+    return `${h % 1 === 0 ? h : h.toFixed(1)} hr`
+  }
+  const m = Math.max(1, Math.round(ms / 60_000))
+  return `${m} min`
+}
+
 // Rough per-run cost in ai_tokens for budget hint. Avatar render uses
 // video_units, tracked separately, but we count an avg cost in tokens for
 // the warning UI.
@@ -2490,20 +2535,33 @@ export const NODE_COST_HINT = {
 }
 
 function AutoRunBody({ data, onPatch }) {
-  const cadence = data.props?.cadence || '15m'
-  const maxRuns = Number(data.props?.max_runs ?? 10)
-  const runsUsed = Number(data.props?.runs_used ?? 0)
-  const active = !!data.props?.active
-  const lastRun = data.props?.last_run_at
+  const props = data.props || {}
+  // New primary inputs. Default to 2 runs per day on fresh nodes —
+  // that matches the "set and forget for a week" use case (~14 posts
+  // over 7 days). Existing nodes that only have `cadence` in their
+  // props keep working: autoRunIntervalMs falls back to the legacy
+  // lookup, and we surface the legacy dropdown below for one-click
+  // migration.
+  const runsPerUnit = Number(props.runs_per_unit ?? 2)
+  const unitId = props.unit || 'day'
+  const cadence = props.cadence || '15m'
+  const usingFrequency = props.runs_per_unit != null && props.unit != null
+
+  const maxRuns = Number(props.max_runs ?? 10)
+  const runsUsed = Number(props.runs_used ?? 0)
+  const active = !!props.active
+  const lastRun = props.last_run_at
   const remaining = Math.max(0, maxRuns - runsUsed)
-  // Draft string for the max-runs input so the user can transiently
-  // clear it while typing (e.g. backspace from "10" → "" → "5").
-  // The previous controlled-value path snapped empty back to 1 on every
-  // keystroke, which prevented clearing the field at all.
+  // Draft strings so each input can transiently clear while typing
+  // (e.g. backspace from "10" → "" → "5") without snapping back.
   const [maxRunsDraft, setMaxRunsDraft] = useState(String(maxRuns))
   useEffect(() => { setMaxRunsDraft(String(maxRuns)) }, [maxRuns])
+  const [runsDraft, setRunsDraft] = useState(String(runsPerUnit))
+  useEffect(() => { setRunsDraft(String(runsPerUnit)) }, [runsPerUnit])
 
-  const opt = AUTORUN_OPTIONS.find((o) => o.id === cadence) || AUTORUN_OPTIONS[2]
+  const intervalMs = autoRunIntervalMs(props)
+  const intervalText = intervalLabel(intervalMs)
+  const unitMeta = AUTORUN_UNITS.find((u) => u.id === unitId) || AUTORUN_UNITS[1]
   const estPerRun = Number(data?._ctxCostPerRun ?? 0)
 
   const toggle = () => {
@@ -2518,17 +2576,77 @@ function AutoRunBody({ data, onPatch }) {
 
   return (
     <>
-      <NodeField label="Cadence">
-        <select
-          className="nodrag"
-          style={tinyInput}
-          value={cadence}
-          onChange={(e) => onPatch({ cadence: e.target.value })}
-          disabled={active}
-        >
-          {AUTORUN_OPTIONS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-        </select>
+      <NodeField label="Frequency">
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <input
+            type="number"
+            className="nodrag"
+            min={1}
+            max={99}
+            step={1}
+            style={{ ...tinyInput, flex: '0 0 60px' }}
+            value={runsDraft}
+            onChange={(e) => {
+              const v = e.target.value
+              setRunsDraft(v)
+              if (v === '') return
+              const n = parseInt(v, 10)
+              if (Number.isFinite(n)) {
+                onPatch({ runs_per_unit: Math.max(1, Math.min(99, n)), unit: unitId })
+              }
+            }}
+            onBlur={() => {
+              const n = parseInt(runsDraft, 10)
+              if (!Number.isFinite(n) || n < 1) {
+                const fallback = Number.isFinite(runsPerUnit) && runsPerUnit >= 1 ? runsPerUnit : 2
+                setRunsDraft(String(fallback))
+                if (fallback !== runsPerUnit) onPatch({ runs_per_unit: fallback, unit: unitId })
+              }
+            }}
+            disabled={active}
+            title="How many times to run within the period below"
+          />
+          <select
+            className="nodrag"
+            style={{ ...tinyInput, flex: 1 }}
+            value={unitId}
+            onChange={(e) => onPatch({ runs_per_unit: runsPerUnit, unit: e.target.value })}
+            disabled={active}
+          >
+            {AUTORUN_UNITS.map((u) => (
+              <option key={u.id} value={u.id}>{u.label}</option>
+            ))}
+          </select>
+        </div>
+        <div style={{ marginTop: 4, fontSize: 10, color: 'var(--muted)' }}>
+          Fires roughly every {intervalText}. {runsPerUnit} × {unitMeta.label.replace('per ', '')}
+          {!usingFrequency && (
+            <>
+              {' · '}
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onPatch({ runs_per_unit: runsPerUnit, unit: unitId }) }}
+                style={{ background: 'transparent', border: 'none', color: 'var(--red)', cursor: 'pointer', padding: 0, fontSize: 10, textDecoration: 'underline' }}
+                title="Use this frequency instead of the legacy cadence dropdown"
+              >use this</button>
+            </>
+          )}
+        </div>
       </NodeField>
+      {!usingFrequency && (
+        <NodeField label="Legacy cadence (fallback)">
+          <select
+            className="nodrag"
+            style={tinyInput}
+            value={cadence}
+            onChange={(e) => onPatch({ cadence: e.target.value })}
+            disabled={active}
+            title="Pre-frequency cadence. Saved spaces still use this until you switch to the Frequency input above."
+          >
+            {AUTORUN_OPTIONS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+          </select>
+        </NodeField>
+      )}
       <NodeField label="Stop after N runs">
         <input
           type="number"
@@ -2575,7 +2693,7 @@ function AutoRunBody({ data, onPatch }) {
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
         }}
       >
-        {active ? <><Pause size={12} /> Active — running every {opt.label.replace('Every ', '').replace(' (testing)', '')}</> : <><Play size={12} /> Start auto-run</>}
+        {active ? <><Pause size={12} /> Active — every {intervalText}</> : <><Play size={12} /> Start auto-run</>}
       </button>
 
       <div style={{ marginTop: 8, fontSize: 10.5, lineHeight: 1.5, color: 'var(--muted)' }}>
@@ -2584,8 +2702,8 @@ function AutoRunBody({ data, onPatch }) {
           <div>Est. cost / run: <strong style={{ color: 'var(--text)' }}>~{estPerRun.toLocaleString()}</strong> AI tokens. Total budget for this batch: ~{(estPerRun * remaining).toLocaleString()}.</div>
         )}
         {lastRun && <div>Last run: {new Date(lastRun).toLocaleTimeString()}</div>}
-        {opt.warn && active && (
-          <div style={{ color: 'var(--amber)', marginTop: 4 }}>Testing cadence — this burns credits fast. Stop when you're done verifying.</div>
+        {intervalMs <= 300_000 && active && (
+          <div style={{ color: 'var(--amber)', marginTop: 4 }}>Tight cadence — this burns credits fast. Stop when you're done verifying.</div>
         )}
         {!active && runsUsed > 0 && (
           <button
@@ -5461,7 +5579,7 @@ export const NODE_REGISTRY = {
     label: 'Auto-run', description: 'Recurring trigger that re-runs everything connected downstream on a fixed cadence. Cost-aware with a hard cap on total runs. Pauses when the canvas is closed.',
     icon: Repeat, category: 'inputs', color: '#f97316',
     inputs: [], outputs: [{ id: 'out', label: 'Out' }],
-    initialProps: { cadence: '15m', max_runs: 10, runs_used: 0, active: false, last_run_at: null },
+    initialProps: { runs_per_unit: 2, unit: 'day', cadence: '15m', max_runs: 10, runs_used: 0, active: false, last_run_at: null },
     Body: AutoRunBody,
     run: async ({ data }) => ({ tick: new Date().toISOString(), run_index: Number(data.props?.runs_used || 0) + 1 }),
   },

@@ -31,7 +31,7 @@ import { useNavigate } from 'react-router-dom'
 import { toast, confirmDialog, chooseDialog } from '../components/Toast.jsx'
 import {
   NODE_REGISTRY, NODE_CATEGORIES, downloadUrl, readImageItems,
-  AUTORUN_OPTIONS, NODE_COST_HINT,
+  AUTORUN_OPTIONS, autoRunIntervalMs, NODE_COST_HINT,
   findUpstreamVideoUrl, findUpstreamScript, findUpstreamLogoUrl,
 } from '../lib/space-nodes.jsx'
 
@@ -2238,7 +2238,11 @@ function SpaceBuilder({ space, onSave, onClose }) {
     const timers = []
     const firstTickTimers = []
     for (const trig of activeTriggers) {
-      const opt = AUTORUN_OPTIONS.find((o) => o.id === trig.data.props.cadence) || AUTORUN_OPTIONS[2]
+      // autoRunIntervalMs handles both the new (runs_per_unit + unit)
+      // and legacy (cadence) shapes so saved spaces keep firing on
+      // their original cadence until the user opts into the new
+      // frequency input.
+      const intervalMs = autoRunIntervalMs(trig.data.props)
       const id = trig.id
       const justActivated = newlyActivated.has(id)
       const tick = async () => {
@@ -2295,14 +2299,16 @@ function SpaceBuilder({ space, onSave, onClose }) {
       if (justActivated) {
         firstTickTimers.push(setTimeout(tick, 800))
       }
-      timers.push(setInterval(tick, opt.ms))
+      timers.push(setInterval(tick, intervalMs))
     }
     return () => {
       firstTickTimers.forEach((t) => clearTimeout(t))
       timers.forEach((t) => clearInterval(t))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes.map((n) => n.data?.type === 'auto_run' ? `${n.id}|${n.data.props?.active ? 1 : 0}|${n.data.props?.cadence}|${n.data.props?.max_runs}` : '').join(',')])
+  }, [nodes.map((n) => n.data?.type === 'auto_run'
+    ? `${n.id}|${n.data.props?.active ? 1 : 0}|${n.data.props?.cadence}|${n.data.props?.runs_per_unit}|${n.data.props?.unit}|${n.data.props?.max_runs}`
+    : '').join(',')])
 
 
   // Esc closes the preview modal.
