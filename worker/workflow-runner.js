@@ -510,11 +510,52 @@ const NODE_RUNNERS = {
     // Use the same /api/content/generate endpoint the browser hits.
     // dry_run avoids inserting a separate content_scripts row — the
     // bundle gets persisted by schedule_post when it actually fires.
-    const intro = `Write ONE canonical TITLE, CAPTION, FIRST_COMMENT, and exactly 5 HASHTAGS for cross-platform publishing. Return JSON.\n\nScript:\n"""\n${String(script).slice(0, 2000)}\n"""`
+    //
+    // Prompt mirrors src/lib/space-nodes.jsx runSingleCaptionFromScript.
+    // The minimal one-liner version used to drop hashtags +
+    // first_comment because the LLM occasionally returned just title +
+    // caption when the schema wasn't spelled out. Spelling it out
+    // (plus the explicit example JSON shape) gets all four every run.
+    const prompt = `From the script below, write ONE canonical TITLE, CAPTION, FIRST_COMMENT, and exactly 5 HASHTAGS that will be used across every platform we publish to (TikTok, Instagram, YouTube, Facebook, X, LinkedIn, Threads, Pinterest, Bluesky). Aim for a tight, punchy caption that reads well on the longest-form platforms (Instagram / Facebook / LinkedIn) but doesn't feel bloated on the shorter ones, keep it under 1500 characters total. The platform layer truncates further for X / Threads / Bluesky automatically.
+
+Title rules:
+- ≤ 80 characters, click-worthy, no number prefix.
+- Used as the YouTube title and the post title on platforms that surface a separate title field.
+
+Caption rules:
+- ≤ 1500 characters. Lead with a strong hook in the first sentence.
+- Should land naturally on every platform, no platform-specific phrasing.
+- Plain text, paragraph breaks ok.
+
+Hashtags:
+- EXACTLY 5 hashtags, space-separated, each starting with #.
+- Lead with the brand's core hashtags from the brand bible, then add topic-specific ones.
+- Always present, never empty. Same set for every platform.
+
+First comment rules:
+- ≤ 220 characters. A short engagement driver that lands as the first reply on the post.
+- A punchy question, "save if this hit" call-to-action, or value-add follow-up thought.
+- NEVER duplicates the caption.
+- NEVER includes hashtags (those belong in the hashtags field).
+
+Voice: stay on the brand bible's tone (already in your system context). NEVER use em dashes; use commas, periods, or colons.
+
+Return ONLY valid JSON, no preamble, no markdown fences. Exact shape:
+{
+  "title": "",
+  "caption": "",
+  "first_comment": "",
+  "hashtags": "#a #b #c #d #e"
+}
+
+Script:
+"""
+${String(script).slice(0, 2000)}
+"""`
     const body = await callApi('/api/content/generate', {
       profile_id: profileId,
       format: 'ig-post',
-      topic: intro,
+      topic: prompt,
       count: 1,
       dry_run: true,
     }, ctx.headers)
@@ -526,12 +567,24 @@ const NODE_RUNNERS = {
       const m = cleaned.match(/\{[\s\S]*\}/)
       parsed = JSON.parse(m ? m[0] : cleaned)
     } catch { parsed = {} }
-    return {
+
+    let canonical = {
       title:         String(parsed.title || '').slice(0, 200),
-      caption:       String(parsed.caption || raw || '').slice(0, 2000),
+      caption:       String(parsed.caption || '').slice(0, 2000),
       hashtags:      String(parsed.hashtags || ''),
       first_comment: String(parsed.first_comment || '').slice(0, 400),
     }
+    // Salvage from raw text when JSON parse partially failed — same
+    // recovery path the browser uses. Without this, an LLM that wraps
+    // the JSON in prose or omits a field leaves columns null in
+    // content_scripts and the Schedule page shows empty hashtags.
+    if (!canonical.caption && raw) {
+      canonical.caption = String(raw).replace(/#[\w]+/g, '').trim().slice(0, 1500)
+    }
+    if (!canonical.hashtags && raw) {
+      canonical.hashtags = (String(raw).match(/#[\w]+/g) || []).slice(0, 5).join(' ')
+    }
+    return canonical
   },
 
   voice_gen: async ({ node, inputs, ctx }) => {
@@ -608,15 +661,44 @@ const NODE_RUNNERS = {
     const p = node.data?.props || {}
     const videoUrls = pickAllVideoUrls(inputs)
     if (!videoUrls.length) throw new Error('video_polish needs an upstream video')
-    let voiceoverUrl = null, musicUrl = p.music_url || null, logoUrl = null, upstreamTitle = ''
+    let voiceoverUrl = null, musicUrl = p.music_url || null, logoUrl = null
+    let upstreamTitle = '', upstreamScript = ''
     for (const v of asArr(inputs)) {
       if (!v || typeof v !== 'object') continue
       if (!voiceoverUrl && v.audio?.url) voiceoverUrl = v.audio.url
       if (!musicUrl && v.audio?.audio_url) musicUrl = v.audio.audio_url
       if (!logoUrl && v.brand?.logo_url) logoUrl = v.brand.logo_url
       if (!upstreamTitle && typeof v.title === 'string') upstreamTitle = v.title
+      if (!upstreamScript) {
+        if (typeof v.script === 'string') upstreamScript = v.script
+        else if (typeof v.full_script === 'string') upstreamScript = v.full_script
+        else if (typeof v.text === 'string') upstreamScript = v.text
+      }
     }
-    const titleText = upstreamTitle || (p.title || '').trim()
+    let titleText = upstreamTitle || (p.title || '').trim()
+    // Auto-title fallback. The browser path calls /api/videos/auto-title
+    // (Scribe transcribe + LLM) when title_mode='auto' and no upstream
+    // title is wired into polish. Without this, server runs whose
+    // graphs wire caption_gen → schedule_post (but NOT caption_gen →
+    // polish) silently published with no big text overlay on the
+    // video, even though the title shows up in the schedule queue.
+    // Mirrors the auto-title branch in src/lib/space-nodes.jsx.
+    if (!titleText && p.title_enabled !== false && (p.title_mode || 'auto') === 'auto') {
+      try {
+        const at = await callApi('/api/videos/auto-title', {
+          profile_id: ctx.profileId,
+          video_url: videoUrls[0],
+          transcript_text: upstreamScript || undefined,
+        }, ctx.headers)
+        if (at?.title) titleText = String(at.title).slice(0, 120)
+      } catch (e) {
+        // Don't fail the polish run over a missing title — the user
+        // still gets a polished video, just without the big top
+        // overlay. The schedule queue title comes from caption_gen
+        // separately.
+        console.warn('[video_polish] auto-title failed, continuing without overlay:', e?.message || e)
+      }
+    }
 
     // Server runs use the FIRST video only — fan-out across multiple
     // clips can be added later. Most automation cases (script →
