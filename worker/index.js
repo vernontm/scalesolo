@@ -220,7 +220,12 @@ async function probeRotation(filePath) {
   })
 }
 
-function runFFmpeg(args, timeoutMs = 600_000) {
+// 20 min cap. Was 10 min, but long voiceover-driven polishes (script
+// → voice_gen → -stream_loop video) routinely run 8-12 min on
+// shared-cpu-2x when the voiceover is multi-minute, so 10 min was
+// flaking on legitimate jobs. 20 min still kills truly stuck encodes
+// without giving up on long-but-fine ones.
+function runFFmpeg(args, timeoutMs = 1_200_000) {
   return new Promise((resolve, reject) => {
     const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] })
     let stderr = ''
