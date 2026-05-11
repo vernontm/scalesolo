@@ -34,7 +34,9 @@ const Spaces        = lazy(() => import('./pages/Spaces.jsx'))
 const Library       = lazy(() => import('./pages/Library.jsx'))
 const Admin         = lazy(() => import('./pages/Admin.jsx'))
 
-import GlobalAgent from './components/GlobalAgent.jsx'
+// GlobalAgent (bottom-right AI chat FAB) was removed. The bottom-right
+// slot is now a Spaces-only workflow-guide toggle rendered inside
+// Spaces.jsx so it can read templateGuide / guideHidden state directly.
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import ToastHost from './components/Toast.jsx'
 import { useAuth } from './context/AuthContext.jsx'
@@ -172,7 +174,6 @@ function AppShell() {
           </Suspense>
         </main>
       </div>
-      <GlobalAgent />
     </div>
   )
 }

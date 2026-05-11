@@ -2754,6 +2754,41 @@ function SpaceBuilder({ space, onSave, onClose }) {
 
         <FloatingPalette onAdd={(type) => addNode(type)} />
 
+        {/* Bottom-right FAB: toggles the workflow-guide side panel.
+            Replaces the old AI chat agent that lived in this slot — for
+            Spaces, the guide is the relevant always-on action. Hidden
+            when this space has no template guide. */}
+        {templateGuide && (
+          <button
+            type="button"
+            onClick={() => setGuideHidden((v) => !v)}
+            title={guideHidden ? 'Show workflow guide' : 'Hide workflow guide'}
+            aria-label={guideHidden ? 'Show workflow guide' : 'Hide workflow guide'}
+            style={{
+              position: 'fixed',
+              right: 24, bottom: 24,
+              width: 56, height: 56,
+              borderRadius: '50%',
+              background: guideHidden
+                ? 'linear-gradient(135deg, var(--red), var(--red-dark))'
+                : 'var(--surface)',
+              color: guideHidden ? '#fff' : 'var(--red)',
+              border: guideHidden ? 'none' : '1px solid rgba(239,68,68,0.45)',
+              cursor: 'pointer',
+              display: 'grid', placeItems: 'center',
+              boxShadow: guideHidden
+                ? '0 14px 36px rgba(239,68,68,0.4)'
+                : '0 8px 24px rgba(0,0,0,0.35)',
+              zIndex: 60,
+              transition: 'transform 0.15s var(--ease), box-shadow 0.15s var(--ease)',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)' }}
+            onMouseLeave={(e) => { e.currentTarget.style.transform = 'none' }}
+          >
+            <BookOpen size={22} strokeWidth={2.2} />
+          </button>
+        )}
+
         {historyOpen && (
           <RunHistoryModal
             spaceId={spaceIdRef.current}
