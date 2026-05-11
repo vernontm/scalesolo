@@ -336,6 +336,17 @@ app.post('/jobs/polish', requireSecret, async (req, res) => {
       vLabel = '[vrot]'
     }
 
+    // Cap output resolution at 1080x1920. iPhone 4K HEVC clips
+    // (~150-200 MB for 30s) decode 4x more data per frame than
+    // 1080p, blowing past 5 min on shared-cpu-2x and triggering
+    // Vercel's 504 gateway timeout. We don't need >1080p for
+    // social clips anyway — TikTok/Instagram downscale to 1080p
+    // before serving. `force_original_aspect_ratio=decrease` only
+    // downscales (never upscales), so 1080p sources pass through
+    // unchanged with zero overhead.
+    filters.push(`${vLabel}scale='min(1080,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease[vscaled]`)
+    vLabel = '[vscaled]'
+
     if (titleIdx !== -1) {
       // SVG is rendered at video width already. Position by y_pos pct.
       const yPct = Math.max(0, Math.min(95, Number(title_style.y_pos ?? 15))) / 100
@@ -375,7 +386,14 @@ app.post('/jobs/polish', requireSecret, async (req, res) => {
 
     args.push('-filter_complex', filters.join(';'))
     args.push('-map', vLabel, '-map', aLabel)
-    args.push('-c:v', 'libx264', '-preset', 'fast', '-crf', '24')
+    // `veryfast` encodes ~30% faster than `fast` with negligible
+    // visible quality loss for short social clips. Combined with
+    // the 1080p cap above, a 4K HEVC iPhone source now polishes
+    // in ~60-90s on shared-cpu-2x (was ~5+ min before, hitting
+    // Vercel's 504). -tune fastdecode hints x264 to skip the
+    // costliest decoding paths in the output — irrelevant to the
+    // viewer, useful for downstream tools (ZapCap especially).
+    args.push('-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'fastdecode', '-crf', '24')
     args.push('-c:a', 'aac', '-b:a', '128k')
     args.push('-movflags', '+faststart', outPath)
 
