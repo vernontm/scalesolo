@@ -324,29 +324,96 @@ app.post('/jobs/run-workflow', requireSecret, async (req, res) => {
   // the actual failure even when the cron is long gone.
   ;(async () => {
     const startedAt = Date.now()
+    let supabase = null
+    if (SUPABASE_URL && SERVICE_KEY) {
+      supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
+    }
+
+    // Bell notification at start so the user knows the cron picked up
+    // their workflow even before any individual node fires. We insert
+    // directly into notifications (same shape api/_lib/notify.js
+    // writes) via service-role so Realtime fans it out to the SPA
+    // immediately. Failures are non-fatal — notifications are
+    // best-effort signaling.
+    const notify = async (row) => {
+      if (!supabase) return
+      try {
+        await supabase.from('notifications').insert([{
+          user_id, profile_id,
+          kind: row.kind, level: row.level,
+          title: String(row.title || '').slice(0, 200),
+          body: row.body ? String(row.body).slice(0, 2000) : null,
+          href: row.href || null,
+          meta: row.meta || null,
+        }])
+      } catch (e) {
+        console.warn(`[wf ${schedule_id}] notify failed:`, e?.message)
+      }
+    }
+
+    await notify({
+      kind: 'workflow.started',
+      level: 'info',
+      title: 'Auto-run started',
+      body: 'Your scheduled workflow is running on the server.',
+      href: `/spaces?id=${body.space_id || ''}`,
+      meta: { schedule_id, space_id: body.space_id },
+    })
+
     try {
       const result = await runWorkflow({
         graph, userId: user_id, profileId: profile_id, internalSecret: internal_secret,
         log: (m) => console.log(`[wf ${schedule_id}] ${m}`),
       })
-      console.log(`[wf ${schedule_id}] done ok=${result.ok} errors=${Object.keys(result.errors).length} duration_ms=${Date.now() - startedAt}`)
-      if (!result.ok && SUPABASE_URL && SERVICE_KEY) {
-        const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
+      const errCount = Object.keys(result.errors).length
+      console.log(`[wf ${schedule_id}] done ok=${result.ok} errors=${errCount} duration_ms=${Date.now() - startedAt}`)
+
+      if (supabase && !result.ok) {
         const summary = Object.entries(result.errors).map(([id, msg]) => `${id}: ${msg}`).join(' · ').slice(0, 500)
         await supabase.from('scheduled_workflows')
           .update({ last_error: summary, updated_at: new Date().toISOString() })
           .eq('id', schedule_id)
           .then(() => {}, (e) => console.warn('[wf] update last_error failed:', e?.message))
       }
+
+      // Completion bell. Different shape for clean vs partial run so
+      // the user can tell at a glance whether to dig in.
+      if (result.ok) {
+        await notify({
+          kind: 'workflow.done',
+          level: 'success',
+          title: 'Auto-run finished',
+          body: `Workflow completed with no errors (${(Date.now() - startedAt) / 1000 | 0}s).`,
+          href: `/spaces?id=${body.space_id || ''}`,
+          meta: { schedule_id, space_id: body.space_id, duration_ms: Date.now() - startedAt },
+        })
+      } else {
+        const firstError = Object.values(result.errors)[0] || 'unknown'
+        await notify({
+          kind: 'workflow.failed',
+          level: 'error',
+          title: `Auto-run finished with ${errCount} error${errCount === 1 ? '' : 's'}`,
+          body: String(firstError).slice(0, 200),
+          href: `/spaces?id=${body.space_id || ''}`,
+          meta: { schedule_id, space_id: body.space_id, errors: result.errors },
+        })
+      }
     } catch (err) {
       console.error(`[wf ${schedule_id}] threw:`, err?.stack || err)
-      if (SUPABASE_URL && SERVICE_KEY) {
-        const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
+      if (supabase) {
         await supabase.from('scheduled_workflows')
           .update({ last_error: String(err?.message || err).slice(0, 500), updated_at: new Date().toISOString() })
           .eq('id', schedule_id)
           .then(() => {}, () => {})
       }
+      await notify({
+        kind: 'workflow.failed',
+        level: 'error',
+        title: 'Auto-run crashed',
+        body: String(err?.message || err).slice(0, 200),
+        href: `/spaces?id=${body.space_id || ''}`,
+        meta: { schedule_id, space_id: body.space_id, error: String(err?.message || err) },
+      })
     }
   })().catch(() => {})
 })

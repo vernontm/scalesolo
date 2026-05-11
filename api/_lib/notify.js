@@ -28,13 +28,20 @@ const ALLOWED_LEVELS = new Set(['info', 'success', 'warning', 'error'])
 // are always allowed (system / billing notifications the user can't opt
 // out of). Add a new entry whenever you ship a new pref toggle.
 const KIND_PREF_KEY = {
-  'run.done':        'run_done',
-  'render.done':     'run_done',
-  'render.failed':   'run_done',
-  'post.scheduled':  'post_scheduled',
-  'post.published':  'post_published',
-  'post.failed':     'post_failed',
-  'credits.low':     'credits_low',
+  'run.done':           'run_done',
+  'render.done':        'run_done',
+  'render.failed':      'run_done',
+  'post.scheduled':     'post_scheduled',
+  'post.published':     'post_published',
+  'post.failed':        'post_failed',
+  'credits.low':        'credits_low',
+  // Server-side auto-run lifecycle. The worker emits these directly
+  // (writes to the notifications table via service-role) so they
+  // bypass the Vercel /api/_lib/notify path — listed here for the
+  // user-prefs mute toggle, not for the notify() helper itself.
+  'workflow.started':   'workflow_run',
+  'workflow.done':      'workflow_run',
+  'workflow.failed':    'workflow_run',
 }
 
 async function isKindAllowed(user_id, kind) {
