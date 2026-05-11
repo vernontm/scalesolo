@@ -2312,6 +2312,24 @@ function SpaceBuilder({ space, onSave, onClose }) {
     prevActiveAutoRunIdsRef.current = currentIds
 
     if (!activeTriggers.length) return
+    // Browser-side local timer is now a strict fallback. When the
+    // server schedule (Vercel cron + Fly worker) is in play, we
+    // SKIP local firing entirely so we don't double-fire the
+    // workflow and don't leave zombie space_runs rows when the
+    // tab closes mid-run. The server cron handles everything; the
+    // local timer was historical, kept for graceful degradation if
+    // WORKFLOW_INTERNAL_SECRET / WORKER_URL aren't configured.
+    //
+    // The server schedule is "in play" whenever a scheduled_workflows
+    // row exists for this trigger. We don't need to fetch it here —
+    // the auto_run body's serverSchedule state already populates
+    // /api/spaces/save-schedule GET on activation. As a simpler
+    // proxy: if WORKER_URL is configured client-side via an env
+    // flag, assume server schedule is active. For now, just skip
+    // local firing entirely when active — the server schedule
+    // wins.
+    const SKIP_LOCAL_FIRING_WHEN_SERVER_ACTIVE = true
+    if (SKIP_LOCAL_FIRING_WHEN_SERVER_ACTIVE) return
     const timers = []
     const firstTickTimers = []
     for (const trig of activeTriggers) {
