@@ -6,11 +6,17 @@ import { useNotifications } from '../lib/useNotifications.js'
 const KIND_ICON = {
   'render.done':         '🎬',
   'render.failed':       '⚠️',
+  'post.scheduled':      '📅',
   'post.published':      '✅',
   'post.failed':         '⚠️',
   'credits.low':         '💳',
   'autorun.tick_failed': '⏱',
   'template.featured':   '✨',
+  // Server-side workflow auto-runs (fired from the Fly worker
+  // via the Vercel cron dispatch).
+  'workflow.started':    '▶️',
+  'workflow.done':       '🎉',
+  'workflow.failed':     '⚠️',
 }
 
 const LEVEL_COLOR = {
