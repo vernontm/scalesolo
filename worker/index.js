@@ -185,6 +185,39 @@ function probeDurationSecs(filePath) {
   })
 }
 
+// Probe rotation metadata. iPhone (and many Android) cameras record
+// "portrait" footage as landscape pixels with a rotation flag set on
+// the video stream. Players honor that flag transparently — but as
+// soon as ffmpeg sees `-filter_complex` it DISABLES auto-rotation
+// and feeds raw frames to filters. Without the workaround, an iPhone
+// vertical recording comes out of our composite sideways even though
+// every preview thumbnail looked correct.
+//
+// `-frames:v 0` makes ffmpeg parse stream metadata then exit instantly,
+// so this probe is ~100ms regardless of clip length.
+async function probeRotation(filePath) {
+  return new Promise((resolve) => {
+    const proc = spawn(ffmpegPath, [
+      '-i', filePath, '-hide_banner', '-frames:v', '0', '-f', 'null', '-',
+    ], { stdio: ['ignore', 'ignore', 'pipe'] })
+    let err = ''
+    proc.stderr.on('data', (d) => { err += d.toString('utf8') })
+    proc.on('close', () => {
+      // ffmpeg surfaces rotation in two forms depending on container:
+      //   "Side data: displaymatrix: rotation of -90.00 degrees"  (mp4/mov)
+      //   "rotate          : 90"                                  (older metadata tag)
+      let rotation = 0
+      const m1 = err.match(/rotation of (-?\d+(?:\.\d+)?) degrees?/i)
+      const m2 = err.match(/^\s*rotate\s*:\s*(-?\d+)/im)
+      if (m1) rotation = parseFloat(m1[1])
+      else if (m2) rotation = parseInt(m2[1], 10)
+      // Normalize to [0, 360). -90 = 270, etc.
+      resolve(((rotation % 360) + 360) % 360)
+    })
+    proc.on('error', () => resolve(0))
+  })
+}
+
 function runFFmpeg(args, timeoutMs = 600_000) {
   return new Promise((resolve, reject) => {
     const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] })
@@ -284,6 +317,25 @@ app.post('/jobs/polish', requireSecret, async (req, res) => {
 
     const filters = []
     let vLabel = '[0:v]'
+
+    // Bake rotation metadata into the pixels BEFORE any overlay
+    // filtering. We probe the input once and prepend a transpose
+    // step when needed. After this, vLabel points to a stream that
+    // already has the correct pixel dimensions (portrait if the
+    // source was a rotated landscape phone capture).
+    //   90  = recorded landscape, displayed CW  → transpose=1 (CW)
+    //   270 = recorded landscape, displayed CCW → transpose=2 (CCW)
+    //   180 = upside down                       → transpose=1,transpose=1
+    //   0   = native, no transform
+    const rotation = await probeRotation(inPath).catch(() => 0)
+    if (rotation === 90 || rotation === 270 || rotation === 180) {
+      const step = rotation === 90 ? 'transpose=1'
+        : rotation === 270 ? 'transpose=2'
+        : 'transpose=1,transpose=1'
+      filters.push(`${vLabel}${step}[vrot]`)
+      vLabel = '[vrot]'
+    }
+
     if (titleIdx !== -1) {
       // SVG is rendered at video width already. Position by y_pos pct.
       const yPct = Math.max(0, Math.min(95, Number(title_style.y_pos ?? 15))) / 100
