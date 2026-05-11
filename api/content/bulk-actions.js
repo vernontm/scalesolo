@@ -16,6 +16,7 @@ import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/su
 import { findNextOpenSlot } from '../_lib/scheduling.js'
 import { message } from '../_lib/anthropic.js'
 import { loadBrandContext, renderBrandContextMarkdown } from '../_lib/brand-context.js'
+import { transcribeFromUrl } from '../_lib/scribe.js'
 import {
   resolveUploadpostUser, uploadpostEnsureUserProfile,
 } from '../_lib/uploadpost.js'
@@ -49,6 +50,16 @@ export default async function handler(req, res) {
 }
 
 // ── generate-captions ──────────────────────────────────────────────────────
+// Transcribes any video row that doesn't already have a full_script, then
+// asks Claude for title + caption + hashtags + first_comment using:
+//   - the transcript (the actual content of the video)
+//   - the brand bible / voice / hashtags (the consistent brand context)
+//
+// This mirrors how VTM did it — the source of truth for caption content
+// is the VIDEO ITSELF (via Scribe), not whatever title was guessed at
+// upload time. Without transcription, a misleading auto-title (e.g.
+// "Mom Eats Free This Mother's Day") was steering every caption Claude
+// wrote on that row, even when the brand profile had nothing seasonal.
 async function generateCaptions({ res, profile_id, script_ids, user_id }) {
   if (!ANTHROPIC_API_KEY) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' })
 
@@ -103,6 +114,40 @@ async function generateCaptions({ res, profile_id, script_ids, user_id }) {
 
 For each script return: title, caption, hashtags, first_comment.${brandBlocks}${coreHashtagsLine}`
 
+  // Video rows: transcribe the audio via Scribe before composing the
+  // user message. This is the difference between "Claude writes captions
+  // from the actual content of the video" and "Claude writes captions
+  // from whatever stale title was on the row." Without this step a
+  // misleading auto-title steers every caption Claude produces.
+  //
+  // Parallel — Scribe with cloud_storage_url is cheap and a batch of 10
+  // rows finishes in ~roughly-the-slowest-call wall time. We cache the
+  // transcript back onto the row's full_script so re-clicks of Generate
+  // Captions reuse it instead of paying Scribe again.
+  const videoRowsNeedingTranscript = scripts
+    .map((s, i) => ({ s, i }))
+    .filter(({ s }) => s.media_type === 'video' && !s.full_script && Array.isArray(s.media_urls) && /^https?:\/\//.test(s.media_urls[0] || ''))
+  if (videoRowsNeedingTranscript.length) {
+    await Promise.all(videoRowsNeedingTranscript.map(async ({ s }) => {
+      try {
+        const result = await transcribeFromUrl(s.media_urls[0])
+        const transcript = String(result?.text || '').trim()
+        if (transcript) {
+          s.full_script = transcript
+          // Best-effort persist so re-runs / library views see it. Don't
+          // fail the batch over a transient PATCH failure.
+          await supaFetch(`content_scripts?id=eq.${s.id}`, {
+            method: 'PATCH',
+            body: { full_script: transcript },
+            prefer: 'return=minimal',
+          }).catch(() => {})
+        }
+      } catch (e) {
+        console.warn(`[generate-captions] transcribe failed for ${s.id}:`, e?.message)
+      }
+    }))
+  }
+
   // Multimodal user content — instructions + per-script blocks + image
   // blocks. Caps: 8 images per batch keeps the request small enough
   // to land under the model's image limit + token budget; extra
@@ -112,7 +157,18 @@ For each script return: title, caption, hashtags, first_comment.${brandBlocks}${
   const userContent = []
 
   scripts.forEach((s, i) => {
-    const header = `--- SCRIPT ${i} ---\nTITLE: ${s.title || 'Untitled'}\nKIND: ${s.media_type || 'unknown'}\nSCRIPT: ${(s.full_script || s.hook || s.title || 'No script text').slice(0, 1500)}`
+    // For video rows we now have a transcript in s.full_script — that's
+    // the canonical content signal. The pre-existing TITLE on the row
+    // may be stale (e.g. an auto-titled "Mom Eats Free This Mother's
+    // Day" landed at upload time and is misleading now). We pass the
+    // transcript verbatim and DO NOT pass the old title for video
+    // rows; Claude generates a fresh title from the transcript.
+    const isVideoWithTranscript = s.media_type === 'video' && !!s.full_script
+    const scriptText = (s.full_script || s.hook || s.title || 'No script text').slice(0, 1500)
+    const titleLine = isVideoWithTranscript
+      ? '' // intentionally blank — let Claude pick a fresh title from the transcript
+      : `\nTITLE: ${s.title || 'Untitled'}`
+    const header = `--- SCRIPT ${i} ---${titleLine}\nKIND: ${s.media_type || 'unknown'}\nSCRIPT: ${scriptText}`
     userContent.push({ type: 'text', text: header })
     const firstUrl = Array.isArray(s.media_urls) && s.media_urls[0]
     if (firstUrl && s.media_type === 'image' && imageBudget > 0 && /^https?:\/\//.test(firstUrl)) {
