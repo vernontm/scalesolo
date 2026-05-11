@@ -294,6 +294,25 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     }))
     setUploads((u) => [...u, ...queue])
 
+    // Bulletproof the platform pre-fill. If the user uploads BEFORE the
+    // background profile fetch in the useEffect above has landed (eg
+    // immediately after profile switch or page refresh), defaultPlatforms
+    // is still [] and every new row would be saved with platforms=NULL.
+    // Force-fetch here so we always have the current connected platforms
+    // when the row is created — the result is also pushed into state so
+    // a re-upload in the same session skips the round trip.
+    let resolvedPlatforms = defaultPlatforms
+    if (!resolvedPlatforms.length) {
+      try {
+        const r = await fetch(`/api/profiles`, { headers: { Authorization: `Bearer ${token}` } })
+        const b = await r.json()
+        const p = (b?.profiles || []).find((x) => x.id === profileId)
+        const arr = Array.isArray(p?.uploadpost_platforms) ? p.uploadpost_platforms : []
+        resolvedPlatforms = arr
+        setDefaultPlatforms(arr)
+      } catch { /* fall through with [] — the row gets platforms=null and the user can fix it inline */ }
+    }
+
     // Collect IDs of newly-created content_scripts rows so we can hand
     // them to the auto-process pipeline below. Failed uploads aren't in
     // here; they show as red rows in the upload list and the user can
@@ -311,7 +330,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         const compatibleByKind = new Set(
           ROW_PLATFORMS.filter((p) => p.kinds.includes(job.kind)).map((p) => p.id)
         )
-        const platforms = defaultPlatforms.filter((p) => compatibleByKind.has(p))
+        const platforms = resolvedPlatforms.filter((p) => compatibleByKind.has(p))
 
         // Create the content_scripts row.
         const r = await fetch('/api/content', {
