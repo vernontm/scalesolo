@@ -316,11 +316,16 @@ opener in the "Previously written for this brand" list.`
     // count=10 because we waited for each response before starting
     // the next; this drops total time to roughly the slowest call.
     // Anthropic's per-account concurrency limit is the only ceiling.
+    // For count>1 we sweep archetypes 0..count-1 so a batch of 10 hits
+    // every opener shape. For count===1 (every server-run script_gen
+    // call, plus all single manual generations) we used to hardcode
+    // archetype 0, which produced near-identical scripts run-to-run
+    // because the brand voice + topic + opener were all the same. Pick
+    // a random archetype for single-shot calls so successive runs land
+    // on different hook shapes.
+    const singleShotBaseIdx = count === 1 ? Math.floor(Math.random() * 10) : 0
     const claudePromises = Array.from({ length: count }, (_, i) => {
-      // Force a different opener archetype index per variation so a
-      // batch of 10 doesn't all converge on the same hook shape. The
-      // archetype list is in the system prompt; pick by index here.
-      const archetypeIdx = i % 10
+      const archetypeIdx = count === 1 ? singleShotBaseIdx : (i % 10)
       // Remix mode: the reference transcript carries the substance;
       // topic (when set) is just an angle hint. Stuff the transcript
       // in a fenced block so prompt injection inside it lands as
