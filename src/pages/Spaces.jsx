@@ -19,7 +19,7 @@ import {
   ZoomIn, ZoomOut, Maximize, Scissors, Download, X, History, Clock,
   CheckCircle2, XCircle, Square, Settings as SettingsIcon, Copy, Building2,
   BookOpen, ChevronLeft, ChevronRight, Lock, Globe, Bookmark, FileVideo,
-  ShieldCheck, Undo2, Redo2,
+  ShieldCheck, Undo2, Redo2, CalendarClock,
 } from 'lucide-react'
 import { useRef } from 'react'
 // (useEffect already imported above for other effects in this file)
@@ -949,6 +949,143 @@ function SpaceCreditsPill() {
   )
 }
 
+// ActiveSchedulesPill — header chip showing how many workflows are
+// currently set to fire on the server cron. Hover / click expands a
+// popover with each schedule's name, next fire time, runs used, and
+// last error (if any). Polls /api/spaces/save-schedule?all=1 on mount
+// + every 30s. Hidden entirely when no schedules are active so we
+// don't clutter the toolbar.
+function ActiveSchedulesPill({ token, spaces, onOpenSpace }) {
+  const [schedules, setSchedules] = useState(null)
+  const [open, setOpen] = useState(false)
+  const popRef = useRef(null)
+
+  // Load + refresh every 30s while mounted. Cheap GET, doesn't
+  // pressure anything.
+  useEffect(() => {
+    if (!token) { setSchedules(null); return }
+    let cancelled = false
+    const fetchOnce = async () => {
+      try {
+        const r = await fetch('/api/spaces/save-schedule?all=1', {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        const body = await r.json().catch(() => ({}))
+        if (!cancelled) setSchedules(Array.isArray(body.schedules) ? body.schedules : [])
+      } catch {
+        if (!cancelled) setSchedules([])
+      }
+    }
+    fetchOnce()
+    const t = setInterval(fetchOnce, 30_000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [token])
+
+  // Click-outside to close.
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e) => { if (popRef.current && !popRef.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [open])
+
+  const active = (schedules || []).filter((s) => s.active)
+  if (!active.length) return null
+
+  // Soonest fire — for the pill's secondary text. Schedules are
+  // already sorted by next_fire_at asc on the server.
+  const next = active[0]
+  const etaText = (() => {
+    if (!next?.next_fire_at) return ''
+    const ms = new Date(next.next_fire_at).getTime() - Date.now()
+    if (ms < 60_000) return 'firing soon'
+    if (ms < 3_600_000) return `in ${Math.round(ms / 60_000)} min`
+    if (ms < 86_400_000) return `in ${Math.round(ms / 3_600_000)} hr`
+    return `in ${Math.round(ms / 86_400_000)} days`
+  })()
+
+  const spaceNameById = (id) => {
+    const s = (spaces || []).find((sp) => sp.id === id)
+    return s?.name || s?.template_name || 'Untitled space'
+  }
+
+  return (
+    <div ref={popRef} style={{ position: 'relative' }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title={`${active.length} workflow${active.length === 1 ? '' : 's'} scheduled — click to view`}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          padding: '5px 10px', borderRadius: 999,
+          background: 'rgba(46,204,113,0.12)',
+          border: '1px solid rgba(46,204,113,0.45)',
+          color: '#2ecc71', cursor: 'pointer',
+          fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 11,
+          letterSpacing: '0.04em',
+        }}
+      >
+        <span style={{
+          width: 6, height: 6, borderRadius: 999, background: '#2ecc71',
+          display: 'inline-block', animation: 'pulse 2s ease-in-out infinite',
+        }} />
+        <CalendarClock size={12} />
+        {active.length} scheduled
+        {etaText && <span style={{ color: 'var(--muted)', fontWeight: 500, marginLeft: 4 }}>· {etaText}</span>}
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 6px)', right: 0,
+          minWidth: 320, maxWidth: 420,
+          background: 'var(--surface)',
+          border: '1px solid var(--border)',
+          borderRadius: 10,
+          boxShadow: '0 18px 48px rgba(0,0,0,0.45)',
+          padding: 8, zIndex: 100,
+          display: 'flex', flexDirection: 'column', gap: 4,
+        }}>
+          <div style={{
+            padding: '6px 8px', fontSize: 10.5,
+            fontFamily: 'var(--font-display)', fontWeight: 700,
+            letterSpacing: '0.06em', textTransform: 'uppercase',
+            color: 'var(--muted)',
+          }}>Active server schedules</div>
+          {active.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => { setOpen(false); onOpenSpace?.(s.space_id) }}
+              style={{
+                textAlign: 'left',
+                background: 'var(--surface-2)',
+                border: '1px solid var(--border)',
+                borderRadius: 8, padding: 8, cursor: 'pointer',
+                display: 'flex', flexDirection: 'column', gap: 2,
+              }}
+            >
+              <div style={{
+                fontSize: 12, fontFamily: 'var(--font-display)', fontWeight: 700,
+                color: 'var(--text)',
+              }}>{spaceNameById(s.space_id)}</div>
+              <div style={{ fontSize: 10.5, color: 'var(--muted)' }}>
+                Next fire: {s.next_fire_at ? new Date(s.next_fire_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'}
+                {' · '}
+                Runs {s.runs_used} / {s.max_runs}
+              </div>
+              {s.last_error && (
+                <div style={{ fontSize: 10, color: 'var(--red)', marginTop: 2 }}>
+                  Last error: {String(s.last_error).slice(0, 100)}
+                </div>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function SpacesList({ spaces, onCreate, onOpen, onDelete, onHistory, onDuplicate, error, token, profileId, onTemplatePicked }) {
   const [tab, setTab] = useState('mine')
   const [templates, setTemplates] = useState(null)
@@ -1021,6 +1158,7 @@ function SpacesList({ spaces, onCreate, onOpen, onDelete, onHistory, onDuplicate
           {tabBtn('mine', `Your spaces${spaces?.length ? ` (${spaces.length})` : ''}`)}
           {tabBtn('templates', `Templates${templates ? ` (${templates.length})` : ''}`)}
         </div>
+        <ActiveSchedulesPill token={token} spaces={spaces} onOpenSpace={onOpen} />
         <div style={{ flex: 1 }} />
         {tab === 'mine' && <button className="btn-primary" onClick={onCreate}><Plus size={14} /> New space</button>}
       </div>

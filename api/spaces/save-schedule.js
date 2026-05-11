@@ -126,12 +126,20 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'GET') {
+      // Two modes:
+      //   ?space_id=…           → schedules for that space (legacy)
+      //   ?all=1                → every active schedule for this user
+      //                            (used by the Spaces toolbar pill)
       const space_id = req.query.space_id
-      if (!space_id) return res.status(400).json({ error: 'space_id required' })
+      const wantAll = req.query.all === '1' || req.query.all === 'true'
+      if (!space_id && !wantAll) return res.status(400).json({ error: 'space_id or all=1 required' })
+      const filter = space_id
+        ? `space_id=eq.${encodeURIComponent(space_id)}&user_id=eq.${auth.user.id}`
+        : `user_id=eq.${auth.user.id}&active=eq.true`
       const rows = await supaFetch(
-        `scheduled_workflows?space_id=eq.${encodeURIComponent(space_id)}` +
-        `&user_id=eq.${auth.user.id}` +
-        `&select=id,trigger_node_id,active,interval_ms,max_runs,runs_used,next_fire_at,last_run_at,last_error`
+        `scheduled_workflows?${filter}` +
+        `&select=id,space_id,profile_id,trigger_node_id,active,interval_ms,max_runs,runs_used,next_fire_at,last_run_at,last_error` +
+        `&order=next_fire_at.asc`
       ).catch(() => [])
       return res.status(200).json({ schedules: rows || [] })
     }
