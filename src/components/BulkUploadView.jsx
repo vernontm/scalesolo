@@ -789,13 +789,19 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                 <th style={{ ...headerCell, width: 30 }} aria-label="Select">{' '}</th>
                 <th style={{ ...headerCell, width: 64 }}>Media</th>
                 <th style={{ ...headerCell }}>Title</th>
-                <th style={{ ...headerCell, width: '24%' }}>Caption</th>
-                <th style={{ ...headerCell, width: '14%' }}>Hashtags</th>
-                <th style={{ ...headerCell, width: '14%' }}>1st comment</th>
-                <th style={{ ...headerCell, width: 110 }}>Platforms</th>
-                <th style={{ ...headerCell, width: 130 }}>Scheduled</th>
+                {/* Width tuning: Scheduled needs ~175px for the
+                    datetime-local input to render "MM/DD/YYYY HH:MM AM"
+                    fully (130px clipped the AM/PM). Caption + 1st
+                    comment trimmed to give that space back — title
+                    column is auto-width so it claims whatever's left
+                    after the fixed columns. */}
+                <th style={{ ...headerCell, width: '20%' }}>Caption</th>
+                <th style={{ ...headerCell, width: '13%' }}>Hashtags</th>
+                <th style={{ ...headerCell, width: '13%' }}>1st comment</th>
+                <th style={{ ...headerCell, width: 100 }}>Platforms</th>
+                <th style={{ ...headerCell, width: 175 }}>Scheduled</th>
                 <th style={{ ...headerCell, width: 90 }}>Status</th>
-                <th style={{ ...headerCell, width: 50 }} aria-label="Actions">{' '}</th>
+                <th style={{ ...headerCell, width: 44 }} aria-label="Actions">{' '}</th>
               </tr>
             </thead>
             <tbody>
