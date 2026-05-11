@@ -476,6 +476,21 @@ function DuplicateSpaceModal({ space, profiles, currentProfileId, token, onClose
 function RunHistoryModal({ spaceId, token, onClose }) {
   const [runs, setRuns] = useState(null)
   const [error, setError] = useState(null)
+  // Active server schedules for this space (one row per auto_run
+  // trigger node). Stop button issues a DELETE which the cron honors
+  // immediately — next tick won't fire.
+  const [schedules, setSchedules] = useState(null)
+  const [stoppingId, setStoppingId] = useState(null)
+  const reloadSchedules = async () => {
+    if (!spaceId) { setSchedules([]); return }
+    try {
+      const r = await fetch(`/api/spaces/save-schedule?space_id=${spaceId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const b = await r.json().catch(() => ({}))
+      setSchedules(Array.isArray(b.schedules) ? b.schedules.filter((s) => s.active) : [])
+    } catch { setSchedules([]) }
+  }
   useEffect(() => {
     if (!spaceId) { setRuns([]); return }
     fetch(`/api/spaces/runs?space_id=${spaceId}&limit=30`, {
@@ -484,7 +499,30 @@ function RunHistoryModal({ spaceId, token, onClose }) {
       .then((r) => r.json())
       .then((b) => setRuns(Array.isArray(b.runs) ? b.runs : []))
       .catch((e) => setError(e.message))
+    reloadSchedules()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spaceId, token])
+
+  const stopSchedule = async (sch) => {
+    if (!spaceId || !sch?.trigger_node_id) return
+    setStoppingId(sch.id)
+    try {
+      const r = await fetch(
+        `/api/spaces/save-schedule?space_id=${encodeURIComponent(spaceId)}&trigger_node_id=${encodeURIComponent(sch.trigger_node_id)}`,
+        { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
+      )
+      if (!r.ok) {
+        const b = await r.json().catch(() => ({}))
+        throw new Error(b.error || `Stop failed (${r.status})`)
+      }
+      toast({ kind: 'success', message: 'Schedule stopped.' })
+      await reloadSchedules()
+    } catch (e) {
+      toast({ kind: 'error', message: e.message || 'Could not stop schedule.' })
+    } finally {
+      setStoppingId(null)
+    }
+  }
   return (
     <div
       onClick={onClose}
@@ -512,6 +550,62 @@ function RunHistoryModal({ spaceId, token, onClose }) {
           {!spaceId && <div style={{ color: 'var(--muted)', fontSize: 12.5, textAlign: 'center', padding: 30 }}>Save the space first to see history.</div>}
           {spaceId && runs == null && <div style={{ textAlign: 'center', padding: 30 }}><span className="spinner" /></div>}
           {error && <div style={{ color: 'var(--red)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+          {/* Active server schedules — pinned above the run list so the
+              user can stop a recurring auto-run without hunting for the
+              trigger node on the canvas. Hidden when none are active. */}
+          {Array.isArray(schedules) && schedules.length > 0 && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{
+                fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 11,
+                textTransform: 'uppercase', letterSpacing: '0.08em',
+                color: 'var(--muted)', marginBottom: 6,
+              }}>
+                Scheduled workflows
+              </div>
+              {schedules.map((s) => {
+                const nextFire = s.next_fire_at ? new Date(s.next_fire_at) : null
+                const intervalMin = Math.round((s.interval_ms || 0) / 60_000)
+                const intervalLabel = intervalMin >= 60
+                  ? `every ${(intervalMin / 60).toFixed(intervalMin % 60 ? 1 : 0)}h`
+                  : `every ${intervalMin}m`
+                return (
+                  <div key={s.id} style={{
+                    padding: '10px 12px', marginBottom: 8,
+                    background: 'rgba(46,204,113,0.08)',
+                    border: '1px solid rgba(46,204,113,0.35)',
+                    borderRadius: 8,
+                    display: 'flex', alignItems: 'center', gap: 10,
+                  }}>
+                    <span style={{
+                      width: 6, height: 6, borderRadius: 999, background: '#2ecc71',
+                      flexShrink: 0, animation: 'pulse 2s ease-in-out infinite',
+                    }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 12, color: '#2ecc71' }}>
+                        Active · {intervalLabel} · Runs {s.runs_used}/{s.max_runs}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-soft)', marginTop: 2 }}>
+                        {nextFire ? `Next fire: ${nextFire.toLocaleString()}` : 'Next fire pending'}
+                      </div>
+                      {s.last_error && (
+                        <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 2 }}>
+                          Last error: {s.last_error}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      className="btn-secondary"
+                      style={{ padding: '6px 12px', fontSize: 12 }}
+                      disabled={stoppingId === s.id}
+                      onClick={() => stopSchedule(s)}
+                    >
+                      {stoppingId === s.id ? <span className="spinner" /> : 'Stop'}
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
           {runs && runs.length === 0 && (
             <div style={{ color: 'var(--muted)', fontSize: 12.5, textAlign: 'center', padding: 30 }}>No runs yet — hit Run to start one.</div>
           )}
