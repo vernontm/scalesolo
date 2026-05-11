@@ -55,6 +55,15 @@ export function buildTimeline({
   resolution  = '1080',
 }) {
   const tracks = []
+  // videoLen is optional. When omitted, the video clip uses Shotstack's
+  // `length: "auto"` (server-side resolves the natural duration) and
+  // overlays use `length: "end"` (stay through the timeline end). This
+  // lets us skip probing the source duration locally — that probe
+  // streamed the entire video through ffmpeg just to read its
+  // `Duration:` line, which OOM'd the Vercel function on big clips.
+  const hasNumericLen   = videoLen != null && videoLen > 0
+  const videoClipLength = hasNumericLen ? videoLen : 'auto'
+  const overlayLength   = hasNumericLen ? videoLen : 'end'
 
   // Track ordering in Shotstack is top-down: track 0 renders on top of
   // track 1, etc. Title sits over watermark sits over the video plate.
@@ -63,7 +72,7 @@ export function buildTimeline({
       clips: [{
         asset: { type: 'image', src: titlePngUrl },
         start: 0,
-        length: videoLen,
+        length: overlayLength,
         position: 'center',
         offset: { x: 0, y: titleOffsetY(titleYpos) },
         // Title PNG is rendered at 1080px wide (the video's width). Setting
@@ -82,7 +91,7 @@ export function buildTimeline({
       clips: [{
         asset: { type: 'image', src: logoUrl },
         start: 0,
-        length: videoLen,
+        length: overlayLength,
         position,
         offset,
         // `scale` on an image clip in Shotstack is the fraction of the
@@ -102,7 +111,7 @@ export function buildTimeline({
     clips: [{
       asset: { type: 'video', src: videoUrl, volume: 1.0 },
       start: 0,
-      length: videoLen,
+      length: videoClipLength,
       fit: 'cover',
     }],
   })

@@ -332,12 +332,12 @@ export default async function handler(req, res) {
     // bad render never breaks the user's run.
     if (process.env.SHOTSTACK_API_KEY && wantsFfmpegEarly && supabaseEarly) {
       try {
-        // Probe duration straight off the source URL — ffmpeg's HTTP
-        // input only reads metadata, no full download, so this is ~1s.
-        let videoLen
-        try { videoLen = await probeDurationSecs(video_url) }
-        catch (e) { throw new Error(`Could not probe source duration: ${e.message}`) }
-        if (!videoLen || videoLen < 0.5) throw new Error('Source video has no usable duration')
+        // No local duration probe — Shotstack resolves the video's
+        // natural length server-side via `length: "auto"` on the clip
+        // (and `length: "end"` on overlays). Probing locally meant
+        // streaming the whole video through ffmpeg just to read its
+        // Duration line, which OOM'd the function on big clips.
+        const videoLen = null
 
         // Title PNG → Storage. Same renderer the ffmpeg path uses, so
         // typography is pixel-identical across the two backends. We
@@ -406,19 +406,31 @@ export default async function handler(req, res) {
 
         // Mirror the final asset to our own Storage so the canvas has
         // a stable URL (Shotstack's CDN URLs expire after ~24h on free
-        // plans). Mirror failure isn't fatal — we just fall back to
-        // returning the upstream URL with a warning.
+        // plans). Skipped for files > MIRROR_MAX_BYTES so big clips
+        // don't OOM the Vercel function — for those we accept the
+        // shorter-lived upstream URL since downstream consumers
+        // (Upload-Post) fetch immediately on submit.
+        const MIRROR_MAX_BYTES = 60 * 1024 * 1024  // 60 MB
         let finalUrl = captionedUrl
         let bytes = 0
         try {
-          const buf = await fetchToBuffer(captionedUrl)
-          bytes = buf.byteLength
-          const outPath = `${profile_id}/spaces/polished/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`
-          const { error } = await supabaseEarly.storage.from('landing-media').upload(outPath, buf, {
-            contentType: 'video/mp4', upsert: false,
-          })
-          if (!error) {
-            finalUrl = supabaseEarly.storage.from('landing-media').getPublicUrl(outPath).data.publicUrl
+          // HEAD first to peek the Content-Length. Avoid pulling 100+ MB
+          // into a Buffer just to discover we shouldn't have.
+          const head = await fetch(captionedUrl, { method: 'HEAD' }).catch(() => null)
+          const len = Number(head?.headers?.get('content-length') || 0)
+          if (len && len > MIRROR_MAX_BYTES) {
+            console.warn(`[polish:shotstack] skipping mirror — file ${(len / 1024 / 1024).toFixed(1)} MB > ${(MIRROR_MAX_BYTES / 1024 / 1024)} MB cap`)
+            bytes = len
+          } else {
+            const buf = await fetchToBuffer(captionedUrl)
+            bytes = buf.byteLength
+            const outPath = `${profile_id}/spaces/polished/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`
+            const { error } = await supabaseEarly.storage.from('landing-media').upload(outPath, buf, {
+              contentType: 'video/mp4', upsert: false,
+            })
+            if (!error) {
+              finalUrl = supabaseEarly.storage.from('landing-media').getPublicUrl(outPath).data.publicUrl
+            }
           }
         } catch (e) {
           console.warn('[polish:shotstack] could not mirror to Storage, using upstream URL:', e.message)
