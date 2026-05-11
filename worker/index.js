@@ -319,10 +319,15 @@ app.post('/jobs/polish-async', requireSecret, async (req, res) => {
 app.post('/jobs/run-workflow', requireSecret, async (req, res) => {
   const body = req.body || {}
   const { schedule_id, user_id, profile_id, graph, internal_secret } = body
-  if (!schedule_id || !user_id || !profile_id || !graph || !internal_secret) {
-    return res.status(400).json({ error: 'schedule_id, user_id, profile_id, graph, internal_secret required' })
+  // Manual one-shot dispatches (from /api/spaces/run-now) don't have a
+  // schedule_id — they're not cron ticks. Everything else still needs
+  // to identify the caller + target + auth secret.
+  if (!user_id || !profile_id || !graph || !internal_secret) {
+    return res.status(400).json({ error: 'user_id, profile_id, graph, internal_secret required' })
   }
-  res.status(202).json({ accepted: true, schedule_id })
+  const triggeredBy = body.triggered_by === 'manual_server' ? 'manual_server' : 'server_cron'
+  const jobLabel = schedule_id || `manual-${Date.now().toString(36)}`
+  res.status(202).json({ accepted: true, schedule_id: schedule_id || null, job_id: jobLabel })
 
   // Background execution. Errors get reported back via Supabase
   // direct (service-role) so the schedule row's last_error reflects
@@ -352,17 +357,20 @@ app.post('/jobs/run-workflow', requireSecret, async (req, res) => {
           meta: row.meta || null,
         }])
       } catch (e) {
-        console.warn(`[wf ${schedule_id}] notify failed:`, e?.message)
+        console.warn(`[wf ${jobLabel}] notify failed:`, e?.message)
       }
     }
 
+    const isManual = triggeredBy === 'manual_server'
     await notify({
       kind: 'workflow.started',
       level: 'info',
-      title: 'Auto-run started',
-      body: 'Your scheduled workflow is running on the server.',
+      title: isManual ? 'Run started on server' : 'Auto-run started',
+      body: isManual
+        ? 'You can close the tab; the workflow continues running.'
+        : 'Your scheduled workflow is running on the server.',
       href: `/spaces?id=${body.space_id || ''}`,
-      meta: { schedule_id, space_id: body.space_id },
+      meta: { schedule_id: schedule_id || null, space_id: body.space_id, triggered_by: triggeredBy },
     })
 
     // Record a space_runs row so the server run shows up in the
@@ -378,24 +386,24 @@ app.post('/jobs/run-workflow', requireSecret, async (req, res) => {
         const inserted = await supabase.from('space_runs').insert([{
           space_id: body.space_id,
           profile_id,
-          triggered_by: 'server_cron',
+          triggered_by: triggeredBy,
           status: 'running',
           node_count: Array.isArray(graph?.nodes) ? graph.nodes.length : 0,
           started_at: new Date().toISOString(),
         }]).select('id').single()
         spaceRunId = inserted?.data?.id || null
       } catch (e) {
-        console.warn(`[wf ${schedule_id}] space_runs insert failed:`, e?.message)
+        console.warn(`[wf ${jobLabel}] space_runs insert failed:`, e?.message)
       }
     }
 
     try {
       const result = await runWorkflow({
         graph, userId: user_id, profileId: profile_id, internalSecret: internal_secret,
-        log: (m) => console.log(`[wf ${schedule_id}] ${m}`),
+        log: (m) => console.log(`[wf ${jobLabel}] ${m}`),
       })
       const errCount = Object.keys(result.errors).length
-      console.log(`[wf ${schedule_id}] done ok=${result.ok} errors=${errCount} duration_ms=${Date.now() - startedAt}`)
+      console.log(`[wf ${jobLabel}] done ok=${result.ok} errors=${errCount} duration_ms=${Date.now() - startedAt}`)
 
       // Finalize the space_runs row with completion state. status
       // mirrors how the browser-side runs label themselves:
@@ -411,10 +419,13 @@ app.post('/jobs/run-workflow', requireSecret, async (req, res) => {
           finished_at: new Date().toISOString(),
           duration_ms: Date.now() - startedAt,
           errors: errorsArr,
-        }).eq('id', spaceRunId).then(() => {}, (e) => console.warn(`[wf ${schedule_id}] space_runs finish update failed:`, e?.message))
+        }).eq('id', spaceRunId).then(() => {}, (e) => console.warn(`[wf ${jobLabel}] space_runs finish update failed:`, e?.message))
       }
 
-      if (supabase && !result.ok) {
+      // Only attribute the error back to a scheduled_workflows row
+      // when this run was actually triggered by one. Manual one-shots
+      // have no schedule to update.
+      if (supabase && !result.ok && schedule_id) {
         const summary = Object.entries(result.errors).map(([id, msg]) => `${id}: ${msg}`).join(' · ').slice(0, 500)
         await supabase.from('scheduled_workflows')
           .update({ last_error: summary, updated_at: new Date().toISOString() })
@@ -445,12 +456,14 @@ app.post('/jobs/run-workflow', requireSecret, async (req, res) => {
         })
       }
     } catch (err) {
-      console.error(`[wf ${schedule_id}] threw:`, err?.stack || err)
-      if (supabase) {
+      console.error(`[wf ${jobLabel}] threw:`, err?.stack || err)
+      if (supabase && schedule_id) {
         await supabase.from('scheduled_workflows')
           .update({ last_error: String(err?.message || err).slice(0, 500), updated_at: new Date().toISOString() })
           .eq('id', schedule_id)
           .then(() => {}, () => {})
+      }
+      if (supabase) {
         // Mark space_runs row as failed too so the canvas history
         // doesn't leave it stuck on 'running' until the zombie sweeper
         // catches it 15 min later.

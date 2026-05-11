@@ -2118,37 +2118,48 @@ function SpaceBuilder({ space, onSave, onClose }) {
     } catch {}
   }
 
+  // The toolbar Run button dispatches to the Fly worker via
+  // /api/spaces/run-now. The whole graph runs server-side, so the user
+  // can close the tab the moment the toast appears and the workflow
+  // keeps going. Per-node Run buttons (the small play arrows on each
+  // node) still use the browser-orchestrated runFromNode below — those
+  // are interactive "just re-run THIS step" actions that need live
+  // canvas feedback.
+  //
+  // We require the space to be saved first because the worker's job
+  // record links back to a real space_id. A "__transient__" id would
+  // produce orphaned space_runs rows that the user can't find later.
   const run = async () => {
     if (running) return
+    if (!spaceIdRef.current) {
+      setError('Save the space first — server runs need a real space_id.')
+      return
+    }
+    if (!nodes.length) return
     setError(null)
-    setNodes((arr) => arr.map((n) => ({ ...n, data: { ...n.data, status: 'idle', output: null, error: null } })))
-
-    const ctx = { token: session.access_token, profileId: selectedProfileId, avatars, profiles }
     const snapshot = safeClone({ nodes, edges })
-    const startedAt = Date.now()
-    const runId = await recordRunStart({ triggered_by: 'manual', node_count: snapshot.nodes.length })
     try {
-      const result = await runCtx.executeRun({
-        spaceId: spaceIdRef.current || '__transient__',
-        ctx,
-        nodes: snapshot.nodes,
-        edges: snapshot.edges,
+      const r = await fetch('/api/spaces/run-now', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({
+          space_id: spaceIdRef.current,
+          profile_id: selectedProfileId,
+          graph: { nodes: snapshot.nodes, edges: snapshot.edges },
+        }),
       })
-      if (!result.ok) {
-        const msg = Object.entries(result.errors).map(([id, e]) => `${id}: ${e}`).join(' · ')
-        setError(msg || 'One or more nodes failed')
-      }
-      ensureCollectionForVideoPolish()
-      refreshCredits()
-      const errCount = Object.keys(result.errors || {}).length
-      await recordRunFinish(runId, {
-        status: errCount === 0 ? 'success' : (errCount < snapshot.nodes.length ? 'partial' : 'failed'),
-        errors: Object.entries(result.errors || {}).map(([nodeId, msg]) => ({ nodeId, msg })),
-        duration_ms: Date.now() - startedAt,
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(body?.error || `Run dispatch failed (${r.status})`)
+      toast({
+        kind: 'success',
+        message: 'Run started on server. You can close the tab — the workflow keeps going.',
       })
+      // Don't flip local `running` — there's no in-browser loop to spin
+      // for. The space_runs row + Realtime will surface progress in the
+      // Run history modal and the notifications bell.
     } catch (e) {
-      setError(e.message)
-      await recordRunFinish(runId, { status: 'failed', errors: [{ msg: e.message }], duration_ms: Date.now() - startedAt })
+      setError(e.message || 'Could not start server run.')
+      toast({ kind: 'error', message: e.message || 'Could not start server run.' })
     }
   }
 
