@@ -54,11 +54,23 @@ export default async function handler(req, res) {
       }
       await assertProfileAccess(auth.user.id, profile_id)
 
-      // First fire is one interval out. Matches browser behavior where
-      // the immediate first tick is a UX nicety — server cron doesn't
-      // have a user clicking Start to anchor against, so it just
-      // schedules the next tick like every other tick.
-      const nextFireAt = new Date(Date.now() + Number(interval_ms)).toISOString()
+      // First fire fires SOON — 60 seconds from now — so the user
+      // gets visible feedback that the schedule works without
+      // waiting a full interval. After the first run completes, the
+      // cron advances next_fire_at by interval_ms on each subsequent
+      // tick (so a "1 per day" schedule clicked at 1:18 PM fires:
+      //   t+60s         (first, soon after activation)
+      //   t+60s+24h     (second)
+      //   t+60s+48h     (third)
+      //   ...
+      // ).
+      //
+      // 60s instead of 0 lets a misclick-Stop happen before any
+      // credits burn. The cron runs every minute anyway so the
+      // first fire generally happens within 60-120s of clicking
+      // Start.
+      const FIRST_FIRE_DELAY_MS = 60_000
+      const nextFireAt = new Date(Date.now() + FIRST_FIRE_DELAY_MS).toISOString()
 
       const payload = {
         user_id: auth.user.id,

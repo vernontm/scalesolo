@@ -2537,6 +2537,15 @@ function SpaceBuilder({ space, onSave, onClose }) {
           _ctxHasAvatarUpstream: findUpstreamAvatarPicker(n.id, nodes, edges),
         } }
       }
+      if (t === 'auto_run') {
+        // Body uses _ctxSpaceId to fetch its server-side schedule
+        // state from /api/spaces/save-schedule and show the live
+        // next_fire_at / runs_used / last_error readout.
+        return { ...n, data: {
+          ...n.data,
+          _ctxSpaceId: spaceIdRef.current || space?.id || null,
+        } }
+      }
       if (t === 'schedule_post') {
         // Drives platform-pill enablement + the auto-slot preview +
         // the per-platform character-cap warning.

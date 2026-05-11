@@ -2551,6 +2551,36 @@ function AutoRunBody({ data, onPatch }) {
   const runsUsed = Number(props.runs_used ?? 0)
   const active = !!props.active
 
+  // Server-side schedule status — fetched live from /api/spaces/save-schedule
+  // for this node when it's active. Drives the "Server: next at X,
+  // runs_used Y" readout + the Cancel button. Refreshes every 30s
+  // while the node is on screen so the user sees runs_used tick up
+  // and next_fire_at advance in near-real-time.
+  const [serverSchedule, setServerSchedule] = useState(null)
+  const spaceId = data._ctxSpaceId
+  useEffect(() => {
+    if (!active || !spaceId || spaceId === '__transient__') {
+      setServerSchedule(null)
+      return
+    }
+    let cancelled = false
+    const fetchSchedule = async () => {
+      try {
+        const session = (await supabase.auth.getSession()).data.session
+        const r = await fetch(`/api/spaces/save-schedule?space_id=${encodeURIComponent(spaceId)}`, {
+          headers: { Authorization: `Bearer ${session?.access_token || ''}` },
+        })
+        const body = await r.json().catch(() => ({}))
+        if (cancelled) return
+        const mine = (body.schedules || []).find((s) => s.trigger_node_id === data.__id)
+        setServerSchedule(mine || null)
+      } catch {}
+    }
+    fetchSchedule()
+    const t = setInterval(fetchSchedule, 30_000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [active, spaceId, data.__id])
+
   // Auto-commit the default frequency on legacy nodes (saved before
   // the Frequency input existed). Without this, the body displays
   // "2 per day" + a hidden "use this" link, but the SCHEDULER
@@ -2752,6 +2782,58 @@ function AutoRunBody({ data, onPatch }) {
           >Reset counter</button>
         )}
       </div>
+      {/* Server schedule status — live state from
+          scheduled_workflows. Only shown when a row exists for this
+          node (set by the activation flow). Includes a Cancel button
+          that DELETEs the row so the cron stops firing without the
+          user needing to come back to the canvas. */}
+      {serverSchedule && (
+        <div className="nodrag" style={{
+          marginTop: 8, padding: 8, fontSize: 10.5,
+          background: 'rgba(46,204,113,0.10)',
+          border: '1px solid rgba(46,204,113,0.30)',
+          borderRadius: 6, color: 'var(--text-soft)',
+          display: 'flex', flexDirection: 'column', gap: 4,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{
+              fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 9.5,
+              color: '#2ecc71', letterSpacing: '0.06em', textTransform: 'uppercase',
+            }}>Server schedule</span>
+            <span style={{ flex: 1 }} />
+            <button
+              type="button"
+              onClick={async (e) => {
+                e.stopPropagation()
+                if (typeof window === 'undefined' || !window.__spaceStopServerSchedule) return
+                await window.__spaceStopServerSchedule(data.__id)
+                onPatch?.({ active: false })
+                setServerSchedule(null)
+              }}
+              style={{
+                background: 'transparent', border: 'none',
+                color: 'var(--red)', cursor: 'pointer',
+                fontSize: 10, padding: 0, textDecoration: 'underline',
+              }}
+              title="Cancel the server schedule and stop firing this workflow"
+            >Cancel schedule</button>
+          </div>
+          {serverSchedule.next_fire_at && (
+            <div>Next fire: <strong style={{ color: 'var(--text)' }}>
+              {new Date(serverSchedule.next_fire_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+            </strong></div>
+          )}
+          <div>Server runs: <strong style={{ color: 'var(--text)' }}>{serverSchedule.runs_used} / {serverSchedule.max_runs}</strong></div>
+          {serverSchedule.last_run_at && (
+            <div>Last server run: {new Date(serverSchedule.last_run_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</div>
+          )}
+          {serverSchedule.last_error && (
+            <div style={{ color: 'var(--red)', marginTop: 2 }}>
+              Last error: {serverSchedule.last_error.slice(0, 120)}
+            </div>
+          )}
+        </div>
+      )}
       <div style={{ marginTop: 8, fontSize: 10, color: 'var(--muted)', lineHeight: 1.4 }}>
         Server-scheduled — fires from our cron even when this tab is closed. The local timer also runs as a backup while the canvas is open.
       </div>
