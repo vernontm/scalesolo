@@ -6770,13 +6770,37 @@ export const NODE_REGISTRY = {
           const POLL_INTERVAL_MS = 7_000
           const sess = ctx.token
           const jobId = body.worker_job_id
+          // Transient errors are common over multi-minute polling: tab
+          // backgrounded + browser throttling, Wi-Fi drop, Fly proxy
+          // restart, etc. None of those mean the job is dead — most of
+          // the time the worker keeps grinding and the next tick works.
+          // Tolerate up to 6 consecutive network failures (~42s of dark
+          // sky) before giving up. Hard errors (4xx/5xx from the proxy
+          // with a parsed body) still abort immediately.
+          const MAX_TRANSIENT_FAILS = 6
+          let consecFails = 0
           let pollResult = null
           while (true) {
             await new Promise((res) => setTimeout(res, POLL_INTERVAL_MS))
-            const sr = await fetch(`/api/videos/polish-status?job_id=${encodeURIComponent(jobId)}`, {
-              headers: { Authorization: `Bearer ${sess}` },
-            })
-            const sb = await sr.json().catch(() => ({}))
+            // Abort cooperatively if the user hit Stop mid-poll.
+            if (ctx.shouldAbort?.()) throw new Error('Stopped')
+            let sr, sb
+            try {
+              sr = await fetch(`/api/videos/polish-status?job_id=${encodeURIComponent(jobId)}`, {
+                headers: { Authorization: `Bearer ${sess}` },
+              })
+              sb = await sr.json().catch(() => ({}))
+            } catch (netErr) {
+              // fetch() threw — DNS failure, CORS, browser-aborted
+              // connection, etc. Count it as transient and retry.
+              consecFails += 1
+              if (consecFails >= MAX_TRANSIENT_FAILS) {
+                throw new Error(`Lost connection to worker after ${consecFails} retries. The polish may have still completed — check the Library in a minute.`)
+              }
+              reportProgress?.({ message: `Reconnecting to worker (${consecFails}/${MAX_TRANSIENT_FAILS})…`, done: idx, total })
+              continue
+            }
+            consecFails = 0
             if (sr.status === 404) throw new Error(`Polish job ${jobId} expired before completion.`)
             if (!sr.ok) throw new Error(sb?.error || `Polish status ${sr.status}`)
             if (sb.status === 'done') { pollResult = sb.result; break }
