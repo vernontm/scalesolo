@@ -23,6 +23,7 @@ import {
 } from 'lucide-react'
 import { useRef } from 'react'
 // (useEffect already imported above for other effects in this file)
+import { supabase } from '../lib/supabase.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { useCredits, fmtCount } from '../context/CreditsContext.jsx'
