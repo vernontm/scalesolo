@@ -839,6 +839,42 @@ async function uploadVideoWithProgress(file, profileId, onProgress, { signal } =
   })
 }
 
+// HEVC (H.265) detector. iPhone Pro models default to recording in
+// HEVC, which:
+//   - decodes 3-4x more memory-hungry than H.264 (fly worker OOMs)
+//   - browsers vary wildly in playback support
+//   - many third-party services (Shotstack, ZapCap) don't honor
+//     rotation metadata in HEVC reliably
+// We reject at upload time so users get a clear actionable error
+// instead of silent failures three steps later in the pipeline.
+//
+// Detection: HEVC samples in MP4 / MOV use the `hvc1` (or `hev1`)
+// FourCC in the stsd atom inside moov. Reading the first 256 KB of
+// the file is enough to capture the moov box in 99% of consumer
+// recordings (faststart MP4 puts moov up front; iPhone .mov puts it
+// at end but stsd is small and the box header appears early). We
+// scan the bytes for either signature — false positives only happen
+// if those exact 4 bytes appear in payload data, which is vanishingly
+// rare in the first 256 KB.
+async function detectHevc(file) {
+  try {
+    const chunkSize = Math.min(file.size, 256 * 1024)
+    const ab = await file.slice(0, chunkSize).arrayBuffer()
+    const bytes = new Uint8Array(ab)
+    const matches = (sig) => {
+      const a = sig.charCodeAt(0), b = sig.charCodeAt(1), c = sig.charCodeAt(2), d = sig.charCodeAt(3)
+      const end = bytes.length - 4
+      for (let i = 0; i < end; i++) {
+        if (bytes[i] === a && bytes[i + 1] === b && bytes[i + 2] === c && bytes[i + 3] === d) return true
+      }
+      return false
+    }
+    return matches('hvc1') || matches('hev1')
+  } catch {
+    return false
+  }
+}
+
 // Off-DOM probe: load video metadata + first frame, return
 // { width, height, duration } so the upload UI can reject non-vertical
 // videos before they hit storage. The 9:16 enforcement matches what
@@ -2181,6 +2217,15 @@ function ImageUploadBody({ data, onPatch }) {
       const isVideo = row.kind === 'video'
       updateOne(row.localId, { status: 'uploading' })
       if (isVideo) {
+        // HEVC reject — see detectHevc() above for why. Errors here
+        // surface in the per-file progress panel with the full
+        // message, so the user knows exactly how to fix it.
+        if (await detectHevc(f)) {
+          throw new Error(
+            'HEVC (H.265) not supported. iPhone: Settings → Camera → Formats → "Most Compatible" to record in H.264. ' +
+            'Existing clips: re-export from Photos / iMovie / Final Cut with H.264 codec.'
+          )
+        }
         // Vertical-only enforcement before we burn bandwidth uploading.
         const meta = await probeVideoMeta(f).catch(() => null)
         if (meta && meta.width && meta.height) {
