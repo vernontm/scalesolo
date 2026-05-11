@@ -54,7 +54,39 @@ export default async function handler(req, res) {
   }
 
   const startedAt = Date.now()
-  const stats = { scanned: 0, dispatched: 0, errors: 0, skipped_claimed: 0 }
+  const stats = { scanned: 0, dispatched: 0, errors: 0, skipped_claimed: 0, swept_zombie_runs: 0 }
+
+  // Zombie space_runs sweep. Browser-side runs write a row at
+  // start and update it on finish. If the user closes the tab
+  // mid-run, the row never reaches finished_at and shows up in
+  // the canvas Run history as "running" forever. Cap at 15 min
+  // since the slowest legitimate workflow (5-clip polish + ZapCap)
+  // tops out around 7-8 min. Anything past 15 is dead.
+  try {
+    const sweepCutoff = new Date(Date.now() - 15 * 60_000).toISOString()
+    const swept = await supaFetch(
+      `space_runs?status=eq.running&started_at=lt.${encodeURIComponent(sweepCutoff)}` +
+      `&select=id&limit=100`
+    ).catch(() => [])
+    if (swept?.length) {
+      const ids = swept.map((r) => r.id)
+      await supaFetch(
+        `space_runs?id=in.(${ids.map((i) => encodeURIComponent(i)).join(',')})`,
+        {
+          method: 'PATCH',
+          body: {
+            status: 'failed',
+            finished_at: new Date().toISOString(),
+            errors: [{ msg: 'Browser tab closed before run completed (auto-cleanup)' }],
+          },
+          prefer: 'return=minimal',
+        }
+      ).catch((e) => console.warn('[cron] zombie sweep PATCH failed:', e?.message))
+      stats.swept_zombie_runs = ids.length
+    }
+  } catch (e) {
+    console.warn('[cron] zombie sweep error:', e?.message)
+  }
 
   try {
     // Pull every due, active, unclaimed schedule. claimed_at filter
