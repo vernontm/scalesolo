@@ -128,79 +128,213 @@ const NODE_RUNNERS = {
 
   avatar_picker: ({ node }) => ({ avatar: { ...node.data?.props } }),
 
-  // Single-clip avatar render. Posts to /api/avatars/photo-render
-  // and polls /api/avatars/photo-render-status until success.
-  // Randomize / multi-clip fan-out modes aren't supported on the
-  // server runtime yet — those run in the browser canvas only.
-  // Surfaces a clear error if the user's auto_run workflow uses
-  // randomize so they know which mode is the blocker.
-  avatar_render: async ({ inputs, ctx }) => {
+  // Avatar render. Supports the three modes the browser canvas
+  // exposes:
+  //
+  //   1. Single-clip: one photo + (audio or script) → one HeyGen
+  //      render. Default for avatars with a specific image_id set
+  //      on the picker.
+  //
+  //   2. Pre-chunked randomize: voice_gen randomize emits
+  //      audio_chunks[{ image_url, audio_url, order, sentence }].
+  //      We fan out one HeyGen render per chunk in parallel. This
+  //      is the canonical voice_gen → avatar_render randomize wire.
+  //
+  //   3. Single audio + look randomize: a non-chunked audio source
+  //      with an avatar in randomize mode + look_id. We call
+  //      /api/avatars/audio-chunks to split the audio against the
+  //      look's image count, then fan out like (2).
+  //
+  // Each clip submits via /api/avatars/photo-render and polls
+  // /api/avatars/photo-render-status. Concurrency 4 keeps HeyGen
+  // happy without serializing the whole batch.
+  avatar_render: async ({ inputs, ctx, log }) => {
     const avatar = pickAvatar(inputs)
     if (!avatar?.avatar_id) throw new Error('avatar_render needs an Avatar picker upstream')
 
-    // voice_gen output: { audio: { url } }. avatar_render expects
-    // audio_url. HeyGen also accepts an inline script via the
-    // /api/avatars/photo-render endpoint — pass either.
     let audioUrl = null
+    let audioDurationSecs = null
+    let preChunkedAudio = null  // [{ image_url, audio_url, order, sentence }]
     let script = ''
     for (const v of asArr(inputs)) {
       if (!v || typeof v !== 'object') continue
-      if (!audioUrl && v.audio?.url) audioUrl = v.audio.url
+      if (!audioUrl && v.audio?.url) { audioUrl = v.audio.url; audioDurationSecs = v.audio.duration_secs }
       if (!audioUrl && v.audio?.audio_url) audioUrl = v.audio.audio_url
       if (!script && (v.script || v.full_script)) script = v.script || v.full_script
-      if (Array.isArray(v.audio_chunks) && v.audio_chunks.length > 1) {
-        throw new Error('avatar_render randomize/multi-clip not yet supported on server-side auto-run. Use single-image avatar mode, or run this workflow manually.')
+      if (!preChunkedAudio && Array.isArray(v.audio_chunks) && v.audio_chunks.length > 0) {
+        preChunkedAudio = v.audio_chunks
       }
     }
-    if (!audioUrl && !script) throw new Error('avatar_render needs upstream voice_gen audio or a script')
-
-    // Pick the photo. avatar.image_url is set when the avatar
-    // picker has a specific image bound to it. For looks with
-    // multiple images and no specific pick, the server runner
-    // doesn't try to randomize — just throws so the user knows
-    // to fix the avatar config or run manually.
-    const photoUrl = avatar.image_url || avatar.photo_url
-    if (!photoUrl) {
-      throw new Error('avatar_render server runs need a specific avatar image. Set the avatar to single-image mode in the picker, or run manually.')
+    if (!audioUrl && !script && !preChunkedAudio) {
+      throw new Error('avatar_render needs upstream voice_gen audio, a script, or audio_chunks')
     }
 
-    // Submit the render.
-    const submit = await callApi('/api/avatars/photo-render', {
-      profile_id: ctx.profileId,
-      avatar_id: avatar.avatar_id,
-      photo_url: photoUrl,
-      audio_url: audioUrl || undefined,
-      script: !audioUrl && script ? script : undefined,
-    }, ctx.headers)
-    const videoId = submit.video_id
-    if (!videoId) throw new Error('avatar_render submit returned no video_id')
+    // Shared single-clip submit + poll. Used by every mode below.
+    const renderOne = async ({ photo_url, audio_url, scriptChunk }) => {
+      const submit = await callApi('/api/avatars/photo-render', {
+        profile_id: ctx.profileId,
+        avatar_id: avatar.avatar_id,
+        photo_url,
+        audio_url: audio_url || undefined,
+        script: !audio_url && scriptChunk ? scriptChunk : undefined,
+        voice_id: avatar.voice_id || undefined,
+      }, ctx.headers)
+      const videoId = submit.video_id
+      if (!videoId) throw new Error('No video_id returned from photo-render')
+      const POLL_INTERVAL_MS = 6_000
+      const DEADLINE_MS = 10 * 60_000
+      const start = Date.now()
+      while (Date.now() - start < DEADLINE_MS) {
+        await new Promise((res) => setTimeout(res, POLL_INTERVAL_MS))
+        const r = await fetch(
+          `${PORTABLE_BASE}/api/avatars/photo-render-status?video_id=${encodeURIComponent(videoId)}`,
+          { headers: ctx.headers }
+        )
+        const s = await r.json().catch(() => ({}))
+        if (!r.ok) throw new Error(s?.error || `photo-render-status ${r.status}`)
+        if (s.state === 'success') return { video_url: s.video_url, video_id: videoId }
+        if (s.state === 'failed') throw new Error(s.error || 'HeyGen render failed')
+      }
+      throw new Error(`Single render timed out after ${DEADLINE_MS / 60_000} min`)
+    }
 
-    // Poll for completion. HeyGen typically returns in 30-90s.
-    // 10-min ceiling matches the browser canvas's polling deadline
-    // — anything slower than that is a stuck render that needs
-    // human inspection.
-    const POLL_INTERVAL_MS = 6_000
-    const DEADLINE_MS = 10 * 60_000
-    const start = Date.now()
-    while (Date.now() - start < DEADLINE_MS) {
-      await new Promise((res) => setTimeout(res, POLL_INTERVAL_MS))
-      const r = await fetch(
-        `${PORTABLE_BASE}/api/avatars/photo-render-status?video_id=${encodeURIComponent(videoId)}`,
-        { headers: ctx.headers }
-      )
-      const s = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(s?.error || `photo-render-status ${r.status}`)
-      if (s.state === 'success') {
-        return {
-          video: { video_url: s.video_url },
-          video_url: s.video_url,
-          media_type: 'video',
+    // Fan-out helper: parallel render-and-poll with bounded
+    // concurrency. Same Promise.allSettled pattern the browser
+    // canvas uses so a single bad clip doesn't poison the batch.
+    const renderClips = async (assignments) => {
+      const CONCURRENCY = 4
+      const results = new Array(assignments.length)
+      let cursor = 0
+      const workers = Array.from({ length: Math.min(CONCURRENCY, assignments.length) }, async () => {
+        while (cursor < assignments.length) {
+          const i = cursor++
+          const a = assignments[i]
+          try {
+            log?.(`avatar_render clip ${i + 1}/${assignments.length} submitting…`)
+            const r = await renderOne(a)
+            results[i] = {
+              video_url: r.video_url,
+              order: a.order ?? i,
+              image_url: a.photo_url,
+              sentence: a.sentence || '',
+              audio_chunk_url: a.audio_url || null,
+            }
+          } catch (err) {
+            results[i] = { failed: true, error: err?.message || String(err), order: a.order ?? i }
+          }
         }
+      })
+      await Promise.all(workers)
+      const clips = results.filter((r) => r && !r.failed)
+      const failures = results
+        .map((r, i) => r?.failed ? { clip_index: i, error: r.error } : null)
+        .filter(Boolean)
+      if (!clips.length) {
+        throw new Error(`All ${assignments.length} clips failed. First: ${failures[0]?.error || 'unknown'}`)
       }
-      if (s.state === 'failed') throw new Error(s.error || 'HeyGen render failed')
-      // 'pending' / 'processing' — keep polling.
+      return {
+        videos: clips,
+        media_type: 'video',
+        is_clip_set: true,
+        ...(failures.length ? { partial_failures: failures } : {}),
+      }
     }
-    throw new Error(`avatar_render timed out after ${DEADLINE_MS / 60_000} min`)
+
+    // ── Mode 2: pre-chunked audio from voice_gen randomize ──────────────
+    if (preChunkedAudio && preChunkedAudio.length > 0) {
+      log?.(`avatar_render: pre-chunked randomize (${preChunkedAudio.length} clips)`)
+      if (preChunkedAudio.length === 1) {
+        const a = preChunkedAudio[0]
+        const r = await renderOne({ photo_url: a.image_url, audio_url: a.audio_url })
+        return { video: { video_url: r.video_url }, video_url: r.video_url, media_type: 'video' }
+      }
+      const assignments = preChunkedAudio.map((a, i) => ({
+        photo_url: a.image_url,
+        audio_url: a.audio_url,
+        order: a.order ?? i,
+        sentence: a.sentence,
+      }))
+      return await renderClips(assignments)
+    }
+
+    // ── Modes 1 & 3 both need to know the avatar's image set ────────────
+    const wantsRandomize = avatar.mode === 'randomize'
+    const couldAutoRandomize = avatar.mode === 'single' && !avatar.image_id && avatar.look_id
+    const singleSpecificImage = avatar.image_url || avatar.photo_url
+
+    if (!wantsRandomize && !couldAutoRandomize && singleSpecificImage) {
+      // ── Mode 1: classic single-clip ──────────────────────────────────
+      log?.(`avatar_render: single-clip`)
+      const r = await renderOne({
+        photo_url: singleSpecificImage,
+        audio_url: audioUrl,
+        scriptChunk: script,
+      })
+      return { video: { video_url: r.video_url }, video_url: r.video_url, media_type: 'video' }
+    }
+
+    // ── Mode 3: server-side audio chunking against look images ──────────
+    // Fetch the look's images then call /api/avatars/audio-chunks to
+    // split the audio against the image count.
+    if (!avatar.look_id) {
+      throw new Error('avatar_render randomize mode needs a look_id on the avatar picker')
+    }
+    log?.(`avatar_render: fetching look images for ${avatar.look_id}`)
+    const imgR = await fetch(
+      `${PORTABLE_BASE}/api/avatars/look-images?look_id=${encodeURIComponent(avatar.look_id)}`,
+      { headers: ctx.headers }
+    )
+    const imgBody = await imgR.json().catch(() => ({}))
+    if (!imgR.ok) throw new Error(imgBody?.error || `look-images ${imgR.status}`)
+    const images = (imgBody.images || []).slice().sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
+    if (!images.length) throw new Error('Look has no images')
+
+    // Single-image look — just render once.
+    if (images.length === 1) {
+      const r = await renderOne({
+        photo_url: images[0].image_url,
+        audio_url: audioUrl,
+        scriptChunk: audioUrl ? '' : script,
+      })
+      return { video: { video_url: r.video_url }, video_url: r.video_url, media_type: 'video' }
+    }
+
+    // Audio-driven: chunk the audio across the look images.
+    if (audioUrl) {
+      const TARGET_CLIP_SECS = 7
+      const clipsCount = Math.min(
+        12,
+        Math.max(images.length, Math.ceil((Number(audioDurationSecs) || images.length * TARGET_CLIP_SECS) / TARGET_CLIP_SECS))
+      )
+      log?.(`avatar_render: chunking audio into ${clipsCount} clips`)
+      const chunkResp = await callApi('/api/avatars/audio-chunks', {
+        audio_url: audioUrl,
+        look_count: clipsCount,
+        profile_id: ctx.profileId,
+      }, ctx.headers)
+      const chunks = Array.isArray(chunkResp.chunks) ? chunkResp.chunks : []
+      if (!chunks.length) throw new Error('Audio chunking returned no chunks')
+      const assignments = chunks.map((c, i) => ({
+        photo_url: images[i % images.length].image_url,
+        audio_url: c.audio_url,
+        order: i,
+        sentence: c.sentence,
+      }))
+      return await renderClips(assignments)
+    }
+
+    // Script-driven: HeyGen synthesizes per-clip via inline TTS. We
+    // pair each look image with a slice of the script.
+    log?.(`avatar_render: script-driven across ${images.length} look images`)
+    const sentences = String(script).split(/(?<=[.!?])\s+/).filter(Boolean)
+    const perImage = Math.max(1, Math.ceil(sentences.length / images.length))
+    const assignments = images.map((img, i) => ({
+      photo_url: img.image_url,
+      scriptChunk: sentences.slice(i * perImage, (i + 1) * perImage).join(' '),
+      order: i,
+    })).filter((a) => a.scriptChunk)
+    if (!assignments.length) throw new Error('Script too short to split across look images')
+    return await renderClips(assignments)
   },
 
   script_gen: async ({ node, inputs, ctx }) => {
@@ -462,7 +596,7 @@ export async function runWorkflow({ graph, userId, profileId, internalSecret, lo
 
     try {
       log?.(`[run]  ${id} (${type})`)
-      const out = await runner({ node, inputs: inputBag, ctx })
+      const out = await runner({ node, inputs: inputBag, ctx, log: (m) => log?.(`  ${m}`) })
       outputs.set(id, out || {})
       log?.(`[done] ${id}`)
     } catch (err) {
