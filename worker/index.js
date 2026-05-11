@@ -320,6 +320,14 @@ async function polishCore(body) {
     watermark_size_pct = 25,
     music_volume = 0.15,
     music_fade_secs = 1.0,
+    // Voiceover narration — overlays as primary audio. When set:
+    //   - mute_video_audio = drop the source camera audio
+    //   - loop_video = -stream_loop on the video input so frames
+    //     stretch to match a longer voiceover; -shortest on output
+    //     trims at the voiceover's natural end
+    voiceover_url,
+    loop_video = false,
+    mute_video_audio = false,
   } = body || {}
   if (!profile_id || !video_url) throw new Error('profile_id + video_url required')
   if (!SUPABASE_URL || !SERVICE_KEY) throw new Error('Storage not configured on worker')
@@ -365,17 +373,41 @@ async function polishCore(body) {
       } catch { musicPath = null }
     }
 
+    // Voiceover (primary audio narration). When present, the source
+    // video's audio is dropped and the voiceover plays in its place.
+    // If loop_video is set + the voiceover is longer than the clip,
+    // we add -stream_loop -1 to the video input below so frames keep
+    // playing while the narration runs.
+    let voiceoverPath = null
+    if (voiceover_url) {
+      try {
+        voiceoverPath = join(workdir, 'voiceover.mp3')
+        await writeFile(voiceoverPath, await fetchToBuffer(voiceover_url))
+      } catch { voiceoverPath = null }
+    }
+
     // -threads 2 caps decode parallelism. HEVC's reference-frame
     // buffers are per-thread, so unlimited-threads × 1080p HEVC
     // easily eats 4+ GB of RAM. Two threads is the sweet spot on a
     // shared-cpu-2x box: still parallel enough to stay fast, low
     // enough to fit in 4 GB even on a high-bitrate iPhone capture.
-    const args = ['-y', '-threads', '2', '-i', inPath]
+    //
+    // -stream_loop -1 on the video input lets ffmpeg replay the
+    // frames indefinitely; we then use -shortest on output so the
+    // final length matches the longest other stream (voiceover).
+    // Only enabled when the caller asked for it AND we actually have
+    // a voiceover — looping silent video alone is rarely what people
+    // mean by polish.
+    const shouldLoopVideo = !!(loop_video && voiceoverPath)
+    const args = ['-y', '-threads', '2']
+    if (shouldLoopVideo) args.push('-stream_loop', '-1')
+    args.push('-i', inPath)
     let nextIdx = 1
-    let titleIdx = -1, logoIdx = -1, musicIdx = -1
-    if (titlePngPath) { args.push('-i', titlePngPath); titleIdx = nextIdx++ }
-    if (logoPath)     { args.push('-i', logoPath);     logoIdx  = nextIdx++ }
-    if (musicPath)    { args.push('-i', musicPath);    musicIdx = nextIdx++ }
+    let titleIdx = -1, logoIdx = -1, musicIdx = -1, voiceIdx = -1
+    if (titlePngPath)  { args.push('-i', titlePngPath);  titleIdx = nextIdx++ }
+    if (logoPath)      { args.push('-i', logoPath);      logoIdx  = nextIdx++ }
+    if (musicPath)     { args.push('-i', musicPath);     musicIdx = nextIdx++ }
+    if (voiceoverPath) { args.push('-i', voiceoverPath); voiceIdx = nextIdx++ }
 
     const filters = []
     let vLabel = '[0:v]'
@@ -423,7 +455,33 @@ async function polishCore(body) {
       filters.push(`[refv][lg]overlay=${x}:${y}[vw]`)
       vLabel = '[vw]'
     }
-    let aLabel = '[0:a]'
+    // Audio chain. Three sources to juggle:
+    //   - source video audio ([0:a])
+    //   - voiceover ([voiceIdx:a]) — primary if present
+    //   - background music ([musicIdx:a]) — looped + faded to length
+    //
+    // Order of operations matters here. With a voiceover:
+    //   - aLabel starts as either [0:a] (mix with source) or null
+    //     (mute_video_audio=true — voiceover replaces source).
+    //   - voiceover gets mixed/used directly as primary.
+    //   - music, if present, ducks under everything via amix.
+    let aLabel = mute_video_audio && voiceoverPath ? null : '[0:a]'
+
+    if (voiceoverPath) {
+      // Voiceover at full volume. The 1.0 anull pass through gives us
+      // a stable label to feed into amix below.
+      filters.push(`[${voiceIdx}:a]volume=1.0[vox]`)
+      if (aLabel === null) {
+        // Source video muted → voiceover IS the primary track.
+        aLabel = '[vox]'
+      } else {
+        // Mix source audio under the voiceover. Voiceover wins
+        // perceptually since aLabel was the source.
+        filters.push(`${aLabel}[vox]amix=inputs=2:duration=longest:dropout_transition=0:weights=0.3 1.0[avox]`)
+        aLabel = '[avox]'
+      }
+    }
+
     if (musicPath) {
       const vol = Math.max(0, Math.min(1, Number(music_volume)))
       const fadeSecs = Math.max(0, Math.min(10, Number(music_fade_secs ?? 1.0)))
@@ -440,14 +498,25 @@ async function polishCore(body) {
         audioChain.push(`afade=t=out:st=${(videoDur - fadeSecs).toFixed(3)}:d=${fadeSecs.toFixed(3)}`)
       }
       filters.push(`[${musicIdx}:a]${audioChain.join(',')}[mus]`)
-      filters.push(`${aLabel}[mus]amix=inputs=2:duration=first:dropout_transition=0[aout]`)
+      const primary = aLabel || '[0:a]'
+      filters.push(`${primary}[mus]amix=inputs=2:duration=first:dropout_transition=0[aout]`)
       aLabel = '[aout]'
     }
     if (vLabel === '[0:v]') { filters.push(`[0:v]null[vfin]`); vLabel = '[vfin]' }
     if (aLabel === '[0:a]') { filters.push(`[0:a]anull[afin]`); aLabel = '[afin]' }
 
     args.push('-filter_complex', filters.join(';'))
-    args.push('-map', vLabel, '-map', aLabel)
+    args.push('-map', vLabel)
+    // aLabel is null only when mute_video_audio was set AND no
+    // voiceover / music was added. In that case skip audio mapping
+    // entirely — output is silent.
+    if (aLabel) args.push('-map', aLabel)
+
+    // -shortest stops the output at whichever stream ends first.
+    // When we're looping video to match a voiceover, the looped
+    // video would otherwise run forever; -shortest trims it to the
+    // voiceover's natural length.
+    if (shouldLoopVideo) args.push('-shortest')
     // `veryfast` encodes ~30% faster than `fast` with negligible
     // visible quality loss for short social clips. Combined with
     // the 1080p cap above, a 4K HEVC iPhone source now polishes
@@ -456,7 +525,7 @@ async function polishCore(body) {
     // costliest decoding paths in the output — irrelevant to the
     // viewer, useful for downstream tools (ZapCap especially).
     args.push('-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'fastdecode', '-crf', '24')
-    args.push('-c:a', 'aac', '-b:a', '128k')
+    if (aLabel) args.push('-c:a', 'aac', '-b:a', '128k')
     args.push('-movflags', '+faststart', outPath)
 
     await runFFmpeg(args)

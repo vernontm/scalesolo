@@ -3239,6 +3239,44 @@ function VoiceGenBody({ data, onPatch }) {
   const chunks = Array.isArray(out?.audio_chunks) ? out.audio_chunks : null
   const [previewIdx, setPreviewIdx] = useState(0)
 
+  // True when an avatar_picker is anywhere upstream. Drives the
+  // picker visibility: when an avatar IS wired, the avatar's voice
+  // wins and we hide the standalone picker to remove ambiguity.
+  // Injected by Spaces.jsx renderNodes. Defaults to false if absent.
+  const hasAvatarUpstream = !!data._ctxHasAvatarUpstream
+  const pickerVoiceId   = data.props?.picker_voice_id || ''
+  const pickerVoiceName = data.props?.picker_voice_name || ''
+  const pickerVoiceOwner = data.props?.picker_voice_owner || 'shared'
+
+  // Load the voice library on demand — only when the picker is
+  // actually visible (no avatar upstream). Cached for the duration
+  // of the mount.
+  const [voices, setVoices] = useState(null)
+  const [voicesLoading, setVoicesLoading] = useState(false)
+  const [voicesError, setVoicesError] = useState(null)
+  useEffect(() => {
+    if (hasAvatarUpstream) return
+    if (voices !== null) return
+    let cancelled = false
+    setVoicesLoading(true); setVoicesError(null)
+    ;(async () => {
+      try {
+        const session = (await supabase.auth.getSession()).data.session
+        const r = await fetch('/api/voices/library', {
+          headers: { Authorization: `Bearer ${session?.access_token || ''}` },
+        })
+        const body = await r.json()
+        if (!r.ok) throw new Error(body?.error || `Voices ${r.status}`)
+        if (!cancelled) setVoices(Array.isArray(body?.shared) ? body.shared : [])
+      } catch (e) {
+        if (!cancelled) { setVoices([]); setVoicesError(e.message) }
+      } finally {
+        if (!cancelled) setVoicesLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [hasAvatarUpstream, voices])
+
   // Read voice settings DIRECTLY from props — single source of truth.
   // Previously this was mirrored into local useState which got re-
   // initialized on canvas re-mount (zoom/virtualization/scope reset),
@@ -3261,6 +3299,58 @@ function VoiceGenBody({ data, onPatch }) {
     <>
       {data.status === 'failed' && <NodePreview status="failed" error={data.error} />}
       {data.status === 'running' && <ProgressPill progress={data.progress} fallback="Synthesizing audio…" />}
+
+      {/* Voice picker — only shown when no avatar is wired upstream.
+          With an avatar wired, the avatar's voice wins so we hide
+          this to remove ambiguity. */}
+      {!hasAvatarUpstream && (
+        <div style={{ marginBottom: 8, padding: 8, background: 'var(--surface-2)', borderRadius: 6, border: '1px solid var(--border)' }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4,
+            fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 10.5,
+            letterSpacing: '0.06em', textTransform: 'uppercase', color: '#22d3ee',
+          }}>
+            <Mic size={10} /> Voice
+            <span style={{ flex: 1 }} />
+            {pickerVoiceName && (
+              <span style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'none', letterSpacing: 0, fontWeight: 500 }}>
+                {pickerVoiceName}
+              </span>
+            )}
+          </div>
+          {voicesLoading && <div style={{ fontSize: 10.5, color: 'var(--muted)' }}>Loading voices…</div>}
+          {voicesError && <div style={{ fontSize: 10.5, color: 'var(--red)' }}>{voicesError}</div>}
+          {voices && voices.length === 0 && !voicesLoading && (
+            <div style={{ fontSize: 10.5, color: 'var(--muted)' }}>No voices available. Check ELEVENLABS_API_KEY.</div>
+          )}
+          {voices && voices.length > 0 && (
+            <select
+              className="nodrag"
+              style={{ ...tinyInput, fontSize: 11 }}
+              value={pickerVoiceId}
+              onChange={(e) => {
+                const id = e.target.value
+                const v = voices.find((x) => x.voice_id === id)
+                onPatch?.({
+                  picker_voice_id: id || null,
+                  picker_voice_name: v?.name || null,
+                  picker_voice_owner: 'shared',
+                })
+              }}
+            >
+              <option value="">— pick a voice —</option>
+              {voices.map((v) => (
+                <option key={v.voice_id} value={v.voice_id}>
+                  {v.name}{v.labels?.gender ? ` · ${v.labels.gender}` : ''}{v.labels?.accent ? ` · ${v.labels.accent}` : ''}
+                </option>
+              ))}
+            </select>
+          )}
+          <div style={{ fontSize: 9.5, color: 'var(--muted)', marginTop: 4, lineHeight: 1.4 }}>
+            Wire an Avatar picker upstream to use that avatar's voice instead.
+          </div>
+        </div>
+      )}
 
       {/* Voice tuning panel — ALWAYS visible. The whole point of this
           node is to give the user direct control over the voice; hiding
@@ -3868,6 +3958,27 @@ export function findUpstreamVideoUrl(nodeId, nodes, edges) {
     }
   }
   return null
+}
+
+// True when at least one upstream node is an avatar_picker. Used by
+// voice_gen's body to switch between "avatar's voice" mode (avatar
+// upstream) and "standalone voice picker" mode (no avatar).
+export function findUpstreamAvatarPicker(nodeId, nodes, edges) {
+  if (!nodeId || !Array.isArray(nodes) || !Array.isArray(edges)) return false
+  const seen = new Set([nodeId])
+  const queue = [nodeId]
+  while (queue.length) {
+    const cur = queue.shift()
+    for (const e of edges) {
+      if (e.target !== cur || seen.has(e.source)) continue
+      seen.add(e.source)
+      const src = nodes.find((n) => n.id === e.source)
+      if (!src) continue
+      if (src.data?.type === 'avatar_picker') return true
+      queue.push(e.source)
+    }
+  }
+  return false
 }
 
 export function findUpstreamScript(nodeId, nodes, edges) {
@@ -5362,9 +5473,9 @@ export const NODE_REGISTRY = {
   // run the (expensive) avatar render against the audio you approved.
   voice_gen: {
     label: 'Voice gen',
-    description: 'Synthesizes audio from a script using your avatar\'s voice. Connect text + avatar; downstream Avatar video uses this audio so HeyGen never re-synths. For Randomize avatars the script gets chunked automatically.',
+    description: 'Synthesizes audio from a script. Two modes: (1) wire an Avatar picker upstream and the avatar\'s voice is used (downstream Avatar video reuses this audio so HeyGen never re-synths). (2) Without an avatar, pick a voice directly in the node — useful for voiceover-only workflows (script → voice → Finish video with media).',
     icon: Mic, category: 'generators', color: '#22d3ee',
-    inputs: [{ id: 'in', label: 'In (script + avatar)' }],
+    inputs: [{ id: 'in', label: 'In (script, optional avatar)' }],
     outputs: [{ id: 'out', label: 'Out' }],
     initialProps: {
       // Per-render overrides — when set, override the avatar's stored
@@ -5373,6 +5484,12 @@ export const NODE_REGISTRY = {
       voice_settings_override: null,
       voice_model_id_override: null,
       voice_language_override: null,
+      // Standalone voice mode (no avatar upstream). Set via the
+      // body's voice picker. Used when picker_voice_id is non-null
+      // and the upstream bag has no avatar.
+      picker_voice_id: null,
+      picker_voice_name: null,
+      picker_voice_owner: 'shared',
       // Cache key fingerprint of the last successful synth so the
       // body can show "stale" status when upstream changes.
       last_synth_fingerprint: null,
@@ -5381,20 +5498,29 @@ export const NODE_REGISTRY = {
     run: async ({ data, inputs, ctx, reportProgress }) => {
       const incoming = inputs?.in
       const avatar = pickAvatarConfig(incoming)
-      if (!avatar?.avatar_id) throw new Error('Connect an Avatar picker so we know which voice to use.')
       const script = pickScript(incoming)
       if (!script) throw new Error('Wire in a script (Text or Script generator).')
 
+      // Standalone mode: no avatar wired, fall back to the body's
+      // voice picker. If neither is set, surface a clear error.
+      const pickerVoiceId = data.props?.picker_voice_id || null
+      const pickerVoiceOwner = data.props?.picker_voice_owner || 'shared'
+      if (!avatar?.avatar_id && !pickerVoiceId) {
+        throw new Error('Pick a voice in the Voice gen node, or wire an Avatar picker upstream.')
+      }
+
       const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` }
 
-      // Idempotency: same script + same avatar + same overrides → return
-      // cached output. New synth fires only when something material
-      // changes upstream OR the user clicks Re-synth from the body.
+      // Idempotency: same script + same avatar/voice + same overrides
+      // → return cached output. New synth fires only when something
+      // material changes upstream OR the user clicks Re-synth from
+      // the body.
       const fingerprint = JSON.stringify({
         s: script,
-        avatar: avatar.avatar_id,
-        mode: avatar.mode || 'single',
-        look: avatar.look_id || null,
+        avatar: avatar?.avatar_id || null,
+        voice: avatar?.avatar_id ? null : pickerVoiceId,
+        mode: avatar?.mode || 'single',
+        look: avatar?.look_id || null,
         vs: data.props?.voice_settings_override || null,
         vm: data.props?.voice_model_id_override || null,
         vl: data.props?.voice_language_override || null,
@@ -5408,16 +5534,16 @@ export const NODE_REGISTRY = {
       if (
         data.output?.audio?.url &&
         data.output?._fp === fingerprint &&
-        avatar.mode !== 'randomize'
+        avatar?.mode !== 'randomize'
       ) {
-        return { ...data.output, avatar }
+        return { ...data.output, ...(avatar ? { avatar } : {}) }
       }
       if (
         Array.isArray(data.output?.audio_chunks) &&
         data.output.audio_chunks.length > 0 &&
         data.output?._fp === fingerprint
       ) {
-        return { ...data.output, avatar }
+        return { ...data.output, ...(avatar ? { avatar } : {}) }
       }
 
       reportProgress?.({ message: `Synthesizing audio (${script.length.toLocaleString()} chars)…` })
@@ -5426,7 +5552,10 @@ export const NODE_REGISTRY = {
         method: 'POST', headers,
         body: JSON.stringify({
           profile_id: ctx.profileId,
-          avatar_id: avatar.avatar_id,
+          // Avatar wins when wired. Otherwise use the body picker.
+          ...(avatar?.avatar_id
+            ? { avatar_id: avatar.avatar_id }
+            : { voice_id: pickerVoiceId, voice_owner: pickerVoiceOwner }),
           script,
           voice_settings: data.props?.voice_settings_override || undefined,
           voice_model_id:  data.props?.voice_model_id_override  || undefined,
@@ -5445,10 +5574,14 @@ export const NODE_REGISTRY = {
       if (!synthRes.ok) throw new Error(synthBody?.error || `Synth failed (${synthRes.status})`)
       if (!synthBody?.audio_url) throw new Error('Synth returned no audio URL — check ELEVENLABS_API_KEY in Vercel env.')
 
-      // Single mode → done with one full audio output.
-      const wantsRandomize = avatar.mode === 'randomize'
-      const couldAutoRandomize = avatar.mode === 'single' && !avatar.image_id && avatar.look_id
-      if (!wantsRandomize && !couldAutoRandomize) {
+      // Single mode → done with one full audio output. When no avatar
+      // is wired (standalone voiceover flow) we skip the
+      // randomize-chunking path entirely — there are no images to
+      // chunk against. The audio.url is the primary output that
+      // downstream Finish video can pick up as a voiceover track.
+      const wantsRandomize = !!avatar && avatar.mode === 'randomize'
+      const couldAutoRandomize = !!avatar && avatar.mode === 'single' && !avatar.image_id && avatar.look_id
+      if (!avatar || (!wantsRandomize && !couldAutoRandomize)) {
         return {
           _fp: fingerprint,
           audio: {
@@ -5456,10 +5589,11 @@ export const NODE_REGISTRY = {
             name: 'voice_gen.mp3',
             duration_secs: null,  // Not measured server-side; downstream estimates from duration if needed.
           },
-          // Forward the avatar config so a Voice gen → Avatar video wire
-          // is sufficient — the user doesn't have to ALSO run a second
-          // wire from Avatar straight to Avatar video.
-          avatar,
+          // Forward the avatar config when present so a Voice gen →
+          // Avatar video wire is sufficient. Omit entirely in
+          // standalone mode so downstream nodes don't think we're
+          // setting up an avatar render.
+          ...(avatar ? { avatar } : {}),
           voice_used: synthBody.voice_used || null,
           script_chars: synthBody.chars || script.length,
         }
@@ -6602,7 +6736,7 @@ export const NODE_REGISTRY = {
     Editor: VideoPolishEditor,
     run: async ({ data, inputs, ctx, reportProgress }) => {
       const arr = asArr(inputs?.in)
-      let logoUrl = null, musicUrl = null
+      let logoUrl = null, musicUrl = null, voiceoverUrl = null
       const p = data.props || {}
       // Loud failure when captions are enabled but no ZapCap template id is
       // set. Without this the polish API silently drops Phase B (it gates
@@ -6655,6 +6789,15 @@ export const NODE_REGISTRY = {
           else if (Array.isArray(v.images) && v.images[0]?.url) logoUrl = v.images[0].url
           else if (v.url && /\.(png|jpe?g|webp)(\?|$)/i.test(v.url)) logoUrl = v.url
         }
+        // voice_gen output: { audio: { url, name, duration_secs } }.
+        // We detect THAT shape separately from background music
+        // (audio_upload uses v.audio.audio_url or top-level v.audio_url
+        // / v.url). When a voiceover is wired in, the polish step
+        // muxes it as the primary audio track, mutes the source
+        // video's audio, and loops the video to match if the
+        // voiceover is longer than the clip. That's the script →
+        // voice → polish + media flow for non-avatar voiceovers.
+        if (!voiceoverUrl && v.audio?.url) voiceoverUrl = v.audio.url
         if (!musicUrl) {
           if (v.audio?.audio_url) musicUrl = v.audio.audio_url
           else if (v.audio_url) musicUrl = v.audio_url
@@ -6743,6 +6886,15 @@ export const NODE_REGISTRY = {
             logo_url: logoUrl || undefined,
             watermark_image_url: p.watermark_image_url || undefined,
             music_url: musicUrl || undefined,
+            // Voiceover from an upstream voice_gen. When present, the
+            // worker uses it as the primary audio track, mutes the
+            // source video's audio (so the camera audio doesn't fight
+            // the narration), and loops the video frames if the
+            // voiceover is longer than the clip — exactly the "narrate
+            // a B-roll" pattern.
+            voiceover_url: voiceoverUrl || undefined,
+            loop_video: voiceoverUrl ? true : undefined,
+            mute_video_audio: voiceoverUrl ? true : undefined,
             title: titleOn ? resolvedTitle : undefined,
             title_style: titleOn ? {
               font: p.title_font, color: p.title_color, bg_color: p.title_bg_color,

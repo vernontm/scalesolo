@@ -294,6 +294,13 @@ export default async function handler(req, res) {
       watermark_size_pct = 25,
       music_volume = 0.15,
       music_fade_secs = 1.0,
+      // Voiceover narration — typically an upstream voice_gen output.
+      // When set, the worker uses it as the primary audio (replaces or
+      // overrides the source video's audio) and can loop the video to
+      // match the voiceover length.
+      voiceover_url,
+      loop_video = false,
+      mute_video_audio = false,
     } = req.body || {}
     const ts = title_style || {}
 
@@ -500,6 +507,14 @@ export default async function handler(req, res) {
             music_url, title, title_style,
             watermark_position, watermark_size_pct,
             music_volume, music_fade_secs,
+            // Voiceover overlay — worker treats this as the primary
+            // audio track. mute_video_audio drops the source camera
+            // audio; loop_video stretches video frames to match a
+            // longer voiceover by tagging the ffmpeg input with
+            // -stream_loop -1 and -shortest on output.
+            voiceover_url: voiceover_url || undefined,
+            loop_video: !!loop_video || undefined,
+            mute_video_audio: !!mute_video_audio || undefined,
             // Worker chains ZapCap captions itself so the full polish
             // result (composite + captions) is one atomic job. Critical
             // for the async path — when Vercel times out we return the

@@ -33,6 +33,7 @@ import {
   NODE_REGISTRY, NODE_CATEGORIES, downloadUrl, readImageItems,
   AUTORUN_OPTIONS, autoRunIntervalMs, NODE_COST_HINT,
   findUpstreamVideoUrl, findUpstreamScript, findUpstreamLogoUrl,
+  findUpstreamAvatarPicker,
 } from '../lib/space-nodes.jsx'
 
 // Defensive deep-clone for run snapshots — JSON.parse(JSON.stringify(x))
@@ -2449,6 +2450,15 @@ function SpaceBuilder({ space, onSave, onClose }) {
           _ctxProfileId: selectedProfileId,
           _ctxUpstreamVideoUrl: findUpstreamVideoUrl(n.id, nodes, edges),
           _ctxUpstreamLogoUrl: findUpstreamLogoUrl(n.id, nodes, edges),
+        } }
+      }
+      if (t === 'voice_gen') {
+        // Body uses this to switch between avatar-voice mode (when an
+        // avatar_picker is upstream) and standalone voice-picker mode.
+        return { ...n, data: {
+          ...n.data,
+          _ctxProfileId: selectedProfileId,
+          _ctxHasAvatarUpstream: findUpstreamAvatarPicker(n.id, nodes, edges),
         } }
       }
       if (t === 'schedule_post') {

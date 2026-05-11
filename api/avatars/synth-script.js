@@ -41,50 +41,69 @@ export default async function handler(req, res) {
 
   try {
     const {
-      profile_id, avatar_id, script,
+      profile_id, avatar_id, voice_id, voice_owner, script,
       voice_settings, voice_model_id, voice_language,
     } = req.body || {}
 
     if (!profile_id) return res.status(400).json({ error: 'profile_id required' })
-    if (!avatar_id) return res.status(400).json({ error: 'avatar_id required' })
+    // Standalone voiceover mode: caller can supply voice_id directly
+    // (no avatar required). Lets the voice_gen node work on its own as
+    // part of a script → voiceover → polish flow that doesn't involve
+    // a HeyGen avatar render.
+    if (!avatar_id && !voice_id) {
+      return res.status(400).json({ error: 'avatar_id OR voice_id required' })
+    }
     if (!script || !String(script).trim()) return res.status(400).json({ error: 'script required' })
     await assertProfileAccess(auth.user.id, profile_id)
 
-    // Pull the avatar so we know its voice + owner. Per-render overrides
-    // win over the stored defaults so the user can experiment with
-    // settings without saving them to the avatar.
-    const aRows = await supaFetch(
-      `avatars?id=eq.${encodeURIComponent(avatar_id)}` +
-      '&select=id,profile_id,elevenlabs_voice_id,voice_owner,voice_settings,voice_model_id,voice_language'
-    )
-    const avatar = aRows?.[0]
-    if (!avatar) return res.status(404).json({ error: 'Avatar not found' })
-    if (avatar.profile_id !== profile_id) return res.status(403).json({ error: 'Avatar does not belong to this profile' })
-    const elevenLabsVoice = avatar.elevenlabs_voice_id
-    if (!elevenLabsVoice || !looksLikeElevenLabsVoiceId(elevenLabsVoice)) {
-      return res.status(400).json({
-        error: 'This avatar has no ElevenLabs voice set. Pick a voice on the Avatar page first.',
-      })
+    let avatar = null
+    let elevenLabsVoice = null
+    let voiceOwner = (voice_owner || 'shared').trim()
+
+    if (avatar_id) {
+      // Avatar mode: pull the avatar so we know its voice + owner. Per-
+      // render overrides win over the stored defaults so the user can
+      // experiment with settings without saving them to the avatar.
+      const aRows = await supaFetch(
+        `avatars?id=eq.${encodeURIComponent(avatar_id)}` +
+        '&select=id,profile_id,elevenlabs_voice_id,voice_owner,voice_settings,voice_model_id,voice_language'
+      )
+      avatar = aRows?.[0]
+      if (!avatar) return res.status(404).json({ error: 'Avatar not found' })
+      if (avatar.profile_id !== profile_id) return res.status(403).json({ error: 'Avatar does not belong to this profile' })
+      elevenLabsVoice = avatar.elevenlabs_voice_id
+      voiceOwner = avatar.voice_owner || 'shared'
+      if (!elevenLabsVoice || !looksLikeElevenLabsVoiceId(elevenLabsVoice)) {
+        return res.status(400).json({
+          error: 'This avatar has no ElevenLabs voice set. Pick a voice on the Avatar page first.',
+        })
+      }
+    } else {
+      // Standalone voice mode: caller-provided voice_id only.
+      elevenLabsVoice = String(voice_id).trim()
+      if (!looksLikeElevenLabsVoiceId(elevenLabsVoice)) {
+        return res.status(400).json({ error: 'voice_id is not a valid ElevenLabs voice id' })
+      }
     }
 
     // Build synth options. Override layer wins over stored avatar values.
     // sanitizeVoiceSettings clamps every field to ElevenLabs' supported
     // ranges so a stale jsonb or bad client can't blow up the synth.
     const opts = {}
-    if (avatar.voice_owner === 'byok') {
+    if (voiceOwner === 'byok') {
       const apiKey = await resolveByoApiKey(profile_id)
       if (!apiKey) {
         return res.status(401).json({
-          error: "This avatar uses a voice from your ElevenLabs workspace, but the API key isn't connected.",
+          error: "This voice belongs to your ElevenLabs workspace, but the API key isn't connected.",
         })
       }
       opts.apiKey = apiKey
     }
-    const settingsForSynth = sanitizeVoiceSettings(voice_settings) || sanitizeVoiceSettings(avatar.voice_settings)
+    const settingsForSynth = sanitizeVoiceSettings(voice_settings) || sanitizeVoiceSettings(avatar?.voice_settings)
     if (settingsForSynth) opts.voice_settings = settingsForSynth
-    const modelIdForSynth = (voice_model_id || avatar.voice_model_id || '').trim()
+    const modelIdForSynth = (voice_model_id || avatar?.voice_model_id || '').trim()
     if (modelIdForSynth) opts.model_id = modelIdForSynth
-    const languageForSynth = (voice_language || avatar.voice_language || 'en').trim()
+    const languageForSynth = (voice_language || avatar?.voice_language || 'en').trim()
     if (languageForSynth) opts.language_code = languageForSynth
 
     // Synthesize.
@@ -105,8 +124,8 @@ export default async function handler(req, res) {
       profileId: profile_id,
       modelId: modelIdForSynth,
       charCount: String(script).length,
-      refTable: 'avatars',
-      refId: avatar.id,
+      refTable: avatar ? 'avatars' : 'voice_gen',
+      refId:   avatar?.id || null,
       kind: 'review-synth',
     })
 
@@ -114,7 +133,7 @@ export default async function handler(req, res) {
       audio_url: audioUrl,
       voice_used: {
         voice_id: elevenLabsVoice,
-        owner: avatar.voice_owner || 'shared',
+        owner: voiceOwner,
         model_id: modelIdForSynth || null,
         language_code: languageForSynth || null,
         voice_settings: settingsForSynth || null,
