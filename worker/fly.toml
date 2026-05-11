@@ -28,10 +28,24 @@ primary_region = 'iad'
     method = 'GET'
     path = '/healthz'
 
+  # Per-machine in-flight request caps so Fly autoscaler knows when
+  # to spin up another machine. soft_limit = "start booting a new
+  # machine once this one has N requests in flight"; hard_limit =
+  # "stop routing new requests to this machine once it has N." With
+  # performance-4x carrying ~2 ffmpeg jobs cleanly, soft=2 hard=4
+  # gives a buffer for short-lived API calls (script_gen,
+  # caption_gen) without queueing heavy work behind a saturated box.
+  [http_service.concurrency]
+    type = 'requests'
+    hard_limit = 4
+    soft_limit = 2
+
 [[vm]]
-  # HEVC (iPhone H.265) decode is 3-4x more memory-hungry than H.264.
-  # 2 GB OOMs on 1080p HEVC clips; 4 GB handles them comfortably.
-  # Cost (paid plan): ~$0.012/hr running, auto-stopped when idle =
-  # ~$3-8/mo at typical hobby volume.
-  size = 'shared-cpu-2x'
-  memory = '4gb'
+  # performance-4x: 4 dedicated vCPUs, 8GB RAM. Roughly 3-4x the
+  # ffmpeg throughput of shared-cpu-2x — a 52s 1080p polish drops
+  # from ~60-120s on shared to ~12-25s. Cost: ~$0.063/hr running,
+  # only billed during active jobs thanks to auto_stop_machines.
+  # 8GB headroom handles 2 concurrent encodes (each ~1.5GB) plus
+  # the node runtime without OOMing.
+  size = 'performance-4x'
+  memory = '8gb'
