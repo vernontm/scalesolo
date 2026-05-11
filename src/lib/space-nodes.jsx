@@ -2579,15 +2579,34 @@ function AutoRunBody({ data, onPatch }) {
   const unitMeta = AUTORUN_UNITS.find((u) => u.id === unitId) || AUTORUN_UNITS[1]
   const estPerRun = Number(data?._ctxCostPerRun ?? 0)
 
-  const toggle = () => {
+  const toggle = async () => {
     if (!active) {
       // Starting fresh — reset run counter so user can re-run after hitting cap.
       onPatch({ active: true, runs_used: 0, last_run_at: null })
+      // Persist to the server scheduler so the workflow fires even
+      // with the canvas tab closed. The browser-side timer still
+      // also runs (defense in depth — if the cron is delayed for
+      // some reason the local tick covers it; on overlapping fires
+      // the worker job-id dedup catches it).
+      if (typeof window !== 'undefined' && window.__spaceStartServerSchedule) {
+        await window.__spaceStartServerSchedule(data.__id, {
+          interval_ms: intervalMs,
+          max_runs: maxRuns,
+        })
+      }
     } else {
       onPatch({ active: false })
+      if (typeof window !== 'undefined' && window.__spaceStopServerSchedule) {
+        await window.__spaceStopServerSchedule(data.__id)
+      }
     }
   }
-  const reset = () => onPatch({ runs_used: 0, last_run_at: null, active: false })
+  const reset = () => {
+    onPatch({ runs_used: 0, last_run_at: null, active: false })
+    if (typeof window !== 'undefined' && window.__spaceStopServerSchedule) {
+      window.__spaceStopServerSchedule(data.__id)
+    }
+  }
 
   return (
     <>
@@ -2729,7 +2748,7 @@ function AutoRunBody({ data, onPatch }) {
         )}
       </div>
       <div style={{ marginTop: 8, fontSize: 10, color: 'var(--muted)', lineHeight: 1.4 }}>
-        Cadence runs only while this canvas is open. Closing the tab pauses auto-run.
+        Server-scheduled — fires from our cron even when this tab is closed. The local timer also runs as a backup while the canvas is open.
       </div>
     </>
   )

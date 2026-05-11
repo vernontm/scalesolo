@@ -29,6 +29,7 @@ import sharp from 'sharp'
 import { Resvg } from '@resvg/resvg-js'
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg'
 import { zapcapAddVideoByUrl, zapcapCreateTask, zapcapPollTask } from './zapcap.js'
+import { runWorkflow } from './workflow-runner.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -298,6 +299,56 @@ app.post('/jobs/polish-async', requireSecret, async (req, res) => {
   // Kick off in background — DO NOT await.
   runPolishJob(jobId, body).catch((e) => console.error(`runPolishJob ${jobId} threw:`, e))
   return res.status(202).json({ job_id: jobId, status: 'queued' })
+})
+
+// ── Workflow runner job (server-side auto-run) ───────────────────────────
+// Called by Vercel cron every minute for each due scheduled_workflows
+// row. Body shape (from /api/cron/run-scheduled-workflows):
+//   { schedule_id, user_id, profile_id, space_id, trigger_node_id,
+//     graph: { nodes, edges }, internal_secret }
+//
+// Returns 202 immediately and processes in background — the cron has
+// already bumped runs_used + advanced next_fire_at, so an error here
+// gets reported via the schedule row's last_error on a subsequent
+// call from this worker back to Supabase.
+app.post('/jobs/run-workflow', requireSecret, async (req, res) => {
+  const body = req.body || {}
+  const { schedule_id, user_id, profile_id, graph, internal_secret } = body
+  if (!schedule_id || !user_id || !profile_id || !graph || !internal_secret) {
+    return res.status(400).json({ error: 'schedule_id, user_id, profile_id, graph, internal_secret required' })
+  }
+  res.status(202).json({ accepted: true, schedule_id })
+
+  // Background execution. Errors get reported back via Supabase
+  // direct (service-role) so the schedule row's last_error reflects
+  // the actual failure even when the cron is long gone.
+  ;(async () => {
+    const startedAt = Date.now()
+    try {
+      const result = await runWorkflow({
+        graph, userId: user_id, profileId: profile_id, internalSecret: internal_secret,
+        log: (m) => console.log(`[wf ${schedule_id}] ${m}`),
+      })
+      console.log(`[wf ${schedule_id}] done ok=${result.ok} errors=${Object.keys(result.errors).length} duration_ms=${Date.now() - startedAt}`)
+      if (!result.ok && SUPABASE_URL && SERVICE_KEY) {
+        const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
+        const summary = Object.entries(result.errors).map(([id, msg]) => `${id}: ${msg}`).join(' · ').slice(0, 500)
+        await supabase.from('scheduled_workflows')
+          .update({ last_error: summary, updated_at: new Date().toISOString() })
+          .eq('id', schedule_id)
+          .then(() => {}, (e) => console.warn('[wf] update last_error failed:', e?.message))
+      }
+    } catch (err) {
+      console.error(`[wf ${schedule_id}] threw:`, err?.stack || err)
+      if (SUPABASE_URL && SERVICE_KEY) {
+        const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
+        await supabase.from('scheduled_workflows')
+          .update({ last_error: String(err?.message || err).slice(0, 500), updated_at: new Date().toISOString() })
+          .eq('id', schedule_id)
+          .then(() => {}, () => {})
+      }
+    }
+  })().catch(() => {})
 })
 
 // Status endpoint. Returns the in-memory state of a job.

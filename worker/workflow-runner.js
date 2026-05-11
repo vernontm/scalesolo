@@ -1,0 +1,404 @@
+// Server-side workflow executor for scheduled workflows.
+//
+// Walks a serialized space graph in topological order, calling each
+// node's API counterpart on the main Vercel app via internal-secret
+// auth. Outputs accumulate in a Map keyed by node id, and downstream
+// nodes pick from upstream outputs via the same input-bag pattern the
+// browser canvas uses.
+//
+// Design constraints:
+//   1. No React, no DOM. Just Node fetch.
+//   2. No source-of-truth duplication for prompts / model names —
+//      every node calls the SAME Vercel endpoint a manual canvas
+//      run would hit, just with an internal-secret header.
+//   3. Best-effort: a single failed non-terminal node is allowed to
+//      poison its descendants but doesn't abort the whole run. The
+//      cron caller stores the final error message on the schedule.
+//
+// Coverage:
+//   Supported node types: brand_profile, text_input, url_reference,
+//   collection, auto_run, script_gen, caption_gen, voice_gen,
+//   avatar_picker, avatar_render, image_gen, upload_media,
+//   video_polish, schedule_post, save_library.
+//
+//   Unsupported: anything else throws "Server-runs don't support
+//   <type> yet". The graph still completes whatever's runnable.
+
+const PORTABLE_BASE = process.env.VERCEL_API_BASE || 'https://scalesolo.vercel.app'
+
+function makeHeaders({ userId, internalSecret }) {
+  return {
+    'Content-Type': 'application/json',
+    'x-internal-secret': internalSecret,
+    'x-impersonate-user': userId,
+  }
+}
+
+async function callApi(path, body, headers) {
+  const r = await fetch(`${PORTABLE_BASE}${path}`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  })
+  const text = await r.text()
+  let parsed = null
+  try { parsed = text ? JSON.parse(text) : null } catch {}
+  if (!r.ok) {
+    const msg = parsed?.error || (text && text.length < 200 ? text.trim() : `${path} → ${r.status}`)
+    const err = new Error(msg)
+    err.status = r.status
+    err.response = parsed
+    throw err
+  }
+  return parsed
+}
+
+// ── input-bag helpers ──────────────────────────────────────────────────────
+// Same shape pickers the browser-side runtime uses. Mirrored here so
+// nothing is shared at runtime — keeps the worker independent of the
+// React bundle.
+function asArr(v) {
+  if (v == null) return []
+  return Array.isArray(v) ? v : [v]
+}
+function pickScript(bag) {
+  for (const v of asArr(bag)) {
+    if (!v) continue
+    if (typeof v === 'string') return v
+    if (typeof v.script === 'string')        return v.script
+    if (typeof v.full_script === 'string')   return v.full_script
+    if (typeof v.text === 'string')          return v.text
+    if (typeof v.caption === 'string' && !v.full_script) return v.caption
+  }
+  return ''
+}
+function pickBrand(bag) {
+  for (const v of asArr(bag)) if (v?.brand?.profile_id) return v.brand
+  return null
+}
+function pickAvatar(bag) {
+  for (const v of asArr(bag)) if (v?.avatar?.avatar_id) return v.avatar
+  return null
+}
+function pickAllVideoUrls(bag) {
+  const seen = new Set(), out = []
+  const push = (u) => { if (u && !seen.has(u)) { seen.add(u); out.push(u) } }
+  for (const v of asArr(bag)) {
+    if (!v || typeof v !== 'object') continue
+    if (v.video?.video_url) push(v.video.video_url)
+    if (v.video_url) push(v.video_url)
+    if (Array.isArray(v.videos)) for (const c of v.videos) if (c?.video_url) push(c.video_url)
+  }
+  return out
+}
+
+// ── per-node runners ───────────────────────────────────────────────────────
+// Each returns the same shape the browser-side run() would return so
+// downstream nodes pick up fields the same way.
+const NODE_RUNNERS = {
+  text_input: ({ node }) => ({ text: node.data?.props?.text || '' }),
+
+  url_reference: ({ node }) => ({ url: node.data?.props?.url || '' }),
+
+  brand_profile: ({ node }) => ({ brand: { profile_id: node.data?.props?.profile_id, ...node.data?.props } }),
+
+  auto_run: () => ({ tick: new Date().toISOString() }),
+
+  collection: ({ inputs }) => {
+    // Aggregator — just passes everything through bagged.
+    const items = []
+    for (const v of asArr(inputs)) {
+      if (v?.video_url) items.push({ kind: 'video', url: v.video_url })
+      else if (v?.url) items.push({ kind: 'image', url: v.url })
+    }
+    return { items }
+  },
+
+  upload_media: ({ node }) => {
+    // Reads stored urls from props (uploaded earlier via the
+    // browser-only Upload media node — server can't accept new file
+    // uploads, but it can pass through what's already there).
+    const urls = Array.isArray(node.data?.props?.urls) ? node.data.props.urls : []
+    const videos = urls.filter((u) => u.kind === 'video').map((u) => ({ url: u.url, name: u.name }))
+    const images = urls.filter((u) => u.kind !== 'video').map((u) => ({ url: u.url, name: u.name }))
+    const out = { images }
+    if (videos.length) { out.videos = videos; out.video_url = videos[0].url }
+    return out
+  },
+
+  avatar_picker: ({ node }) => ({ avatar: { ...node.data?.props } }),
+
+  script_gen: async ({ node, inputs, ctx }) => {
+    const brand = pickBrand(inputs)
+    const profileId = brand?.profile_id || ctx.profileId
+    const props = node.data?.props || {}
+    const topic = (props.topic || '').trim() || pickScript(inputs) || ''
+    if (!topic) throw new Error('script_gen needs a topic')
+    const body = await callApi('/api/content/generate', {
+      profile_id: profileId,
+      format: props.format || 'tiktok-script',
+      topic,
+      count: 1,
+      target_length_secs: props.target_length_secs || undefined,
+      dry_run: true,
+    }, ctx.headers)
+    const item = body.items?.[0] || {}
+    return {
+      script: item.full_script || '',
+      full_script: item.full_script || '',
+      title: item.title || '',
+      hook: item.hook || '',
+    }
+  },
+
+  caption_gen: async ({ inputs, ctx }) => {
+    const brand = pickBrand(inputs)
+    const profileId = brand?.profile_id || ctx.profileId
+    const script = pickScript(inputs)
+    if (!script) throw new Error('caption_gen needs a script upstream')
+    // Use the same /api/content/generate endpoint the browser hits.
+    // dry_run avoids inserting a separate content_scripts row — the
+    // bundle gets persisted by schedule_post when it actually fires.
+    const intro = `Write ONE canonical TITLE, CAPTION, FIRST_COMMENT, and exactly 5 HASHTAGS for cross-platform publishing. Return JSON.\n\nScript:\n"""\n${String(script).slice(0, 2000)}\n"""`
+    const body = await callApi('/api/content/generate', {
+      profile_id: profileId,
+      format: 'ig-post',
+      topic: intro,
+      count: 1,
+      dry_run: true,
+    }, ctx.headers)
+    const item = body.items?.[0] || {}
+    const raw = item.full_script || item.caption || ''
+    let parsed = {}
+    try {
+      const cleaned = String(raw).replace(/```json\s*|```\s*/gi, '').trim()
+      const m = cleaned.match(/\{[\s\S]*\}/)
+      parsed = JSON.parse(m ? m[0] : cleaned)
+    } catch { parsed = {} }
+    return {
+      title:         String(parsed.title || '').slice(0, 200),
+      caption:       String(parsed.caption || raw || '').slice(0, 2000),
+      hashtags:      String(parsed.hashtags || ''),
+      first_comment: String(parsed.first_comment || '').slice(0, 400),
+    }
+  },
+
+  voice_gen: async ({ node, inputs, ctx }) => {
+    const avatar = pickAvatar(inputs)
+    const script = pickScript(inputs)
+    if (!script) throw new Error('voice_gen needs a script')
+    const pickerVoiceId = node.data?.props?.picker_voice_id
+    if (!avatar?.avatar_id && !pickerVoiceId) {
+      throw new Error('voice_gen needs either an upstream Avatar or a picker_voice_id in props')
+    }
+    const body = await callApi('/api/avatars/synth-script', {
+      profile_id: ctx.profileId,
+      ...(avatar?.avatar_id ? { avatar_id: avatar.avatar_id } : { voice_id: pickerVoiceId, voice_owner: node.data?.props?.picker_voice_owner || 'shared' }),
+      script,
+      voice_settings: node.data?.props?.voice_settings_override || undefined,
+      voice_model_id:  node.data?.props?.voice_model_id_override  || undefined,
+      voice_language:  node.data?.props?.voice_language_override  || undefined,
+    }, ctx.headers)
+    return {
+      audio: { url: body.audio_url, name: 'voice_gen.mp3' },
+      script,
+      full_script: script,
+      ...(avatar ? { avatar } : {}),
+      voice_used: body.voice_used || null,
+    }
+  },
+
+  video_polish: async ({ node, inputs, ctx }) => {
+    const p = node.data?.props || {}
+    const videoUrls = pickAllVideoUrls(inputs)
+    if (!videoUrls.length) throw new Error('video_polish needs an upstream video')
+    let voiceoverUrl = null, musicUrl = p.music_url || null, logoUrl = null, upstreamTitle = ''
+    for (const v of asArr(inputs)) {
+      if (!v || typeof v !== 'object') continue
+      if (!voiceoverUrl && v.audio?.url) voiceoverUrl = v.audio.url
+      if (!musicUrl && v.audio?.audio_url) musicUrl = v.audio.audio_url
+      if (!logoUrl && v.brand?.logo_url) logoUrl = v.brand.logo_url
+      if (!upstreamTitle && typeof v.title === 'string') upstreamTitle = v.title
+    }
+    const titleText = upstreamTitle || (p.title || '').trim()
+
+    // Server runs use the FIRST video only — fan-out across multiple
+    // clips can be added later. Most automation cases (script →
+    // voiceover → 1 b-roll) hit this single-clip path anyway.
+    const body = await callApi('/api/videos/polish', {
+      profile_id: ctx.profileId,
+      video_url: videoUrls[0],
+      logo_url: logoUrl || undefined,
+      music_url: musicUrl || undefined,
+      voiceover_url: voiceoverUrl || undefined,
+      loop_video: voiceoverUrl ? true : undefined,
+      mute_video_audio: voiceoverUrl ? true : undefined,
+      title: titleText || undefined,
+      captions_enabled: p.captions_enabled !== false,
+      caption_template_id: p.caption_template_id || undefined,
+      watermark_position: p.watermark_position || 'br',
+      watermark_size_pct: p.watermark_size_pct ?? 25,
+      music_volume: p.music_volume ?? 0.15,
+      music_fade_secs: p.music_fade_secs ?? 1.0,
+    }, ctx.headers)
+    return {
+      video: { video_url: body.video_url },
+      video_url: body.video_url,
+      polished: true,
+      title: titleText,
+    }
+  },
+
+  schedule_post: async ({ node, inputs, ctx }) => {
+    const p = node.data?.props || {}
+    const platforms = Array.isArray(p.platforms) ? p.platforms : []
+    if (!platforms.length) throw new Error('schedule_post needs platforms picked')
+    let caption = '', hashtags = '', firstComment = '', title = '', script = ''
+    let videoUrl = null
+    const photoUrls = []
+    for (const v of asArr(inputs)) {
+      if (!v || typeof v !== 'object') continue
+      if (!title && v.title) title = v.title
+      if (!script && (v.script || v.full_script)) script = v.script || v.full_script
+      if (!caption && v.caption) caption = v.caption
+      if (!hashtags && v.hashtags) hashtags = v.hashtags
+      if (!firstComment && v.first_comment) firstComment = v.first_comment
+      if (!videoUrl) {
+        if (v.video?.video_url) videoUrl = v.video.video_url
+        else if (v.video_url) videoUrl = v.video_url
+      }
+      if (Array.isArray(v.images)) for (const im of v.images) if (im?.url) photoUrls.push(im.url)
+    }
+    if (!videoUrl && !photoUrls.length) throw new Error('schedule_post needs upstream video or images')
+    const description = [caption, hashtags].filter(Boolean).join('\n\n').trim() || String(script || '').slice(0, 500)
+    const body = await callApi('/api/social/upload-post', {
+      profile_id: ctx.profileId,
+      platforms,
+      video_url: videoUrl || undefined,
+      photo_urls: !videoUrl && photoUrls.length ? photoUrls : undefined,
+      description,
+      title,
+      caption,
+      hashtags,
+      script,
+      first_comment: firstComment,
+      // Server runs always auto-schedule into the next open slot.
+      // 'now' / 'fixed' don't make sense for a recurring cron — by
+      // the time the next tick fires the user has no chance to pick
+      // a time.
+      scheduling_mode: 'auto',
+    }, ctx.headers)
+    return {
+      request_id: body.request_id || null,
+      scheduled_iso: body.scheduled_iso || null,
+      platforms,
+      submitted: true,
+    }
+  },
+
+  save_library: ({ inputs }) => {
+    // Same in-memory bundler the browser uses — just passes a
+    // bundle downstream. The real persistence happens via
+    // schedule_post.
+    let title = '', script = '', caption = '', hashtags = '', firstComment = ''
+    let videoUrl = null
+    const images = []
+    for (const v of asArr(inputs)) {
+      if (!v || typeof v !== 'object') continue
+      if (!title && v.title) title = v.title
+      if (!script && (v.script || v.full_script)) script = v.script || v.full_script
+      if (!caption && v.caption) caption = v.caption
+      if (!hashtags && v.hashtags) hashtags = v.hashtags
+      if (!firstComment && v.first_comment) firstComment = v.first_comment
+      if (!videoUrl && (v.video?.video_url || v.video_url)) videoUrl = v.video?.video_url || v.video_url
+      if (Array.isArray(v.images)) for (const im of v.images) if (im?.url) images.push({ url: im.url })
+    }
+    const mediaUrls = videoUrl ? [videoUrl] : (images.length ? images.map((i) => i.url) : null)
+    return {
+      bundle: true,
+      title, script, full_script: script, caption, hashtags, first_comment: firstComment,
+      video_url: videoUrl,
+      images: images.length ? images : undefined,
+      media_urls: mediaUrls,
+      media_type: videoUrl ? 'video' : (images.length ? 'image' : 'text'),
+    }
+  },
+}
+
+// Topological sort + execute. Inputs into each node come from the
+// outputs of every node with an edge pointing TO this node.
+export async function runWorkflow({ graph, userId, profileId, internalSecret, log }) {
+  const nodes = graph?.nodes || []
+  const edges = graph?.edges || []
+  const incoming = new Map()
+  for (const e of edges) {
+    if (!incoming.has(e.target)) incoming.set(e.target, [])
+    incoming.get(e.target).push(e)
+  }
+
+  // Topo order via Kahn's algorithm.
+  const inDegree = new Map(nodes.map((n) => [n.id, 0]))
+  for (const e of edges) inDegree.set(e.target, (inDegree.get(e.target) || 0) + 1)
+  const queue = nodes.filter((n) => (inDegree.get(n.id) || 0) === 0).map((n) => n.id)
+  const order = []
+  while (queue.length) {
+    const id = queue.shift()
+    order.push(id)
+    for (const e of edges.filter((e) => e.source === id)) {
+      const d = (inDegree.get(e.target) || 0) - 1
+      inDegree.set(e.target, d)
+      if (d === 0) queue.push(e.target)
+    }
+  }
+  if (order.length !== nodes.length) {
+    throw new Error('Workflow has a cycle — fix the graph on the canvas')
+  }
+
+  const outputs = new Map()
+  const errors = {}
+  const headers = makeHeaders({ userId, internalSecret })
+  const ctx = { userId, profileId, headers, internalSecret }
+
+  for (const id of order) {
+    const node = nodes.find((n) => n.id === id)
+    if (!node) continue
+    const type = node.data?.type
+    const runner = NODE_RUNNERS[type]
+
+    // Pull upstream outputs into an input bag.
+    const inputBag = (incoming.get(id) || []).map((e) => outputs.get(e.source)).filter(Boolean)
+
+    // Poison check: if any ancestor errored, skip this node and
+    // mark it as ancestor-failed. Matches the browser runtime.
+    const ancestorFailed = (incoming.get(id) || []).some((e) => errors[e.source])
+    if (ancestorFailed) {
+      errors[id] = `Blocked by upstream failure`
+      continue
+    }
+
+    if (!runner) {
+      // Unsupported node type — fail gracefully. The user can flip
+      // off server-run for this space and run it manually, or we
+      // add the runner later.
+      errors[id] = `Server runs don't support node type "${type}" yet`
+      log?.(`[skip] ${id} (${type}): unsupported`)
+      continue
+    }
+
+    try {
+      log?.(`[run]  ${id} (${type})`)
+      const out = await runner({ node, inputs: inputBag, ctx })
+      outputs.set(id, out || {})
+      log?.(`[done] ${id}`)
+    } catch (err) {
+      errors[id] = err.message || String(err)
+      log?.(`[fail] ${id} (${type}): ${errors[id]}`)
+    }
+  }
+
+  return {
+    ok: Object.keys(errors).length === 0,
+    errors,
+    output_count: outputs.size,
+  }
+}

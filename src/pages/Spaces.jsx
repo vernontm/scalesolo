@@ -2202,10 +2202,85 @@ function SpaceBuilder({ space, onSave, onClose }) {
         window.__spaceUserDialogOpen = false
       }
     }
+    // Server-side schedule hooks. Called from the auto_run node body
+    // when the user clicks Start / Stop. Persists or removes the
+    // schedule from scheduled_workflows so the Vercel cron can fire
+    // the workflow even when the canvas tab is closed.
+    window.__spaceStartServerSchedule = async (triggerNodeId, options = {}) => {
+      const sid = spaceIdRef.current
+      if (!sid || sid === '__transient__') {
+        toast({ kind: 'warn', message: 'Save the space before starting server-side auto-run.' })
+        return false
+      }
+      try {
+        const sess = (await supabase.auth.getSession()).data.session
+        // Serialize a minimal graph — strip _ctx fields and runtime
+        // status / output / progress so the saved snapshot is
+        // deterministic. The worker rehydrates props for each node
+        // when running.
+        const sanitized = {
+          nodes: nodesRef.current.map((n) => ({
+            id: n.id,
+            type: n.type,
+            position: n.position,
+            data: {
+              type: n.data?.type,
+              name: n.data?.name,
+              props: n.data?.props,
+            },
+          })),
+          edges: edgesRef.current.map((e) => ({
+            id: e.id,
+            source: e.source,
+            target: e.target,
+            sourceHandle: e.sourceHandle,
+            targetHandle: e.targetHandle,
+          })),
+          snapshot_at: new Date().toISOString(),
+        }
+        const r = await fetch('/api/spaces/save-schedule', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sess?.access_token || ''}` },
+          body: JSON.stringify({
+            space_id: sid,
+            trigger_node_id: triggerNodeId,
+            profile_id: selectedProfileId,
+            interval_ms: options.interval_ms,
+            max_runs: options.max_runs,
+            graph: sanitized,
+          }),
+        })
+        const body = await r.json().catch(() => ({}))
+        if (!r.ok) throw new Error(body?.error || `save-schedule ${r.status}`)
+        toast({ kind: 'success', message: `Server auto-run scheduled. Next fire: ${new Date(body.next_fire_at).toLocaleString()}` })
+        return true
+      } catch (e) {
+        toast({ kind: 'error', message: `Couldn't save server schedule: ${e.message}` })
+        return false
+      }
+    }
+    window.__spaceStopServerSchedule = async (triggerNodeId) => {
+      const sid = spaceIdRef.current
+      if (!sid || sid === '__transient__') return true
+      try {
+        const sess = (await supabase.auth.getSession()).data.session
+        const url = `/api/spaces/save-schedule?space_id=${encodeURIComponent(sid)}&trigger_node_id=${encodeURIComponent(triggerNodeId)}`
+        await fetch(url, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${sess?.access_token || ''}` },
+        })
+        return true
+      } catch (e) {
+        toast({ kind: 'warn', message: `Couldn't fully stop server schedule: ${e.message}. The cron will quietly fail next tick.` })
+        return false
+      }
+    }
     return () => {
       window.__spaceRunFromNode = null
       window.__spaceAbortRun = null
       window.__spaceChooseRunScope = null
+      window.__spaceStartServerSchedule = null
+      window.__spaceStopServerSchedule = null
     }
   }, [runFromNode])
 

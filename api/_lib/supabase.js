@@ -69,6 +69,25 @@ export async function getUserFromRequest(req) {
 }
 
 export async function requireUser(req, res) {
+  // Internal service-secret bypass — lets the Fly workflow worker
+  // call Vercel APIs without a user session. The worker sends:
+  //   x-internal-secret: <WORKFLOW_INTERNAL_SECRET>
+  //   x-impersonate-user: <user_id>
+  // Both must be present + the secret must match. We trust the
+  // impersonate header only when the secret is correct, so it's
+  // impossible to spoof from a normal client. The synthesized auth
+  // object looks just like a real user session to downstream code.
+  const internalSecret = process.env.WORKFLOW_INTERNAL_SECRET
+  const claimedSecret = req.headers['x-internal-secret']
+  const claimedUserId = req.headers['x-impersonate-user']
+  if (internalSecret && claimedSecret === internalSecret && claimedUserId) {
+    return {
+      user: { id: String(claimedUserId), email: null, app_metadata: { internal: true } },
+      token: null,
+      internal: true,
+    }
+  }
+
   const { user, token } = await getUserFromRequest(req)
   if (!user || !user.id) {
     res.status(401).json({ error: 'Unauthorized' })
