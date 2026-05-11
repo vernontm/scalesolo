@@ -777,28 +777,32 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12,
         overflow: 'hidden',
       }}>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', minWidth: 1100, borderCollapse: 'collapse', fontSize: 12 }}>
+        {/* No horizontal scroll wrapper. Column widths below are tuned
+            so the row fits on a typical 1440-px laptop minus the side
+            nav. Script column dropped — captions / hashtags / first
+            comment are the actually-edited fields here; the full
+            script lives on the Content modal if anyone needs it. */}
+        <div>
+          <table style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
               <tr>
-                <th style={{ ...headerCell, width: 32 }} aria-label="Select">{' '}</th>
-                <th style={{ ...headerCell, width: 70 }}>Media</th>
-                <th style={{ ...headerCell, minWidth: 160 }}>Title</th>
-                <th style={{ ...headerCell, minWidth: 200 }}>Script</th>
-                <th style={{ ...headerCell, minWidth: 200 }}>Caption</th>
-                <th style={{ ...headerCell, minWidth: 160 }}>Hashtags</th>
-                <th style={{ ...headerCell, minWidth: 160 }}>1st Comment</th>
-                <th style={{ ...headerCell, width: 160 }}>Platforms</th>
-                <th style={{ ...headerCell, width: 140 }}>Scheduled</th>
-                <th style={{ ...headerCell, width: 120 }}>Status</th>
-                <th style={{ ...headerCell, width: 80 }}>Actions</th>
+                <th style={{ ...headerCell, width: 30 }} aria-label="Select">{' '}</th>
+                <th style={{ ...headerCell, width: 64 }}>Media</th>
+                <th style={{ ...headerCell }}>Title</th>
+                <th style={{ ...headerCell, width: '24%' }}>Caption</th>
+                <th style={{ ...headerCell, width: '14%' }}>Hashtags</th>
+                <th style={{ ...headerCell, width: '14%' }}>1st comment</th>
+                <th style={{ ...headerCell, width: 110 }}>Platforms</th>
+                <th style={{ ...headerCell, width: 130 }}>Scheduled</th>
+                <th style={{ ...headerCell, width: 90 }}>Status</th>
+                <th style={{ ...headerCell, width: 50 }} aria-label="Actions">{' '}</th>
               </tr>
             </thead>
             <tbody>
               {scripts === null ? (
-                <tr><td colSpan={11} style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}><Loader2 size={18} className="spin" /></td></tr>
+                <tr><td colSpan={10} style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}><Loader2 size={18} className="spin" /></td></tr>
               ) : visible.length === 0 ? (
-                <tr><td colSpan={11} style={{ padding: 60, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
+                <tr><td colSpan={10} style={{ padding: 60, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
                   {tab === 'queued' && 'No queued posts. Drop media above to start.'}
                   {tab === 'error' && 'No failed posts.'}
                   {tab === 'delivered' && 'Nothing delivered yet.'}
@@ -825,7 +829,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                           title="Click to preview"
                           style={{
                             position: 'relative',
-                            width: 56, height: 56, padding: 0, borderRadius: 6,
+                            width: 48, height: 48, padding: 0, borderRadius: 6,
                             border: '1px solid var(--border)', background: '#000',
                             cursor: 'pointer', overflow: 'hidden', display: 'block',
                           }}
@@ -844,16 +848,13 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                           )}
                         </button>
                       ) : (
-                        <div style={{ width: 56, height: 56, borderRadius: 6, background: 'var(--surface-2)', display: 'grid', placeItems: 'center', color: 'var(--muted)' }}>
-                          <ImageIcon size={18} />
+                        <div style={{ width: 48, height: 48, borderRadius: 6, background: 'var(--surface-2)', display: 'grid', placeItems: 'center', color: 'var(--muted)' }}>
+                          <ImageIcon size={16} />
                         </div>
                       )}
                     </td>
                     <td style={{ padding: 4, verticalAlign: 'top' }}>
                       <EditableCell value={r.title} multiline placeholder="Title" onSave={(v) => patchScript(r.id, { title: v })} />
-                    </td>
-                    <td style={{ padding: 4, verticalAlign: 'top' }}>
-                      <EditableCell value={r.full_script} placeholder="Script / transcript" onSave={(v) => patchScript(r.id, { full_script: v })} />
                     </td>
                     <td style={{ padding: 4, verticalAlign: 'top' }}>
                       <EditableCell value={r.caption} placeholder="Caption" onSave={(v) => patchScript(r.id, { caption: v })} />
