@@ -2547,6 +2547,10 @@ function AutoRunBody({ data, onPatch }) {
   const cadence = props.cadence || '15m'
   const usingFrequency = props.runs_per_unit != null && props.unit != null
 
+  const maxRuns = Number(props.max_runs ?? 10)
+  const runsUsed = Number(props.runs_used ?? 0)
+  const active = !!props.active
+
   // Auto-commit the default frequency on legacy nodes (saved before
   // the Frequency input existed). Without this, the body displays
   // "2 per day" + a hidden "use this" link, but the SCHEDULER
@@ -2555,16 +2559,17 @@ function AutoRunBody({ data, onPatch }) {
   // surprised their "2 per day" setting ran every 15 min. By
   // promoting the defaults on first render we make the displayed
   // frequency match the actual behavior.
+  //
+  // Note: this useEffect MUST come after the `active` const above —
+  // it reads `active` in the dep array, and JS const TDZ rules trip
+  // if we declare it earlier (a real "Cannot access 'a' before
+  // initialization" crash, hard to spot in minified bundles).
   useEffect(() => {
     if (usingFrequency) return
     if (active) return  // never silently rewrite props on an active trigger
     onPatch?.({ runs_per_unit: runsPerUnit, unit: unitId })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [usingFrequency, active])
-
-  const maxRuns = Number(props.max_runs ?? 10)
-  const runsUsed = Number(props.runs_used ?? 0)
-  const active = !!props.active
   const lastRun = props.last_run_at
   const remaining = Math.max(0, maxRuns - runsUsed)
   // Draft strings so each input can transiently clear while typing
