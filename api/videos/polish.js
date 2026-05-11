@@ -480,49 +480,81 @@ export default async function handler(req, res) {
     const WORKER_SECRET = process.env.WORKER_SHARED_SECRET
     if (WORKER_URL && wantsFfmpegEarly) {
       try {
-        // Step 1 — composite (title + logo + music) on the worker. The
-        // worker downloads, ffmpegs, uploads back to Supabase Storage,
-        // returns a public URL. ZapCap can fetch from there directly.
-        const wRes = await fetch(`${WORKER_URL.replace(/\/$/, '')}/jobs/polish`, {
+        // Step 1 — submit ASYNC. Worker returns a job_id immediately,
+        // processes ffmpeg in background. We then long-poll status
+        // up to ~250s (leaving 50s headroom under Vercel's 300s gateway
+        // timeout for the ZapCap chain + mirror that runs after). For
+        // big clips (4K HEVC, 100MB+) that take longer than 250s, we
+        // surface a 202 with the worker_job_id so the canvas can keep
+        // polling on its own — no more 504s.
+        const workerBase = `${WORKER_URL.replace(/\/$/, '')}`
+        const headers = {
+          'Content-Type': 'application/json',
+          ...(WORKER_SECRET ? { 'x-worker-secret': WORKER_SECRET } : {}),
+        }
+        const submitRes = await fetch(`${workerBase}/jobs/polish-async`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(WORKER_SECRET ? { 'x-worker-secret': WORKER_SECRET } : {}),
-          },
+          headers,
           body: JSON.stringify({
             profile_id, video_url, logo_url, watermark_image_url,
             music_url, title, title_style,
             watermark_position, watermark_size_pct,
             music_volume, music_fade_secs,
+            // Worker chains ZapCap captions itself so the full polish
+            // result (composite + captions) is one atomic job. Critical
+            // for the async path — when Vercel times out we return the
+            // worker job_id; the canvas polls until done; the result
+            // it gets is already captioned. Without this, async clips
+            // would skip captions entirely.
+            captions_enabled: wantsCaptionsEarly,
+            caption_template_id: caption_template_id || undefined,
+            caption_language:    req.body?.caption_language || undefined,
           }),
         })
-        const wBody = await wRes.json()
-        if (!wRes.ok) throw new Error(wBody.error || `Worker ${wRes.status}`)
-
-        // Step 2 — chain ZapCap captions over the worker's composite
-        // URL. Same pattern Phase B uses for the local ffmpeg path
-        // below — single submit → poll → download. ZapCap failures
-        // are non-fatal: surface a warning and return the composite-
-        // only render rather than erroring the whole polish.
-        let finalUrl = wBody.video_url
-        let zapcapMeta = null
-        if (wantsCaptionsEarly) {
-          try {
-            const zVideoId = await zapcapAddVideoByUrl(wBody.video_url, { ttl: '1d' })
-            const zTaskId  = await zapcapCreateTask(zVideoId, { templateId: caption_template_id, autoApprove: true })
-            const zResult  = await zapcapPollTask(zVideoId, zTaskId, { timeoutMs: 180_000, intervalMs: 2500 })
-            const dlUrl    = zResult.downloadUrl || zResult.video?.downloadUrl || zResult.url
-            if (dlUrl) {
-              finalUrl = dlUrl
-              zapcapMeta = { template_id: caption_template_id, video_id: zVideoId, task_id: zTaskId }
-            } else {
-              zapcapMeta = { error: 'ZapCap returned no downloadUrl' }
-            }
-          } catch (e) {
-            console.warn('[polish:worker] ZapCap failed, returning composite-only:', e.message)
-            zapcapMeta = { error: e.message }
-          }
+        const submitBody = await submitRes.json().catch(() => ({}))
+        if (!submitRes.ok || !submitBody?.job_id) {
+          throw new Error(submitBody?.error || `Worker submit ${submitRes.status}`)
         }
+        const jobId = submitBody.job_id
+
+        // Long-poll worker status. 5s interval, 250s deadline. Most
+        // clips complete in 20-90s; the 4K HEVC outliers that don't
+        // exit this loop early. When they don't, we hand the canvas
+        // the job_id to keep polling against /api/videos/polish-status.
+        const POLL_DEADLINE_MS = 250_000
+        const POLL_INTERVAL_MS = 5_000
+        const start = Date.now()
+        let wBody = null
+        while (Date.now() - start < POLL_DEADLINE_MS) {
+          await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
+          const r = await fetch(`${workerBase}/jobs/${encodeURIComponent(jobId)}`, { headers })
+          const body = await r.json().catch(() => ({}))
+          if (!r.ok) throw new Error(body?.error || `Worker status ${r.status}`)
+          if (body.status === 'done') { wBody = body.result; break }
+          if (body.status === 'failed') throw new Error(body.error || 'Worker reported failure')
+          // 'queued' or 'running' — keep polling.
+        }
+        if (!wBody) {
+          // Still cooking. Hand the job_id back so the canvas keeps
+          // polling via /api/videos/polish-status. 202 = Accepted,
+          // processing continues.
+          return res.status(202).json({
+            polling: true,
+            worker_job_id: jobId,
+            worker_url: WORKER_URL,
+            poll_url: `/api/videos/polish-status?job_id=${encodeURIComponent(jobId)}`,
+            estimated_remaining_secs: 90,
+          })
+        }
+
+        // Worker now chains ZapCap captions itself (see worker/index.js
+        // polishCore). wBody.video_url is the final captioned URL; the
+        // ZapCap metadata comes back in wBody.zapcap. No second Vercel-
+        // side pass needed. This is critical for the async (>250s) path
+        // — without worker-side captions, big clips that timeout
+        // Vercel's outer loop would skip captions entirely.
+        const finalUrl = wBody.video_url
+        const zapcapMeta = wBody.zapcap || null
 
         // Debit credits after the worker confirms success. Atomic on
         // the DB side; we still surface failures so a tight race that

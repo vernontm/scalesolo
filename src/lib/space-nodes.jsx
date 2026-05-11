@@ -6595,8 +6595,35 @@ export const NODE_REGISTRY = {
             music_fade_secs: p.music_fade_secs ?? 1.0,
           }),
         })
-        const body = await r.json().catch(() => ({}))
-        if (!r.ok || !body?.video_url) {
+        let body = await r.json().catch(() => ({}))
+
+        // Async path: 202 = worker accepted the job but didn't finish
+        // inside Vercel's 300s window. Keep polling the status endpoint
+        // until we get a final URL or a failure. No client-side
+        // deadline — big 4K clips can take 3-5 min, and we'd rather
+        // wait honestly than fail spuriously.
+        if (r.status === 202 && body?.polling && body?.worker_job_id) {
+          reportProgress?.({ message: `Polishing on worker${tag} (this may take a few minutes for big clips)…`, done: idx, total })
+          const POLL_INTERVAL_MS = 7_000
+          const sess = ctx.token
+          const jobId = body.worker_job_id
+          let pollResult = null
+          while (true) {
+            await new Promise((res) => setTimeout(res, POLL_INTERVAL_MS))
+            const sr = await fetch(`/api/videos/polish-status?job_id=${encodeURIComponent(jobId)}`, {
+              headers: { Authorization: `Bearer ${sess}` },
+            })
+            const sb = await sr.json().catch(() => ({}))
+            if (sr.status === 404) throw new Error(`Polish job ${jobId} expired before completion.`)
+            if (!sr.ok) throw new Error(sb?.error || `Polish status ${sr.status}`)
+            if (sb.status === 'done') { pollResult = sb.result; break }
+            if (sb.status === 'failed') throw new Error(sb.error || 'Worker reported polish failure')
+            // queued / running — keep polling.
+          }
+          body = pollResult
+        }
+
+        if (!body?.video_url) {
           const msg = body?.error || `Polish failed (${r.status})`
           const detail = body?.ffmpeg_error ? `\n\nffmpeg: ${body.ffmpeg_error}` : ''
           throw new Error(msg + detail)

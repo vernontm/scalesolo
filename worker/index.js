@@ -28,6 +28,7 @@ import { createClient } from '@supabase/supabase-js'
 import sharp from 'sharp'
 import { Resvg } from '@resvg/resvg-js'
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg'
+import { zapcapAddVideoByUrl, zapcapCreateTask, zapcapPollTask } from './zapcap.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -249,7 +250,68 @@ function overlayPos(pos) {
   }
 }
 
-app.post('/jobs/polish', requireSecret, async (req, res) => {
+// In-memory job registry for the async path. Maps job_id → state.
+// Acceptable because:
+//   - Fly's auto_stop only kicks in when there are no in-flight
+//     requests, so jobs never get killed mid-process.
+//   - If the machine genuinely restarts mid-job (deploy / OOM /
+//     crash), the client polling the status endpoint will see
+//     "not found" and the canvas falls back to a fresh polish.
+const jobs = new Map()
+
+function newJobId() {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+// Job processor — same body as the sync /jobs/polish handler, just
+// extracted so both paths share the work and only differ in HTTP
+// lifecycle. Updates the jobs map as it runs.
+async function runPolishJob(jobId, body) {
+  const job = jobs.get(jobId)
+  if (!job) return
+  job.status = 'running'
+  job.started_at = new Date().toISOString()
+  try {
+    const result = await polishCore(body)
+    job.status = 'done'
+    job.result = result
+    job.finished_at = new Date().toISOString()
+  } catch (err) {
+    job.status = 'failed'
+    job.error = String(err?.message || err)
+    job.finished_at = new Date().toISOString()
+    console.error(`polish job ${jobId} failed:`, err?.stack || err)
+  }
+  // Reap after 10 min so the registry doesn't grow forever.
+  setTimeout(() => jobs.delete(jobId), 10 * 60 * 1000)
+}
+
+// Async submit: returns { job_id, status: 'queued' } immediately
+// and processes in background. Caller polls GET /jobs/:id for status.
+app.post('/jobs/polish-async', requireSecret, async (req, res) => {
+  const body = req.body || {}
+  if (!body.profile_id || !body.video_url) {
+    return res.status(400).json({ error: 'profile_id + video_url required' })
+  }
+  const jobId = newJobId()
+  jobs.set(jobId, { status: 'queued', queued_at: new Date().toISOString() })
+  // Kick off in background — DO NOT await.
+  runPolishJob(jobId, body).catch((e) => console.error(`runPolishJob ${jobId} threw:`, e))
+  return res.status(202).json({ job_id: jobId, status: 'queued' })
+})
+
+// Status endpoint. Returns the in-memory state of a job.
+app.get('/jobs/:id', requireSecret, (req, res) => {
+  const job = jobs.get(req.params.id)
+  if (!job) return res.status(404).json({ error: 'Job not found (expired or never existed)' })
+  return res.json({ job_id: req.params.id, ...job })
+})
+
+// Shared polish work. Both the sync /jobs/polish handler and the
+// async background runner call this. Returns { video_url, bytes }
+// on success, throws on failure (callers translate to HTTP / job
+// state). Cleans up its own tempdir.
+async function polishCore(body) {
   const {
     profile_id, video_url,
     logo_url, watermark_image_url, music_url, title,
@@ -258,9 +320,9 @@ app.post('/jobs/polish', requireSecret, async (req, res) => {
     watermark_size_pct = 25,
     music_volume = 0.15,
     music_fade_secs = 1.0,
-  } = req.body || {}
-  if (!profile_id || !video_url) return res.status(400).json({ error: 'profile_id + video_url required' })
-  if (!SUPABASE_URL || !SERVICE_KEY) return res.status(500).json({ error: 'Storage not configured on worker' })
+  } = body || {}
+  if (!profile_id || !video_url) throw new Error('profile_id + video_url required')
+  if (!SUPABASE_URL || !SERVICE_KEY) throw new Error('Storage not configured on worker')
 
   let workdir = null
   try {
@@ -411,12 +473,55 @@ app.post('/jobs/polish', requireSecret, async (req, res) => {
     if (upErr) throw new Error(`Upload failed: ${upErr.message}`)
     const { data: pub } = supabase.storage.from('landing-media').getPublicUrl(path)
 
-    res.json({ video_url: pub.publicUrl, bytes: finalBuf.byteLength })
+    // Chain ZapCap captions when requested. Async jobs in particular
+    // need this — Vercel's polish.js USED to handle captions after
+    // the worker returned, but with big-clip async, Vercel times out
+    // before we return, so it never gets that chance. Doing captions
+    // here keeps the chain intact for both sync and async callers.
+    // Failures are non-fatal — return the composite-only URL with a
+    // warning so the user gets something rather than a hard error.
+    let finalUrl = pub.publicUrl
+    let zapcapMeta = null
+    const wantsCaptions = !!(body.captions_enabled !== false && body.caption_template_id)
+    if (wantsCaptions) {
+      try {
+        const zVideoId = await zapcapAddVideoByUrl(pub.publicUrl, { ttl: '1d' })
+        const zTaskId  = await zapcapCreateTask(zVideoId, {
+          templateId: body.caption_template_id,
+          language:   body.caption_language || 'en',
+          autoApprove: true,
+        })
+        const zResult  = await zapcapPollTask(zVideoId, zTaskId, { timeoutMs: 6 * 60 * 1000, intervalMs: 4000 })
+        const dlUrl = zResult.downloadUrl || zResult.video?.downloadUrl || zResult.url
+        if (dlUrl) {
+          finalUrl = dlUrl
+          zapcapMeta = { template_id: body.caption_template_id, video_id: zVideoId, task_id: zTaskId }
+        } else {
+          zapcapMeta = { error: 'ZapCap returned no downloadUrl' }
+        }
+      } catch (e) {
+        console.warn('[worker] ZapCap failed, returning composite-only:', e.message)
+        zapcapMeta = { error: e.message }
+      }
+    }
+
+    return { video_url: finalUrl, bytes: finalBuf.byteLength, zapcap: zapcapMeta }
+  } finally {
+    if (workdir) { try { await rm(workdir, { recursive: true, force: true }) } catch {} }
+  }
+}
+
+// Sync wrapper around polishCore. Kept for backward compat — small
+// clips (< ~60 MB) finish well within Vercel's 300s timeout via
+// this path. Larger clips should use /jobs/polish-async + status
+// polling instead.
+app.post('/jobs/polish', requireSecret, async (req, res) => {
+  try {
+    const result = await polishCore(req.body || {})
+    res.json(result)
   } catch (err) {
     console.error('polish job error:', err?.stack || err)
     res.status(500).json({ error: String(err?.message || err) })
-  } finally {
-    if (workdir) { try { await rm(workdir, { recursive: true, force: true }) } catch {} }
   }
 })
 
