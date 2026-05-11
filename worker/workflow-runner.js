@@ -128,6 +128,81 @@ const NODE_RUNNERS = {
 
   avatar_picker: ({ node }) => ({ avatar: { ...node.data?.props } }),
 
+  // Single-clip avatar render. Posts to /api/avatars/photo-render
+  // and polls /api/avatars/photo-render-status until success.
+  // Randomize / multi-clip fan-out modes aren't supported on the
+  // server runtime yet — those run in the browser canvas only.
+  // Surfaces a clear error if the user's auto_run workflow uses
+  // randomize so they know which mode is the blocker.
+  avatar_render: async ({ inputs, ctx }) => {
+    const avatar = pickAvatar(inputs)
+    if (!avatar?.avatar_id) throw new Error('avatar_render needs an Avatar picker upstream')
+
+    // voice_gen output: { audio: { url } }. avatar_render expects
+    // audio_url. HeyGen also accepts an inline script via the
+    // /api/avatars/photo-render endpoint — pass either.
+    let audioUrl = null
+    let script = ''
+    for (const v of asArr(inputs)) {
+      if (!v || typeof v !== 'object') continue
+      if (!audioUrl && v.audio?.url) audioUrl = v.audio.url
+      if (!audioUrl && v.audio?.audio_url) audioUrl = v.audio.audio_url
+      if (!script && (v.script || v.full_script)) script = v.script || v.full_script
+      if (Array.isArray(v.audio_chunks) && v.audio_chunks.length > 1) {
+        throw new Error('avatar_render randomize/multi-clip not yet supported on server-side auto-run. Use single-image avatar mode, or run this workflow manually.')
+      }
+    }
+    if (!audioUrl && !script) throw new Error('avatar_render needs upstream voice_gen audio or a script')
+
+    // Pick the photo. avatar.image_url is set when the avatar
+    // picker has a specific image bound to it. For looks with
+    // multiple images and no specific pick, the server runner
+    // doesn't try to randomize — just throws so the user knows
+    // to fix the avatar config or run manually.
+    const photoUrl = avatar.image_url || avatar.photo_url
+    if (!photoUrl) {
+      throw new Error('avatar_render server runs need a specific avatar image. Set the avatar to single-image mode in the picker, or run manually.')
+    }
+
+    // Submit the render.
+    const submit = await callApi('/api/avatars/photo-render', {
+      profile_id: ctx.profileId,
+      avatar_id: avatar.avatar_id,
+      photo_url: photoUrl,
+      audio_url: audioUrl || undefined,
+      script: !audioUrl && script ? script : undefined,
+    }, ctx.headers)
+    const videoId = submit.video_id
+    if (!videoId) throw new Error('avatar_render submit returned no video_id')
+
+    // Poll for completion. HeyGen typically returns in 30-90s.
+    // 10-min ceiling matches the browser canvas's polling deadline
+    // — anything slower than that is a stuck render that needs
+    // human inspection.
+    const POLL_INTERVAL_MS = 6_000
+    const DEADLINE_MS = 10 * 60_000
+    const start = Date.now()
+    while (Date.now() - start < DEADLINE_MS) {
+      await new Promise((res) => setTimeout(res, POLL_INTERVAL_MS))
+      const r = await fetch(
+        `${PORTABLE_BASE}/api/avatars/photo-render-status?video_id=${encodeURIComponent(videoId)}`,
+        { headers: ctx.headers }
+      )
+      const s = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(s?.error || `photo-render-status ${r.status}`)
+      if (s.state === 'success') {
+        return {
+          video: { video_url: s.video_url },
+          video_url: s.video_url,
+          media_type: 'video',
+        }
+      }
+      if (s.state === 'failed') throw new Error(s.error || 'HeyGen render failed')
+      // 'pending' / 'processing' — keep polling.
+    }
+    throw new Error(`avatar_render timed out after ${DEADLINE_MS / 60_000} min`)
+  },
+
   script_gen: async ({ node, inputs, ctx }) => {
     const brand = pickBrand(inputs)
     const profileId = brand?.profile_id || ctx.profileId
