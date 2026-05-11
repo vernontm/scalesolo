@@ -40,6 +40,7 @@ const Admin         = lazy(() => import('./pages/Admin.jsx'))
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import ToastHost from './components/Toast.jsx'
 import { useAuth } from './context/AuthContext.jsx'
+import { useProfile } from './context/ProfileContext.jsx'
 
 // Tiny fallback shown while a lazy route's chunk is fetching. Subtle
 // enough that users don't notice on warm caches; visible enough on a
@@ -118,6 +119,16 @@ function AppShell() {
   const { pathname } = useLocation()
   // Spaces gets a collapsed sidebar so the canvas has more room.
   const compact = pathname.startsWith('/spaces')
+  // Profile-switch full remount. When the active brand profile
+  // changes, every page mounted in <Routes> can hold stale state
+  // pinned to the previous profile (e.g. fetched avatars, canvas
+  // nodes still referencing the old profile's media). Wrapping
+  // <Routes> in a key on the profile id makes React unmount the
+  // entire route subtree on change and remount it fresh — every
+  // useState resets, every useEffect re-fires with the new profile.
+  // Cheap to do because route components were already lazy-loaded
+  // chunks so the remount has no JS load cost.
+  const { selectedProfileId } = useProfile()
 
   // Sync a body class so CSS rules can target compact mode for the
   // builder overlay + main content margin.
@@ -142,7 +153,12 @@ function AppShell() {
         <Header onOpenSidebar={() => setMobileOpen(true)} />
         <main style={contentStyle}>
           <Suspense fallback={<RouteFallback />}>
-          <Routes>
+          {/* Profile-keyed Routes: see the comment near useProfile()
+              above. The key change unmounts the previous page tree
+              completely so stale per-profile state can't leak across
+              brand switches. Fallback key 'no-profile' keeps the
+              initial render stable while ProfileContext loads. */}
+          <Routes key={selectedProfileId || 'no-profile'}>
             <Route path="/auth/callback" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/spaces"    element={<Spaces />} />
