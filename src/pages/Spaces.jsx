@@ -1675,6 +1675,17 @@ function SpaceBuilder({ space, onSave, onClose }) {
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
   }, [running])
   const [skippedTicks, setSkippedTicks] = useState(0)
+  // Live progress for SERVER-side runs (the kind /api/spaces/run-now
+  // and the cron tick start). Tracks the currently-active space_runs
+  // row for this space, fed by a Realtime subscription below. The
+  // canvas patches each node's status off of node_progress as the
+  // worker updates it; the bottom-right pill shows "N / total nodes".
+  // null means no active server run for this space.
+  const [serverRun, setServerRun] = useState(null)
+  // Toast handle for the active server-run progress toast. We reuse
+  // the same toast id so successive updates replace the previous one
+  // instead of stacking. Cleared when the run finalizes.
+  const serverRunToastIdRef = useRef(null)
   // Abort flag now lives on the context — local ref points at it so all
   // existing reads of abortRunRef.current keep working.
   const abortRunRef = runCtx.abortRef
@@ -1996,6 +2007,78 @@ function SpaceBuilder({ space, onSave, onClose }) {
     if (meaningful) pushHistory()
     setNodes((arr) => arr.map((n) => n.id === id ? { ...n, data: { ...n.data, ...patch } } : n))
   }, [pushHistory])
+
+  // Server-run live progress subscription. Subscribes to space_runs
+  // INSERT + UPDATE for this space; when the worker (cron or manual
+  // /api/spaces/run-now) advances the run, it writes node_progress
+  // jsonb. We reflect that on the canvas by patching each node's
+  // status (running / success / failed) and surface a bottom-right
+  // progress panel showing N / total complete.
+  //
+  // Browser-orchestrated runs (per-node Run buttons) don't write to
+  // node_progress, so they don't conflict with this subscription;
+  // they keep using the in-memory patchNode path as before.
+  useEffect(() => {
+    const spaceId = spaceIdRef.current
+    if (!spaceId) return
+    let cancelled = false
+    const applyRow = (row) => {
+      if (cancelled || !row) return
+      if (row.status === 'running') {
+        const np = row.node_progress || {}
+        const total = row.node_count || 0
+        const completed = Object.values(np).filter((p) => p && (p.status === 'success' || p.status === 'failed')).length
+        setServerRun({ id: row.id, total, completed, triggered_by: row.triggered_by, started_at: row.started_at })
+        // Reflect each node's progress on the canvas. We only patch
+        // status (not output) because the worker holds the actual
+        // result data — the canvas would need a separate fetch to
+        // hydrate it. Statuses alone are enough for the highlight.
+        for (const [nodeId, prog] of Object.entries(np)) {
+          if (!prog?.status) continue
+          patchNode(nodeId, { status: prog.status, error: prog.error || null })
+        }
+      } else {
+        // Run finalized. Final patch of each node to its terminal
+        // status, then clear the active server-run panel.
+        const np = row.node_progress || {}
+        for (const [nodeId, prog] of Object.entries(np)) {
+          if (!prog?.status) continue
+          patchNode(nodeId, { status: prog.status, error: prog.error || null })
+        }
+        setServerRun(null)
+      }
+    }
+    // Prime: fetch the latest running row (if any) so a remount mid-run
+    // catches up without waiting for a Realtime event.
+    ;(async () => {
+      try {
+        const { data } = await supabase
+          .from('space_runs')
+          .select('id, status, node_count, node_progress, triggered_by, started_at')
+          .eq('space_id', spaceId)
+          .eq('status', 'running')
+          .order('started_at', { ascending: false })
+          .limit(1)
+        if (data?.[0]) applyRow(data[0])
+      } catch { /* ok */ }
+    })()
+    const channel = supabase
+      .channel(`space_runs:${spaceId}`)
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'space_runs', filter: `space_id=eq.${spaceId}` },
+        (payload) => applyRow(payload.new))
+      .on('postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'space_runs', filter: `space_id=eq.${spaceId}` },
+        (payload) => applyRow(payload.new))
+      .subscribe()
+    return () => {
+      cancelled = true
+      try { channel.unsubscribe() } catch {}
+    }
+    // patchNode is stable via useCallback. spaceIdRef.current change after
+    // first save triggers a re-run via the spaceIdRef.current dep.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spaceIdRef.current])
 
   // After a run finishes, video_polish nodes that produced a clip but have
   // no downstream destination silently lose the result — the user has to
@@ -3174,6 +3257,54 @@ function SpaceBuilder({ space, onSave, onClose }) {
         </ReactFlow>
 
         <FloatingPalette onAdd={(type) => addNode(type)} />
+
+        {/* Live server-run progress panel. Shows up at top-right while
+            a server-side run (manual via /api/spaces/run-now OR cron)
+            is in flight, then disappears when the worker finalizes
+            the space_runs row. Click X to hide for this session — the
+            run continues, you just dismissed the chrome. */}
+        {serverRun && (
+          <div
+            role="status" aria-live="polite"
+            style={{
+              position: 'fixed', right: 16, bottom: 88, zIndex: 90,
+              background: 'var(--surface)',
+              border: '1px solid rgba(46,204,113,0.45)',
+              borderRadius: 12, padding: '12px 14px',
+              boxShadow: '0 12px 24px rgba(0,0,0,0.35)',
+              minWidth: 240, maxWidth: 320,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <span style={{
+                width: 8, height: 8, borderRadius: 999, background: '#2ecc71',
+                animation: 'pulse 2s ease-in-out infinite', flexShrink: 0,
+              }} />
+              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 12.5, color: '#2ecc71', flex: 1 }}>
+                Running on server
+              </div>
+              <button
+                aria-label="Hide progress panel"
+                onClick={() => setServerRun(null)}
+                style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 0, fontSize: 14, lineHeight: 1 }}
+              >×</button>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-soft)', marginBottom: 6 }}>
+              {serverRun.completed} / {serverRun.total} steps · {serverRun.triggered_by === 'manual_server' ? 'Manual run' : 'Auto-run'}
+            </div>
+            <div style={{
+              height: 6, background: 'var(--surface-2)', borderRadius: 3, overflow: 'hidden',
+            }}>
+              <div style={{
+                width: `${serverRun.total ? (serverRun.completed / serverRun.total) * 100 : 0}%`,
+                height: '100%', background: '#2ecc71', transition: 'width 0.4s ease',
+              }} />
+            </div>
+            <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 6 }}>
+              Safe to close the tab — the worker keeps going.
+            </div>
+          </div>
+        )}
 
         {/* Bottom-right FAB: toggles the workflow-guide side panel.
             Replaces the old AI chat agent that lived in this slot — for

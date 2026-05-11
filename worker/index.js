@@ -397,10 +397,33 @@ app.post('/jobs/run-workflow', requireSecret, async (req, res) => {
       }
     }
 
+    // Per-node progress map. Worker writes this back to space_runs
+    // after every node start / finish so the canvas can highlight live.
+    // We accumulate locally + patch the whole jsonb on each step
+    // because Postgres jsonb_set via PostgREST is awkward, and total
+    // graph size is small (rarely > 20 nodes). One write per step ≈ 2
+    // round-trips per node — well within Realtime's budget.
+    const nodeProgress = {}
+    const writeProgress = async (nodeId, patch) => {
+      const prev = nodeProgress[nodeId] || {}
+      nodeProgress[nodeId] = { ...prev, ...patch }
+      if (!supabase || !spaceRunId) return
+      try {
+        await supabase.from('space_runs')
+          .update({ node_progress: nodeProgress })
+          .eq('id', spaceRunId)
+      } catch (e) {
+        // Don't let a progress hiccup kill the run. We re-write on
+        // the next step anyway so a single dropped update self-heals.
+        console.warn(`[wf ${jobLabel}] node_progress write failed:`, e?.message)
+      }
+    }
+
     try {
       const result = await runWorkflow({
         graph, userId: user_id, profileId: profile_id, internalSecret: internal_secret,
         log: (m) => console.log(`[wf ${jobLabel}] ${m}`),
+        onProgress: writeProgress,
       })
       const errCount = Object.keys(result.errors).length
       console.log(`[wf ${jobLabel}] done ok=${result.ok} errors=${errCount} duration_ms=${Date.now() - startedAt}`)

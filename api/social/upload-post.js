@@ -151,7 +151,15 @@ export default async function handler(req, res) {
       // Title field has a hard 255-char limit (FB's API rejects past that —
       // saw "Facebook title is too long (767 characters)" in production).
       // Description has no real cap; we use the full caption there.
-      fd.append('facebook_title', trim(fullCaption || cleanTitle, 255))
+      //
+      // We aim for 240 (not 255) because the upload-post.com layer
+      // counts characters differently than JS slice when emojis,
+      // newlines, or fancy unicode are involved — seen 259 reported
+      // back even after slice(0, 255). Knock newlines down to single
+      // spaces too so FB doesn't expand them into paragraph breaks
+      // that bloat the count further on their end.
+      const fbTitleSource = (fullCaption || cleanTitle || '').replace(/\s*\n+\s*/g, ' ').trim()
+      fd.append('facebook_title', trim(fbTitleSource, 240))
       fd.append('facebook_description', trim(fullCaption || cleanTitle, 5000))
     }
     if (platforms.includes('youtube')) {

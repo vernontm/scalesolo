@@ -805,7 +805,7 @@ ${String(script).slice(0, 2000)}
 
 // Topological sort + execute. Inputs into each node come from the
 // outputs of every node with an edge pointing TO this node.
-export async function runWorkflow({ graph, userId, profileId, internalSecret, log }) {
+export async function runWorkflow({ graph, userId, profileId, internalSecret, log, onProgress }) {
   const nodes = graph?.nodes || []
   const edges = graph?.edges || []
   const incoming = new Map()
@@ -851,6 +851,7 @@ export async function runWorkflow({ graph, userId, profileId, internalSecret, lo
     const ancestorFailed = (incoming.get(id) || []).some((e) => errors[e.source])
     if (ancestorFailed) {
       errors[id] = `Blocked by upstream failure`
+      try { await onProgress?.(id, { status: 'failed', error: 'Blocked by upstream failure', finished_at: new Date().toISOString() }) } catch {}
       continue
     }
 
@@ -860,17 +861,21 @@ export async function runWorkflow({ graph, userId, profileId, internalSecret, lo
       // add the runner later.
       errors[id] = `Server runs don't support node type "${type}" yet`
       log?.(`[skip] ${id} (${type}): unsupported`)
+      try { await onProgress?.(id, { status: 'failed', error: errors[id], finished_at: new Date().toISOString() }) } catch {}
       continue
     }
 
     try {
       log?.(`[run]  ${id} (${type})`)
+      try { await onProgress?.(id, { status: 'running', started_at: new Date().toISOString() }) } catch {}
       const out = await runner({ node, inputs: inputBag, ctx, log: (m) => log?.(`  ${m}`) })
       outputs.set(id, out || {})
       log?.(`[done] ${id}`)
+      try { await onProgress?.(id, { status: 'success', finished_at: new Date().toISOString() }) } catch {}
     } catch (err) {
       errors[id] = err.message || String(err)
       log?.(`[fail] ${id} (${type}): ${errors[id]}`)
+      try { await onProgress?.(id, { status: 'failed', error: errors[id], finished_at: new Date().toISOString() }) } catch {}
     }
   }
 
