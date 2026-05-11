@@ -417,6 +417,51 @@ const NODE_RUNNERS = {
     }
   },
 
+  // Stitch a set of clips end-to-end into one MP4. Used after
+  // avatar_render randomize to merge the N look-image clips back
+  // into a single deliverable. Mirrors the browser path: try the
+  // server-side ffmpeg combine API, fall back to a playlist shape
+  // (videos[] array) if it's unavailable so downstream nodes still
+  // have something to consume.
+  combine_videos: async ({ inputs, ctx }) => {
+    const clips = []
+    for (const v of asArr(inputs)) {
+      if (!v) continue
+      if (Array.isArray(v.videos)) for (const c of v.videos) { if (c?.video_url) clips.push(c) }
+      else if (Array.isArray(v.items)) for (const it of v.items) { if (it?.kind === 'video' && it.url) clips.push({ video_url: it.url, order: it.order }) }
+      else if (v.video_url) clips.push({ video_url: v.video_url, order: v.order })
+    }
+    clips.sort((a, b) => (a.order ?? 1e9) - (b.order ?? 1e9))
+    if (clips.length < 2) {
+      // Server runs almost always reach this with N>=2 from avatar
+      // randomize. If somehow N<2, treat it as a pass-through.
+      if (clips.length === 1) return { video: { video_url: clips[0].video_url }, video_url: clips[0].video_url, media_type: 'video' }
+      throw new Error('combine_videos needs at least 2 video clips upstream')
+    }
+    try {
+      const body = await callApi('/api/videos/combine', {
+        profile_id: ctx.profileId,
+        video_urls: clips.map((c) => c.video_url),
+      }, ctx.headers)
+      if (body?.video_url) {
+        return { video: { video_url: body.video_url, source_clips: clips.length }, video_url: body.video_url, media_type: 'video' }
+      }
+      // No video_url on a 200 → unknown failure. Fall through to
+      // playlist so downstream nodes still see something.
+      return { videos: clips, media_type: 'video', is_clip_set: true, combine_unavailable: 'No video_url in combine response' }
+    } catch (e) {
+      // Combine endpoint unreachable or threw — same fallback as
+      // browser: pass the clips through so polish / schedule_post
+      // can still fan out across them.
+      return {
+        videos: clips,
+        media_type: 'video',
+        is_clip_set: true,
+        combine_unavailable: e?.message || 'combine failed',
+      }
+    }
+  },
+
   video_polish: async ({ node, inputs, ctx }) => {
     const p = node.data?.props || {}
     const videoUrls = pickAllVideoUrls(inputs)
