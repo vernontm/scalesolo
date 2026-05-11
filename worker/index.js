@@ -484,24 +484,41 @@ async function polishCore(body) {
     let zapcapMeta = null
     const wantsCaptions = !!(body.captions_enabled !== false && body.caption_template_id)
     if (wantsCaptions) {
+      // Step-aware error capture: each ZapCap call lives in its own
+      // try block so we know exactly which one threw. "Forbidden
+      // resource" on the addVideoByUrl call = API key / account issue.
+      // Same error on createTask = template_id doesn't belong to this
+      // account. The DB row's zapcap.failed_step field surfaces which.
+      let zStep = 'init'
+      let zVideoId = null
+      let zTaskId = null
       try {
-        const zVideoId = await zapcapAddVideoByUrl(pub.publicUrl, { ttl: '1d' })
-        const zTaskId  = await zapcapCreateTask(zVideoId, {
+        zStep = 'addVideoByUrl'
+        zVideoId = await zapcapAddVideoByUrl(pub.publicUrl, { ttl: '1d' })
+        zStep = 'createTask'
+        zTaskId = await zapcapCreateTask(zVideoId, {
           templateId: body.caption_template_id,
           language:   body.caption_language || 'en',
           autoApprove: true,
         })
-        const zResult  = await zapcapPollTask(zVideoId, zTaskId, { timeoutMs: 6 * 60 * 1000, intervalMs: 4000 })
+        zStep = 'pollTask'
+        const zResult = await zapcapPollTask(zVideoId, zTaskId, { timeoutMs: 6 * 60 * 1000, intervalMs: 4000 })
         const dlUrl = zResult.downloadUrl || zResult.video?.downloadUrl || zResult.url
         if (dlUrl) {
           finalUrl = dlUrl
           zapcapMeta = { template_id: body.caption_template_id, video_id: zVideoId, task_id: zTaskId }
         } else {
-          zapcapMeta = { error: 'ZapCap returned no downloadUrl' }
+          zapcapMeta = { failed_step: 'pollTask', error: 'ZapCap returned no downloadUrl', template_id: body.caption_template_id }
         }
       } catch (e) {
-        console.warn('[worker] ZapCap failed, returning composite-only:', e.message)
-        zapcapMeta = { error: e.message }
+        console.warn(`[worker] ZapCap failed at step=${zStep}:`, e.status, e.message, JSON.stringify(e.response || {}).slice(0, 300))
+        zapcapMeta = {
+          failed_step: zStep,
+          error: e.message,
+          status: e.status || null,
+          template_id: body.caption_template_id,
+          video_id: zVideoId || null,
+        }
       }
     }
 
