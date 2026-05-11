@@ -348,10 +348,37 @@ opener in the "Previously written for this brand" list.`
           totalUsage.output += resp.usage.output_tokens || 0
         }
         const text = resp?.content?.[0]?.text || ''
-        const json = text.match(/\{[\s\S]*\}/)?.[0]
+        // Strip markdown code fences before JSON extraction. Claude
+        // periodically wraps responses in ```json blocks even though
+        // the prompt forbids it; if we don't pre-strip those, the
+        // greedy {...} match can include the trailing ``` or grab the
+        // wrong block, JSON.parse blows up, and the catch path stuffs
+        // the entire raw response (including the markdown fences and
+        // field names) into full_script — which then leaks straight
+        // out as the post caption on TikTok / IG / etc.
+        const cleaned = text
+          .replace(/```json\s*/gi, '')
+          .replace(/```\s*/g, '')
+          .trim()
+        const jsonMatch = cleaned.match(/\{[\s\S]*\}/)?.[0]
         let parsed = {}
-        if (json) { try { parsed = JSON.parse(json) } catch { parsed = { full_script: text } } }
-        else parsed = { full_script: text }
+        if (jsonMatch) {
+          try { parsed = JSON.parse(jsonMatch) }
+          catch { /* fall through to text fallback below */ }
+        }
+        // Fallback: parse failed or no JSON block. Salvage what we
+        // can. Even when parse fails we never want to ship the raw
+        // JSON dump (curly braces, field names) downstream — strip
+        // those first so the resulting full_script reads as prose.
+        if (!parsed.full_script && !parsed.title && !parsed.caption) {
+          const stripped = cleaned
+            .replace(/^[\s\S]*?"full_script"\s*:\s*"/i, '')
+            .replace(/",\s*"[a-z_]+"\s*:[\s\S]*$/i, '')
+            .replace(/\\n/g, '\n')
+            .replace(/\\"/g, '"')
+            .trim()
+          parsed = { full_script: stripped || cleaned }
+        }
         return { parsed, text }
       })
     })

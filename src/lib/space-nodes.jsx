@@ -7032,6 +7032,27 @@ export const NODE_REGISTRY = {
         }
       }
 
+      // Defensive: if the caption / script we're about to publish
+      // looks like raw JSON (curly braces + "title": or "caption":
+      // markers, or a ```json fence), refuse to ship it. This was
+      // landing on TikTok / IG as a literal JSON dump when an upstream
+      // model wrapped its output in markdown and the parser fell
+      // back to the raw text. Force a re-run instead of posting
+      // garbage.
+      const looksLikeJson = (s) => {
+        if (!s) return false
+        const t = String(s).trim()
+        if (t.startsWith('```')) return true
+        if (t.startsWith('{') && /"\s*(title|caption|full_script|hashtags|first_comment)\s*"\s*:/.test(t)) return true
+        return false
+      }
+      if (looksLikeJson(caption) || looksLikeJson(script) || looksLikeJson(hashtags)) {
+        throw new Error(
+          'Upstream generator emitted raw JSON instead of clean text. ' +
+          'Re-run script_gen / caption_gen — the model wrapped its response in code fences and the parser couldn\'t recover. ' +
+          'If this keeps happening, edit the caption manually on the caption_gen node before scheduling.'
+        )
+      }
       const description = [caption, hashtags].filter(Boolean).join('\n\n').trim()
         || String(script || '').slice(0, 500)
 
