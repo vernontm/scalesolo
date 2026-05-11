@@ -5,18 +5,15 @@
 // Use to debug "why isn't my polish going through the worker?" when
 // fly logs show zero incoming requests.
 //
-// Auth: requires a logged-in user (same as every other /api route).
-// Doesn't return the actual values — just whether they're truthy and
-// the URL host so you can confirm it points at the right Fly app.
+// No auth — doesn't return any secret values, just booleans + the
+// public Fly hostname + the secret's string length. Safe to hit from
+// a browser tab during debugging.
 
-import { setCors, requireUser } from '../_lib/supabase.js'
+import { setCors } from '../_lib/supabase.js'
 
 export default async function handler(req, res) {
   setCors(req, res)
   if (req.method === 'OPTIONS') return res.status(204).end()
-
-  const auth = await requireUser(req, res)
-  if (!auth) return
 
   const workerUrl = process.env.WORKER_URL || ''
   const workerSecret = process.env.WORKER_SHARED_SECRET || ''
