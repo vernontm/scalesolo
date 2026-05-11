@@ -22,11 +22,14 @@ import {
 } from '../_lib/elevenlabs.js'
 
 // Vercel's default function timeout is 10s, but ElevenLabs Multilingual
-// v2 / v3 on longer scripts can reasonably take 15-30s end-to-end
-// (synth + Storage upload). 60s leaves comfortable headroom; if a
-// single synth somehow takes longer than that the user has bigger
-// problems (giant script, ElevenLabs incident).
-export const config = { maxDuration: 60 }
+// v2 / v3 on longer scripts can reasonably take 30-90s end-to-end
+// (synth + Storage upload). 180s gives plenty of headroom for the case
+// where script_gen overshoots the requested length and produces a
+// ~90-120s read — used to time out at the old 60s cap and leave the
+// voice_gen step hanging. ElevenLabs' own per-request char limit is
+// the real ceiling (sanitized + capped client-side), this just stops
+// us giving up on synths that ARE making progress.
+export const config = { maxDuration: 180 }
 
 export default async function handler(req, res) {
   setCors(req, res)
