@@ -270,7 +270,12 @@ app.post('/jobs/polish', requireSecret, async (req, res) => {
       } catch { musicPath = null }
     }
 
-    const args = ['-y', '-i', inPath]
+    // -threads 2 caps decode parallelism. HEVC's reference-frame
+    // buffers are per-thread, so unlimited-threads × 1080p HEVC
+    // easily eats 4+ GB of RAM. Two threads is the sweet spot on a
+    // shared-cpu-2x box: still parallel enough to stay fast, low
+    // enough to fit in 4 GB even on a high-bitrate iPhone capture.
+    const args = ['-y', '-threads', '2', '-i', inPath]
     let nextIdx = 1
     let titleIdx = -1, logoIdx = -1, musicIdx = -1
     if (titlePngPath) { args.push('-i', titlePngPath); titleIdx = nextIdx++ }

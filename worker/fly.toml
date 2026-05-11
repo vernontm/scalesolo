@@ -1,41 +1,37 @@
-# Fly.io deploy config for the ScaleSolo render worker.
+# fly.toml app configuration file generated for scalesolo-worker on 2026-05-10T19:24:53-05:00
 #
-# Auto-detects worker/Dockerfile. After `fly launch` from this directory
-# you'll get a public URL — copy it into Vercel as WORKER_URL.
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
-# The worker is stateless: ffmpeg jobs receive a video URL, composite,
-# upload back to Supabase Storage, return the result URL. Restarts /
-# crashes lose nothing, so auto_stop_machines is safe.
 
-app = "scalesolo-worker"
-primary_region = "iad"          # change to match your Vercel region
+app = 'scalesolo-worker'
+primary_region = 'iad'
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = 'Dockerfile'
 
 [env]
-  PORT = "8080"
-  NODE_ENV = "production"
+  NODE_ENV = 'production'
+  PORT = '8080'
 
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = "stop"   # idle → suspended, wakes on request (~2-3s)
+  auto_stop_machines = 'stop'
   auto_start_machines = true
-  min_machines_running = 0      # bump to 1 if you want zero cold-start
-  processes = ["app"]
+  min_machines_running = 0
+  processes = ['app']
+
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '10s'
+    method = 'GET'
+    path = '/healthz'
 
 [[vm]]
-  # Composite jobs are CPU + memory bound. shared-cpu-2x with 2 GB handles
-  # a 60s 1080p clip + libx264 fast in ~10-15s with concurrency 1. Bump
-  # to performance-2x ($30/mo) if you start running multiple concurrent
-  # polishes per worker.
-  size = "shared-cpu-2x"
-  memory = "2gb"
-
-[[http_service.checks]]
-  grace_period = "10s"
-  interval = "30s"
-  method = "GET"
-  timeout = "5s"
-  path = "/healthz"
+  # HEVC (iPhone H.265) decode is 3-4x more memory-hungry than H.264.
+  # 2 GB OOMs on 1080p HEVC clips; 4 GB handles them comfortably.
+  # Cost (paid plan): ~$0.012/hr running, auto-stopped when idle =
+  # ~$3-8/mo at typical hobby volume.
+  size = 'shared-cpu-2x'
+  memory = '4gb'
