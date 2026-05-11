@@ -618,9 +618,23 @@ export default async function handler(req, res) {
         }).catch(() => {})
         return res.status(200).json({ video_url: finalUrl, bytes: wBody.bytes, zapcap: zapcapMeta, via: 'worker' })
       } catch (e) {
-        // Worker outage / error: fall through to the Shotstack / local
-        // ffmpeg paths below so the user still gets a render. They'll
-        // see slower polishes until the worker is back.
+        // Worker outage / error.
+        //
+        // Voiceover polishes can NOT safely fall through to local
+        // Vercel ffmpeg — that path doesn't know about voiceover_url /
+        // loop_video / mute_video_audio, so a "successful" fallback
+        // would produce a video with the source camera audio instead
+        // of the user's intended narration. Fail loud here so the
+        // user re-deploys the worker / checks logs instead of
+        // shipping a silently-broken polish.
+        if (voiceover_url) {
+          console.error('[polish] worker failed AND voiceover_url was requested — refusing local fallback:', e.message)
+          return res.status(502).json({
+            error: `Polish worker failed: ${e.message}. ` +
+              'Voiceover polishes require the Fly worker (local ffmpeg fallback ignores voiceover audio). ' +
+              'Check fly logs / redeploy the worker, then retry.',
+          })
+        }
         console.warn('[polish] worker forward failed, falling back:', e.message)
       }
     }

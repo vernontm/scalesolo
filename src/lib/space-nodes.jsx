@@ -5604,6 +5604,15 @@ export const NODE_REGISTRY = {
             name: 'voice_gen.mp3',
             duration_secs: null,  // Not measured server-side; downstream estimates from duration if needed.
           },
+          // Forward the script downstream. Polish's title generator
+          // uses this to skip ElevenLabs Scribe (it can title from
+          // the script directly). caption_gen and schedule_post also
+          // pick up upstream scripts. Without forwarding, polish ends
+          // up transcribing whatever audio the polished video happens
+          // to have — meaningless when we're muting source audio and
+          // overlaying a voiceover.
+          script,
+          full_script: script,
           // Forward the avatar config when present so a Voice gen →
           // Avatar video wire is sufficient. Omit entirely in
           // standalone mode so downstream nodes don't think we're
