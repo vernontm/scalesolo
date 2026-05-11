@@ -749,8 +749,32 @@ async function polishCore(body) {
         const zResult = await zapcapPollTask(zVideoId, zTaskId, { timeoutMs: 6 * 60 * 1000, intervalMs: 4000 })
         const dlUrl = zResult.downloadUrl || zResult.video?.downloadUrl || zResult.url
         if (dlUrl) {
-          finalUrl = dlUrl
-          zapcapMeta = { template_id: body.caption_template_id, video_id: zVideoId, task_id: zTaskId }
+          // ZapCap returns a pre-signed R2 URL with
+          // `response-content-disposition=attachment` baked in. Browsers
+          // refuse to play those inline (the <video> tag goes black),
+          // so the canvas's Finish Video tile shows a black square even
+          // though the file is fine. Re-host into Supabase so the URL
+          // is plain video/mp4 with no attachment header. Falls back to
+          // the raw ZapCap URL on download/upload failure so we never
+          // regress to "no video at all".
+          try {
+            zStep = 'rehost'
+            const zRes = await fetch(dlUrl)
+            if (!zRes.ok) throw new Error(`ZapCap download ${zRes.status}`)
+            const zBuf = Buffer.from(await zRes.arrayBuffer())
+            const zPath = `${profile_id}/spaces/polished/zapcap-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`
+            const { error: zErr } = await supabase.storage.from('landing-media').upload(zPath, zBuf, {
+              contentType: 'video/mp4', upsert: false,
+            })
+            if (zErr) throw new Error(`Re-upload failed: ${zErr.message}`)
+            const { data: zPub } = supabase.storage.from('landing-media').getPublicUrl(zPath)
+            finalUrl = zPub.publicUrl
+            zapcapMeta = { template_id: body.caption_template_id, video_id: zVideoId, task_id: zTaskId, rehosted: true }
+          } catch (e) {
+            console.warn('[worker] ZapCap re-host failed, falling back to R2 URL:', e.message)
+            finalUrl = dlUrl
+            zapcapMeta = { template_id: body.caption_template_id, video_id: zVideoId, task_id: zTaskId, rehost_failed: e.message }
+          }
         } else {
           zapcapMeta = { failed_step: 'pollTask', error: 'ZapCap returned no downloadUrl', template_id: body.caption_template_id }
         }
