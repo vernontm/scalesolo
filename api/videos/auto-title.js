@@ -71,7 +71,7 @@ ${brandContext}
 ${String(transcript || '').slice(0, 8000)}
 </transcript>
 
-Return ONLY the title text. No quotes, no preamble, no explanation.`
+OUTPUT FORMAT (strict): the response must be EXACTLY the title text and nothing else. No quotes, no preamble, no headers, no markdown, no "# Analysis", no "**Word count**", no checkmarks, no horizontal rules, no bullets. Just the 10-word-or-fewer headline on a single line.`
 
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -92,14 +92,51 @@ Return ONLY the title text. No quotes, no preamble, no explanation.`
   }
   const data = await r.json()
   const raw = String(data?.content?.[0]?.text || '').trim()
-  // Strip surrounding quotes / dashes / "Title:" prefixes Claude sometimes
-  // emits despite the rule. Final hard cap at 100 chars for ffmpeg safety.
-  return raw
-    .replace(/^["'`]+|["'`]+$/g, '')
-    .replace(/^title\s*:\s*/i, '')
-    .replace(/—/g, ',')
-    .trim()
-    .slice(0, 100)
+  return sanitizeTitle(raw)
+}
+
+// Extract just the title from Claude's response. Even with a strict
+// prompt the model sometimes adds "# Analysis", "**Word count: 6**",
+// checkmarks, or other meta-commentary AFTER the title. The
+// observed leak that prompted this:
+//
+//   "STOP MEMORIZING HIM WHILE HE FORGETS YOU # GENERATED TITLE
+//    ANALYSIS: - **WORD COUNT:** 6 WORDS ✓ -"
+//
+// Strategy:
+//   1. Split on the FIRST line — Claude almost always puts the
+//      headline on line 1, then adds analysis on subsequent lines.
+//   2. Inside that line, lop off any "# ...", "**...**", " - ", or
+//      multiple-space markdown junk that follows the headline.
+//   3. Strip surrounding quotes, "title:" prefixes, and em dashes
+//      (existing behavior).
+//   4. Hard cap at 100 chars for ffmpeg drawtext safety.
+function sanitizeTitle(raw) {
+  let s = String(raw || '').trim()
+  // Strip the entire body after any of these meta-markers, ANYWHERE
+  // in the string (not just the start). Each pattern is a fallback
+  // for the others, so we run them in order from most-specific to
+  // least and stop at whichever fires first.
+  const meta = [
+    /\s*#+\s*generated\s+title.*$/is,
+    /\s*#+\s*(analysis|word\s*count|notes?)\b.*$/is,
+    /\s*\*\*\s*word\s*count.*$/is,
+    /\s+#\s+.*$/s,           // hash followed by space (markdown heading)
+    /\s+-{2,}\s+.*$/s,       // " -- " or " --- " separator
+    /\s+✓.*$/s,          // checkmark ✓ and anything after
+  ]
+  for (const re of meta) s = s.replace(re, '')
+  // First line wins — split on newline / double-space-dash patterns.
+  s = s.split(/\r?\n/)[0]
+  // Strip stray markdown emphasis / leading bullets.
+  s = s.replace(/^\s*[-*]\s+/, '').replace(/\*+/g, '').trim()
+  // Existing legacy cleaners.
+  s = s.replace(/^["'`]+|["'`]+$/g, '')
+       .replace(/^title\s*:\s*/i, '')
+       .replace(/—/g, ',')
+       .trim()
+       .slice(0, 100)
+  return s
 }
 
 export default async function handler(req, res) {
