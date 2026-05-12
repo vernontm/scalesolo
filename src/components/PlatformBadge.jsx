@@ -12,8 +12,8 @@ export const PLATFORMS = [
   { id: 'instagram', label: 'Instagram', kinds: ['image', 'video'],         color: '#e1306c', initial: 'I', logo: `${SM_ICON_BASE}/instagram.svg` },
   { id: 'youtube',   label: 'YouTube',   kinds: ['video'],                  color: '#ff0000', initial: 'Y', logo: `${SM_ICON_BASE}/youtube.svg` },
   { id: 'facebook',  label: 'Facebook',  kinds: ['image', 'video', 'text'], color: '#1877f2', initial: 'F', logo: `${SM_ICON_BASE}/facebook.svg` },
-  { id: 'linkedin',  label: 'LinkedIn',  kinds: ['image', 'video', 'text'], color: '#0a66c2', initial: 'L', logo: null },
-  { id: 'threads',   label: 'Threads',   kinds: ['image', 'video', 'text'], color: '#000000', initial: '@', logo: null },
+  { id: 'linkedin',  label: 'LinkedIn',  kinds: ['image', 'video', 'text'], color: '#0a66c2', initial: 'L', logo: `${SM_ICON_BASE}/linkedin-svgrepo-com.svg` },
+  { id: 'threads',   label: 'Threads',   kinds: ['image', 'video', 'text'], color: '#000000', initial: '@', logo: `${SM_ICON_BASE}/threads.svg` },
   { id: 'x',         label: 'X',         kinds: ['image', 'video', 'text'], color: '#000000', initial: '𝕏', logo: `${SM_ICON_BASE}/x.svg` },
 ]
 
