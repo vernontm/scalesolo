@@ -17,6 +17,7 @@ import { findNextOpenSlot } from '../_lib/scheduling.js'
 import { message } from '../_lib/anthropic.js'
 import { loadBrandContext, renderBrandContextMarkdown } from '../_lib/brand-context.js'
 import { transcribeFromUrl } from '../_lib/scribe.js'
+import { uploadpostCancelScheduled } from '../_lib/uploadpost.js'
 import {
   resolveUploadpostUser, uploadpostEnsureUserProfile,
 } from '../_lib/uploadpost.js'
@@ -42,6 +43,7 @@ export default async function handler(req, res) {
     if (action === 'generate-captions') return generateCaptions({ res, profile_id, script_ids, user_id: auth.user.id })
     if (action === 'auto-schedule')     return autoSchedule({ res, profile_id, script_ids })
     if (action === 'publish-selected')  return publishSelected({ req, res, profile_id, script_ids, user_id: auth.user.id })
+    if (action === 'resync-upload-post') return resyncUploadPost({ req, res, profile_id, script_ids })
     return res.status(400).json({ error: `Unknown action: ${action}` })
   } catch (err) {
     console.error('bulk-actions error:', err?.stack || err)
@@ -451,4 +453,103 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
   }
 
   return res.status(200).json({ submitted: okCount, failed: results.length - okCount, results })
+}
+
+// ── resync-upload-post ─────────────────────────────────────────────────────
+// Walks every status='scheduled' row for the profile (or just the ids the
+// caller passes) and re-submits its CURRENT payload to Upload-Post. Cancels
+// any prior uploadpost_request_id along the way. Used to repair rows whose
+// platforms / caption / hashtags / media drifted from the originally queued
+// job — pre-existing scheduled posts that pre-date the auto-reschedule
+// behavior fix.
+//
+// Body: { profile_id, script_ids?: string[] }
+// Returns: { resynced, skipped, failed, details }
+async function resyncUploadPost({ req, res, profile_id, script_ids }) {
+  let q = `content_scripts?profile_id=eq.${profile_id}&status=eq.scheduled`
+  if (Array.isArray(script_ids) && script_ids.length) {
+    q += `&id=in.(${script_ids.map((id) => encodeURIComponent(id)).join(',')})`
+  }
+  q += '&select=id,title,full_script,caption,hashtags,first_comment,media_urls,media_type,platforms,scheduled_datetime,uploadpost_request_id'
+  const rows = await supaFetch(q)
+  if (!rows?.length) return res.status(200).json({ resynced: 0, skipped: 0, failed: 0, details: [] })
+
+  const proto = (req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim()
+  const host  = req.headers['x-forwarded-host'] || req.headers.host
+  const base  = `${proto}://${host}`
+  const authToken = req.headers.authorization?.replace(/^Bearer\s+/i, '') || ''
+
+  let resynced = 0, skipped = 0, failed = 0
+  const details = []
+
+  // Sequential so a slow Upload-Post doesn't fan us into rate-limit
+  // territory. 200 max scheduled rows in practice; 1-2s each → tops
+  // out under the 120s function budget.
+  for (const row of rows) {
+    const platforms = Array.isArray(row.platforms) ? row.platforms : []
+    const mediaUrls = Array.isArray(row.media_urls) ? row.media_urls : []
+    if (!platforms.length || !mediaUrls.length || !row.scheduled_datetime) {
+      skipped += 1
+      details.push({ id: row.id, status: 'skipped', reason: 'missing platforms / media / scheduled_datetime' })
+      continue
+    }
+    // Cancel old job (best-effort). 404 = already gone, fine.
+    if (row.uploadpost_request_id) {
+      try {
+        const cancel = await uploadpostCancelScheduled(row.uploadpost_request_id)
+        if (!cancel.ok && cancel.status !== 404) {
+          console.warn('[resync] cancel failed:', row.uploadpost_request_id, cancel.reason)
+        }
+      } catch (e) {
+        console.warn('[resync] cancel threw:', e.message)
+      }
+    }
+    // Re-submit with current payload.
+    const isVideo = row.media_type === 'video' || /\.(mp4|mov|webm|m4v)(\?|#|$)/i.test(mediaUrls[0] || '')
+    const fullCaption = [row.caption, row.hashtags].filter(Boolean).join('\n\n').trim()
+    const body = {
+      profile_id,
+      platforms,
+      video_url: isVideo ? mediaUrls[0] : undefined,
+      photo_urls: !isVideo ? mediaUrls : undefined,
+      description: fullCaption || row.full_script || row.title || '',
+      title: row.title || undefined,
+      caption: row.caption || undefined,
+      hashtags: row.hashtags || undefined,
+      script: row.full_script || undefined,
+      first_comment: row.first_comment || undefined,
+      scheduling_mode: 'fixed',
+      scheduled_iso: row.scheduled_datetime,
+    }
+    try {
+      const r = await fetch(`${base}/api/social/upload-post`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` },
+        body: JSON.stringify(body),
+      })
+      const resp = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        failed += 1
+        details.push({ id: row.id, status: 'failed', reason: resp?.error || `upload-post ${r.status}` })
+        continue
+      }
+      // Patch the row's uploadpost_request_id with the new one so future
+      // edits know where to find the active job. status / scheduled
+      // stay put — we're not moving anything, just re-syncing payload.
+      if (resp.request_id) {
+        await supaFetch(`content_scripts?id=eq.${row.id}`, {
+          method: 'PATCH',
+          body: { uploadpost_request_id: resp.request_id },
+          prefer: 'return=minimal',
+        }).catch(() => {})
+      }
+      resynced += 1
+      details.push({ id: row.id, status: 'ok', request_id: resp.request_id || null })
+    } catch (e) {
+      failed += 1
+      details.push({ id: row.id, status: 'failed', reason: e.message })
+    }
+  }
+
+  return res.status(200).json({ resynced, skipped, failed, details })
 }

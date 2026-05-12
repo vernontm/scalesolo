@@ -304,19 +304,44 @@ export default async function handler(req, res) {
       await assertProfileAccess(auth.user.id, profileId)
       const updates = pickAllowed(req.body || {})
 
-      // Reschedule-on-Upload-Post when scheduled_datetime is moving
-      // on a row that's already in the Upload-Post queue. Without
-      // this, the local DB shows the new time but the actual post
-      // fires at the original moment (silent wrong-time bug).
+      // Reschedule-on-Upload-Post when ANY field that gets sent to
+      // Upload-Post is changing on an already-scheduled row. Previously
+      // we only re-submitted on scheduled_datetime changes, which meant
+      // editing platforms / caption / hashtags / media on a scheduled
+      // post updated the local row but left the queued Upload-Post job
+      // with the original payload — eg adding Instagram to a row that
+      // was already submitted as TikTok-only would silently still fire
+      // only on TikTok. Now we cancel + re-submit whenever the user
+      // changes any field Upload-Post actually consumes.
       const wasScheduled = item.status === 'scheduled' && item.uploadpost_request_id
-      const timeChanged = Object.prototype.hasOwnProperty.call(updates, 'scheduled_datetime')
-        && updates.scheduled_datetime
-        && updates.scheduled_datetime !== item.scheduled_datetime
-      if (wasScheduled && timeChanged) {
+      const UPLOAD_POST_FIELDS = ['scheduled_datetime', 'platforms', 'caption', 'hashtags', 'first_comment', 'media_urls', 'media_type', 'title', 'full_script']
+      const arraysDiffer = (a, b) => {
+        const aa = Array.isArray(a) ? a : []
+        const bb = Array.isArray(b) ? b : []
+        if (aa.length !== bb.length) return true
+        const sa = [...aa].sort()
+        const sb = [...bb].sort()
+        return sa.some((v, i) => v !== sb[i])
+      }
+      const uploadPostFieldChanged = UPLOAD_POST_FIELDS.some((k) => {
+        if (!Object.prototype.hasOwnProperty.call(updates, k)) return false
+        const next = updates[k]
+        const prev = item[k]
+        if (Array.isArray(next) || Array.isArray(prev)) return arraysDiffer(next, prev)
+        return (next ?? null) !== (prev ?? null)
+      })
+      if (wasScheduled && uploadPostFieldChanged) {
         try {
+          // Use the next-scheduled-iso the user is moving to (if they
+          // changed it) OR the row's existing time. Either way, we
+          // re-submit the full current payload (merged with the new
+          // values from updates) so Upload-Post's queued job matches
+          // what the user sees in the Schedule UI.
+          const mergedRow = { ...item, ...updates }
+          const newIso = updates.scheduled_datetime || item.scheduled_datetime
           const newReqId = await rescheduleUploadPostJob({
-            row: item,
-            newScheduledIso: updates.scheduled_datetime,
+            row: mergedRow,
+            newScheduledIso: newIso,
             authToken: req.headers.authorization?.replace(/^Bearer\s+/i, '') || '',
             req,
           })
