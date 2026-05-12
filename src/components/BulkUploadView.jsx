@@ -22,7 +22,7 @@ import { createPortal } from 'react-dom'
 import {
   Upload, Loader2, Sparkles, CalendarClock, Send, Download, Trash2,
   Check, X, AlertCircle, Image as ImageIcon, Video as VideoIcon, ChevronDown, Zap,
-  RefreshCw,
+  RefreshCw, Type,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase.js'
 import { toast, confirmDialog } from './Toast.jsx'
@@ -52,13 +52,13 @@ const headerCell = {
 // targets. The full set is intentionally small — only platforms Upload-
 // Post supports — and matches the schedule_post node's PLATFORMS list.
 const ROW_PLATFORMS = [
-  { id: 'tiktok',    label: 'TikTok',    kinds: ['video'] },
-  { id: 'instagram', label: 'Instagram', kinds: ['image', 'video'] },
-  { id: 'youtube',   label: 'YouTube',   kinds: ['video'] },
-  { id: 'facebook',  label: 'Facebook',  kinds: ['image', 'video'] },
-  { id: 'linkedin',  label: 'LinkedIn',  kinds: ['image', 'video'] },
-  { id: 'threads',   label: 'Threads',   kinds: ['image', 'video'] },
-  { id: 'x',         label: 'X',         kinds: ['image', 'video'] },
+  { id: 'tiktok',    label: 'TikTok',    kinds: ['video', 'text'],          color: '#ff0050', initial: 'T' },
+  { id: 'instagram', label: 'Instagram', kinds: ['image', 'video'],         color: '#e1306c', initial: 'I' },
+  { id: 'youtube',   label: 'YouTube',   kinds: ['video'],                  color: '#ff0000', initial: 'Y' },
+  { id: 'facebook',  label: 'Facebook',  kinds: ['image', 'video', 'text'], color: '#1877f2', initial: 'F' },
+  { id: 'linkedin',  label: 'LinkedIn',  kinds: ['image', 'video', 'text'], color: '#0a66c2', initial: 'L' },
+  { id: 'threads',   label: 'Threads',   kinds: ['image', 'video', 'text'], color: '#000000', initial: '@' },
+  { id: 'x',         label: 'X',         kinds: ['image', 'video', 'text'], color: '#000000', initial: '𝕏' },
 ]
 
 function PlatformsCell({ value, mediaType, onSave }) {
@@ -139,8 +139,26 @@ function PlatformsCell({ value, mediaType, onSave }) {
         }}
         title="Pick which platforms this row publishes to"
       >
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {cur.length === 0 ? <span style={{ color: 'var(--muted)' }}>Pick platforms</span> : cur.join(', ')}
+        <span style={{ overflow: 'hidden', display: 'flex', alignItems: 'center', gap: 4 }}>
+          {cur.length === 0
+            ? <span style={{ color: 'var(--muted)' }}>Pick platforms</span>
+            : cur.map((id) => {
+                const def = ROW_PLATFORMS.find((p) => p.id === id)
+                if (!def) return null
+                return (
+                  <span
+                    key={id}
+                    title={def.label}
+                    style={{
+                      display: 'inline-grid', placeItems: 'center',
+                      width: 18, height: 18, borderRadius: 999,
+                      background: def.color, color: '#fff',
+                      fontFamily: 'var(--font-display)', fontWeight: 700,
+                      fontSize: 10, lineHeight: 1, flexShrink: 0,
+                    }}
+                  >{def.initial}</span>
+                )
+              })}
         </span>
         <ChevronDown size={11} />
       </button>
@@ -270,6 +288,10 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   const [scripts, setScripts] = useState(null) // null = loading, [] = empty
   const [error, setError] = useState(null)
   const [tab, setTab] = useState('queued')
+  // Post-kind filter chip: all | video | image | text. Quick way to
+  // narrow the queue when you only want to see (say) all text posts
+  // landing this week.
+  const [kindFilter, setKindFilter] = useState('all')
   const [selected, setSelected] = useState(new Set())
   const [search, setSearch] = useState('')
   const [busyAction, setBusyAction] = useState(null) // 'captions' | 'schedule' | 'publish'
@@ -498,14 +520,20 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   // ── filtering / selection ────────────────────────────────────────────────
   const tabFn = STATUS_TABS.find((t) => t.id === tab)?.filter || (() => true)
   const visible = useMemo(() => {
-    const all = (scripts || []).filter(tabFn)
+    let all = (scripts || []).filter(tabFn)
+    if (kindFilter !== 'all') {
+      all = all.filter((r) => {
+        const k = r.media_type || (Array.isArray(r.media_urls) && r.media_urls.length ? 'image' : 'text')
+        return k === kindFilter
+      })
+    }
     const s = search.trim().toLowerCase()
     if (!s) return all
     return all.filter((r) => (r.title || '').toLowerCase().includes(s)
       || (r.caption || '').toLowerCase().includes(s)
       || (r.full_script || '').toLowerCase().includes(s)
       || (r.hashtags || '').toLowerCase().includes(s))
-  }, [scripts, tab, search]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [scripts, tab, search, kindFilter]) // eslint-disable-line react-hooks/exhaustive-deps
   const counts = useMemo(() => {
     const out = {}
     for (const t of STATUS_TABS) out[t.id] = (scripts || []).filter(t.filter).length
@@ -798,6 +826,38 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                   color: active ? '#fff' : 'var(--muted)',
                   padding: '1px 7px', borderRadius: 999, fontSize: 10.5, fontWeight: 800,
                 }}>{counts[t.id] ?? 0}</span>
+              </button>
+            )
+          })}
+        </div>
+        {/* Post-kind filter chips. Quick narrow to videos / images /
+            text-only posts without touching the search field. */}
+        <div style={{ display: 'flex', gap: 4 }}>
+          {[
+            { id: 'all',   label: 'All',    icon: null },
+            { id: 'video', label: 'Video',  icon: VideoIcon },
+            { id: 'image', label: 'Image',  icon: ImageIcon },
+            { id: 'text',  label: 'Text',   icon: Type },
+          ].map((k) => {
+            const Icon = k.icon
+            const active = kindFilter === k.id
+            return (
+              <button
+                key={k.id}
+                onClick={() => setKindFilter(k.id)}
+                style={{
+                  padding: '6px 10px', borderRadius: 7,
+                  background: active ? 'var(--surface-2)' : 'transparent',
+                  border: `1px solid ${active ? 'var(--border)' : 'transparent'}`,
+                  color: active ? 'var(--text)' : 'var(--muted)',
+                  fontFamily: 'var(--font-display)', fontSize: 11.5, fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                }}
+                title={`Show only ${k.label.toLowerCase()} posts`}
+              >
+                {Icon ? <Icon size={11} /> : null}
+                {k.label}
               </button>
             )
           })}

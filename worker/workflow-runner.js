@@ -502,6 +502,46 @@ const NODE_RUNNERS = {
     }
   },
 
+  // Generates per-platform native text posts (X / Threads / Facebook /
+  // LinkedIn). User-edited overrides on the node's props.edited win over
+  // freshly generated text.
+  text_post_gen: async ({ node, inputs, ctx }) => {
+    const brand = pickBrand(inputs)
+    const profileId = brand?.profile_id || ctx.profileId
+    const props = node.data?.props || {}
+    const platforms = Array.isArray(props.platforms) && props.platforms.length
+      ? props.platforms
+      : ['x', 'threads', 'facebook', 'linkedin']
+    // Use the upstream Text content as the prompt. Fall back to any
+    // script-shaped input so script_gen → text_post_gen chains work.
+    let prompt = ''
+    for (const v of asArr(inputs)) {
+      if (!v) continue
+      if (typeof v === 'string') { prompt = v; break }
+      if (typeof v !== 'object') continue
+      if (typeof v.text === 'string' && v.text.trim()) { prompt = v.text; break }
+      if (typeof v.script === 'string' && v.script.trim()) { prompt = v.script; break }
+      if (typeof v.full_script === 'string' && v.full_script.trim()) { prompt = v.full_script; break }
+    }
+    if (!prompt.trim()) throw new Error('text_post_gen needs a prompt — wire a Text or Script node into "in".')
+    const body = await callApi('/api/content/text-post-generate', {
+      profile_id: profileId,
+      prompt,
+      platforms,
+    }, ctx.headers)
+    const edits = props.edited || {}
+    const merged = {}
+    for (const p of platforms) {
+      merged[p] = (edits[p] && String(edits[p]).trim()) || body.per_platform?.[p] || ''
+    }
+    return {
+      is_text_post: true,
+      platforms,
+      per_platform: merged,
+      caption: merged[platforms[0]] || '',
+    }
+  },
+
   caption_gen: async ({ inputs, ctx }) => {
     const brand = pickBrand(inputs)
     const profileId = brand?.profile_id || ctx.profileId
@@ -816,6 +856,7 @@ ${String(script).slice(0, 2000)}
     let caption = '', hashtags = '', firstComment = '', title = '', script = ''
     let videoUrl = null
     const photoUrls = []
+    let textPostBundle = null
     for (const v of asArr(inputs)) {
       if (!v || typeof v !== 'object') continue
       if (!title && v.title) title = v.title
@@ -828,8 +869,18 @@ ${String(script).slice(0, 2000)}
         else if (v.video_url) videoUrl = v.video_url
       }
       if (Array.isArray(v.images)) for (const im of v.images) if (im?.url) photoUrls.push(im.url)
+      // Text post bundle from text_post_gen — per-platform variants
+      // ride downstream as v.per_platform. We forward this map to
+      // /api/social/upload-post so each platform gets its native
+      // variant instead of one shared caption.
+      if (!textPostBundle && v.is_text_post && v.per_platform && typeof v.per_platform === 'object') {
+        textPostBundle = v.per_platform
+      }
     }
-    if (!videoUrl && !photoUrls.length) throw new Error('schedule_post needs upstream video or images')
+    const isTextPost = !!textPostBundle && !videoUrl && !photoUrls.length
+    if (!isTextPost && !videoUrl && !photoUrls.length) {
+      throw new Error('schedule_post needs upstream video, images, or a text-post bundle')
+    }
     const description = [caption, hashtags].filter(Boolean).join('\n\n').trim() || String(script || '').slice(0, 500)
     const body = await callApi('/api/social/upload-post', {
       profile_id: ctx.profileId,
@@ -842,6 +893,11 @@ ${String(script).slice(0, 2000)}
       hashtags,
       script,
       first_comment: firstComment,
+      // Text-only post: pass the per-platform variants so each
+      // platform's submission carries its native text instead of one
+      // shared caption.
+      is_text_post: isTextPost || undefined,
+      per_platform_text: textPostBundle || undefined,
       // Server runs always auto-schedule into the next open slot.
       // 'now' / 'fixed' don't make sense for a recurring cron — by
       // the time the next tick fires the user has no chance to pick

@@ -71,6 +71,12 @@ export default async function handler(req, res) {
       hashtags: rawHashtags,
       script: rawScript,
       first_comment: rawFirstComment,
+      // Text-only post bundle from text_post_gen. When is_text_post is
+      // true, no media is required and per_platform_text holds the
+      // platform-specific variants. We persist the variants on the
+      // row and use the first variant as the canonical description.
+      is_text_post,
+      per_platform_text,
     } = req.body || {}
 
     if (!profile_id || !Array.isArray(platforms) || !platforms.length) {
@@ -78,8 +84,9 @@ export default async function handler(req, res) {
     }
     const isVideo = !!video_url
     const photos = Array.isArray(photo_urls) ? photo_urls.filter(Boolean) : []
-    if (!isVideo && !photos.length) {
-      return res.status(400).json({ error: 'video_url or photo_urls required' })
+    const isText = !!is_text_post
+    if (!isVideo && !photos.length && !isText) {
+      return res.status(400).json({ error: 'video_url, photo_urls, or is_text_post required' })
     }
     await assertProfileAccess(auth.user.id, profile_id)
 
@@ -227,7 +234,18 @@ export default async function handler(req, res) {
       if (resolvedTimezone) fd.append('timezone', resolvedTimezone)
     }
 
-    if (isVideo) {
+    if (isText) {
+      // Text-only posts use /api/upload_text. Append per-platform
+      // variant text via *_title-style overrides so each platform
+      // publishes its native wording. The base `description` still
+      // goes too — Upload-Post uses it as the fallback for any
+      // platform without an explicit override.
+      const ppt = (per_platform_text && typeof per_platform_text === 'object') ? per_platform_text : {}
+      if (ppt.x)         fd.set('x_title',         String(ppt.x).slice(0, 280))
+      if (ppt.threads)   fd.set('threads_title',   String(ppt.threads).slice(0, 500))
+      if (ppt.facebook)  fd.set('facebook_title',  String(ppt.facebook).slice(0, 5000))
+      if (ppt.linkedin)  fd.set('linkedin_title',  String(ppt.linkedin).slice(0, 3000))
+    } else if (isVideo) {
       const blob = await fetchToBlob(video_url)
       fd.append('video', blob, `video.${ext(video_url, 'mp4')}`)
     } else {
@@ -237,7 +255,7 @@ export default async function handler(req, res) {
       }
     }
 
-    const endpoint = `https://api.upload-post.com/api/${isVideo ? 'upload' : 'upload_photos'}`
+    const endpoint = `https://api.upload-post.com/api/${isText ? 'upload_text' : isVideo ? 'upload' : 'upload_photos'}`
     const r = await fetch(endpoint, {
       method: 'POST',
       headers: { Authorization: `Apikey ${apiKey}` },
@@ -278,9 +296,9 @@ export default async function handler(req, res) {
     try {
       const isFuture = !!resolvedScheduledIso && new Date(resolvedScheduledIso).getTime() > Date.now() + 30_000
       const status = isFuture ? 'scheduled' : 'posted'
-      const mediaUrls = isVideo ? [video_url] : photos
-      const mediaType = isVideo ? 'video' : 'image'
-      const postType = isVideo ? 'video' : 'post'
+      const mediaUrls = isText ? [] : (isVideo ? [video_url] : photos)
+      const mediaType = isText ? 'text' : (isVideo ? 'video' : 'image')
+      const postType = isText ? 'text' : (isVideo ? 'video' : 'post')
       const titleStr = (title || '').trim() || (description || '').slice(0, 60).trim() || 'Scheduled post'
       const primaryMediaUrl = mediaUrls?.[0]
       const fiveMinAgo = new Date(Date.now() - 5 * 60_000).toISOString()
@@ -359,6 +377,12 @@ export default async function handler(req, res) {
         scheduled_datetime: resolvedScheduledIso || null,
         uploadpost_request_id: uploadpostRequestId,
         generated_by: 'schedule_post',
+        // Per-platform text variants for text-only posts. Stored as
+        // jsonb so the Schedule page can paginate through them like
+        // the canvas does, and the resync / edit-on-row flows can
+        // submit each platform's native wording instead of one shared
+        // caption.
+        per_platform_text: isText ? (per_platform_text || null) : null,
       }
       if (existing?.id) {
         // Same media inserted moments ago — patch the existing row

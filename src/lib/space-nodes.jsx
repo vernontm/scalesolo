@@ -1318,6 +1318,162 @@ function ScriptGenBody({ data, onPatch }) {
   )
 }
 
+// ─── TEXT POST (per-platform native posts) ──────────────────────────────────
+// Body for text_post_gen. Three regions:
+//   1. Platform pills (toggle which platforms are included)
+//   2. Pagination tabs (one per selected platform)
+//   3. Editable textarea for the currently-paginated platform, with
+//      a character-count + expand control
+//
+// Char limits per platform are surfaced in the count display so the user
+// knows how close they are to the cap as they edit.
+const TEXT_POST_PLATFORMS = [
+  { id: 'x',        label: 'X',        max: 280 },
+  { id: 'threads',  label: 'Threads',  max: 500 },
+  { id: 'facebook', label: 'Facebook', max: 2000 },
+  { id: 'linkedin', label: 'LinkedIn', max: 3000 },
+]
+
+function TextPostGenBody({ data, onPatch }) {
+  const props = data.props || {}
+  const selected = Array.isArray(props.platforms) && props.platforms.length
+    ? props.platforms
+    : ['x', 'threads', 'facebook', 'linkedin']
+  // Generated AI output + user-edited overrides. Edits win on display
+  // and are forwarded to downstream nodes by the node's run() merger.
+  const generated = (data.output?.per_platform && typeof data.output.per_platform === 'object')
+    ? data.output.per_platform
+    : (props.per_platform || {})
+  const edited = props.edited || {}
+  // Pagination — show the FIRST selected platform on first render, but
+  // remember the user's last-viewed tab in state.
+  const [activeTab, setActiveTab] = useState(selected[0] || 'x')
+  const [expanded, setExpanded] = useState(false)
+  useEffect(() => {
+    if (!selected.includes(activeTab)) setActiveTab(selected[0] || 'x')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected.join('|')])
+
+  const togglePlatform = (id) => {
+    const next = selected.includes(id) ? selected.filter((p) => p !== id) : [...selected, id]
+    if (!next.length) return // require at least one
+    onPatch({ platforms: next })
+  }
+
+  const currentText = (edited[activeTab] ?? generated[activeTab] ?? '')
+  const max = TEXT_POST_PLATFORMS.find((p) => p.id === activeTab)?.max || 1000
+  const len = currentText.length
+  const overCap = len > max
+
+  const setText = (text) => {
+    onPatch({ edited: { ...edited, [activeTab]: text } })
+  }
+  const resetEdit = () => {
+    const nextEdited = { ...edited }
+    delete nextEdited[activeTab]
+    onPatch({ edited: nextEdited })
+  }
+
+  return (
+    <>
+      {/* Platform pills */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
+        {TEXT_POST_PLATFORMS.map((p) => {
+          const on = selected.includes(p.id)
+          return (
+            <button
+              key={p.id} type="button"
+              onClick={(e) => { e.stopPropagation(); togglePlatform(p.id) }}
+              style={{
+                padding: '4px 9px', borderRadius: 999, cursor: 'pointer',
+                fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 10,
+                letterSpacing: '0.04em',
+                background: on ? 'rgba(14,165,233,0.18)' : 'var(--surface-2)',
+                color: on ? '#0ea5e9' : 'var(--text-soft)',
+                border: `1px solid ${on ? 'rgba(14,165,233,0.45)' : 'var(--border)'}`,
+              }}
+            >{p.label}</button>
+          )
+        })}
+      </div>
+
+      {/* Pagination tabs */}
+      {selected.length > 1 && (
+        <div style={{ display: 'flex', gap: 2, marginBottom: 6, borderBottom: '1px solid var(--border)' }}>
+          {selected.map((id) => {
+            const def = TEXT_POST_PLATFORMS.find((p) => p.id === id)
+            const isActive = id === activeTab
+            return (
+              <button
+                key={id} type="button"
+                onClick={(e) => { e.stopPropagation(); setActiveTab(id) }}
+                style={{
+                  padding: '5px 9px', cursor: 'pointer',
+                  fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 10,
+                  background: 'transparent', border: 'none',
+                  color: isActive ? '#0ea5e9' : 'var(--muted)',
+                  borderBottom: isActive ? '2px solid #0ea5e9' : '2px solid transparent',
+                  marginBottom: -1,
+                }}
+              >{def?.label || id}</button>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Editable post body */}
+      <textarea
+        className="nodrag"
+        value={currentText}
+        placeholder={`Run to generate. ${TEXT_POST_PLATFORMS.find((p) => p.id === activeTab)?.label || ''} max ${max} chars.`}
+        onChange={(e) => setText(e.target.value)}
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          ...tinyInput, width: '100%',
+          minHeight: expanded ? 280 : 110,
+          maxHeight: expanded ? 540 : 200,
+          fontFamily: 'var(--font-body)',
+          fontSize: 12, lineHeight: 1.45,
+          resize: 'vertical',
+          padding: 8,
+        }}
+      />
+
+      {/* Char count + actions */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, marginTop: 4,
+        fontSize: 10.5,
+      }}>
+        <span style={{ color: overCap ? 'var(--red)' : 'var(--muted)' }}>
+          {len} / {max}
+        </span>
+        <span style={{ flex: 1 }} />
+        {edited[activeTab] != null && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); resetEdit() }}
+            style={{
+              padding: '2px 6px', borderRadius: 4,
+              background: 'transparent', border: 'none',
+              color: 'var(--muted)', cursor: 'pointer', fontSize: 10,
+            }}
+            title="Discard your edit and show the AI-generated version"
+          >Reset</button>
+        )}
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v) }}
+          style={{
+            padding: '2px 6px', borderRadius: 4,
+            background: 'transparent', border: 'none',
+            color: 'var(--muted)', cursor: 'pointer', fontSize: 10,
+          }}
+        >{expanded ? 'Compact' : 'Expand'}</button>
+      </div>
+    </>
+  )
+}
+
 // ─── 3. CAPTION + HASHTAGS (merged) ─────────────────────────────────────────
 function CaptionGenBody({ data, onPatch }) {
   // Single canonical title + caption + hashtags + first_comment. The
@@ -2737,6 +2893,7 @@ export const NODE_COST_HINT = {
   auto_run:      0,
   script_gen:    3000,
   caption_gen:   2500,
+  text_post_gen: 2000,
   image_gen:     4000,    // per image
   avatar_picker: 0,
   avatar_render: 8000,    // ~30s clip equivalent
@@ -6195,6 +6352,64 @@ export const NODE_REGISTRY = {
     },
   },
 
+  text_post_gen: {
+    label: 'Text post',
+    description: 'Generates a native text-only social post per platform (X, Threads, Facebook, LinkedIn). Wire a Text node in for the prompt. Each platform gets its own variant tailored to the platform\'s character limit and voice. Editable inline. Output goes to Schedule post — all picked platforms publish at the same time slot.',
+    icon: Type, category: 'generators', color: '#0ea5e9',
+    inputs: [{ id: 'in', label: 'In (prompt / brand)' }],
+    outputs: [{ id: 'out', label: 'Out (text post bundle)' }],
+    initialProps: {
+      platforms: ['x', 'threads', 'facebook', 'linkedin'],
+      per_platform: {}, // generated per-platform text, keyed by platform id
+      edited: {},       // user overrides keyed by platform id
+    },
+    Body: TextPostGenBody,
+    run: async ({ data, inputs, ctx }) => {
+      const arr = asArr(inputs?.in)
+      const brand = pickBrand(arr)
+      const profileId = brand?.profile_id || ctx.profileId
+      const platforms = Array.isArray(data.props?.platforms) ? data.props.platforms : ['x']
+      // Use the upstream Text node's content as the prompt. Falls back
+      // to any script-shaped input so a script_gen → text_post_gen
+      // chain works too.
+      let prompt = ''
+      for (const v of arr) {
+        if (!v) continue
+        if (typeof v === 'string') { prompt = v; break }
+        if (typeof v !== 'object') continue
+        if (typeof v.text === 'string' && v.text.trim()) { prompt = v.text; break }
+        if (typeof v.script === 'string' && v.script.trim()) { prompt = v.script; break }
+        if (typeof v.full_script === 'string' && v.full_script.trim()) { prompt = v.full_script; break }
+      }
+      if (!prompt.trim()) throw new Error('text_post_gen needs a prompt — wire a Text or Script node into "in".')
+      if (!platforms.length) throw new Error('Pick at least one platform.')
+
+      const r = await fetch('/api/content/text-post-generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
+        body: JSON.stringify({ profile_id: profileId, prompt, platforms }),
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body.error || `Text-post gen failed (${r.status})`)
+
+      // User edits win over fresh AI output (same pattern caption_gen uses).
+      const edits = data.props?.edited || {}
+      const merged = {}
+      for (const p of platforms) {
+        merged[p] = (edits[p] && String(edits[p]).trim()) || body.per_platform?.[p] || ''
+      }
+      return {
+        is_text_post: true,
+        platforms,
+        per_platform: merged,
+        // canonical caption = whichever variant we generated for the
+        // first selected platform, used as a fallback if downstream
+        // needs a single caption string.
+        caption: merged[platforms[0]] || '',
+      }
+    },
+  },
+
   caption_gen: {
     label: 'Title + caption + hashtags', description: 'Generates a click-worthy title, a platform-tuned caption, and 5 hashtags. Accepts a script, voice_gen audio chunks, OR raw videos (Upload media / Collection / avatar_render output) — videos get transcribed automatically and each gets its own caption set. schedule_post matches clip[i] → captions[i].',
     icon: Captions, category: 'generators', color: '#f59e0b',
@@ -7534,6 +7749,11 @@ export const NODE_REGISTRY = {
       // present AND we're in multi-video fan-out, each video gets its
       // own caption set instead of the single shared one.
       let perClipCaptions = null
+      // Text-only post bundle from text_post_gen. Holds per-platform
+      // native variants (x, threads, facebook, linkedin) that get
+      // forwarded to upload-post so each platform publishes its own
+      // wording. No media required when this is present.
+      let textPostBundle = null
       const photoUrls = []
       for (const v of arr) {
         if (!v) continue
@@ -7544,7 +7764,10 @@ export const NODE_REGISTRY = {
         if (!caption && v.caption) caption = v.caption
         if (!hashtags && v.hashtags) hashtags = v.hashtags
         if (!firstComment && v.first_comment) firstComment = v.first_comment
-        if (!perPlatform && v.per_platform && typeof v.per_platform === 'object') perPlatform = v.per_platform
+        if (!perPlatform && v.per_platform && typeof v.per_platform === 'object' && !v.is_text_post) perPlatform = v.per_platform
+        if (!textPostBundle && v.is_text_post && v.per_platform && typeof v.per_platform === 'object') {
+          textPostBundle = v.per_platform
+        }
         if (!perClipCaptions && Array.isArray(v.captions) && v.captions.length > 0) {
           perClipCaptions = v.captions
         }
@@ -7567,17 +7790,24 @@ export const NODE_REGISTRY = {
 
       const platforms = Array.isArray(data.props?.platforms) ? data.props.platforms : []
       if (!platforms.length) throw new Error('Pick at least one platform.')
-      if (!videoUrl && !photoUrls.length) throw new Error('Wire a video or images into "in".')
+      const isTextPost = !!textPostBundle && !videoUrl && !photoUrls.length
+      if (!isTextPost && !videoUrl && !photoUrls.length) {
+        throw new Error('Wire a video, images, or a Text post node into "in".')
+      }
 
-      // Per-platform kind validation up front so we don't waste an API call.
-      const detectedKind = videoUrl ? 'video' : 'image'
-      const bad = platforms.filter((id) => {
-        const def = SCHEDULE_PLATFORMS.find((p) => p.id === id)
-        return def && !def.kinds.includes(detectedKind)
-      })
-      if (bad.length) {
-        const names = bad.map((id) => SCHEDULE_PLATFORMS.find((p) => p.id === id)?.label || id).join(', ')
-        throw new Error(`${names} can't accept ${detectedKind} content.`)
+      // Per-platform kind validation up front so we don't waste an API
+      // call. Text posts skip this — every supported platform accepts
+      // text-only posts by definition.
+      if (!isTextPost) {
+        const detectedKind = videoUrl ? 'video' : 'image'
+        const bad = platforms.filter((id) => {
+          const def = SCHEDULE_PLATFORMS.find((p) => p.id === id)
+          return def && !def.kinds.includes(detectedKind)
+        })
+        if (bad.length) {
+          const names = bad.map((id) => SCHEDULE_PLATFORMS.find((p) => p.id === id)?.label || id).join(', ')
+          throw new Error(`${names} can't accept ${detectedKind} content.`)
+        }
       }
 
       // Backward-compat fallback: older saved spaces' caption_gen output
@@ -7688,6 +7918,11 @@ export const NODE_REGISTRY = {
             hashtags: useHashtags || null,
             script: script || null,
             first_comment: useFirstC || (data._ctxBrandCTA || '').trim() || useHashtags || null,
+            // Text-only post — forward the per-platform variants so each
+            // platform's queued submission carries its native wording
+            // instead of one shared caption.
+            is_text_post: isTextPost || undefined,
+            per_platform_text: textPostBundle || undefined,
             // For multi-clip fan-out, ALWAYS use auto so each post lands
             // in the next open slot of the brand's posting schedule.
             // Sequential submits cascade: each call sees the previous

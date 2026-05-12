@@ -110,6 +110,9 @@ const ALLOWED = new Set([
   // ALLOWED so the reschedule handler can include it in the updates
   // payload alongside scheduled_datetime in one PATCH.
   'uploadpost_request_id',
+  // Per-platform text variants for text-only posts (text_post_gen
+  // output). Editable inline on the Schedule page.
+  'per_platform_text',
 ])
 
 function pickAllowed(obj) {
