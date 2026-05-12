@@ -121,6 +121,26 @@ function writeAdminCache(userId, value) {
   }
 }
 
+// Lightweight admin check. Returns true/false WITHOUT writing a 403,
+// so callers can use it for soft-gated paths (eg "admins skip this
+// owner check, everyone else falls through"). Reuses the same JWT
+// claim → cache → user_profiles DB fallback chain as requireAdmin.
+export async function isAdminUser(auth) {
+  if (!auth?.user?.id) return false
+  const claim = auth.user.app_metadata?.is_admin
+  if (claim === true) return true
+  if (claim === false) return false
+  const cached = readAdminCache(auth.user.id)
+  if (cached === true) return true
+  if (cached === false) return false
+  try {
+    const rows = await supaFetch(`user_profiles?id=eq.${auth.user.id}&select=is_admin`)
+    const isAdmin = !!rows?.[0]?.is_admin
+    writeAdminCache(auth.user.id, isAdmin)
+    return isAdmin
+  } catch { return false }
+}
+
 // Admin gate. Three-layer check, fastest first:
 //   1. JWT claim — auth.users.raw_app_meta_data.is_admin is mirrored
 //      from user_profiles via DB trigger, so getUserFromRequest()

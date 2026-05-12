@@ -697,6 +697,7 @@ function RunHistoryModal({ spaceId, token, onClose }) {
 // Lets the user start from a blank canvas or clone any template they can
 // see (curated public templates + private templates they saved themselves).
 function NewSpaceModal({ profileId, token, onClose, onPicked }) {
+  const { isAdmin } = useAuth()
   const [templates, setTemplates] = useState(null)  // null = loading
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -864,8 +865,30 @@ function NewSpaceModal({ profileId, token, onClose, onPicked }) {
                         cursor: busy ? 'wait' : 'pointer',
                         display: 'flex', alignItems: 'center', gap: 12, padding: 14,
                         opacity: gated ? 0.78 : 1,
+                        position: 'relative',
                       }}
                     >
+                      {/* Admin-only direct-edit shortcut. Opens the
+                          template row itself instead of cloning, so
+                          changes propagate to every user's gallery on
+                          their next fetch. Non-admins never see this. */}
+                      {isAdmin && tpl.template_visibility === 'public' && (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); navigate(`/spaces?id=${tpl.id}`) }}
+                          title="Admin: open this public template for direct editing"
+                          style={{
+                            position: 'absolute', top: 6, right: 6,
+                            padding: '3px 8px', borderRadius: 999,
+                            background: 'rgba(46,204,113,0.16)',
+                            border: '1px solid rgba(46,204,113,0.45)',
+                            color: '#2ecc71', cursor: 'pointer',
+                            fontFamily: 'var(--font-display)', fontSize: 10,
+                            fontWeight: 700, letterSpacing: '0.04em',
+                            textTransform: 'uppercase',
+                          }}
+                        >Edit template</button>
+                      )}
                       <div style={{ width: 36, height: 36, borderRadius: 10, background: tpl.template_visibility === 'public' ? 'rgba(239,68,68,0.10)' : 'var(--surface-2)', display: 'grid', placeItems: 'center' }}>
                         {gated
                           ? <Lock size={15} style={{ color: 'var(--amber)' }} />
@@ -3178,8 +3201,29 @@ function SpaceBuilder({ space, onSave, onClose }) {
     WebkitBackdropFilter: 'blur(10px)',
   }
 
+  // Admin direct-edit banner: when the open space row is a public
+  // template, surface a loud "you're editing the global template"
+  // banner so the admin doesn't accidentally treat it like a regular
+  // workflow. Autosave still writes the template row in place; future
+  // user clones pick up the changes on next gallery load.
+  const editingPublicTemplate = isAdmin && space?.is_template && space?.template_visibility === 'public'
+
   return (
     <div className="space-builder-overlay" style={overlayStyle}>
+      {editingPublicTemplate && (
+        <div style={{
+          padding: '8px 16px',
+          background: 'linear-gradient(135deg, rgba(46,204,113,0.18), rgba(46,204,113,0.10))',
+          borderBottom: '1px solid rgba(46,204,113,0.45)',
+          color: '#2ecc71',
+          fontFamily: 'var(--font-display)', fontSize: 12.5, fontWeight: 700,
+          letterSpacing: '0.06em', textTransform: 'uppercase',
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <ShieldCheck size={13} />
+          Editing public template · changes apply to every user's gallery on their next load
+        </div>
+      )}
       <div style={toolbarStyle}>
         <button className="btn-ghost" onClick={onClose}><ArrowLeft size={14} /> Spaces</button>
         <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Space name" style={{ width: 220, flex: '0 0 220px', fontWeight: 600 }} />

@@ -7,7 +7,7 @@
 //   GET  ?action=templates              → list templates the caller can see
 //   POST ?action=use_template           → clone a template into a target profile
 //   POST ?action=save_as_template       → flag a copy of a space as a private template
-import { setCors, requireUser, supaFetch, assertProfileAccess } from './_lib/supabase.js'
+import { setCors, requireUser, supaFetch, assertProfileAccess, isAdminUser } from './_lib/supabase.js'
 
 const ALLOWED = new Set(['name','description','nodes','edges','last_run'])
 
@@ -271,10 +271,16 @@ export default async function handler(req, res) {
       const rows = await supaFetch(`spaces?id=eq.${id}&select=profile_id,is_template,template_visibility,created_by`)
       const row = rows?.[0]
       if (!row) return res.status(404).json({ error: 'Not found' })
-      // Templates: only the creator can edit. Public templates require admin
-      // (no admin role in the current model — locked out via created_by check).
+      // Templates: only the creator OR an admin can edit. Without the
+      // admin override, public templates created by another admin
+      // couldn't be updated by anyone else — even though they're shown
+      // in every user's gallery. isAdminUser is a soft check (no 403
+      // side-effect) so non-admins fall through to the creator check.
       if (row.is_template) {
-        if (row.created_by !== auth.user.id) return res.status(403).json({ error: 'Forbidden' })
+        const isAdmin = await isAdminUser(auth)
+        if (!isAdmin && row.created_by !== auth.user.id) {
+          return res.status(403).json({ error: 'Forbidden' })
+        }
       } else {
         if (!row.profile_id) return res.status(404).json({ error: 'Not found' })
         await assertProfileAccess(auth.user.id, row.profile_id)
