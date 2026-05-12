@@ -206,7 +206,22 @@ export default function Login() {
         if (err) throw err
         // sign-in success — if there's a pending tier, the useEffect above will fire after session lands
       } else {
-        const { error: err } = await signUp(email, password)
+        const { data: signUpData, error: err } = await signUp(email, password)
+        // Supabase silently no-ops signUp when the email already exists
+        // (returns success-shaped data with no error). The tell is an
+        // empty `identities` array on the returned user. We detect that
+        // and trigger a resend so the user isn't stuck in a black hole.
+        if (!err && signUpData?.user && Array.isArray(signUpData.user.identities) && signUpData.user.identities.length === 0) {
+          try {
+            await supabase.auth.resend({ type: 'signup', email })
+            setInfo('That email already has an account pending confirmation. We sent a fresh confirmation link, check your inbox (and spam).')
+            setResendCooldown(60)
+            return
+          } catch (resendErr) {
+            setInfo('That email is already registered. Try signing in, or use the resend link below.')
+            return
+          }
+        }
         if (err) {
           // "User already registered" is the common case when somebody
           // came back from Stripe Checkout, submitted once, and is now
