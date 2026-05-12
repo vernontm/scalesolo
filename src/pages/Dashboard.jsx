@@ -415,7 +415,7 @@ function QuickAction({ icon: Icon, label, hint, to, color }) {
 
 export default function Dashboard() {
   const { user, session } = useAuth()
-  const { selectedProfile, selectedProfileId, profiles } = useProfile()
+  const { selectedProfile, selectedProfileId, profiles, refresh: refreshProfiles } = useProfile()
   const navigate = useNavigate()
   const [pendingApprovals, setPendingApprovals] = useState(0)
   const [shippedThisMonth, setShippedThisMonth] = useState(null)
@@ -451,6 +451,12 @@ export default function Dashboard() {
 
   const closeOnboarding = () => {
     setOnboardingState('hide')
+    // The survey just created the user's first brand profile via
+    // /api/profiles. ProfileContext doesn't know about it yet — it
+    // loaded once on mount with an empty list. Refetch so the dashboard
+    // (and the brand switcher in the nav) shows the new brand without
+    // needing a hard page reload.
+    refreshProfiles?.()
     if (surveyForced) {
       // Strip ?survey from the URL so a refresh doesn't reopen it.
       const next = new URLSearchParams(searchParams)

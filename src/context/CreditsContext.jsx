@@ -60,6 +60,35 @@ export function CreditsProvider({ children }) {
     }
   }, [refresh])
 
+  // Refresh aggressively after first-signup redirect (?welcome=1). The
+  // subscription.created webhook may race the dashboard load: the user
+  // can land here before Stripe has even called our endpoint, never
+  // mind before the credit-grant RPC finished. Poll for ~24 seconds at
+  // 2-second intervals until the pools come back non-empty.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const url = new URL(window.location.href)
+    if (url.searchParams.get('welcome') !== '1') return
+    if (!session) return
+    let attempts = 0
+    let stopped = false
+    const tick = async () => {
+      if (stopped) return
+      attempts++
+      await refresh()
+      // refresh() updates pools via setState which is async, so we
+      // can't read the latest value here — keep polling until we hit
+      // the cap. The cost is 12 GETs against /api/credits in the worst
+      // case, which is fine.
+      if (attempts < 12) setTimeout(tick, 2000)
+    }
+    tick()
+    // Strip the param so a manual refresh doesn't re-run the loop.
+    url.searchParams.delete('welcome')
+    window.history.replaceState({}, '', url.toString())
+    return () => { stopped = true }
+  }, [refresh, session])
+
   // Memoize so the topup-success poll (which calls refresh 4×) doesn't
   // recreate the context value object 4× and re-render every consumer.
   const value = useMemo(
