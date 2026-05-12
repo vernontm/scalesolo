@@ -80,10 +80,17 @@ const testimonials = [
 
 export default function Landing() {
   const nav = useNavigate()
-  // Landing CTAs all funnel here. Pass ?mode=signup so the Login page
-  // opens directly to the signup form (the segmented control on the
-  // Login card highlights the right tab on render).
-  const goSignup = () => nav('/login?mode=signup')
+  // "Sign in" goes to the login page for existing users.
+  const goSignin = () => nav('/login')
+  // "Start free" and other primary CTAs scroll to the pricing section
+  // so the visitor picks a plan first. Plan buttons in <PricingPlans />
+  // route anonymous users straight to Stripe Checkout, and after
+  // payment the success URL drops them on /login to finish signup.
+  // This keeps the funnel single-path: land → pick plan → pay → signup.
+  const goPricing = () => {
+    const el = document.getElementById('pricing')
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
 
   // Capture affiliate ref code from ?ref=… and stash in BOTH localStorage
   // and a 30-day first-party cookie. Cookies survive a localStorage wipe
@@ -162,8 +169,8 @@ export default function Landing() {
             <a href="/blog" style={navLink}>Blog</a>
           </nav>
           <div style={navCta} className="hide-on-narrow">
-            <button onClick={goSignup} className="btn-ghost" style={{ fontSize: 13 }}>Sign in</button>
-            <button onClick={goSignup} className="btn-primary">Start free <ArrowRight size={13} /></button>
+            <button onClick={goSignin} className="btn-ghost" style={{ fontSize: 13 }}>Sign in</button>
+            <button onClick={goPricing} className="btn-primary">Start free <ArrowRight size={13} /></button>
           </div>
           <button
             type="button"
@@ -183,8 +190,8 @@ export default function Landing() {
             <a href="#pricing"   style={navLink} onClick={closeMenu}>Pricing</a>
             <a href="/blog"      style={navLink} onClick={closeMenu}>Blog</a>
             <div className="nav-mobile-ctas">
-              <button onClick={() => { closeMenu(); goSignup() }} className="btn-ghost" style={{ fontSize: 13 }}>Sign in</button>
-              <button onClick={() => { closeMenu(); goSignup() }} className="btn-primary">Start free <ArrowRight size={13} /></button>
+              <button onClick={() => { closeMenu(); goSignin() }} className="btn-ghost" style={{ fontSize: 13 }}>Sign in</button>
+              <button onClick={() => { closeMenu(); goPricing() }} className="btn-primary">Start free <ArrowRight size={13} /></button>
             </div>
           </div>
         )}
@@ -208,7 +215,7 @@ export default function Landing() {
               The first AI platform that builds a faceless brand for you and runs it on autopilot. No camera. No editor. No daily grind.
             </p>
             <div style={{ ...heroCtas, justifyContent: 'flex-start' }} className="fade-up hero-ctas">
-              <button onClick={goSignup} className="btn-primary" style={ctaSizing}>
+              <button onClick={goPricing} className="btn-primary" style={ctaSizing}>
                 Start free <ArrowRight size={14} />
               </button>
               <a href="#canvas" className="btn-secondary" style={ctaSizing}>
