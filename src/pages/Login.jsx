@@ -121,7 +121,9 @@ export default function Login() {
       const { error: err } = await supabase.auth.resend({ type: 'signup', email })
       if (err) throw err
       setInfo('Confirmation email resent. Check your inbox (and spam folder).')
-      setResendCooldown(30)
+      // Matches Supabase's "Minimum interval per user" setting (60s).
+      // If you raise that in the dashboard, raise this too.
+      setResendCooldown(60)
     } catch (e) {
       setError(e.message || 'Could not resend confirmation email.')
     } finally {
