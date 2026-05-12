@@ -69,13 +69,51 @@ export default async function handler(req, res) {
   if (!auth) return
 
   try {
-    const { profile_id, prompt, platforms } = req.body || {}
-    if (!profile_id) return res.status(400).json({ error: 'profile_id required' })
-    if (!prompt || !String(prompt).trim()) return res.status(400).json({ error: 'prompt required' })
+    const { profile_id: rawProfileId, prompt: rawPrompt, platforms } = req.body || {}
+    if (!rawProfileId) return res.status(400).json({ error: 'profile_id required' })
+    if (!rawPrompt || !String(rawPrompt).trim()) return res.status(400).json({ error: 'prompt required' })
     const selected = (Array.isArray(platforms) ? platforms : [])
       .map((p) => String(p).toLowerCase())
       .filter((p) => VALID_PLATFORMS.has(p))
     if (!selected.length) return res.status(400).json({ error: 'pick at least one platform' })
+
+    // @-mention resolution. Lets worker / cron text-post runs route
+    // through a different brand inline ("Quick reaction about
+    // @ScaleSolo's pricing change"). The browser already runs this
+    // expansion client-side, but server-triggered runs (manual_server
+    // dispatch + cron auto_run) don't, so we redo it here so both
+    // paths behave the same.
+    //
+    // - Match @"quoted name" OR @bareToken
+    // - Normalize to lowercase letters/digits only
+    // - Look up against the caller's accessible brand profiles
+    // - First match wins; that brand's id replaces profile_id
+    // - The @ token is then swapped with the brand's plain business
+    //   name so the model reads natural prose instead of "@".
+    let prompt = String(rawPrompt)
+    let profile_id = rawProfileId
+    const ownedBrands = await supaFetch(
+      `profile_access?user_id=eq.${auth.user.id}&select=profile:profiles(id,business_name)`
+    ).catch(() => [])
+    const brands = (ownedBrands || [])
+      .map((row) => row.profile)
+      .filter((p) => p && p.business_name)
+    const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9_-]/g, '')
+    const byNorm = new Map(brands.map((p) => [norm(p.business_name), p]))
+    const tokens = Array.from(new Set(prompt.match(/@(?:"([^"]+)"|([A-Za-z0-9_-]+))/g) || []))
+    let firstHit = null
+    for (const tok of tokens) {
+      const key = norm(tok.replace(/^@"?|"?$/g, ''))
+      const hit = byNorm.get(key)
+      if (hit) { firstHit = hit; break }
+    }
+    if (firstHit) profile_id = firstHit.id
+    // Strip the @ off matched tokens so the model sees plain names.
+    prompt = prompt.replace(/@(?:"([^"]+)"|([A-Za-z0-9_-]+))/g, (full, q, b) => {
+      const key = norm(q || b || '')
+      return byNorm.has(key) ? byNorm.get(key).business_name : full
+    })
+
     await assertProfileAccess(auth.user.id, profile_id)
 
     const ctx = await loadBrandContext(profile_id, { skip: ['exemplars'] })
