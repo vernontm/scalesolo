@@ -6456,10 +6456,9 @@ export const NODE_REGISTRY = {
       edited: {},       // user overrides keyed by platform id
     },
     Body: TextPostGenBody,
-    run: async ({ data, inputs, ctx }) => {
+    run: async ({ data, inputs, inputsByName, ctx }) => {
       const arr = asArr(inputs?.in)
       const brand = pickBrand(arr)
-      const profileId = brand?.profile_id || ctx.profileId
       const platforms = Array.isArray(data.props?.platforms) ? data.props.platforms : ['x']
       // Prefer the upstream Text node's content (script_gen too). If
       // no wired prompt, fall back to the in-node Prompt textarea.
@@ -6475,6 +6474,18 @@ export const NODE_REGISTRY = {
       if (!prompt.trim()) prompt = (data.props?.prompt || '').trim()
       if (!prompt.trim()) throw new Error('text_post_gen needs a prompt — type one in the node or wire a Text / Script node into "in".')
       if (!platforms.length) throw new Error('Pick at least one platform.')
+
+      // @-mention expansion (same machinery script_gen uses):
+      //   - expandMentions replaces @altTag for any named upstream
+      //     node (eg image_upload items) with that node's content
+      //   - resolveBrandMention finds an @brandname token that matches
+      //     a brand the user has access to; that brand wins over the
+      //     wired brand_profile so the user can swap brands inline
+      //   - expandBrandMentions then prints the brand's display name
+      prompt = expandMentions(prompt, inputsByName)
+      const mentioned = resolveBrandMention(prompt, ctx.profiles)
+      const profileId = mentioned?.id || brand?.profile_id || ctx.profileId
+      prompt = expandBrandMentions(prompt, ctx.profiles)
 
       const r = await fetch('/api/content/text-post-generate', {
         method: 'POST',
