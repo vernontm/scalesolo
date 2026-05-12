@@ -26,6 +26,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '../lib/supabase.js'
 import { toast, confirmDialog } from './Toast.jsx'
+import { PlatformBadge, PLATFORMS as PB_PLATFORMS } from './PlatformBadge.jsx'
 
 // ── styles ──────────────────────────────────────────────────────────────────
 const cellInput = {
@@ -51,56 +52,8 @@ const headerCell = {
 // single Publish Selected click can fan out different rows to different
 // targets. The full set is intentionally small — only platforms Upload-
 // Post supports — and matches the schedule_post node's PLATFORMS list.
-// Per-platform brand metadata. Public logo URLs come from a Supabase
-// storage bucket (sm_icons) and render as <img> tags so the table chips
-// look like actual social brand marks. Threads + LinkedIn don't have a
-// hosted SVG yet — they fall back to a colored letter chip until one
-// is added.
-const SM_ICON_BASE = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/sm_icons'
-const ROW_PLATFORMS = [
-  { id: 'tiktok',    label: 'TikTok',    kinds: ['video', 'text'],          color: '#ff0050', initial: 'T', logo: `${SM_ICON_BASE}/tiktok.svg` },
-  { id: 'instagram', label: 'Instagram', kinds: ['image', 'video'],         color: '#e1306c', initial: 'I', logo: `${SM_ICON_BASE}/instagram.svg` },
-  { id: 'youtube',   label: 'YouTube',   kinds: ['video'],                  color: '#ff0000', initial: 'Y', logo: `${SM_ICON_BASE}/youtube.svg` },
-  { id: 'facebook',  label: 'Facebook',  kinds: ['image', 'video', 'text'], color: '#1877f2', initial: 'F', logo: `${SM_ICON_BASE}/facebook.svg` },
-  { id: 'linkedin',  label: 'LinkedIn',  kinds: ['image', 'video', 'text'], color: '#0a66c2', initial: 'L', logo: null },
-  { id: 'threads',   label: 'Threads',   kinds: ['image', 'video', 'text'], color: '#000000', initial: '@', logo: null },
-  { id: 'x',         label: 'X',         kinds: ['image', 'video', 'text'], color: '#000000', initial: '𝕏', logo: `${SM_ICON_BASE}/x.svg` },
-]
-
-// Renders one platform badge — actual logo when we have a hosted SVG,
-// otherwise a colored brand-letter chip. Sized in pixels so the same
-// component fits the row cell, the filter chip, and the dropdown
-// trigger without re-styling.
-function PlatformBadge({ id, size = 18, title }) {
-  const def = ROW_PLATFORMS.find((p) => p.id === id)
-  if (!def) return null
-  if (def.logo) {
-    return (
-      <img
-        src={def.logo}
-        alt={def.label}
-        title={title || def.label}
-        style={{
-          width: size, height: size, borderRadius: 999,
-          objectFit: 'cover', flexShrink: 0,
-          background: '#fff',
-        }}
-      />
-    )
-  }
-  return (
-    <span
-      title={title || def.label}
-      style={{
-        display: 'inline-grid', placeItems: 'center',
-        width: size, height: size, borderRadius: 999,
-        background: def.color, color: '#fff',
-        fontFamily: 'var(--font-display)', fontWeight: 700,
-        fontSize: Math.round(size * 0.55), lineHeight: 1, flexShrink: 0,
-      }}
-    >{def.initial}</span>
-  )
-}
+// Local alias so existing references (kinds, label, etc) keep working.
+const ROW_PLATFORMS = PB_PLATFORMS
 
 function PlatformsCell({ value, mediaType, onSave }) {
   const cur = Array.isArray(value) ? value : []
@@ -287,12 +240,83 @@ function EditableCell({ value, multiline = true, placeholder = '', onSave }) {
   )
 }
 
+// Tabbed caption editor for text-only rows that carry per-platform
+// variants (text_post_gen → schedule_post output). Each platform's
+// variant is editable inline; saves PATCH the per_platform_text jsonb
+// in one shot. Character count vs the platform cap shown below the
+// textarea so the user can see when they're over.
+const PER_PLATFORM_CAPS = { x: 280, threads: 500, facebook: 5000, linkedin: 3000 }
+function PerPlatformCaptionCell({ value, onSave }) {
+  const platforms = Object.keys(value || {}).filter((k) => PER_PLATFORM_CAPS[k])
+  const [activeTab, setActiveTab] = useState(platforms[0] || 'x')
+  const [draft, setDraft] = useState((value && value[activeTab]) || '')
+  // Reset draft whenever the saved row value changes (or the user
+  // switches tabs). Avoids leaking edits across rows after auto-refresh.
+  useEffect(() => { setDraft((value && value[activeTab]) || '') }, [value, activeTab])
+  useEffect(() => {
+    if (!platforms.includes(activeTab)) setActiveTab(platforms[0] || 'x')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [platforms.join('|')])
+  if (!platforms.length) return null
+  const cap = PER_PLATFORM_CAPS[activeTab] || 1000
+  const over = draft.length > cap
+  const commit = () => {
+    if (draft === (value?.[activeTab] || '')) return
+    onSave({ ...(value || {}), [activeTab]: draft })
+  }
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 2, marginBottom: 4, flexWrap: 'wrap' }}>
+        {platforms.map((p) => {
+          const def = ROW_PLATFORMS.find((x) => x.id === p)
+          const isActive = p === activeTab
+          return (
+            <button
+              key={p} type="button"
+              onClick={() => setActiveTab(p)}
+              title={def?.label || p}
+              style={{
+                padding: '3px 5px', borderRadius: 4,
+                background: isActive ? 'var(--surface-2)' : 'transparent',
+                border: `1px solid ${isActive ? 'var(--border)' : 'transparent'}`,
+                cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 3,
+                fontSize: 10, color: isActive ? 'var(--text)' : 'var(--muted)',
+                fontFamily: 'var(--font-display)', fontWeight: 700,
+              }}
+            >
+              <PlatformBadge id={p} size={12} />
+              {def?.label || p}
+            </button>
+          )
+        })}
+      </div>
+      <textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === 'Escape') { setDraft(value?.[activeTab] || ''); e.target.blur() } }}
+        rows={3}
+        style={{ ...cellInput, fontSize: 11.5 }}
+      />
+      <div style={{ fontSize: 9.5, color: over ? 'var(--red)' : 'var(--muted)', marginTop: 2, textAlign: 'right' }}>
+        {draft.length} / {cap}
+      </div>
+    </div>
+  )
+}
+
 // ── status pill ─────────────────────────────────────────────────────────────
+// Status pill color contract:
+//   gray   draft         — sitting on the canvas, not promoted yet
+//   amber  caption_ready — Claude wrote captions, awaiting a slot
+//   green  scheduled     — queued to fire (the most actionable state)
+//   blue   posted        — already went out, archival
+//   red    failed        — needs attention
 const PILL = {
   draft:         { bg: 'rgba(255,255,255,0.06)', fg: 'var(--muted)', label: 'Draft' },
   caption_ready: { bg: 'rgba(245,158,11,0.16)',  fg: '#f59e0b',     label: 'Caption ready' },
-  scheduled:     { bg: 'rgba(96,165,250,0.16)',  fg: '#60a5fa',     label: 'Scheduled' },
-  posted:        { bg: 'rgba(46,204,113,0.16)',  fg: '#2ecc71',     label: 'Published' },
+  scheduled:     { bg: 'rgba(46,204,113,0.16)',  fg: '#2ecc71',     label: 'Scheduled' },
+  posted:        { bg: 'rgba(96,165,250,0.16)',  fg: '#60a5fa',     label: 'Published' },
   failed:        { bg: 'rgba(239,68,68,0.16)',   fg: 'var(--red)',  label: 'Failed' },
 }
 function StatusPill({ status }) {
@@ -321,6 +345,20 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   // set = no filter. Multi-select so the user can ask for "tiktok or
   // instagram" without scrolling rows.
   const [platformFilter, setPlatformFilter] = useState(() => new Set())
+  // Date-range filter for the scheduled_datetime field. 'all' is the
+  // default (everything visible regardless of when it fires). 'today',
+  // 'week', '7d' are quick presets — 'custom' arms the two from/to
+  // inputs below.
+  const [dateRange, setDateRange] = useState('all') // 'all' | 'today' | 'week' | '7d' | 'custom'
+  const [customFrom, setCustomFrom] = useState('')  // YYYY-MM-DD
+  const [customTo, setCustomTo] = useState('')      // YYYY-MM-DD
+  // Sort order. Sort happens AFTER all filters so the user's filter
+  // selection isn't re-shuffled by sort changes.
+  const [sortBy, setSortBy] = useState('scheduled') // 'scheduled' | 'created' | 'title'
+  // Group by platform: when true, rows fan out so each platform a row
+  // publishes to becomes its own row. Helpful for "show me everything
+  // going to TikTok this week" reads. Off by default.
+  const [groupByPlatform, setGroupByPlatform] = useState(false)
   const [selected, setSelected] = useState(new Set())
   const [search, setSearch] = useState('')
   const [busyAction, setBusyAction] = useState(null) // 'captions' | 'schedule' | 'publish'
@@ -565,13 +603,75 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         return pls.some((p) => platformFilter.has(p))
       })
     }
+    // Date-range gate. Local time, since scheduled_datetime stored as
+    // UTC ISO is displayed in local time elsewhere on this page.
+    if (dateRange !== 'all') {
+      const now = new Date()
+      let from = null, to = null
+      if (dateRange === 'today') {
+        from = new Date(now); from.setHours(0, 0, 0, 0)
+        to = new Date(from); to.setDate(from.getDate() + 1)
+      } else if (dateRange === 'week') {
+        // Sun..Sat current week
+        from = new Date(now); from.setHours(0, 0, 0, 0); from.setDate(from.getDate() - from.getDay())
+        to = new Date(from); to.setDate(from.getDate() + 7)
+      } else if (dateRange === '7d') {
+        from = new Date(now); from.setHours(0, 0, 0, 0)
+        to = new Date(from); to.setDate(from.getDate() + 7)
+      } else if (dateRange === 'custom') {
+        if (customFrom) { from = new Date(customFrom + 'T00:00:00') }
+        if (customTo)   { to   = new Date(customTo   + 'T23:59:59') }
+      }
+      if (from || to) {
+        all = all.filter((r) => {
+          if (!r.scheduled_datetime) return false  // un-scheduled rows hide from date filters
+          const t = new Date(r.scheduled_datetime).getTime()
+          if (from && t < from.getTime()) return false
+          if (to && t > to.getTime()) return false
+          return true
+        })
+      }
+    }
     const s = search.trim().toLowerCase()
-    if (!s) return all
-    return all.filter((r) => (r.title || '').toLowerCase().includes(s)
-      || (r.caption || '').toLowerCase().includes(s)
-      || (r.full_script || '').toLowerCase().includes(s)
-      || (r.hashtags || '').toLowerCase().includes(s))
-  }, [scripts, tab, search, kindFilter, platformFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (s) {
+      all = all.filter((r) => (r.title || '').toLowerCase().includes(s)
+        || (r.caption || '').toLowerCase().includes(s)
+        || (r.full_script || '').toLowerCase().includes(s)
+        || (r.hashtags || '').toLowerCase().includes(s))
+    }
+    // Group by platform: explode each row into one row per platform.
+    // The row's `platforms` array becomes a single-element array on each
+    // fan-out copy so the rendering layer shows just that platform's
+    // badge. id is suffixed so React keys stay unique.
+    if (groupByPlatform) {
+      const exploded = []
+      for (const r of all) {
+        const pls = Array.isArray(r.platforms) ? r.platforms : []
+        if (pls.length <= 1) {
+          exploded.push(r)
+          continue
+        }
+        for (const p of pls) {
+          exploded.push({ ...r, id: `${r.id}__${p}`, platforms: [p], _grouped_parent_id: r.id })
+        }
+      }
+      all = exploded
+    }
+    // Sort last so the filter result is stable across sort changes.
+    const sorted = [...all].sort((a, b) => {
+      if (sortBy === 'created') {
+        return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+      }
+      if (sortBy === 'title') {
+        return String(a.title || '').localeCompare(String(b.title || ''))
+      }
+      // 'scheduled' — earliest first, un-scheduled rows last.
+      const ta = a.scheduled_datetime ? new Date(a.scheduled_datetime).getTime() : Infinity
+      const tb = b.scheduled_datetime ? new Date(b.scheduled_datetime).getTime() : Infinity
+      return ta - tb
+    })
+    return sorted
+  }, [scripts, tab, search, kindFilter, platformFilter, dateRange, customFrom, customTo, sortBy, groupByPlatform]) // eslint-disable-line react-hooks/exhaustive-deps
   const counts = useMemo(() => {
     const out = {}
     for (const t of STATUS_TABS) out[t.id] = (scripts || []).filter(t.filter).length
@@ -589,7 +689,11 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   }
 
   // ── inline patch ──────────────────────────────────────────────────────────
-  const patchScript = async (id, patch) => {
+  const patchScript = async (rawId, patch) => {
+    // groupByPlatform fans out each row into one row per platform with
+    // a synthesized id like 'parent_id__tiktok'. Strip the suffix so
+    // PATCH hits the canonical row.
+    const id = String(rawId).split('__')[0]
     setScripts((arr) => arr.map((r) => r.id === id ? { ...r, ...patch } : r))
     try {
       const r = await fetch(`/api/content?id=${id}`, {
@@ -962,6 +1066,75 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         <span style={{ fontSize: 12, color: 'var(--muted)' }}>{visible.length} of {(scripts || []).length}</span>
       </div>
 
+      {/* Secondary filter row — date range, sort order, group by
+          platform toggle. Lives under the primary tab + chip row so
+          the visual hierarchy stays clear (tabs decide WHAT, this row
+          decides WHEN / HOW). */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap', fontSize: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--muted)' }}>
+          <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 10.5, letterSpacing: '0.06em', textTransform: 'uppercase', marginRight: 4 }}>Date</span>
+          {[
+            { id: 'all',    label: 'All' },
+            { id: 'today',  label: 'Today' },
+            { id: 'week',   label: 'This week' },
+            { id: '7d',     label: 'Next 7d' },
+            { id: 'custom', label: 'Custom' },
+          ].map((d) => {
+            const active = dateRange === d.id
+            return (
+              <button
+                key={d.id}
+                onClick={() => setDateRange(d.id)}
+                style={{
+                  padding: '5px 9px', borderRadius: 6,
+                  background: active ? 'var(--surface-2)' : 'transparent',
+                  border: `1px solid ${active ? 'var(--border)' : 'transparent'}`,
+                  color: active ? 'var(--text)' : 'var(--muted)',
+                  fontFamily: 'var(--font-display)', fontSize: 11.5, fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >{d.label}</button>
+            )
+          })}
+        </div>
+        {dateRange === 'custom' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} style={{ padding: '5px 8px', fontSize: 11.5, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }} />
+            <span style={{ color: 'var(--muted)' }}>to</span>
+            <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} style={{ padding: '5px 8px', fontSize: 11.5, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }} />
+          </div>
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--muted)', paddingLeft: 6, borderLeft: '1px solid var(--border)' }}>
+          <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 10.5, letterSpacing: '0.06em', textTransform: 'uppercase', marginRight: 4 }}>Sort</span>
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            style={{ padding: '5px 8px', fontSize: 11.5, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
+          >
+            <option value="scheduled">Scheduled time</option>
+            <option value="created">Recently created</option>
+            <option value="title">Title A → Z</option>
+          </select>
+        </div>
+        <label
+          title="Show one row per platform per post (fan out grouped rows)"
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6, paddingLeft: 6,
+            borderLeft: '1px solid var(--border)',
+            fontFamily: 'var(--font-display)', fontSize: 11.5, fontWeight: 700,
+            color: groupByPlatform ? 'var(--text)' : 'var(--muted)',
+            cursor: 'pointer',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={groupByPlatform}
+            onChange={(e) => setGroupByPlatform(e.target.checked)}
+          />
+          Group by platform
+        </label>
+      </div>
+
       {/* Bulk action toolbar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-soft)', cursor: 'pointer' }}>
@@ -1059,6 +1232,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
               <tr>
                 <th style={{ ...headerCell, width: 30 }} aria-label="Select">{' '}</th>
                 <th style={{ ...headerCell, width: 64 }}>Media</th>
+                <th style={{ ...headerCell, width: 36 }} aria-label="Type" title="Post type">Type</th>
                 <th style={{ ...headerCell }}>Title</th>
                 {/* Width tuning: Scheduled needs ~175px for the
                     datetime-local input to render "MM/DD/YYYY HH:MM AM"
@@ -1077,9 +1251,9 @@ export default function BulkUploadView({ profileId, token, onChange }) {
             </thead>
             <tbody>
               {scripts === null ? (
-                <tr><td colSpan={10} style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}><Loader2 size={18} className="spin" /></td></tr>
+                <tr><td colSpan={11} style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}><Loader2 size={18} className="spin" /></td></tr>
               ) : visible.length === 0 ? (
-                <tr><td colSpan={10} style={{ padding: 60, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
+                <tr><td colSpan={11} style={{ padding: 60, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
                   {tab === 'queued' && 'No queued posts. Drop media above to start.'}
                   {tab === 'error' && 'No failed posts.'}
                   {tab === 'delivered' && 'Nothing delivered yet.'}
@@ -1087,8 +1261,14 @@ export default function BulkUploadView({ profileId, token, onChange }) {
               ) : visible.map((r) => {
                 const thumb = Array.isArray(r.media_urls) && r.media_urls[0]
                 const isVideo = r.media_type === 'video'
+                const isText = r.media_type === 'text'
+                const hasPerPlatformText = isText && r.per_platform_text && typeof r.per_platform_text === 'object' && Object.keys(r.per_platform_text).length > 0
+                // Left-border color by post kind so the table stays
+                // scannable when mixing types: video=blue, image=purple,
+                // text=amber.
+                const kindBorder = isVideo ? '#0ea5e9' : isText ? '#f59e0b' : '#a855f7'
                 return (
-                  <tr key={r.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                  <tr key={r.id} style={{ borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${kindBorder}` }}>
                     <td style={{ padding: 8, verticalAlign: 'top' }}>
                       <input
                         type="checkbox"
@@ -1124,17 +1304,40 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                             }}>▶</span>
                           )}
                         </button>
+                      ) : isText ? (
+                        <div style={{
+                          width: 48, height: 48, borderRadius: 6,
+                          background: 'rgba(245,158,11,0.10)',
+                          border: '1px solid rgba(245,158,11,0.35)',
+                          display: 'grid', placeItems: 'center', color: '#f59e0b',
+                          fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 22, lineHeight: 1,
+                        }}>“”</div>
                       ) : (
                         <div style={{ width: 48, height: 48, borderRadius: 6, background: 'var(--surface-2)', display: 'grid', placeItems: 'center', color: 'var(--muted)' }}>
                           <ImageIcon size={16} />
                         </div>
                       )}
                     </td>
+                    <td style={{ padding: 6, verticalAlign: 'top', textAlign: 'center' }}>
+                      <span
+                        title={isVideo ? 'Video post' : isText ? 'Text post' : 'Image post'}
+                        style={{ color: kindBorder, display: 'inline-flex' }}
+                      >
+                        {isVideo ? <VideoIcon size={16} /> : isText ? <Type size={16} /> : <ImageIcon size={16} />}
+                      </span>
+                    </td>
                     <td style={{ padding: 4, verticalAlign: 'top' }}>
                       <EditableCell value={r.title} multiline placeholder="Title" onSave={(v) => patchScript(r.id, { title: v })} />
                     </td>
                     <td style={{ padding: 4, verticalAlign: 'top' }}>
-                      <EditableCell value={r.caption} placeholder="Caption" onSave={(v) => patchScript(r.id, { caption: v })} />
+                      {hasPerPlatformText ? (
+                        <PerPlatformCaptionCell
+                          value={r.per_platform_text}
+                          onSave={(next) => patchScript(r.id, { per_platform_text: next })}
+                        />
+                      ) : (
+                        <EditableCell value={r.caption} placeholder="Caption" onSave={(v) => patchScript(r.id, { caption: v })} />
+                      )}
                     </td>
                     <td style={{ padding: 4, verticalAlign: 'top' }}>
                       <EditableCell value={r.hashtags} placeholder="#hashtags" onSave={(v) => patchScript(r.id, { hashtags: v })} />

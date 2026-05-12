@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Sparkles, Library, Calendar, FileEdit, ClipboardCheck, X, Wand2,
   Check, Trash2, Edit3, Send, Eye, AlertCircle, Link2, Plus, ExternalLink,
 } from 'lucide-react'
+import { PlatformBadge } from '../components/PlatformBadge.jsx'
 import BulkUploadView from '../components/BulkUploadView.jsx'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
@@ -330,84 +331,281 @@ function ItemList({ items, emptyHint, onOpen }) {
   return <div>{items.map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} />)}</div>
 }
 
-// ── Calendar view (compact week list) ─────────────────────────────────────
-function CalendarView({ items, onOpen }) {
+// ── Calendar view ─────────────────────────────────────────────────────────
+// Redesigned from a compact day list into a richer card-grid:
+//   • Heatmap header up top — visual density per day, click a day to
+//     jump-scroll to it.
+//   • One post-card per scheduled item, color-bordered by post kind.
+//   • Empty days render an understated placeholder so you can still
+//     see your open inventory at a glance.
+//   • Drag a card onto another day to reschedule — the new ISO is
+//     resolved against the destination day at the same time of day,
+//     PATCH'd via the existing /api/content endpoint (which auto-
+//     resyncs the Upload-Post job behind the scenes).
+function CalendarView({ items, onOpen, token, onChange }) {
+  // Show today + the next 13 days. Two weeks is enough to read the
+  // posting cadence at a glance without the grid getting noisy.
   const days = useMemo(() => {
-    const out = new Map()
+    const out = []
     const now = new Date()
     for (let i = 0; i < 14; i++) {
-      const d = new Date(now); d.setDate(now.getDate() + i)
-      const k = d.toISOString().slice(0, 10)
-      out.set(k, [])
-    }
-    for (const item of items) {
-      if (!item.scheduled_datetime) continue
-      const k = new Date(item.scheduled_datetime).toISOString().slice(0, 10)
-      if (out.has(k)) out.get(k).push(item)
+      const d = new Date(now)
+      d.setHours(0, 0, 0, 0)
+      d.setDate(now.getDate() + i)
+      out.push(d)
     }
     return out
+  }, [])
+
+  // Bucket items by local YYYY-MM-DD so calendar slots map correctly
+  // against the user's timezone (toISOString().slice(0,10) is UTC, which
+  // shifts items into the wrong day for users east of UTC).
+  const byDay = useMemo(() => {
+    const m = new Map()
+    const keyOf = (date) => {
+      const d = new Date(date)
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    }
+    for (const it of items) {
+      if (!it.scheduled_datetime) continue
+      const k = keyOf(it.scheduled_datetime)
+      if (!m.has(k)) m.set(k, [])
+      m.get(k).push(it)
+    }
+    // Sort each day's items by time so the column reads top→bottom.
+    for (const arr of m.values()) {
+      arr.sort((a, b) => new Date(a.scheduled_datetime) - new Date(b.scheduled_datetime))
+    }
+    return m
   }, [items])
 
+  const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const todayKey = dayKey(new Date())
+  const maxCount = Math.max(1, ...Array.from(byDay.values()).map((a) => a.length))
+  const scrollRefs = useRef({})
+
+  // Drag state — we hold the dragging item id while it's in flight so
+  // hover styling on drop targets shows up.
+  const [dragId, setDragId] = useState(null)
+  const dragItemRef = useRef(null)
+
+  const onDragStart = (e, item) => {
+    setDragId(item.id)
+    dragItemRef.current = item
+    try {
+      e.dataTransfer.setData('text/plain', item.id)
+      e.dataTransfer.effectAllowed = 'move'
+    } catch {}
+  }
+  const onDragEnd = () => {
+    setDragId(null)
+    dragItemRef.current = null
+  }
+  const onDropDay = async (e, dayDate) => {
+    e.preventDefault()
+    const item = dragItemRef.current
+    if (!item) return
+    // Keep the same time of day, just move the calendar date.
+    const orig = new Date(item.scheduled_datetime)
+    const next = new Date(dayDate)
+    next.setHours(orig.getHours(), orig.getMinutes(), 0, 0)
+    if (next.getTime() === orig.getTime()) { onDragEnd(); return }
+    try {
+      const r = await fetch(`/api/content?id=${item.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ scheduled_datetime: next.toISOString() }),
+      })
+      if (!r.ok) {
+        const b = await r.json().catch(() => ({}))
+        console.warn('reschedule failed:', b?.error || r.status)
+      } else {
+        onChange?.()
+      }
+    } catch (err) {
+      console.warn('reschedule threw:', err.message)
+    } finally {
+      onDragEnd()
+    }
+  }
+
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8 }}>
-      {Array.from(days.entries()).map(([day, dayItems]) => {
-        const date = new Date(day + 'T12:00:00')
-        const isToday = day === new Date().toISOString().slice(0, 10)
-        return (
-          <div key={day} style={{
-            background: 'var(--surface)', border: '1px solid ' + (isToday ? 'rgba(239,68,68,0.35)' : 'var(--border)'),
-            borderRadius: 10, padding: 10, minHeight: 110,
-          }}>
-            <div style={{ fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 700, color: isToday ? 'var(--red)' : 'var(--muted)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8 }}>
-              {date.toLocaleDateString(undefined, { weekday: 'short' })} {date.getDate()}
-            </div>
-            {dayItems.length === 0 ? (
-              <div style={{ fontSize: 11, color: 'var(--muted)' }}>—</div>
-            ) : dayItems.map((item) => {
-              const platforms = Array.isArray(item.platforms) ? item.platforms : []
-              const thumb = Array.isArray(item.media_urls) && item.media_urls[0]
-              const isVideo = item.media_type === 'video'
-              return (
-                <div key={item.id} onClick={() => onOpen(item)} style={{
-                  marginBottom: 6, padding: 6, borderRadius: 6,
-                  background: 'var(--surface-2)', cursor: 'pointer',
-                  fontSize: 12, color: 'var(--text-soft)',
-                  display: 'flex', gap: 8, alignItems: 'flex-start',
-                }}>
-                  {thumb && (
-                    isVideo
-                      ? <video src={thumb} muted playsInline preload="metadata" style={{ width: 32, height: 32, borderRadius: 4, objectFit: 'cover', background: '#000', flexShrink: 0 }} />
-                      : <img src={thumb} alt="" style={{ width: 32, height: 32, borderRadius: 4, objectFit: 'cover', background: 'var(--surface)', flexShrink: 0 }} />
-                  )}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {item.title || 'Untitled'}
-                    </div>
-                    <div style={{ fontSize: 10.5, color: 'var(--muted)' }}>
-                      {new Date(item.scheduled_datetime).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
-                    </div>
-                    {platforms.length > 0 && (
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 4 }}>
-                        {platforms.slice(0, 4).map((p) => (
-                          <span key={p} style={{
-                            fontSize: 9, padding: '1px 6px', borderRadius: 999,
-                            background: 'rgba(46,204,113,0.15)', color: '#2ecc71',
-                            fontFamily: 'var(--font-display)', fontWeight: 700,
-                            letterSpacing: '0.04em', textTransform: 'capitalize',
-                          }}>{p}</span>
-                        ))}
-                        {platforms.length > 4 && (
-                          <span style={{ fontSize: 9, color: 'var(--muted)' }}>+{platforms.length - 4}</span>
-                        )}
-                      </div>
-                    )}
-                  </div>
+    <div>
+      {/* Heatmap header — one tile per upcoming day, height scales with
+          item count. Click to scroll the matching column into view. */}
+      <div style={{
+        display: 'grid', gridTemplateColumns: `repeat(${days.length}, 1fr)`, gap: 4,
+        marginBottom: 14, padding: 10,
+        background: 'var(--surface)', border: '1px solid var(--border)',
+        borderRadius: 10,
+      }}>
+        {days.map((d) => {
+          const k = dayKey(d)
+          const count = (byDay.get(k) || []).length
+          const ratio = count / maxCount
+          const isToday = k === todayKey
+          return (
+            <button
+              key={k}
+              onClick={() => scrollRefs.current[k]?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' })}
+              title={`${count} post${count === 1 ? '' : 's'} on ${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}`}
+              style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+                padding: '6px 4px', borderRadius: 6,
+                background: 'transparent', border: 'none', cursor: 'pointer',
+              }}
+            >
+              <div style={{
+                fontSize: 10, fontFamily: 'var(--font-display)', fontWeight: 700,
+                color: isToday ? 'var(--red)' : 'var(--muted)',
+                letterSpacing: '0.06em', textTransform: 'uppercase',
+              }}>
+                {d.toLocaleDateString(undefined, { weekday: 'short' })}
+              </div>
+              <div style={{
+                width: '100%', height: 36,
+                position: 'relative', overflow: 'hidden',
+                borderRadius: 4, background: 'var(--surface-2)',
+              }}>
+                <div style={{
+                  position: 'absolute', left: 0, right: 0, bottom: 0,
+                  height: `${Math.max(4, ratio * 100)}%`,
+                  background: count === 0 ? 'transparent'
+                    : isToday ? 'rgba(239,68,68,0.5)'
+                    : 'rgba(14,165,233,0.45)',
+                  transition: 'height 0.2s',
+                }} />
+              </div>
+              <div style={{ fontSize: 10.5, color: isToday ? 'var(--red)' : 'var(--text-soft)' }}>
+                {d.getDate()}{count > 0 ? ` · ${count}` : ''}
+              </div>
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Day columns. Horizontal scroll on narrow viewports so the user
+          can still see all 14 days without the cards collapsing into
+          unreadable widths. */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(7, minmax(220px, 1fr))',
+        gap: 10,
+      }}>
+        {days.map((d) => {
+          const k = dayKey(d)
+          const dayItems = byDay.get(k) || []
+          const isToday = k === todayKey
+          const isDropTarget = !!dragId
+          return (
+            <div
+              key={k}
+              ref={(el) => { scrollRefs.current[k] = el }}
+              onDragOver={(e) => { if (isDropTarget) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' } }}
+              onDrop={(e) => onDropDay(e, d)}
+              style={{
+                background: 'var(--surface)',
+                border: `1px solid ${isToday ? 'rgba(239,68,68,0.45)' : 'var(--border)'}`,
+                borderRadius: 10, padding: 8, minHeight: 140,
+                position: 'relative',
+              }}
+            >
+              <div style={{
+                display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 8,
+                paddingBottom: 6, borderBottom: '1px solid var(--border)',
+              }}>
+                <div style={{
+                  fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 11,
+                  letterSpacing: '0.08em', textTransform: 'uppercase',
+                  color: isToday ? 'var(--red)' : 'var(--muted)',
+                }}>{d.toLocaleDateString(undefined, { weekday: 'short' })}</div>
+                <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 18, color: isToday ? 'var(--red)' : 'var(--text)', lineHeight: 1 }}>
+                  {d.getDate()}
                 </div>
-              )
-            })}
-          </div>
-        )
-      })}
+                <div style={{ fontSize: 10, color: 'var(--muted)', marginLeft: 'auto' }}>
+                  {dayItems.length || ''}
+                </div>
+              </div>
+
+              {dayItems.length === 0 ? (
+                <div style={{
+                  fontSize: 11, color: 'var(--muted)',
+                  textAlign: 'center', padding: '20px 6px',
+                  border: '1px dashed var(--border)', borderRadius: 6,
+                  background: 'rgba(255,255,255,0.02)',
+                }}>
+                  {isDropTarget ? 'Drop here' : '—'}
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {dayItems.map((item) => {
+                    const isDragging = item.id === dragId
+                    const platforms = Array.isArray(item.platforms) ? item.platforms : []
+                    const thumb = Array.isArray(item.media_urls) && item.media_urls[0]
+                    const isVideo = item.media_type === 'video'
+                    const isText = item.media_type === 'text'
+                    const kindBorder = isVideo ? '#0ea5e9' : isText ? '#f59e0b' : '#a855f7'
+                    return (
+                      <div
+                        key={item.id}
+                        draggable
+                        onDragStart={(e) => onDragStart(e, item)}
+                        onDragEnd={onDragEnd}
+                        onClick={() => onOpen(item)}
+                        style={{
+                          background: 'var(--surface-2)',
+                          border: '1px solid var(--border)',
+                          borderLeft: `3px solid ${kindBorder}`,
+                          borderRadius: 6, padding: 6,
+                          cursor: 'grab',
+                          opacity: isDragging ? 0.5 : 1,
+                          fontSize: 11.5, color: 'var(--text-soft)',
+                          display: 'flex', gap: 6, alignItems: 'flex-start',
+                        }}
+                      >
+                        {thumb ? (
+                          isVideo
+                            ? <video src={thumb} muted playsInline preload="metadata" style={{ width: 36, height: 36, borderRadius: 4, objectFit: 'cover', background: '#000', flexShrink: 0 }} />
+                            : <img src={thumb} alt="" style={{ width: 36, height: 36, borderRadius: 4, objectFit: 'cover', background: 'var(--surface)', flexShrink: 0 }} />
+                        ) : (
+                          <div style={{
+                            width: 36, height: 36, borderRadius: 4,
+                            background: isText ? 'rgba(245,158,11,0.10)' : 'var(--surface)',
+                            border: isText ? '1px solid rgba(245,158,11,0.4)' : '1px solid var(--border)',
+                            display: 'grid', placeItems: 'center',
+                            color: isText ? '#f59e0b' : 'var(--muted)',
+                            fontFamily: 'var(--font-display)', fontWeight: 700,
+                            fontSize: isText ? 16 : 11,
+                            flexShrink: 0,
+                          }}>{isText ? '“”' : '?'}</div>
+                        )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, color: 'var(--text)', fontSize: 11.5, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                            {item.title || 'Untitled'}
+                          </div>
+                          <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>
+                            {new Date(item.scheduled_datetime).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                          </div>
+                          {platforms.length > 0 && (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, marginTop: 4 }}>
+                              {platforms.slice(0, 5).map((p) => (
+                                <PlatformBadge key={p} id={p} size={14} />
+                              ))}
+                              {platforms.length > 5 && (
+                                <span style={{ fontSize: 9, color: 'var(--muted)', alignSelf: 'center' }}>+{platforms.length - 5}</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -643,7 +841,7 @@ export default function Content() {
       ) : loading ? (
         <div className="card-flat" style={{ padding: 40, textAlign: 'center' }}><span className="spinner" /></div>
       ) : tab === 'calendar' ? (
-        <CalendarView items={items} onOpen={setOpened} />
+        <CalendarView items={items} onOpen={setOpened} token={session?.access_token} onChange={refresh} />
       ) : (
         <ItemList items={items} emptyHint={TABS.find((t) => t.value === tab).empty} onOpen={setOpened} />
       )}
