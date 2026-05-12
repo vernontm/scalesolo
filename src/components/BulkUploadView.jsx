@@ -51,15 +51,56 @@ const headerCell = {
 // single Publish Selected click can fan out different rows to different
 // targets. The full set is intentionally small — only platforms Upload-
 // Post supports — and matches the schedule_post node's PLATFORMS list.
+// Per-platform brand metadata. Public logo URLs come from a Supabase
+// storage bucket (sm_icons) and render as <img> tags so the table chips
+// look like actual social brand marks. Threads + LinkedIn don't have a
+// hosted SVG yet — they fall back to a colored letter chip until one
+// is added.
+const SM_ICON_BASE = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/sm_icons'
 const ROW_PLATFORMS = [
-  { id: 'tiktok',    label: 'TikTok',    kinds: ['video', 'text'],          color: '#ff0050', initial: 'T' },
-  { id: 'instagram', label: 'Instagram', kinds: ['image', 'video'],         color: '#e1306c', initial: 'I' },
-  { id: 'youtube',   label: 'YouTube',   kinds: ['video'],                  color: '#ff0000', initial: 'Y' },
-  { id: 'facebook',  label: 'Facebook',  kinds: ['image', 'video', 'text'], color: '#1877f2', initial: 'F' },
-  { id: 'linkedin',  label: 'LinkedIn',  kinds: ['image', 'video', 'text'], color: '#0a66c2', initial: 'L' },
-  { id: 'threads',   label: 'Threads',   kinds: ['image', 'video', 'text'], color: '#000000', initial: '@' },
-  { id: 'x',         label: 'X',         kinds: ['image', 'video', 'text'], color: '#000000', initial: '𝕏' },
+  { id: 'tiktok',    label: 'TikTok',    kinds: ['video', 'text'],          color: '#ff0050', initial: 'T', logo: `${SM_ICON_BASE}/tiktok.svg` },
+  { id: 'instagram', label: 'Instagram', kinds: ['image', 'video'],         color: '#e1306c', initial: 'I', logo: `${SM_ICON_BASE}/instagram.svg` },
+  { id: 'youtube',   label: 'YouTube',   kinds: ['video'],                  color: '#ff0000', initial: 'Y', logo: `${SM_ICON_BASE}/youtube.svg` },
+  { id: 'facebook',  label: 'Facebook',  kinds: ['image', 'video', 'text'], color: '#1877f2', initial: 'F', logo: `${SM_ICON_BASE}/facebook.svg` },
+  { id: 'linkedin',  label: 'LinkedIn',  kinds: ['image', 'video', 'text'], color: '#0a66c2', initial: 'L', logo: null },
+  { id: 'threads',   label: 'Threads',   kinds: ['image', 'video', 'text'], color: '#000000', initial: '@', logo: null },
+  { id: 'x',         label: 'X',         kinds: ['image', 'video', 'text'], color: '#000000', initial: '𝕏', logo: `${SM_ICON_BASE}/x.svg` },
 ]
+
+// Renders one platform badge — actual logo when we have a hosted SVG,
+// otherwise a colored brand-letter chip. Sized in pixels so the same
+// component fits the row cell, the filter chip, and the dropdown
+// trigger without re-styling.
+function PlatformBadge({ id, size = 18, title }) {
+  const def = ROW_PLATFORMS.find((p) => p.id === id)
+  if (!def) return null
+  if (def.logo) {
+    return (
+      <img
+        src={def.logo}
+        alt={def.label}
+        title={title || def.label}
+        style={{
+          width: size, height: size, borderRadius: 999,
+          objectFit: 'cover', flexShrink: 0,
+          background: '#fff',
+        }}
+      />
+    )
+  }
+  return (
+    <span
+      title={title || def.label}
+      style={{
+        display: 'inline-grid', placeItems: 'center',
+        width: size, height: size, borderRadius: 999,
+        background: def.color, color: '#fff',
+        fontFamily: 'var(--font-display)', fontWeight: 700,
+        fontSize: Math.round(size * 0.55), lineHeight: 1, flexShrink: 0,
+      }}
+    >{def.initial}</span>
+  )
+}
 
 function PlatformsCell({ value, mediaType, onSave }) {
   const cur = Array.isArray(value) ? value : []
@@ -142,23 +183,7 @@ function PlatformsCell({ value, mediaType, onSave }) {
         <span style={{ overflow: 'hidden', display: 'flex', alignItems: 'center', gap: 4 }}>
           {cur.length === 0
             ? <span style={{ color: 'var(--muted)' }}>Pick platforms</span>
-            : cur.map((id) => {
-                const def = ROW_PLATFORMS.find((p) => p.id === id)
-                if (!def) return null
-                return (
-                  <span
-                    key={id}
-                    title={def.label}
-                    style={{
-                      display: 'inline-grid', placeItems: 'center',
-                      width: 18, height: 18, borderRadius: 999,
-                      background: def.color, color: '#fff',
-                      fontFamily: 'var(--font-display)', fontWeight: 700,
-                      fontSize: 10, lineHeight: 1, flexShrink: 0,
-                    }}
-                  >{def.initial}</span>
-                )
-              })}
+            : cur.map((id) => <PlatformBadge key={id} id={id} size={18} />)}
         </span>
         <ChevronDown size={11} />
       </button>
@@ -292,6 +317,10 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   // narrow the queue when you only want to see (say) all text posts
   // landing this week.
   const [kindFilter, setKindFilter] = useState('all')
+  // Platform filter — set of platform ids the user wants to see. Empty
+  // set = no filter. Multi-select so the user can ask for "tiktok or
+  // instagram" without scrolling rows.
+  const [platformFilter, setPlatformFilter] = useState(() => new Set())
   const [selected, setSelected] = useState(new Set())
   const [search, setSearch] = useState('')
   const [busyAction, setBusyAction] = useState(null) // 'captions' | 'schedule' | 'publish'
@@ -527,13 +556,22 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         return k === kindFilter
       })
     }
+    if (platformFilter.size > 0) {
+      // OR semantics — show a row if any of its platforms intersects
+      // the filter. That matches user intent ("show me posts going to
+      // TikTok or Instagram") better than AND would.
+      all = all.filter((r) => {
+        const pls = Array.isArray(r.platforms) ? r.platforms : []
+        return pls.some((p) => platformFilter.has(p))
+      })
+    }
     const s = search.trim().toLowerCase()
     if (!s) return all
     return all.filter((r) => (r.title || '').toLowerCase().includes(s)
       || (r.caption || '').toLowerCase().includes(s)
       || (r.full_script || '').toLowerCase().includes(s)
       || (r.hashtags || '').toLowerCase().includes(s))
-  }, [scripts, tab, search, kindFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [scripts, tab, search, kindFilter, platformFilter]) // eslint-disable-line react-hooks/exhaustive-deps
   const counts = useMemo(() => {
     const out = {}
     for (const t of STATUS_TABS) out[t.id] = (scripts || []).filter(t.filter).length
@@ -861,6 +899,57 @@ export default function BulkUploadView({ profileId, token, onChange }) {
               </button>
             )
           })}
+        </div>
+        {/* Platform filter chips. Multi-select — click each platform
+            you want to see, click again to remove. Empty set = no
+            filter. */}
+        <div
+          title="Filter rows by platform — click to toggle, OR semantics"
+          style={{
+            display: 'flex', gap: 4, paddingLeft: 6,
+            borderLeft: '1px solid var(--border)',
+          }}
+        >
+          {ROW_PLATFORMS.map((p) => {
+            const on = platformFilter.has(p.id)
+            return (
+              <button
+                key={p.id}
+                onClick={() => {
+                  setPlatformFilter((prev) => {
+                    const next = new Set(prev)
+                    if (next.has(p.id)) next.delete(p.id); else next.add(p.id)
+                    return next
+                  })
+                }}
+                style={{
+                  padding: 4, borderRadius: 999,
+                  background: on ? 'rgba(46,204,113,0.18)' : 'transparent',
+                  border: `1px solid ${on ? 'rgba(46,204,113,0.55)' : 'transparent'}`,
+                  cursor: 'pointer',
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  opacity: on ? 1 : 0.55,
+                  transition: 'opacity 0.12s, background 0.12s',
+                }}
+                aria-pressed={on}
+                title={`${on ? 'Hide' : 'Show only'} ${p.label} posts`}
+              >
+                <PlatformBadge id={p.id} size={20} />
+              </button>
+            )
+          })}
+          {platformFilter.size > 0 && (
+            <button
+              onClick={() => setPlatformFilter(new Set())}
+              style={{
+                marginLeft: 2, padding: '4px 8px', borderRadius: 999,
+                background: 'transparent', border: '1px solid var(--border)',
+                color: 'var(--muted)', cursor: 'pointer',
+                fontFamily: 'var(--font-display)', fontSize: 10.5, fontWeight: 700,
+              }}
+              title="Clear platform filter"
+            >Clear</button>
+          )}
         </div>
         <input
           className="input"
