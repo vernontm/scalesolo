@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Plus, Upload, X, UserCircle2, Sparkles, Video, AlertCircle, CheckCircle2,
   RefreshCw, Trash2, Wand2, Image as ImageIcon, ArrowLeft, Play, ChevronRight,
-  Mic, Library, Volume2, Loader2, Check, Search,
+  ChevronLeft, Mic, Library, Volume2, Loader2, Check, Search,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
@@ -426,7 +426,7 @@ function RenderComposer({ avatar, models, onClose, onSubmitted }) {
 // Inline, expandable. Cover thumb + name + image count. Click header to
 // collapse / expand. Inside: image grid + drop zone for more images +
 // inline rename.
-function LookFolder({ look, index, onAddImages, onDeleteImage, onRename, busy }) {
+function LookFolder({ look, index, onAddImages, onDeleteImage, onRename, onReorderImage, busy }) {
   const [open, setOpen] = useState(true)
   const [editingName, setEditingName] = useState(false)
   const [draftName, setDraftName] = useState(look.name || '')
@@ -492,9 +492,45 @@ function LookFolder({ look, index, onAddImages, onDeleteImage, onRename, busy })
       {open && (
         <div style={{ padding: 10, paddingTop: 0 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 8 }}>
-            {images.map((im) => (
+            {images.map((im, imIdx) => (
               <div key={im.id} style={{ position: 'relative' }}>
                 <img src={im.image_url} alt={im.name || 'Look image'} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', borderRadius: 6, border: '1px solid var(--border)' }} />
+                {/* Reorder controls — hidden when there's only one image
+                    (nothing to reorder). The first image is the cover,
+                    so it's worth nudging up; arrows are disabled at the
+                    edges instead of vanishing so the layout stays
+                    stable as the user moves things around. */}
+                {images.length > 1 && (
+                  <div style={{
+                    position: 'absolute', bottom: 4, left: 4,
+                    display: 'flex', gap: 2,
+                  }}>
+                    <button
+                      aria-label="Move left"
+                      disabled={imIdx === 0 || busy}
+                      onClick={(e) => { e.stopPropagation(); onReorderImage(im.id, imIdx - 1) }}
+                      style={{
+                        background: imIdx === 0 ? 'rgba(0,0,0,0.4)' : 'rgba(0,0,0,0.75)',
+                        color: '#fff', border: 'none', borderRadius: 999,
+                        width: 20, height: 20, cursor: imIdx === 0 ? 'not-allowed' : 'pointer',
+                        display: 'grid', placeItems: 'center', opacity: imIdx === 0 ? 0.4 : 1,
+                      }}
+                      title="Move earlier"
+                    ><ChevronLeft size={11} /></button>
+                    <button
+                      aria-label="Move right"
+                      disabled={imIdx === images.length - 1 || busy}
+                      onClick={(e) => { e.stopPropagation(); onReorderImage(im.id, imIdx + 1) }}
+                      style={{
+                        background: imIdx === images.length - 1 ? 'rgba(0,0,0,0.4)' : 'rgba(0,0,0,0.75)',
+                        color: '#fff', border: 'none', borderRadius: 999,
+                        width: 20, height: 20, cursor: imIdx === images.length - 1 ? 'not-allowed' : 'pointer',
+                        display: 'grid', placeItems: 'center', opacity: imIdx === images.length - 1 ? 0.4 : 1,
+                      }}
+                      title="Move later"
+                    ><ChevronRight size={11} /></button>
+                  </div>
+                )}
                 <button
                   aria-label="Delete this image"
                   onClick={async (e) => {
@@ -646,6 +682,38 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
     } catch (e) { setError(e.message) }
   }
 
+  // Reorder a single image within its look. We swap order_index with
+  // whoever is currently at the target slot — keeps the rest of the
+  // list stable without re-indexing every row on every move.
+  const reorderImageInLook = async (lookId, imageId, targetIdx) => {
+    setError(null)
+    const look = looks.find((l) => l.id === lookId)
+    if (!look) return
+    const sorted = (look.images || []).slice().sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
+    const fromIdx = sorted.findIndex((im) => im.id === imageId)
+    if (fromIdx < 0 || targetIdx < 0 || targetIdx >= sorted.length || fromIdx === targetIdx) return
+    const target = sorted[targetIdx]
+    const mover = sorted[fromIdx]
+    // Two PATCHes: swap the order_index between mover and the one
+    // it's displacing. Parallel — they're independent rows. Failures
+    // are surfaced so the user sees what didn't stick.
+    try {
+      await Promise.all([
+        fetch(`/api/avatars/look-images?id=${mover.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ order_index: target.order_index ?? targetIdx }),
+        }),
+        fetch(`/api/avatars/look-images?id=${target.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ order_index: mover.order_index ?? fromIdx }),
+        }),
+      ])
+      onChange()
+    } catch (e) { setError(e.message) }
+  }
+
   const updateAvatar = async (patch) => {
     setError(null)
     const r = await fetch(`/api/avatars?id=${avatar.id}`, {
@@ -702,8 +770,20 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
               the spaces avatar picker lets users pick Single (one image)
               or Randomize (any image in the look) per render. */}
           <div className="card-flat" style={{ marginBottom: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
               <div style={{ fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.1em', textTransform: 'uppercase', flex: 1 }}>Looks</div>
+              {/* Manual refresh — uploads usually auto-refresh via onChange,
+                  but this is a fallback for cases where the canvas-side
+                  cache or a slow PATCH lag is still showing stale data. */}
+              <button
+                className="btn-ghost"
+                onClick={onChange}
+                disabled={busy}
+                title="Reload looks"
+                style={{ padding: '6px 10px' }}
+              >
+                <RefreshCw size={13} /> Refresh
+              </button>
               <button className="btn-ghost" onClick={() => fileRef.current?.click()} disabled={busy}>
                 {busy ? <span className="spinner" /> : <Plus size={13} />} New look
               </button>
@@ -724,6 +804,7 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
                     onAddImages={(files) => addImagesToLook(l.id, files)}
                     onDeleteImage={deleteLookImage}
                     onRename={(name) => renameLook(l.id, name)}
+                    onReorderImage={(imageId, targetIdx) => reorderImageInLook(l.id, imageId, targetIdx)}
                     busy={busy}
                   />
                 ))}
