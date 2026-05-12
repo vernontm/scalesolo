@@ -69,7 +69,8 @@ export default async function handler(req, res) {
   if (!auth) return
 
   try {
-    const { profile_id: rawProfileId, prompt: rawPrompt, platforms } = req.body || {}
+    const { profile_id: rawProfileId, prompt: rawPrompt, platforms, use_brand: rawUseBrand } = req.body || {}
+    const useBrand = rawUseBrand !== false   // default true; explicit false bypasses brand context
     if (!rawProfileId) return res.status(400).json({ error: 'profile_id required' })
     if (!rawPrompt || !String(rawPrompt).trim()) return res.status(400).json({ error: 'prompt required' })
     const selected = (Array.isArray(platforms) ? platforms : [])
@@ -116,12 +117,19 @@ export default async function handler(req, res) {
 
     await assertProfileAccess(auth.user.id, profile_id)
 
-    const ctx = await loadBrandContext(profile_id, { skip: ['exemplars'] })
-    if (!ctx.profile) return res.status(404).json({ error: 'Profile not found' })
-    const brandBlocks = renderBrandContextMarkdown(ctx, {
-      include: ['identity', 'bible', 'summary', 'rules'],
-      bibleCharLimit: 2500,
-    })
+    // When use_brand=false the user wants a generic post that ignores
+    // bible/voice/hashtags. Skip loading the brand context entirely
+    // and emit an empty block so the model just sees the platform
+    // rules + the user's prompt.
+    let brandBlocks = ''
+    if (useBrand) {
+      const bctx = await loadBrandContext(profile_id, { skip: ['exemplars'] })
+      if (!bctx.profile) return res.status(404).json({ error: 'Profile not found' })
+      brandBlocks = renderBrandContextMarkdown(bctx, {
+        include: ['identity', 'bible', 'summary', 'rules'],
+        bibleCharLimit: 2500,
+      })
+    }
 
     const platformRules = selected
       .map((id) => {

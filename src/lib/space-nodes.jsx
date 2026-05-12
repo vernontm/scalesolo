@@ -1394,6 +1394,29 @@ function TextPostGenBody({ data, onPatch }) {
         style={{ ...tinyInput, width: '100%', fontSize: 11.5, lineHeight: 1.4, padding: 8, marginBottom: 8, resize: 'vertical' }}
       />
 
+      {/* Brand-profile toggle. When on (default), the active brand's
+          voice + bible + hashtags get baked into the prompt sent to
+          Claude — same effect as wiring a brand_profile node in. Off
+          = generic posts that ignore brand context. A wired
+          brand_profile node always wins over this checkbox. */}
+      <label
+        title="Write in the current brand's voice using its saved bible. Same as wiring a Brand profile node in."
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8,
+          fontSize: 11, color: props.use_brand !== false ? 'var(--text)' : 'var(--muted)',
+          cursor: 'pointer', userSelect: 'none',
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={props.use_brand !== false}
+          onChange={(e) => { e.stopPropagation(); onPatch({ use_brand: e.target.checked }) }}
+          onClick={(e) => e.stopPropagation()}
+          style={{ accentColor: '#0ea5e9' }}
+        />
+        Use brand profile voice
+      </label>
+
       {/* Platform pills */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
         {TEXT_POST_PLATFORMS.map((p) => {
@@ -6517,6 +6540,10 @@ export const NODE_REGISTRY = {
       platforms: ['x', 'threads', 'facebook', 'linkedin'],
       per_platform: {}, // generated per-platform text, keyed by platform id
       edited: {},       // user overrides keyed by platform id
+      // When true (default), use the active brand profile's voice/
+      // bible/hashtags even without a brand_profile node wired in.
+      // Uncheck to write generic posts that ignore any brand context.
+      use_brand: true,
     },
     Body: TextPostGenBody,
     run: async ({ data, inputs, inputsByName, ctx }) => {
@@ -6550,10 +6577,15 @@ export const NODE_REGISTRY = {
       const profileId = mentioned?.id || brand?.profile_id || ctx.profileId
       prompt = expandBrandMentions(prompt, ctx.profiles)
 
+      // use_brand: true (default) sends profile_id so the API loads
+      // the brand bible + voice into the prompt. Wiring a
+      // brand_profile node also flips this on regardless of the
+      // checkbox so explicit upstream brand always wins.
+      const useBrand = (data.props?.use_brand !== false) || !!brand
       const r = await fetch('/api/content/text-post-generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
-        body: JSON.stringify({ profile_id: profileId, prompt, platforms }),
+        body: JSON.stringify({ profile_id: profileId, prompt, platforms, use_brand: useBrand }),
       })
       const body = await r.json()
       if (!r.ok) throw new Error(body.error || `Text-post gen failed (${r.status})`)
