@@ -67,19 +67,32 @@ export default async function handler(req, res) {
     const durationSecs = estimateDurationSecs(script)
     const unitsToCharge = videoUnitsForModel(modelKey, durationSecs)
 
-    // Pre-flight credit check
+    // Pre-flight credit check. Hard wall — if the user doesn't have
+    // a billing customer record OR their balance is short, we BAIL
+    // BEFORE calling HeyGen. Without this check a user with no
+    // credits would still trigger a HeyGen render (and a real bill
+    // on our end) and only fail post-charge. The 402 / code:
+    // 'insufficient_credits' shape is what the canvas listens for to
+    // pop the top-up / upgrade modal.
     const cust = await supaFetch(`billing_customers?user_id=eq.${auth.user.id}&select=id`)
     const customerId = cust?.[0]?.id
-    if (customerId) {
-      const pools = await supaFetch(`credit_pools?customer_id=eq.${customerId}&pool_type=eq.video_units&select=balance`)
-      const balance = Number(pools?.[0]?.balance ?? 0)
-      if (balance < unitsToCharge) {
-        return res.status(402).json({
-          error: `Insufficient video units. Need ${unitsToCharge}, have ${balance}.`,
-          code: 'insufficient_credits',
-          required: unitsToCharge,
-        })
-      }
+    if (!customerId) {
+      return res.status(402).json({
+        error: 'No active subscription. Pick a plan to start rendering videos.',
+        code: 'insufficient_credits',
+        required: unitsToCharge,
+        have: 0,
+      })
+    }
+    const pools = await supaFetch(`credit_pools?customer_id=eq.${customerId}&pool_type=eq.video_units&select=balance`)
+    const balance = Number(pools?.[0]?.balance ?? 0)
+    if (balance < unitsToCharge) {
+      return res.status(402).json({
+        error: `Not enough video credits — this render needs ${unitsToCharge}, you have ${balance}. Top up or upgrade to keep going.`,
+        code: 'insufficient_credits',
+        required: unitsToCharge,
+        have: balance,
+      })
     }
 
     // Resolve the avatar identifier:

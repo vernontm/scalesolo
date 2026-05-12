@@ -35,39 +35,22 @@ const HEADERS = () => ({
 // Sources:
 //   https://developers.heygen.com/docs/pricing#video-generation-%E2%80%94-avatar-iv
 // Update this in one place — UI reads it through /api/avatars at runtime.
+// V4 is the only supported model going forward. V3 (cheaper, lower
+// quality) and V5 (more expensive, marginally better motion) were
+// retired to simplify the UI and pricing math — one rate to the
+// user, one rate from HeyGen. Old saved spaces that reference
+// model: 'v3' or 'v5' silently fall through to v4 via the lookup
+// helpers below.
 export const MODELS = {
-  v3: {
-    label:               'V3 — Standard',
-    description:         'Avatar III (legacy talking photo). Fastest renders.',
-    engine:              'v2_legacy',
-    cents_per_sec:       1.67,    // HeyGen Photo Avatar 720/1080p
-    cents_per_sec_4k:    2,
-    video_units_per_sec: 0.10,
-    badge:               'Fast',
-  },
   v4: {
-    label:               'V4 — Pro',
-    description:         'Avatar IV. Better lip-sync and expression. The everyday default.',
+    label:               'Avatar Video',
+    description:         'The default talking-photo renderer.',
     engine:              'v3_avatar_iv',
     expressiveness:      'low',
     cents_per_sec:       5,       // HeyGen Avatar IV Photo 720/1080p
     cents_per_sec_4k:    6.67,
     video_units_per_sec: 0.15,
     badge:               'Recommended',
-  },
-  v5: {
-    label:               'V5 — Cinematic',
-    description:         'Avatar V (auto-enabled on rollout). High motion + expressiveness.',
-    engine:              'v3_avatar_v',
-    expressiveness:      'high',
-    motion_default:      true,
-    // V5 is not yet on HeyGen's public pricing page; conservatively
-    // assume Avatar IV parity until announced. Bump in admin usage if
-    // we get a real number from HeyGen.
-    cents_per_sec:       5,
-    cents_per_sec_4k:    6.67,
-    video_units_per_sec: 0.20,
-    badge:               'Premium',
   },
 }
 

@@ -41,17 +41,25 @@ export default async function handler(req, res) {
     const durationSecs = estimateDurationSecs(script || '')
     const unitsToCharge = videoUnitsForModel(modelKey, durationSecs)
 
+    // Hard pre-flight credit check before any HeyGen call. Without
+    // a billing customer or with insufficient balance, BAIL — we
+    // can't let HeyGen render and charge us when the user can't
+    // pay for it.
     const cust = await supaFetch(`billing_customers?user_id=eq.${auth.user.id}&select=id`)
     const customerId = cust?.[0]?.id
-    if (customerId) {
-      const pools = await supaFetch(`credit_pools?customer_id=eq.${customerId}&pool_type=eq.video_units&select=balance`)
-      const balance = Number(pools?.[0]?.balance ?? 0)
-      if (balance < unitsToCharge) {
-        return res.status(402).json({
-          error: `Insufficient video units. Need ${unitsToCharge}, have ${balance}.`,
-          code: 'insufficient_credits', required: unitsToCharge,
-        })
-      }
+    if (!customerId) {
+      return res.status(402).json({
+        error: 'No active subscription. Pick a plan to start rendering videos.',
+        code: 'insufficient_credits', required: unitsToCharge, have: 0,
+      })
+    }
+    const pools = await supaFetch(`credit_pools?customer_id=eq.${customerId}&pool_type=eq.video_units&select=balance`)
+    const balance = Number(pools?.[0]?.balance ?? 0)
+    if (balance < unitsToCharge) {
+      return res.status(402).json({
+        error: `Not enough video credits — this render needs ${unitsToCharge}, you have ${balance}. Top up or upgrade to keep going.`,
+        code: 'insufficient_credits', required: unitsToCharge, have: balance,
+      })
     }
 
     // Voice resolution. Same two-path logic as /api/avatars/render:

@@ -7163,7 +7163,18 @@ export const NODE_REGISTRY = {
             }),
           })
           const body = await r.json()
-          if (!r.ok) throw new Error(body?.error || `Render submit failed (${r.status})`)
+          if (!r.ok) {
+            // Enrich 402 / insufficient_credits errors with the
+            // required + have numbers so the top-up modal can
+            // display them.
+            const err = new Error(body?.error || `Render submit failed (${r.status})`)
+            if (r.status === 402 || body?.code === 'insufficient_credits') {
+              err.code = 'insufficient_credits'
+              err.required = body?.required
+              err.have = body?.have
+            }
+            throw err
+          }
           const videoId = body.video_id
           if (!videoId) throw new Error('No video id')
           const start = Date.now()
@@ -8580,12 +8591,31 @@ export async function runSpace({ ctx, nodes, edges, onNodeChange }) {
       onNodeChange?.(id, { status: 'done', output: result, progress: null })
     } catch (err) {
       // Tag insufficient-credit errors so the UI can offer a top-up CTA.
-      const isCreditError = /insufficient/i.test(err?.message || '') || err?.code === 'insufficient_credits'
+      const isCreditError = /insufficient/i.test(err?.message || '')
+        || err?.code === 'insufficient_credits'
+        || /not enough video credits/i.test(err?.message || '')
+        || /no active subscription/i.test(err?.message || '')
       const finalMsg = isCreditError
         ? `${err.message} — top up in Billing to continue.`
         : err.message
       onNodeChange?.(id, { status: 'failed', error: finalMsg })
       errors[id] = finalMsg
+      // Pop the global modal so the user sees the top-up CTA
+      // immediately — without it the only signal is a red error chip
+      // on the failed node, which most users miss. typeof window
+      // check keeps this safe on the worker side (SSR / Node).
+      if (isCreditError && typeof window !== 'undefined' && window.dispatchEvent) {
+        try {
+          window.dispatchEvent(new CustomEvent('scalesolo:out-of-credits', {
+            detail: {
+              message: err.message,
+              required: err.required ?? err.data?.required,
+              have: err.have ?? err.data?.have,
+              node_id: id,
+            },
+          }))
+        } catch { /* ignore */ }
+      }
       // Poison every descendant so they don't run with empty inputs and
       // throw misleading "Wire X into in" errors.
       for (const e of edges.filter((e) => e.source === id)) {

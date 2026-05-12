@@ -3,6 +3,7 @@ import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { Zap } from 'lucide-react'
 import Sidebar from './components/Sidebar.jsx'
 import Header from './components/Header.jsx'
+import OutOfCreditsModal from './components/OutOfCreditsModal.jsx'
 // Eager: routes that the user is likely to land on immediately
 // (auth + dashboard) or that are tiny stand-alones. Everything else
 // loads on demand to keep the initial JS bundle lean.
@@ -190,6 +191,11 @@ function AppShell() {
           </Suspense>
         </main>
       </div>
+      {/* Global listener for credit-shortage events fired from any
+          node run / fetch path. Once mounted it intercepts the
+          'scalesolo:out-of-credits' window event and pops a modal
+          with the top-up / upgrade CTA. */}
+      <OutOfCreditsModal />
     </div>
   )
 }

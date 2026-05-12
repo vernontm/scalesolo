@@ -1,5 +1,17 @@
 // Tier catalog. Lives in code (not DB) so it's version-controlled.
 
+// Each tier exposes:
+//   profile_limit       — max brand profiles the user can own
+//   credits.ai_tokens   — Claude/Anthropic token bucket
+//   credits.video_units — HeyGen seconds bucket. 1 unit = ~6.7s at V4.
+//                         50 → 10 × 30-second videos OR 5 × 60-sec
+//                         100 → 20 × 30-second OR 10 × 60-sec
+//                         250 → 50 × 30-second OR 27 × 60-sec
+//   limits              — feature gates (active workflows, avatars per
+//                         brand, looks per avatar) for the soft caps
+//                         the schedule / spaces / avatars pages enforce
+//   support             — what kind of support that tier gets, surfaced
+//                         in the pricing UI as a feature row
 export const TIERS = {
   solo_starter: {
     name: 'Solo Starter',
@@ -8,28 +20,49 @@ export const TIERS = {
     annual_price_id:  process.env.STRIPE_PRICE_SOLO_STARTER_ANNUAL,
     monthly_usd: 49,
     annual_usd:  490,
-    credits: { ai_tokens: 100_000, video_units: 10, voice_minutes: 0 },
-    description: 'For solopreneurs starting out.',
+    credits: { ai_tokens: 100_000, video_units: 50, voice_minutes: 0 },
+    limits: {
+      active_workflows: 3,
+      avatars_per_profile: 1,
+      looks_per_avatar: 3,
+      public_templates: false,
+    },
+    support: 'Email support',
+    description: 'For solopreneurs starting out. 10 × 30-second avatar videos / month.',
   },
   solo_pro: {
     name: 'Solo Pro',
     profile_limit: 2,
     monthly_price_id: process.env.STRIPE_PRICE_SOLO_PRO,
     annual_price_id:  process.env.STRIPE_PRICE_SOLO_PRO_ANNUAL,
-    monthly_usd: 79,
-    annual_usd:  790,
-    credits: { ai_tokens: 500_000, video_units: 30, voice_minutes: 0 },
-    description: 'The everything plan most users land on.',
+    monthly_usd: 89,
+    annual_usd:  890,
+    credits: { ai_tokens: 500_000, video_units: 100, voice_minutes: 0 },
+    limits: {
+      active_workflows: 10,
+      avatars_per_profile: 3,
+      looks_per_avatar: 6,
+      public_templates: true,
+    },
+    support: 'Priority chat + email',
+    description: 'The everything plan most users land on. 20 × 30-second avatar videos / month.',
   },
   solo_studio: {
     name: 'Solo Studio',
     profile_limit: 5,
     monthly_price_id: process.env.STRIPE_PRICE_SOLO_STUDIO,
     annual_price_id:  process.env.STRIPE_PRICE_SOLO_STUDIO_ANNUAL,
-    monthly_usd: 149,
-    annual_usd:  1490,
-    credits: { ai_tokens: 2_000_000, video_units: 100, voice_minutes: 0 },
-    description: 'Multi-brand creators and agencies of one.',
+    monthly_usd: 229,
+    annual_usd:  2290,
+    credits: { ai_tokens: 2_000_000, video_units: 250, voice_minutes: 0 },
+    limits: {
+      active_workflows: 50,
+      avatars_per_profile: 10,
+      looks_per_avatar: 12,
+      public_templates: true,
+    },
+    support: 'Discord + priority chat + 1:1 onboarding call',
+    description: 'Multi-brand creators and agencies. 50 × 30-second avatar videos / month.',
   },
   founding: {
     name: 'Founding Member',
@@ -39,7 +72,14 @@ export const TIERS = {
     monthly_usd: 39,
     annual_usd:  null,
     lifetime_lock: true,
-    credits: { ai_tokens: 500_000, video_units: 30, voice_minutes: 0 },
+    credits: { ai_tokens: 500_000, video_units: 100, voice_minutes: 0 },
+    limits: {
+      active_workflows: 10,
+      avatars_per_profile: 3,
+      looks_per_avatar: 6,
+      public_templates: true,
+    },
+    support: 'Priority chat + email + founding-member Discord',
     description: 'Lifetime price lock. 100 spots only.',
   },
 }
