@@ -540,6 +540,9 @@ const NODE_RUNNERS = {
       is_text_post: true,
       platforms,
       per_platform: merged,
+      title:         props.edited_title         || body.title         || '',
+      hashtags:      props.edited_hashtags      || body.hashtags      || '',
+      first_comment: props.edited_first_comment || body.first_comment || '',
       caption: merged[platforms[0]] || '',
     }
   },

@@ -6501,13 +6501,17 @@ export const NODE_REGISTRY = {
       for (const p of platforms) {
         merged[p] = (edits[p] && String(edits[p]).trim()) || body.per_platform?.[p] || ''
       }
+      // Title / hashtags / first_comment ride alongside the variants so
+      // schedule_post has the same fields it expects for image/video
+      // posts. The canonical caption falls back to the first variant
+      // for any downstream node that wants a single shared string.
       return {
         is_text_post: true,
         platforms,
         per_platform: merged,
-        // canonical caption = whichever variant we generated for the
-        // first selected platform, used as a fallback if downstream
-        // needs a single caption string.
+        title:         data.props?.edited_title         || body.title         || '',
+        hashtags:      data.props?.edited_hashtags      || body.hashtags      || '',
+        first_comment: data.props?.edited_first_comment || body.first_comment || '',
         caption: merged[platforms[0]] || '',
       }
     },
