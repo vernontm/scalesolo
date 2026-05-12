@@ -8,6 +8,7 @@
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { generateVideoV2, generateVideoV3, MODELS, videoUnitsForModel, listLooksForGroup } from '../_lib/heygen.js'
 import { synthesizeToPublicUrl, looksLikeElevenLabsVoiceId, resolveByoApiKey, sanitizeVoiceSettings, chargeTtsCredits } from '../_lib/elevenlabs.js'
+import { isUserOnTrial, TRIAL_LOCKS } from '../_lib/billing.js'
 
 function estimateDurationSecs(script) {
   const words = (script || '').trim().split(/\s+/).filter(Boolean).length
@@ -60,11 +61,19 @@ export default async function handler(req, res) {
       }
     }
 
-    const modelKey = model_version || avatar.model_version || 'v4'
+    // Trial enforcement. Forces V4 + 30-second hard cap regardless of
+    // what the client sent. Caller can't sneak past it from the
+    // canvas — the server is the only source of truth. Watermark
+    // lock is applied later by the polish step (it reads the same
+    // helper).
+    const onTrial = await isUserOnTrial(auth.user.id)
+    const modelKey = onTrial ? TRIAL_LOCKS.forced_model
+      : (model_version || avatar.model_version || 'v4')
     const modelDef = MODELS[modelKey]
     if (!modelDef) return res.status(400).json({ error: `Unknown model_version: ${modelKey}` })
 
-    const durationSecs = estimateDurationSecs(script)
+    const rawDuration = estimateDurationSecs(script)
+    const durationSecs = onTrial ? Math.min(rawDuration, TRIAL_LOCKS.max_duration_secs) : rawDuration
     const unitsToCharge = videoUnitsForModel(modelKey, durationSecs)
 
     // Pre-flight credit check. Hard wall — if the user doesn't have

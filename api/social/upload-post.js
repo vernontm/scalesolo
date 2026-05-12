@@ -17,6 +17,7 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { resolveUploadpostUser, uploadpostEnsureUserProfile } from '../_lib/uploadpost.js'
+import { isUserOnTrial } from '../_lib/billing.js'
 import { findNextOpenSlot } from '../_lib/scheduling.js'
 import { NotifyKind } from '../_lib/notify.js'
 
@@ -81,6 +82,16 @@ export default async function handler(req, res) {
 
     if (!profile_id || !Array.isArray(platforms) || !platforms.length) {
       return res.status(400).json({ error: 'profile_id, platforms required' })
+    }
+    // Trial users can generate + preview, but they can't publish.
+    // We return the same 402 shape the credit wall uses so the
+    // canvas's existing OutOfCreditsModal handler pops the upgrade
+    // CTA. The error message tells the user exactly why.
+    if (await isUserOnTrial(auth.user.id)) {
+      return res.status(402).json({
+        error: 'Publishing to social accounts is locked during the free trial. Upgrade to start scheduling posts.',
+        code: 'trial_publish_blocked',
+      })
     }
     const isVideo = !!video_url
     const photos = Array.isArray(photo_urls) ? photo_urls.filter(Boolean) : []

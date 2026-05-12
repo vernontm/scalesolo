@@ -84,6 +84,51 @@ export const TIERS = {
   },
 }
 
+// Trial caps — server-enforced on every avatar render and polish
+// step when the user's subscription is in 'trialing' status. Keeps
+// HeyGen cost-per-trial bounded:
+//   - V4 only (we removed V3 / V5 entirely; this is just defensive)
+//   - 30-second hard cap on duration
+//   - ScaleSolo watermark, bottom-center-above-UI position, can't
+//     be changed by the user
+//   - 1 video allowance enforced via the 5-credit trial grant
+// SVG sits in the public sm_icons bucket so it's directly usable as
+// a watermark image URL — sharp can fetch it like any logo.
+export const TRIAL_LOCKS = {
+  forced_model: 'v4',
+  max_duration_secs: 30,
+  forced_watermark_url: 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/sm_icons/scalesolo%20logo.svg',
+  forced_watermark_position: 'bc-safe',
+  forced_watermark_size_pct: 22,
+  trial_video_credits: 5,           // 1 × 30-second V4 render
+  trial_ai_tokens: 5_000,
+}
+
+// Cheap "is this user on a trial right now" check. Reads
+// billing_subscriptions.status — 'trialing' is the only state that
+// triggers the locks. Called from avatar render + polish endpoints
+// so the gating is consistent regardless of which surface kicks off
+// the work.
+//
+// Returns true on trial, false otherwise. Service-role auth assumed
+// — the caller already passed requireUser.
+export async function isUserOnTrial(userId) {
+  if (!userId) return false
+  try {
+    const cust = await (await import('./supabase.js')).supaFetch(
+      `billing_customers?user_id=eq.${userId}&select=id`
+    )
+    const customerId = cust?.[0]?.id
+    if (!customerId) return false
+    const subs = await (await import('./supabase.js')).supaFetch(
+      `billing_subscriptions?customer_id=eq.${customerId}&order=created_at.desc&limit=1&select=status`
+    )
+    return subs?.[0]?.status === 'trialing'
+  } catch {
+    return false
+  }
+}
+
 export function tierForPriceId(priceId) {
   if (!priceId) return null
   for (const [tier, def] of Object.entries(TIERS)) {

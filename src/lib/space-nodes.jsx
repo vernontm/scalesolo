@@ -7126,9 +7126,10 @@ export const NODE_REGISTRY = {
     initialProps: {},
     Body: AvatarRenderBody,
     run: async ({ data, inputs, ctx, reportProgress }) => {
-      if (data?._ctxIsTrialing) {
-        throw new Error('Avatar video render is locked during free trial. Upgrade for 20% off your first month → /billing')
-      }
+      // Trial users CAN run this once — the server forces V4 + 30s
+      // duration + ScaleSolo watermark. The credit wall (5 trial
+      // credits = 1 × 30s render) stops a second attempt and pops
+      // the upgrade modal automatically.
       const incoming = inputs?.in
       const avatar = pickAvatarConfig(incoming)
       if (!avatar?.avatar_id) throw new Error('Connect an Avatar picker')
@@ -8593,8 +8594,10 @@ export async function runSpace({ ctx, nodes, edges, onNodeChange }) {
       // Tag insufficient-credit errors so the UI can offer a top-up CTA.
       const isCreditError = /insufficient/i.test(err?.message || '')
         || err?.code === 'insufficient_credits'
+        || err?.code === 'trial_publish_blocked'
         || /not enough video credits/i.test(err?.message || '')
         || /no active subscription/i.test(err?.message || '')
+        || /trial/i.test(err?.message || '')
       const finalMsg = isCreditError
         ? `${err.message} — top up in Billing to continue.`
         : err.message

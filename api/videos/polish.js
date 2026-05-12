@@ -27,6 +27,7 @@
 //   4. Upload the result to landing-media via service role.
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { isUserOnTrial, TRIAL_LOCKS } from '../_lib/billing.js'
 import { createClient } from '@supabase/supabase-js'
 import { NotifyKind } from '../_lib/notify.js'
 import { zapcapAddVideoByUrl, zapcapCreateTask, zapcapPollTask } from '../_lib/zapcap.js'
@@ -287,14 +288,15 @@ export default async function handler(req, res) {
   let workdir = null
 
   try {
+    // Destructured as `let` for watermark_* so the trial-lock block
+    // below can reassign them in place without renaming every
+    // downstream reference. Other fields stay const.
     const {
       profile_id, video_url,
-      logo_url, watermark_image_url, music_url, title,
+      logo_url, music_url, title,
       title_style,
       captions_enabled,         // bool — gates the ZapCap pass entirely
       caption_template_id,      // ZapCap template UUID
-      watermark_position = 'br',
-      watermark_size_pct = 25,
       music_volume = 0.15,
       music_fade_secs = 1.0,
       // Voiceover narration — typically an upstream voice_gen output.
@@ -305,10 +307,23 @@ export default async function handler(req, res) {
       loop_video = false,
       mute_video_audio = false,
     } = req.body || {}
+    let watermark_image_url = req.body?.watermark_image_url
+    let watermark_position  = req.body?.watermark_position ?? 'br'
+    let watermark_size_pct  = req.body?.watermark_size_pct ?? 25
     const ts = title_style || {}
 
     if (!profile_id || !video_url) return res.status(400).json({ error: 'profile_id + video_url required' })
     await assertProfileAccess(auth.user.id, profile_id)
+
+    // Trial enforcement. Reassigns the watermark_* lets so every
+    // downstream code path (Shotstack early, worker forward, ffmpeg
+    // local fallback) sees the locked values. No way for the client
+    // to override.
+    if (await isUserOnTrial(auth.user.id)) {
+      watermark_image_url = TRIAL_LOCKS.forced_watermark_url
+      watermark_position  = TRIAL_LOCKS.forced_watermark_position
+      watermark_size_pct  = TRIAL_LOCKS.forced_watermark_size_pct
+    }
 
     const cust = await supaFetch(`billing_customers?user_id=eq.${auth.user.id}&select=id`)
     const customerId = cust?.[0]?.id
