@@ -22,6 +22,7 @@ import { createPortal } from 'react-dom'
 import {
   Upload, Loader2, Sparkles, CalendarClock, Send, Download, Trash2,
   Check, X, AlertCircle, Image as ImageIcon, Video as VideoIcon, ChevronDown, Zap,
+  RefreshCw,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase.js'
 import { toast, confirmDialog } from './Toast.jsx'
@@ -595,6 +596,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
       const summary = body.updated != null ? `${label}: ${body.updated}/${body.total ?? ids.length} updated`
         : body.scheduled != null ? `${label}: ${body.scheduled} scheduled${body.skipped ? `, ${body.skipped} skipped` : ''}`
         : body.submitted != null ? `${label}: ${body.submitted} submitted${body.failed ? `, ${body.failed} failed` : ''}`
+        : body.resynced != null ? `${label}: ${body.resynced} resynced${body.failed ? `, ${body.failed} failed` : ''}${body.skipped ? `, ${body.skipped} skipped` : ''}`
         : `${label} done`
       toast({ kind: 'success', message: summary })
       refresh()
@@ -807,6 +809,23 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           }}
           style={{ padding: '8px 12px' }}
         >{busyAction === 'publish-selected' ? <Loader2 size={13} className="spin" /> : <Send size={13} />} Publish Selected</button>
+        {/* Resync existing scheduled rows with Upload-Post so the queued
+            job matches the current platforms / caption / hashtags
+            / media on the row. Use when you edited platforms or media
+            on a row whose Upload-Post job was already submitted. */}
+        <button
+          className="btn-ghost" disabled={busyAction !== null}
+          onClick={async () => {
+            const ok = await confirmDialog({
+              title: 'Resync scheduled posts with Upload-Post?',
+              message: 'Cancels each scheduled job and re-submits with the current platforms / caption / hashtags / media. Safe to run anytime.',
+              confirmText: 'Resync',
+            })
+            if (ok) callBulk('resync-upload-post', 'Resync')
+          }}
+          style={{ padding: '8px 12px' }}
+          title="Cancel + re-submit every scheduled row with its current payload"
+        >{busyAction === 'resync-upload-post' ? <Loader2 size={13} className="spin" /> : <RefreshCw size={13} />} Resync Scheduled</button>
         {/* Bulk delete — only renders once at least one row is checked so
            the toolbar isn't cluttered when nothing's selected. */}
         {selected.size > 0 && (
