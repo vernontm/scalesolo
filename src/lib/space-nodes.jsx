@@ -4498,6 +4498,30 @@ export function findUpstreamAvatarPicker(nodeId, nodes, edges) {
   return false
 }
 
+// Returns true when a text_post_gen node sits anywhere upstream of
+// the given nodeId. Used by Schedule post to gate its platform
+// picker — text-only posts can only land on the platforms that
+// natively accept text (X, Threads, Facebook, LinkedIn), even
+// though the brand has TikTok / Instagram / YouTube / Pinterest
+// connected for image / video posts.
+export function findUpstreamTextPost(nodeId, nodes, edges) {
+  if (!nodeId || !Array.isArray(nodes) || !Array.isArray(edges)) return false
+  const seen = new Set([nodeId])
+  const queue = [nodeId]
+  while (queue.length) {
+    const cur = queue.shift()
+    for (const e of edges) {
+      if (e.target !== cur || seen.has(e.source)) continue
+      seen.add(e.source)
+      const src = nodes.find((n) => n.id === e.source)
+      if (!src) continue
+      if (src.data?.type === 'text_post_gen') return true
+      queue.push(e.source)
+    }
+  }
+  return false
+}
+
 export function findUpstreamScript(nodeId, nodes, edges) {
   if (!nodeId) return ''
   const seen = new Set([nodeId])
@@ -5546,15 +5570,20 @@ export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges })
 // same description to all selected platforms (Upload-Post takes one
 // string), so the *minimum* of the selected caps is the safe upper
 // bound. Anything past gets truncated by the platform on its end.
+// `kinds` controls which post types each platform can accept. Used
+// by the schedule_post picker to gate platforms when the upstream
+// chain is a text-only post (only X / Threads / Facebook / LinkedIn
+// support text posts on Upload-Post). TikTok / Instagram / YouTube
+// / Pinterest never accept text-only posts.
 const SCHEDULE_PLATFORMS = [
-  { id: 'tiktok',    label: 'TikTok',    kinds: ['video'],          cap: 2200 },
-  { id: 'instagram', label: 'Instagram', kinds: ['image', 'video'], cap: 2200 },
-  { id: 'youtube',   label: 'YouTube',   kinds: ['video'],          cap: 5000 },
-  { id: 'x',         label: 'X',         kinds: ['image', 'video'], cap: 280  },
-  { id: 'threads',   label: 'Threads',   kinds: ['image', 'video'], cap: 500  },
-  { id: 'linkedin',  label: 'LinkedIn',  kinds: ['image', 'video'], cap: 3000 },
-  { id: 'facebook',  label: 'Facebook',  kinds: ['image', 'video'], cap: 63206 },
-  { id: 'pinterest', label: 'Pinterest', kinds: ['image', 'video'], cap: 500  },
+  { id: 'tiktok',    label: 'TikTok',    kinds: ['video'],                  cap: 2200 },
+  { id: 'instagram', label: 'Instagram', kinds: ['image', 'video'],         cap: 2200 },
+  { id: 'youtube',   label: 'YouTube',   kinds: ['video'],                  cap: 5000 },
+  { id: 'x',         label: 'X',         kinds: ['image', 'video', 'text'], cap: 280  },
+  { id: 'threads',   label: 'Threads',   kinds: ['image', 'video', 'text'], cap: 500  },
+  { id: 'linkedin',  label: 'LinkedIn',  kinds: ['image', 'video', 'text'], cap: 3000 },
+  { id: 'facebook',  label: 'Facebook',  kinds: ['image', 'video', 'text'], cap: 63206 },
+  { id: 'pinterest', label: 'Pinterest', kinds: ['image', 'video'],         cap: 500  },
 ]
 
 function SchedulePostBody({ data, onPatch }) {
@@ -5565,9 +5594,30 @@ function SchedulePostBody({ data, onPatch }) {
   const brandSchedule = data._ctxBrandSchedule || null
   const profileId = data._ctxProfileId
   const when = props.when || 'now'
+  // Detect a text-only post upstream. When true, the picker hides
+  // every platform that can't accept text (TikTok / Instagram /
+  // YouTube / Pinterest) and trims any of those out of the saved
+  // selection so a stale graph doesn't leave invalid platforms in
+  // place after switching from a video chain to a text chain.
+  const isTextChain = !!data._ctxUpstreamIsTextPost
+  useEffect(() => {
+    if (!isTextChain || !platforms.length) return
+    const validIds = new Set(SCHEDULE_PLATFORMS.filter((p) => p.kinds.includes('text')).map((p) => p.id))
+    const trimmed = platforms.filter((id) => validIds.has(id))
+    if (trimmed.length !== platforms.length) onPatch({ platforms: trimmed })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTextChain])
 
   const togglePlatform = (id) => {
     if (!connected.includes(id)) return  // hard-gated, button is disabled too
+    // For text-only upstream chains, hard-gate platforms that don't
+    // accept text. Without this the user could toggle (eg) TikTok on
+    // and hit a confusing "TikTok can't accept text content" error
+    // at run time.
+    if (isTextChain) {
+      const def = SCHEDULE_PLATFORMS.find((p) => p.id === id)
+      if (!def || !def.kinds.includes('text')) return
+    }
     const next = platforms.includes(id) ? platforms.filter((p) => p !== id) : [...platforms, id]
     onPatch({ platforms: next })
   }
@@ -5614,16 +5664,29 @@ function SchedulePostBody({ data, onPatch }) {
             No social accounts connected yet. Open <a href="/schedule" style={{ color: 'inherit', fontWeight: 700 }}>Schedule</a> to link your platforms.
           </div>
         )}
+        {isTextChain && (
+          <div style={{
+            fontSize: 10, color: 'var(--muted)', marginBottom: 6, lineHeight: 1.4,
+          }}>
+            Only platforms that allow text-only posts are available because a Text post step is connected upstream.
+          </div>
+        )}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
           {SCHEDULE_PLATFORMS.map((p) => {
             const on = platforms.includes(p.id)
-            const enabled = connected.includes(p.id)
+            const textCompat = !isTextChain || p.kinds.includes('text')
+            const enabled = connected.includes(p.id) && textCompat
+            const disabledReason = !connected.includes(p.id)
+              ? 'Not connected — link this platform on the Schedule page first.'
+              : !textCompat
+                ? `${p.label} doesn't accept text-only posts.`
+                : ''
             return (
               <button
                 key={p.id}
                 type="button"
                 disabled={!enabled}
-                title={enabled ? '' : 'Not connected — link this platform on the Schedule page first.'}
+                title={disabledReason}
                 onClick={(e) => { e.stopPropagation(); togglePlatform(p.id) }}
                 style={{
                   fontSize: 10.5, padding: '4px 9px', borderRadius: 999,

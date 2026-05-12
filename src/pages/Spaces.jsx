@@ -34,7 +34,7 @@ import {
   NODE_REGISTRY, NODE_CATEGORIES, downloadUrl, readImageItems,
   AUTORUN_OPTIONS, autoRunIntervalMs, NODE_COST_HINT,
   findUpstreamVideoUrl, findUpstreamScript, findUpstreamLogoUrl,
-  findUpstreamAvatarPicker,
+  findUpstreamAvatarPicker, findUpstreamTextPost,
 } from '../lib/space-nodes.jsx'
 
 // Defensive deep-clone for run snapshots — JSON.parse(JSON.stringify(x))
@@ -3137,6 +3137,10 @@ function SpaceBuilder({ space, onSave, onClose }) {
           _ctxBrandCTA: activeProfile?.brand_cta || '',
           _ctxIncomingDescriptionLength: descLen,
           _ctxIsTrialing: subscriptionStatus === 'trialing',
+          // Lets the picker know to hide platforms that don't accept
+          // text-only posts. Detected by walking upstream for any
+          // text_post_gen node.
+          _ctxUpstreamIsTextPost: findUpstreamTextPost(n.id, nodes, edges),
         } }
       }
       if (t === 'save_library') {
