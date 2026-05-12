@@ -103,6 +103,31 @@ export default function Login() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [info, setInfo] = useState(null)
+  // Resend-confirmation state. We surface the link any time we've
+  // shown the "check your email" info banner, plus a 30-second
+  // cooldown so users don't spam Supabase's auth SMTP rate limit
+  // (2/hr/address on default; higher on a custom SMTP provider).
+  const [resending, setResending] = useState(false)
+  const [resendCooldown, setResendCooldown] = useState(0)
+  useEffect(() => {
+    if (resendCooldown <= 0) return
+    const t = setTimeout(() => setResendCooldown((s) => s - 1), 1000)
+    return () => clearTimeout(t)
+  }, [resendCooldown])
+  async function handleResend() {
+    if (!email || resending || resendCooldown > 0) return
+    setResending(true); setError(null)
+    try {
+      const { error: err } = await supabase.auth.resend({ type: 'signup', email })
+      if (err) throw err
+      setInfo('Confirmation email resent. Check your inbox (and spam folder).')
+      setResendCooldown(30)
+    } catch (e) {
+      setError(e.message || 'Could not resend confirmation email.')
+    } finally {
+      setResending(false)
+    }
+  }
   // Stripe-session prefill: read email + tier off the session and
   // lock the email field so the account ties to the right Stripe
   // customer. emailLocked turns the input read-only.
@@ -330,9 +355,32 @@ export default function Login() {
 
           <button type="submit" className="btn-primary" disabled={busy} style={{ marginTop: 6 }}>
             {busy ? <span className="spinner" /> : <Sparkles size={15} />}
-            {mode === 'signin' ? 'Sign in' : (tier ? 'Continue to checkout' : 'Create account')}
+            {mode === 'signin'
+              ? 'Sign in'
+              : stripeSessionId
+                ? 'Finish account'
+                : tier
+                  ? 'Continue to checkout'
+                  : 'Create account'}
           </button>
         </form>
+
+        {/* Resend confirmation email — only useful after a signup attempt
+            that triggered the "check your email" path. Hidden until the
+            user has typed an email and we've shown the info banner. */}
+        {mode === 'signup' && info && email && (
+          <div style={{ ...switchLine, marginTop: 12 }}>
+            Didn't get the email?
+            <button
+              type="button"
+              style={{ ...switchBtn, opacity: (resending || resendCooldown > 0) ? 0.5 : 1, cursor: (resending || resendCooldown > 0) ? 'not-allowed' : 'pointer' }}
+              disabled={resending || resendCooldown > 0}
+              onClick={handleResend}
+            >
+              {resending ? 'Sending…' : resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend confirmation'}
+            </button>
+          </div>
+        )}
 
         <div style={switchLine}>
           {mode === 'signin' ? "Don't have an account?" : 'Already have one?'}
