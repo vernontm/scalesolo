@@ -50,6 +50,54 @@ function safeClone(value) {
   }
 }
 
+// Two-tone "ding" played when a server workflow finishes. We synthesize
+// it with Web Audio instead of shipping an mp3 to keep the bundle lean
+// and dodge format / autoplay quirks. Different intervals for success
+// vs warn so a glance-away user can tell the outcome without looking.
+//   success: rising fifth (G4 → D5), smooth + happy
+//   warn:    falling minor third (F4 → D4), short + alerting
+// Returns silently if AudioContext isn't available (older browsers /
+// SSR) or the tab has never received a user gesture.
+function playRunFinishChime(kind = 'success') {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext
+    if (!AC) return
+    const ctx = new AC()
+    const now = ctx.currentTime
+    const tones = kind === 'success'
+      ? [{ f: 587.33, t: 0.00 }, { f: 880.00, t: 0.14 }]   // D5 → A5
+      : [{ f: 349.23, t: 0.00 }, { f: 261.63, t: 0.18 }]   // F4 → C4
+    for (const { f, t } of tones) {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = 'sine'
+      osc.frequency.value = f
+      // Quick attack, tail off ~0.35s so the chime doesn't drag.
+      gain.gain.setValueAtTime(0, now + t)
+      gain.gain.linearRampToValueAtTime(0.12, now + t + 0.02)
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + t + 0.35)
+      osc.connect(gain).connect(ctx.destination)
+      osc.start(now + t)
+      osc.stop(now + t + 0.4)
+    }
+    // Free the context once the chime is done so we don't leak.
+    setTimeout(() => { try { ctx.close() } catch {} }, 800)
+  } catch { /* swallow — chime is best-effort */ }
+}
+
+// Pretty-print platforms like "TikTok, Instagram, YouTube" given an
+// array of canonical lowercase ids.
+function prettyPlatforms(arr) {
+  const labels = {
+    tiktok: 'TikTok', instagram: 'Instagram', youtube: 'YouTube',
+    facebook: 'Facebook', linkedin: 'LinkedIn', threads: 'Threads',
+    x: 'X', pinterest: 'Pinterest', bluesky: 'Bluesky',
+  }
+  return (Array.isArray(arr) ? arr : [])
+    .map((id) => labels[id] || id)
+    .join(', ')
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom node renderer (one component for every registered type)
 
@@ -2046,8 +2094,12 @@ function SpaceBuilder({ space, onSave, onClose }) {
         }
       } else {
         // Run finalized. Final patch of each node to its terminal
-        // status, then clear the active server-run panel.
+        // status, then transition the bottom-right panel to a sticky
+        // "Run finished" summary (the user closes it themselves).
         const np = row.node_progress || {}
+        const total = row.node_count || Object.keys(np).length
+        const completed = Object.values(np).filter((p) => p && p.status === 'success').length
+        const failed = Object.values(np).filter((p) => p && p.status === 'failed').length
         for (const [nodeId, prog] of Object.entries(np)) {
           if (!prog?.status) continue
           // Hydrate node.data.output from the worker's serialized result
@@ -2059,7 +2111,44 @@ function SpaceBuilder({ space, onSave, onClose }) {
           if (prog.output && typeof prog.output === 'object') patch.output = prog.output
           patchNode(nodeId, patch)
         }
-        setServerRun(null)
+        // Pull platforms from the schedule_post node's output (worker
+        // mirrored its run() return into node_progress.output) so the
+        // summary can show "Scheduled to TikTok, Instagram, YouTube".
+        let postedPlatforms = []
+        for (const prog of Object.values(np)) {
+          const out = prog?.output
+          if (Array.isArray(out?.platforms) && out.platforms.length && !postedPlatforms.length) {
+            postedPlatforms = out.platforms
+          }
+        }
+        // Resolve a human brand name for the summary header. Falls
+        // back to the profile id slice when the brand list hasn't
+        // been loaded yet (rare — Spaces page always loads profiles).
+        const brandName = (profiles || []).find((p) => p.id === selectedProfileId)?.business_name
+          || (selectedProfileId || '').slice(0, 8)
+        const durationMs = row.duration_ms || (row.finished_at && row.started_at
+          ? new Date(row.finished_at).getTime() - new Date(row.started_at).getTime()
+          : 0)
+        // Show the summary panel. Don't clear it on errors either —
+        // partial runs need just as much visibility as successes.
+        setServerRun({
+          finished: true,
+          status: row.status, // success | partial | failed
+          completed, failed, total,
+          brand: brandName,
+          duration_ms: durationMs,
+          platforms: postedPlatforms,
+          errors: Array.isArray(row.errors) ? row.errors : [],
+          finished_at: row.finished_at,
+        })
+        // Audible ping. Different tones for success vs partial/failed
+        // so a glance-away user still knows whether to come check the
+        // canvas. Wrapped in try because Web Audio fails on tabs that
+        // never received a user gesture (browser autoplay gate).
+        try {
+          const success = row.status === 'success'
+          playRunFinishChime(success ? 'success' : 'warn')
+        } catch { /* silent */ }
       }
     }
     // Prime: fetch the latest running row (if any) so a remount mid-run
@@ -3272,12 +3361,13 @@ function SpaceBuilder({ space, onSave, onClose }) {
 
         <FloatingPalette onAdd={(type) => addNode(type)} />
 
-        {/* Live server-run progress panel. Shows up at top-right while
-            a server-side run (manual via /api/spaces/run-now OR cron)
-            is in flight, then disappears when the worker finalizes
-            the space_runs row. Click X to hide for this session — the
-            run continues, you just dismissed the chrome. */}
-        {serverRun && (
+        {/* Live server-run progress panel. Two states:
+              - running: pulsing green dot + progress bar
+              - finished: sticky summary (success/partial/failed),
+                stays until the user closes it
+            Click X to dismiss. Running runs continue regardless of
+            dismissal — closing only hides the chrome. */}
+        {serverRun && !serverRun.finished && (
           <div
             role="status" aria-live="polite"
             style={{
@@ -3319,6 +3409,88 @@ function SpaceBuilder({ space, onSave, onClose }) {
             </div>
           </div>
         )}
+
+        {/* Finished-run summary panel. Stays mounted until the user
+            X's it. Color + icon flip by outcome (success / partial /
+            failed). Includes brand name, step count, duration,
+            destination platforms, and a deep link to Schedule. */}
+        {serverRun?.finished && (() => {
+          const isSuccess = serverRun.status === 'success'
+          const isPartial = serverRun.status === 'partial'
+          const accent = isSuccess ? '#2ecc71' : isPartial ? '#f59e0b' : 'var(--red)'
+          const badge = isSuccess ? '✓' : isPartial ? '⚠' : '✕'
+          const headline = isSuccess
+            ? 'Run finished'
+            : isPartial ? 'Run finished with errors' : 'Run failed'
+          const secs = Math.round((serverRun.duration_ms || 0) / 1000)
+          const mins = Math.floor(secs / 60)
+          const ss = String(secs % 60).padStart(2, '0')
+          const durationLabel = mins > 0 ? `${mins}:${ss}` : `${secs}s`
+          const platformsLabel = prettyPlatforms(serverRun.platforms)
+          const firstError = serverRun.errors?.[0]?.msg
+          return (
+            <div
+              role="status" aria-live="polite"
+              style={{
+                position: 'fixed', right: 16, bottom: 88, zIndex: 90,
+                background: 'var(--surface)',
+                border: `1px solid ${accent}`,
+                borderRadius: 12, padding: '14px 16px',
+                boxShadow: '0 14px 32px rgba(0,0,0,0.4)',
+                minWidth: 280, maxWidth: 360,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 8 }}>
+                <span style={{
+                  flexShrink: 0, width: 22, height: 22, borderRadius: 999,
+                  background: accent, color: '#000',
+                  display: 'grid', placeItems: 'center',
+                  fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13, lineHeight: 1,
+                }}>{badge}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13.5, color: accent }}>
+                    {headline}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-soft)', marginTop: 2 }}>
+                    {serverRun.brand ? `${serverRun.brand} · ` : ''}{serverRun.completed}/{serverRun.total} steps · {durationLabel}
+                  </div>
+                </div>
+                <button
+                  aria-label="Dismiss"
+                  onClick={() => setServerRun(null)}
+                  style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 0, fontSize: 16, lineHeight: 1 }}
+                >×</button>
+              </div>
+              {platformsLabel && (
+                <div style={{ fontSize: 11.5, color: 'var(--text-soft)', marginBottom: 8 }}>
+                  Scheduled to {platformsLabel}
+                </div>
+              )}
+              {firstError && !isSuccess && (
+                <div style={{
+                  fontSize: 11, color: 'var(--red)', marginBottom: 8,
+                  padding: '6px 8px', borderRadius: 6,
+                  background: 'rgba(239,68,68,0.10)',
+                  border: '1px solid rgba(239,68,68,0.3)',
+                  wordBreak: 'break-word',
+                }}>
+                  {firstError}
+                  {serverRun.errors.length > 1 ? ` (+${serverRun.errors.length - 1} more)` : ''}
+                </div>
+              )}
+              <a
+                href="/schedule"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  fontFamily: 'var(--font-display)', fontWeight: 700,
+                  fontSize: 11.5, color: accent, textDecoration: 'none',
+                }}
+              >
+                Open Schedule →
+              </a>
+            </div>
+          )
+        })()}
 
         {/* Bottom-right FAB: toggles the workflow-guide side panel.
             Replaces the old AI chat agent that lived in this slot — for
