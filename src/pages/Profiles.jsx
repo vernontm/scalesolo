@@ -127,9 +127,8 @@ const SECTIONS = [
     id: 'music',
     label: 'Music library',
     icon: Music,
-    description: 'Background tracks for finished videos. Pick one per render or randomize across the library.',
-    isComplete: (f) => Array.isArray(f.music_tracks) && f.music_tracks.length > 0,
-    requiresSavedProfile: true,
+    description: 'Background tracks for finished videos. Shared across every brand profile on your account.',
+    isComplete: () => true, // user-level; no per-brand completion gate
   },
 ]
 
@@ -263,12 +262,10 @@ function ProfileEditor({ profile, onClose, onSaved }) {
               {activeSection === 'handles' && (
                 <HandlesSection form={form} set={set} />
               )}
-              {activeSection === 'music' && profile?.id && (
+              {activeSection === 'music' && (
                 <MusicLibrarySection
-                  profileId={profile.id}
+                  userId={session?.user?.id}
                   token={session.access_token}
-                  initialTracks={Array.isArray(form.music_tracks) ? form.music_tracks : []}
-                  onTracksChange={(arr) => set('music_tracks', arr)}
                 />
               )}
             </div>
@@ -624,12 +621,13 @@ function TrainingSection({ profile, session, form, set }) {
   )
 }
 
-// ─── Music library — brand-scoped catalog of background tracks ───────────
-// Upload mp3 / m4a / wav files; each gets a name + a public URL. Finish
-// video node pulls this list and lets the user pick a specific track or
-// randomize across the whole library.
-function MusicLibrarySection({ profileId, token, initialTracks, onTracksChange }) {
-  const [tracks, setTracks] = useState(initialTracks || [])
+// ─── Music library — USER-scoped catalog of background tracks ────────────
+// Shared across every brand profile on the account. Upload mp3 / m4a /
+// wav files; each gets a name + a public URL. The Finish video node
+// pulls this list (via /api/account/music-tracks) and lets the user
+// pick a specific track or randomize across the library.
+function MusicLibrarySection({ userId, token }) {
+  const [tracks, setTracks] = useState([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [playingId, setPlayingId] = useState(null)
@@ -639,25 +637,21 @@ function MusicLibrarySection({ profileId, token, initialTracks, onTracksChange }
   const audioRef = useRef(null)
 
   // Refresh from server on mount so we get any tracks added from
-  // another tab / device since the editor opened.
+  // another tab / device / brand profile since the editor opened.
   useEffect(() => {
-    if (!profileId || !token) return
+    if (!token) return
     let cancelled = false
-    fetch(`/api/profiles/music-tracks?profile_id=${profileId}`, {
+    fetch(`/api/account/music-tracks`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => r.json())
       .then((b) => {
         if (cancelled) return
-        if (Array.isArray(b?.tracks)) {
-          setTracks(b.tracks)
-          onTracksChange?.(b.tracks)
-        }
+        if (Array.isArray(b?.tracks)) setTracks(b.tracks)
       })
       .catch(() => {})
     return () => { cancelled = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profileId, token])
+  }, [token])
 
   const onUpload = async (files) => {
     const list = Array.from(files || [])
@@ -666,19 +660,22 @@ function MusicLibrarySection({ profileId, token, initialTracks, onTracksChange }
     const added = []
     for (const f of list) {
       try {
-        // Upload to landing-media/<profile_id>/music/<filename>
+        // Upload to landing-media/account/<user_id>/music/<filename> so
+        // the file stays accessible across every brand the user owns.
+        // Falls back to a "shared" path when userId isn't known yet
+        // (rare — only on the first render after sign-in).
         const ext = (f.name.split('.').pop() || 'mp3').toLowerCase()
-        const path = `${profileId}/music/${Date.now()}-${Math.random().toString(36).slice(2, 6)}.${ext}`
+        const folder = userId ? `account/${userId}` : 'account/shared'
+        const path = `${folder}/music/${Date.now()}-${Math.random().toString(36).slice(2, 6)}.${ext}`
         const { error: upErr } = await supabase.storage.from('landing-media').upload(path, f, {
           contentType: f.type || 'audio/mpeg', upsert: false,
         })
         if (upErr) throw new Error(upErr.message)
         const { data: pub } = supabase.storage.from('landing-media').getPublicUrl(path)
-        const r = await fetch(`/api/profiles/music-tracks`, {
+        const r = await fetch(`/api/account/music-tracks`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({
-            profile_id: profileId,
             url: pub.publicUrl,
             name: f.name.replace(/\.[^.]+$/, '').slice(0, 80),
           }),
@@ -690,16 +687,14 @@ function MusicLibrarySection({ profileId, token, initialTracks, onTracksChange }
         setError(e.message)
       }
     }
-    const next = [...tracks, ...added]
-    setTracks(next)
-    onTracksChange?.(next)
+    setTracks((cur) => [...cur, ...added])
     setBusy(false)
     if (fileRef.current) fileRef.current.value = ''
   }
 
   const removeTrack = async (id) => {
-    if (!window.confirm('Remove this track from your brand library? Polished videos already using it keep their URL.')) return
-    const r = await fetch(`/api/profiles/music-tracks?profile_id=${profileId}&id=${id}`, {
+    if (!window.confirm('Remove this track from your account-wide music library? Polished videos already using it keep their URL.')) return
+    const r = await fetch(`/api/account/music-tracks?id=${id}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -708,9 +703,7 @@ function MusicLibrarySection({ profileId, token, initialTracks, onTracksChange }
       setError(b?.error || 'Remove failed')
       return
     }
-    const next = tracks.filter((t) => t.id !== id)
-    setTracks(next)
-    onTracksChange?.(next)
+    setTracks((cur) => cur.filter((t) => t.id !== id))
   }
 
   const renameTrack = async (id) => {
@@ -718,18 +711,13 @@ function MusicLibrarySection({ profileId, token, initialTracks, onTracksChange }
     setEditingId(null)
     setDraftName('')
     if (!name) return
-    const r = await fetch(`/api/profiles/music-tracks?profile_id=${profileId}`, {
+    const r = await fetch(`/api/account/music-tracks`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ profile_id: profileId, id, name }),
+      body: JSON.stringify({ id, name }),
     })
-    if (!r.ok) {
-      setError('Rename failed')
-      return
-    }
-    const next = tracks.map((t) => t.id === id ? { ...t, name } : t)
-    setTracks(next)
-    onTracksChange?.(next)
+    if (!r.ok) { setError('Rename failed'); return }
+    setTracks((cur) => cur.map((t) => t.id === id ? { ...t, name } : t))
   }
 
   const togglePlay = (track) => {
@@ -754,6 +742,19 @@ function MusicLibrarySection({ profileId, token, initialTracks, onTracksChange }
 
   return (
     <div>
+      <div style={{
+        marginBottom: 14, padding: '10px 14px',
+        background: 'rgba(14,165,233,0.10)',
+        border: '1px solid rgba(14,165,233,0.30)',
+        borderRadius: 10, fontSize: 12.5, color: 'var(--text-soft)',
+        display: 'flex', alignItems: 'flex-start', gap: 8,
+      }}>
+        <Music size={14} style={{ color: '#0ea5e9', marginTop: 2, flexShrink: 0 }} />
+        <div>
+          <strong style={{ color: '#0ea5e9', fontFamily: 'var(--font-display)' }}>Account-wide library.</strong>{' '}
+          Every brand profile on your account picks from the same set of tracks. Add one here once and it'll show up in the Finish video node for all your brands.
+        </div>
+      </div>
       <div style={{ marginBottom: 14 }}>
         <button
           type="button"
@@ -770,7 +771,7 @@ function MusicLibrarySection({ profileId, token, initialTracks, onTracksChange }
           hidden onChange={(e) => onUpload(e.target.files)}
         />
         <span style={{ marginLeft: 12, fontSize: 12, color: 'var(--muted)' }}>
-          MP3, WAV, M4A. Max 50 tracks per brand.
+          MP3, WAV, M4A. Max 100 tracks per account.
         </span>
       </div>
       {error && (
@@ -781,7 +782,7 @@ function MusicLibrarySection({ profileId, token, initialTracks, onTracksChange }
       {tracks.length === 0 ? (
         <div style={{ padding: 28, textAlign: 'center', color: 'var(--muted)', fontSize: 13, background: 'var(--surface-2)', borderRadius: 10, border: '1px dashed var(--border)' }}>
           <Music size={22} style={{ marginBottom: 8, opacity: 0.5 }} />
-          <div>No music yet. Upload tracks here and they appear in the Finish video node's music dropdown for every workflow.</div>
+          <div>No music yet. Upload tracks here and they appear in the Finish video node's music dropdown across every brand profile on your account.</div>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

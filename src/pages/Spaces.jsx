@@ -1670,6 +1670,25 @@ function SpaceBuilder({ space, onSave, onClose }) {
   const { session, isAdmin } = useAuth()
   const { selectedProfileId, profiles } = useProfile()
   const { refresh: refreshCredits } = useCredits()
+  // Account-wide music library shared across every brand profile.
+  // Fetched once per Spaces mount + on session change. Injected into
+  // video_polish nodes' _ctxMusicTracks so the dropdown can show the
+  // user's tracks regardless of which brand is active.
+  const [accountMusicTracks, setAccountMusicTracks] = useState([])
+  useEffect(() => {
+    if (!session?.access_token) { setAccountMusicTracks([]); return }
+    let cancelled = false
+    fetch('/api/account/music-tracks', {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    })
+      .then((r) => r.json())
+      .then((b) => {
+        if (cancelled) return
+        if (Array.isArray(b?.tracks)) setAccountMusicTracks(b.tracks)
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [session?.access_token])
 
   const [name, setName] = useState(space.name || 'Untitled space')
   // Strip stale runtime fields when loading a saved space. A node saved
@@ -3027,15 +3046,15 @@ function SpaceBuilder({ space, onSave, onClose }) {
       if (t === 'video_polish') {
         // The polish editor uses upstream video + logo for the live
         // overlay preview, plus profile id for the watermark uploader.
-        // Brand music tracks come from the active profile so the body
-        // can populate the music dropdown without a per-mount fetch.
-        const activeProfile = (profiles || []).find((p) => p.id === selectedProfileId)
+        // Music tracks are pulled from the ACCOUNT-wide library
+        // (user_profiles.music_tracks) so every brand the user owns
+        // shares the same set of tracks in the dropdown.
         return { ...n, data: {
           ...n.data,
           _ctxProfileId: selectedProfileId,
           _ctxUpstreamVideoUrl: findUpstreamVideoUrl(n.id, nodes, edges),
           _ctxUpstreamLogoUrl: findUpstreamLogoUrl(n.id, nodes, edges),
-          _ctxMusicTracks: Array.isArray(activeProfile?.music_tracks) ? activeProfile.music_tracks : [],
+          _ctxMusicTracks: accountMusicTracks,
         } }
       }
       if (t === 'voice_gen') {

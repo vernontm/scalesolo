@@ -759,7 +759,9 @@ ${String(script).slice(0, 2000)}
       const wantsLibrary = p.music_mode === 'random' || (p.music_mode === 'library' && p.music_track_id)
       if (wantsLibrary) {
         try {
-          const r = await fetch(`${PORTABLE_BASE}/api/profiles/music-tracks?profile_id=${encodeURIComponent(ctx.profileId)}`, {
+          // Account-wide library (user_profiles.music_tracks). Same
+          // tracks across every brand profile the user owns.
+          const r = await fetch(`${PORTABLE_BASE}/api/account/music-tracks`, {
             headers: ctx.headers,
           })
           const body = await r.json().catch(() => ({}))
