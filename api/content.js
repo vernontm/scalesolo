@@ -71,6 +71,10 @@ async function rescheduleUploadPostJob({ row, newScheduledIso, authToken, req })
     first_comment: row.first_comment || undefined,
     scheduling_mode: 'fixed',
     scheduled_iso: newScheduledIso,
+    // Force the upload-post endpoint to PATCH this row, not insert a
+    // new one. Edits-on-scheduled-row often happen long after the
+    // 5-min dedup window, which without script_id duplicates the row.
+    script_id: row.id,
   }
 
   // Internal call — same Vercel host, forward the user's auth token so

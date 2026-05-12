@@ -520,6 +520,11 @@ async function resyncUploadPost({ req, res, profile_id, script_ids }) {
       first_comment: row.first_comment || undefined,
       scheduling_mode: 'fixed',
       scheduled_iso: row.scheduled_datetime,
+      // Force /api/social/upload-post to PATCH this specific row instead
+      // of inserting a new one. Without this, resync (which runs hours
+      // after the original create) misses the 5-min dedup window and
+      // duplicates pile up on the Schedule page.
+      script_id: row.id,
     }
     try {
       const r = await fetch(`${base}/api/social/upload-post`, {

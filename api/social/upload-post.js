@@ -285,8 +285,23 @@ export default async function handler(req, res) {
       const primaryMediaUrl = mediaUrls?.[0]
       const fiveMinAgo = new Date(Date.now() - 5 * 60_000).toISOString()
 
+      // When the caller passes script_id (resync flow, edits-on-scheduled
+      // -row flow), patch THAT specific row instead of doing the 5-min
+      // media-URL lookup. The lookup window is intentionally short to
+      // avoid stale matches during normal workflows, but resync runs
+      // hours/days after the original create — so without script_id, the
+      // lookup misses and a duplicate row gets inserted.
       let existing = null
-      if (primaryMediaUrl) {
+      if (req.body?.script_id) {
+        try {
+          const matches = await supaFetch(
+            `content_scripts?id=eq.${encodeURIComponent(req.body.script_id)}` +
+            `&select=id,status`
+          )
+          existing = Array.isArray(matches) ? matches[0] : null
+        } catch { /* fall through to lookup */ }
+      }
+      if (!existing && primaryMediaUrl) {
         const matches = await supaFetch(
           `content_scripts?profile_id=eq.${profile_id}` +
           `&media_urls=cs.{${encodeURIComponent('"' + primaryMediaUrl + '"')}}` +
