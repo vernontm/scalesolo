@@ -252,6 +252,11 @@ function overlayPos(pos) {
     case 'tl': return { x: '24', y: '24' }
     case 'tr': return { x: 'main_w-overlay_w-24', y: '24' }
     case 'bl': return { x: '24', y: 'main_h-overlay_h-24' }
+    // Bottom-center, kept above the social-UI safe zone (TikTok / IG
+    // Reels overlay their caption + handle / mute toggle in roughly
+    // the bottom 16-20% of the frame). Anchoring the logo at 18% from
+    // the bottom keeps it visible without being clipped by those UIs.
+    case 'bc-safe': return { x: '(main_w-overlay_w)/2', y: 'main_h-overlay_h-(main_h*0.18)' }
     case 'br': default: return { x: 'main_w-overlay_w-24', y: 'main_h-overlay_h-24' }
   }
 }

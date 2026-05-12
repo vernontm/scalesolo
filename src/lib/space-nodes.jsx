@@ -4734,23 +4734,33 @@ function VideoPolishPreview({ videoUrl, props, logoUrl }) {
         </div>
       )}
       {/* Logo / watermark — actual image if we have one, dashed placeholder otherwise. */}
-      {props.watermark_position && props.watermark_position !== 'none' && (
-        logoUrl ? (
-          <img
-            src={logoUrl} alt=""
-            style={{
-              position: 'absolute',
+      {props.watermark_position && props.watermark_position !== 'none' && (() => {
+        // Position calc — corners use percent insets, the new 'bc-safe'
+        // option (centered horizontally, 18% off the bottom) needs
+        // transform-based centering so it stays centered as the
+        // preview frame scales.
+        const isBcSafe = props.watermark_position === 'bc-safe'
+        const posStyle = isBcSafe
+          ? { bottom: '18%', left: '50%', transform: 'translateX(-50%)' }
+          : {
               ...(props.watermark_position.includes('t') ? { top: '4%' } : { bottom: '4%' }),
               ...(props.watermark_position.includes('l') ? { left: '4%' } : { right: '4%' }),
-              width: `${props.watermark_size_pct ?? 12}%`,
-              objectFit: 'contain',
-            }}
-          />
-        ) : (
+            }
+        if (logoUrl) {
+          return (
+            <img
+              src={logoUrl} alt=""
+              style={{
+                position: 'absolute', ...posStyle,
+                width: `${props.watermark_size_pct ?? 12}%`,
+                objectFit: 'contain',
+              }}
+            />
+          )
+        }
+        return (
           <div style={{
-            position: 'absolute',
-            ...(props.watermark_position.includes('t') ? { top: '4%' } : { bottom: '4%' }),
-            ...(props.watermark_position.includes('l') ? { left: '4%' } : { right: '4%' }),
+            position: 'absolute', ...posStyle,
             width: `${props.watermark_size_pct ?? 12}%`,
             aspectRatio: '3/1',
             background: 'rgba(255,255,255,0.18)',
@@ -4760,7 +4770,7 @@ function VideoPolishPreview({ videoUrl, props, logoUrl }) {
             letterSpacing: '0.06em', textTransform: 'uppercase',
           }}>logo</div>
         )
-      )}
+      })()}
       </div>
       {/* Fullscreen preview overlay — opens when the user clicks the
           maximize button. Click outside or hit Esc closes. The video
@@ -5333,17 +5343,24 @@ export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges })
               border: '1px solid var(--border)', overflow: 'hidden',
             }}>
               {[
-                { id: 'tl', top: 6,  left: 6  },
-                { id: 'tr', top: 6,  right: 6 },
-                { id: 'bl', bottom: 6, left: 6  },
-                { id: 'br', bottom: 6, right: 6 },
+                { id: 'tl',      top: 6,  left: 6  },
+                { id: 'tr',      top: 6,  right: 6 },
+                { id: 'bl',      bottom: 6, left: 6  },
+                { id: 'br',      bottom: 6, right: 6 },
+                // Centered horizontally near the bottom but lifted ~18%
+                // off the bottom edge so it sits above the social-UI
+                // caption / handle band that TikTok and IG Reels stamp
+                // over the frame. Visual position in the preview is
+                // intentionally rounded to "18% from bottom" so the
+                // user can see roughly where it'll land.
+                { id: 'bc-safe', bottom: '18%', left: 'calc(50% - 14px)', title: 'Bottom-center, above social UI' },
               ].map((p) => {
                 const on = (props.watermark_position || 'br') === p.id
                 return (
                   <button
                     key={p.id} type="button"
                     onClick={() => setP({ watermark_position: p.id })}
-                    title={`Place at ${p.id.toUpperCase()}`}
+                    title={p.title || `Place at ${p.id.toUpperCase()}`}
                     style={{
                       position: 'absolute',
                       top: p.top, left: p.left, right: p.right, bottom: p.bottom,
@@ -5393,17 +5410,73 @@ export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges })
         />
         {(props.music_volume ?? 0.15) > 0 && (
           <>
-            <PolishMusicUpload
-              uploadedUrl={props.music_url}
-              uploadedName={props.music_file_name}
-              upstreamUrl={upstreamMusic}
-              profileId={data?._ctxProfileId}
-              onChange={(url, meta) => setP({
-                music_url: url || null,
-                music_file_name: meta?.name || null,
-                music_size_bytes: meta?.size ?? null,
-              })}
-            />
+            {/* Music source dropdown.
+                Modes:
+                  - 'library': pick a specific track from the brand's
+                    music library (default when tracks exist)
+                  - 'random': randomly pick one track per render
+                  - 'custom': fall back to the per-node mp3 uploader for
+                    one-off / experimental tracks
+                Library mode + a non-empty music_tracks_cache + a track
+                id = run() uses that specific URL. Random mode = run()
+                picks a fresh track each invocation. */}
+            {(() => {
+              const tracks = Array.isArray(data?._ctxMusicTracks) ? data._ctxMusicTracks : []
+              const mode = props.music_mode || (tracks.length > 0 ? 'library' : 'custom')
+              return (
+                <>
+                  <div style={labelStyle}>Track source</div>
+                  <select
+                    className="select nodrag"
+                    value={mode === 'library' ? (props.music_track_id || 'library:any')
+                      : mode === 'random' ? 'random'
+                      : 'custom'}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      if (v === 'random') setP({ music_mode: 'random', music_track_id: null })
+                      else if (v === 'custom') setP({ music_mode: 'custom', music_track_id: null })
+                      else if (v === 'library:any' && tracks[0]) setP({ music_mode: 'library', music_track_id: tracks[0].id })
+                      else setP({ music_mode: 'library', music_track_id: v })
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ padding: '6px 8px', fontSize: 12, marginBottom: 10, width: '100%' }}
+                  >
+                    {tracks.length > 0 && (
+                      <optgroup label="From brand library">
+                        {tracks.map((t) => (
+                          <option key={t.id} value={t.id}>{t.name}</option>
+                        ))}
+                        <option value="random">🎲 Randomize across all library tracks</option>
+                      </optgroup>
+                    )}
+                    <option value="custom">Upload a one-off track…</option>
+                  </select>
+                  {tracks.length === 0 && (
+                    <div style={{ fontSize: 10.5, color: 'var(--muted)', marginBottom: 8, lineHeight: 1.4 }}>
+                      No brand tracks yet. Add them in <strong>Profiles → Music library</strong> to use a saved track or randomize across them.
+                    </div>
+                  )}
+                  {mode === 'random' && tracks.length > 0 && (
+                    <div style={{ fontSize: 10.5, color: '#0ea5e9', marginBottom: 8, padding: '6px 8px', background: 'rgba(14,165,233,0.10)', border: '1px solid rgba(14,165,233,0.30)', borderRadius: 6 }}>
+                      Each render will pick a random track from your {tracks.length}-track library.
+                    </div>
+                  )}
+                  {mode === 'custom' && (
+                    <PolishMusicUpload
+                      uploadedUrl={props.music_url}
+                      uploadedName={props.music_file_name}
+                      upstreamUrl={upstreamMusic}
+                      profileId={data?._ctxProfileId}
+                      onChange={(url, meta) => setP({
+                        music_url: url || null,
+                        music_file_name: meta?.name || null,
+                        music_size_bytes: meta?.size ?? null,
+                      })}
+                    />
+                  )}
+                </>
+              )
+            })()}
 
             <div style={labelStyle}>Quick volume</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4, marginBottom: 12 }}>
@@ -7373,7 +7446,23 @@ export const NODE_REGISTRY = {
       if (p.captions_enabled !== false && !p.caption_template_id) {
         throw new Error('Captions are on but no style picked. Open settings → Captions and choose a template.')
       }
-      if (p.music_url) musicUrl = p.music_url
+      // Resolve music source per the dropdown mode:
+      //   - 'library' + music_track_id → use that specific track URL
+      //     from the brand's library
+      //   - 'random' → pick a random track from the library at run time
+      //     (so each render uses a different one)
+      //   - 'custom' / unset → fall back to p.music_url (one-off upload)
+      const libraryTracks = Array.isArray(data?._ctxMusicTracks) ? data._ctxMusicTracks : []
+      if (p.music_mode === 'random' && libraryTracks.length > 0) {
+        const pick = libraryTracks[Math.floor(Math.random() * libraryTracks.length)]
+        if (pick?.url) musicUrl = pick.url
+      } else if (p.music_mode === 'library' && p.music_track_id) {
+        const pick = libraryTracks.find((t) => t.id === p.music_track_id)
+        if (pick?.url) musicUrl = pick.url
+        else if (libraryTracks[0]?.url) musicUrl = libraryTracks[0].url   // saved id no longer exists
+      } else if (p.music_url) {
+        musicUrl = p.music_url
+      }
       // Also pluck a wired-in title from upstream caption_gen so it can
       // override the manually-typed prop without the user re-typing.
       // Plus the source script when an upstream Text / script_gen /

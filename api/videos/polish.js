@@ -169,6 +169,9 @@ function overlayPos(pos) {
     case 'tl': return { x: pad,                          y: pad }
     case 'tr': return { x: `(main_w-overlay_w-${pad})`,  y: pad }
     case 'bl': return { x: pad,                          y: `(main_h-overlay_h-${pad})` }
+    // Centered horizontally, lifted 18% from the bottom so it sits
+    // above where TikTok / IG Reels render the caption + handle band.
+    case 'bc-safe': return { x: `(main_w-overlay_w)/2`, y: `(main_h-overlay_h-(main_h*0.18))` }
     case 'br':
     default:   return { x: `(main_w-overlay_w-${pad})`,  y: `(main_h-overlay_h-${pad})` }
   }

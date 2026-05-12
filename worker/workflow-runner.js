@@ -737,7 +737,7 @@ ${String(script).slice(0, 2000)}
     const p = node.data?.props || {}
     const videoUrls = pickAllVideoUrls(inputs)
     if (!videoUrls.length) throw new Error('video_polish needs an upstream video')
-    let voiceoverUrl = null, musicUrl = p.music_url || null, logoUrl = null
+    let voiceoverUrl = null, musicUrl = null, logoUrl = null
     let upstreamTitle = '', upstreamScript = ''
     for (const v of asArr(inputs)) {
       if (!v || typeof v !== 'object') continue
@@ -750,6 +750,31 @@ ${String(script).slice(0, 2000)}
         else if (typeof v.full_script === 'string') upstreamScript = v.full_script
         else if (typeof v.text === 'string') upstreamScript = v.text
       }
+    }
+    // Resolve music source. Same modes as the browser run: library +
+    // track id, random across the library, or a one-off custom URL.
+    // For server runs we have to fetch the brand's tracks since they
+    // aren't carried on the saved node props.
+    if (!musicUrl) {
+      const wantsLibrary = p.music_mode === 'random' || (p.music_mode === 'library' && p.music_track_id)
+      if (wantsLibrary) {
+        try {
+          const r = await fetch(`${PORTABLE_BASE}/api/profiles/music-tracks?profile_id=${encodeURIComponent(ctx.profileId)}`, {
+            headers: ctx.headers,
+          })
+          const body = await r.json().catch(() => ({}))
+          const tracks = Array.isArray(body?.tracks) ? body.tracks : []
+          if (p.music_mode === 'random' && tracks.length > 0) {
+            musicUrl = tracks[Math.floor(Math.random() * tracks.length)]?.url || null
+          } else if (p.music_mode === 'library' && p.music_track_id) {
+            const pick = tracks.find((t) => t.id === p.music_track_id) || tracks[0]
+            if (pick?.url) musicUrl = pick.url
+          }
+        } catch (e) {
+          console.warn('[video_polish] music_tracks fetch failed:', e?.message)
+        }
+      }
+      if (!musicUrl && p.music_url) musicUrl = p.music_url
     }
     let titleText = upstreamTitle || (p.title || '').trim()
     // Auto-title fallback. The browser path calls /api/videos/auto-title

@@ -4,6 +4,7 @@ import {
   Plus, Building2, Edit3, Trash2, X, Save, Sparkles, Check, Crown,
   Upload, ClipboardCopy, MessageSquare, Wand2, Loader2, ChevronRight,
   CircleDashed, CheckCircle2, Mic, Calendar, Share2, Palette, ChevronDown,
+  Music, Play, Pause,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
@@ -121,6 +122,14 @@ const SECTIONS = [
     icon: Share2,
     description: "Where you post. Used for @mentions, hashtags, and links.",
     isComplete: (f) => !!(f.instagram_handle || f.tiktok_handle || f.youtube_handle || f.linkedin_handle || f.threads_handle || f.x_handle),
+  },
+  {
+    id: 'music',
+    label: 'Music library',
+    icon: Music,
+    description: 'Background tracks for finished videos. Pick one per render or randomize across the library.',
+    isComplete: (f) => Array.isArray(f.music_tracks) && f.music_tracks.length > 0,
+    requiresSavedProfile: true,
   },
 ]
 
@@ -253,6 +262,14 @@ function ProfileEditor({ profile, onClose, onSaved }) {
               )}
               {activeSection === 'handles' && (
                 <HandlesSection form={form} set={set} />
+              )}
+              {activeSection === 'music' && profile?.id && (
+                <MusicLibrarySection
+                  profileId={profile.id}
+                  token={session.access_token}
+                  initialTracks={Array.isArray(form.music_tracks) ? form.music_tracks : []}
+                  onTracksChange={(arr) => set('music_tracks', arr)}
+                />
               )}
             </div>
 
@@ -603,6 +620,228 @@ function TrainingSection({ profile, session, form, set }) {
         onRulesChange={(key, arr) => set(key, arr)}
       />
       <VoiceSummaryCard profileId={profile.id} session={session} />
+    </div>
+  )
+}
+
+// ─── Music library — brand-scoped catalog of background tracks ───────────
+// Upload mp3 / m4a / wav files; each gets a name + a public URL. Finish
+// video node pulls this list and lets the user pick a specific track or
+// randomize across the whole library.
+function MusicLibrarySection({ profileId, token, initialTracks, onTracksChange }) {
+  const [tracks, setTracks] = useState(initialTracks || [])
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  const [playingId, setPlayingId] = useState(null)
+  const [editingId, setEditingId] = useState(null)
+  const [draftName, setDraftName] = useState('')
+  const fileRef = useRef(null)
+  const audioRef = useRef(null)
+
+  // Refresh from server on mount so we get any tracks added from
+  // another tab / device since the editor opened.
+  useEffect(() => {
+    if (!profileId || !token) return
+    let cancelled = false
+    fetch(`/api/profiles/music-tracks?profile_id=${profileId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((b) => {
+        if (cancelled) return
+        if (Array.isArray(b?.tracks)) {
+          setTracks(b.tracks)
+          onTracksChange?.(b.tracks)
+        }
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId, token])
+
+  const onUpload = async (files) => {
+    const list = Array.from(files || [])
+    if (!list.length) return
+    setBusy(true); setError(null)
+    const added = []
+    for (const f of list) {
+      try {
+        // Upload to landing-media/<profile_id>/music/<filename>
+        const ext = (f.name.split('.').pop() || 'mp3').toLowerCase()
+        const path = `${profileId}/music/${Date.now()}-${Math.random().toString(36).slice(2, 6)}.${ext}`
+        const { error: upErr } = await supabase.storage.from('landing-media').upload(path, f, {
+          contentType: f.type || 'audio/mpeg', upsert: false,
+        })
+        if (upErr) throw new Error(upErr.message)
+        const { data: pub } = supabase.storage.from('landing-media').getPublicUrl(path)
+        const r = await fetch(`/api/profiles/music-tracks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            profile_id: profileId,
+            url: pub.publicUrl,
+            name: f.name.replace(/\.[^.]+$/, '').slice(0, 80),
+          }),
+        })
+        const body = await r.json().catch(() => ({}))
+        if (!r.ok) throw new Error(body?.error || `Add track failed (${r.status})`)
+        if (body?.track) added.push(body.track)
+      } catch (e) {
+        setError(e.message)
+      }
+    }
+    const next = [...tracks, ...added]
+    setTracks(next)
+    onTracksChange?.(next)
+    setBusy(false)
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
+  const removeTrack = async (id) => {
+    if (!window.confirm('Remove this track from your brand library? Polished videos already using it keep their URL.')) return
+    const r = await fetch(`/api/profiles/music-tracks?profile_id=${profileId}&id=${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!r.ok) {
+      const b = await r.json().catch(() => ({}))
+      setError(b?.error || 'Remove failed')
+      return
+    }
+    const next = tracks.filter((t) => t.id !== id)
+    setTracks(next)
+    onTracksChange?.(next)
+  }
+
+  const renameTrack = async (id) => {
+    const name = (draftName || '').trim()
+    setEditingId(null)
+    setDraftName('')
+    if (!name) return
+    const r = await fetch(`/api/profiles/music-tracks?profile_id=${profileId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ profile_id: profileId, id, name }),
+    })
+    if (!r.ok) {
+      setError('Rename failed')
+      return
+    }
+    const next = tracks.map((t) => t.id === id ? { ...t, name } : t)
+    setTracks(next)
+    onTracksChange?.(next)
+  }
+
+  const togglePlay = (track) => {
+    const el = audioRef.current
+    if (!el) return
+    if (playingId === track.id && !el.paused) {
+      el.pause()
+      setPlayingId(null)
+    } else {
+      el.src = track.url
+      el.play().catch(() => {})
+      setPlayingId(track.id)
+    }
+  }
+  useEffect(() => {
+    const el = audioRef.current
+    if (!el) return
+    const onEnded = () => setPlayingId(null)
+    el.addEventListener('ended', onEnded)
+    return () => el.removeEventListener('ended', onEnded)
+  }, [])
+
+  return (
+    <div>
+      <div style={{ marginBottom: 14 }}>
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={busy}
+          className="btn-primary"
+          style={{ padding: '8px 14px', fontSize: 13 }}
+        >
+          {busy ? <Loader2 size={13} className="spin" /> : <Upload size={13} />} Upload tracks
+        </button>
+        <input
+          ref={fileRef} type="file" multiple
+          accept="audio/mpeg,audio/mp3,audio/wav,audio/x-m4a,audio/mp4,.mp3,.wav,.m4a"
+          hidden onChange={(e) => onUpload(e.target.files)}
+        />
+        <span style={{ marginLeft: 12, fontSize: 12, color: 'var(--muted)' }}>
+          MP3, WAV, M4A. Max 50 tracks per brand.
+        </span>
+      </div>
+      {error && (
+        <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, marginBottom: 12 }}>
+          {error}
+        </div>
+      )}
+      {tracks.length === 0 ? (
+        <div style={{ padding: 28, textAlign: 'center', color: 'var(--muted)', fontSize: 13, background: 'var(--surface-2)', borderRadius: 10, border: '1px dashed var(--border)' }}>
+          <Music size={22} style={{ marginBottom: 8, opacity: 0.5 }} />
+          <div>No music yet. Upload tracks here and they appear in the Finish video node's music dropdown for every workflow.</div>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {tracks.map((t) => (
+            <div key={t.id} style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '8px 12px', borderRadius: 8,
+              background: 'var(--surface-2)', border: '1px solid var(--border)',
+            }}>
+              <button
+                type="button"
+                onClick={() => togglePlay(t)}
+                title={playingId === t.id ? 'Pause' : 'Preview'}
+                style={{
+                  width: 30, height: 30, borderRadius: 999,
+                  background: playingId === t.id ? 'var(--red)' : 'var(--surface)',
+                  color: playingId === t.id ? '#fff' : 'var(--text)',
+                  border: '1px solid var(--border)', cursor: 'pointer',
+                  display: 'grid', placeItems: 'center', flexShrink: 0,
+                }}
+              >
+                {playingId === t.id ? <Pause size={13} /> : <Play size={13} />}
+              </button>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {editingId === t.id ? (
+                  <input
+                    autoFocus
+                    value={draftName}
+                    onChange={(e) => setDraftName(e.target.value)}
+                    onBlur={() => renameTrack(t.id)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') renameTrack(t.id); if (e.key === 'Escape') { setEditingId(null); setDraftName('') } }}
+                    className="input"
+                    style={{ padding: '4px 8px', fontSize: 13 }}
+                  />
+                ) : (
+                  <div
+                    onDoubleClick={() => { setEditingId(t.id); setDraftName(t.name) }}
+                    title="Double-click to rename"
+                    style={{ fontSize: 13, fontWeight: 600 }}
+                  >{t.name}</div>
+                )}
+                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                  Added {t.added_at ? new Date(t.added_at).toLocaleDateString() : '—'}
+                </div>
+              </div>
+              <button
+                onClick={() => removeTrack(t.id)}
+                title="Remove from library"
+                style={{
+                  width: 26, height: 26, borderRadius: 6,
+                  background: 'transparent', border: '1px solid transparent',
+                  color: 'var(--muted)', cursor: 'pointer',
+                  display: 'grid', placeItems: 'center',
+                }}
+              ><Trash2 size={13} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+      <audio ref={audioRef} style={{ display: 'none' }} />
     </div>
   )
 }

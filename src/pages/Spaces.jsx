@@ -3027,11 +3027,15 @@ function SpaceBuilder({ space, onSave, onClose }) {
       if (t === 'video_polish') {
         // The polish editor uses upstream video + logo for the live
         // overlay preview, plus profile id for the watermark uploader.
+        // Brand music tracks come from the active profile so the body
+        // can populate the music dropdown without a per-mount fetch.
+        const activeProfile = (profiles || []).find((p) => p.id === selectedProfileId)
         return { ...n, data: {
           ...n.data,
           _ctxProfileId: selectedProfileId,
           _ctxUpstreamVideoUrl: findUpstreamVideoUrl(n.id, nodes, edges),
           _ctxUpstreamLogoUrl: findUpstreamLogoUrl(n.id, nodes, edges),
+          _ctxMusicTracks: Array.isArray(activeProfile?.music_tracks) ? activeProfile.music_tracks : [],
         } }
       }
       if (t === 'voice_gen') {
