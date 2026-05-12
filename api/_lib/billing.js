@@ -68,9 +68,9 @@ export const TIERS = {
     name: 'Founding Member',
     profile_limit: 2,
     monthly_price_id: process.env.STRIPE_PRICE_FOUNDING,
-    annual_price_id:  null,
-    monthly_usd: 39,
-    annual_usd:  null,
+    annual_price_id:  process.env.STRIPE_PRICE_FOUNDING_ANNUAL,
+    monthly_usd: 69,
+    annual_usd:  690,
     lifetime_lock: true,
     credits: { ai_tokens: 500_000, video_units: 100, voice_minutes: 0 },
     limits: {
@@ -80,7 +80,7 @@ export const TIERS = {
       public_templates: true,
     },
     support: 'Priority chat + email + founding-member Discord',
-    description: 'Lifetime price lock. 100 spots only.',
+    description: 'Solo Pro at $20/mo off — locked for life. 100 spots only.',
   },
 }
 
