@@ -341,10 +341,6 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   // narrow the queue when you only want to see (say) all text posts
   // landing this week.
   const [kindFilter, setKindFilter] = useState('all')
-  // Platform filter — set of platform ids the user wants to see. Empty
-  // set = no filter. Multi-select so the user can ask for "tiktok or
-  // instagram" without scrolling rows.
-  const [platformFilter, setPlatformFilter] = useState(() => new Set())
   // Date-range filter for the scheduled_datetime field. 'all' is the
   // default (everything visible regardless of when it fires). 'today',
   // 'week', '7d' are quick presets — 'custom' arms the two from/to
@@ -352,13 +348,6 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   const [dateRange, setDateRange] = useState('all') // 'all' | 'today' | 'week' | '7d' | 'custom'
   const [customFrom, setCustomFrom] = useState('')  // YYYY-MM-DD
   const [customTo, setCustomTo] = useState('')      // YYYY-MM-DD
-  // Sort order. Sort happens AFTER all filters so the user's filter
-  // selection isn't re-shuffled by sort changes.
-  const [sortBy, setSortBy] = useState('scheduled') // 'scheduled' | 'created' | 'title'
-  // Group by platform: when true, rows fan out so each platform a row
-  // publishes to becomes its own row. Helpful for "show me everything
-  // going to TikTok this week" reads. Off by default.
-  const [groupByPlatform, setGroupByPlatform] = useState(false)
   const [selected, setSelected] = useState(new Set())
   const [search, setSearch] = useState('')
   const [busyAction, setBusyAction] = useState(null) // 'captions' | 'schedule' | 'publish'
@@ -594,15 +583,6 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         return k === kindFilter
       })
     }
-    if (platformFilter.size > 0) {
-      // OR semantics — show a row if any of its platforms intersects
-      // the filter. That matches user intent ("show me posts going to
-      // TikTok or Instagram") better than AND would.
-      all = all.filter((r) => {
-        const pls = Array.isArray(r.platforms) ? r.platforms : []
-        return pls.some((p) => platformFilter.has(p))
-      })
-    }
     // Date-range gate. Local time, since scheduled_datetime stored as
     // UTC ISO is displayed in local time elsewhere on this page.
     if (dateRange !== 'all') {
@@ -639,39 +619,16 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         || (r.full_script || '').toLowerCase().includes(s)
         || (r.hashtags || '').toLowerCase().includes(s))
     }
-    // Group by platform: explode each row into one row per platform.
-    // The row's `platforms` array becomes a single-element array on each
-    // fan-out copy so the rendering layer shows just that platform's
-    // badge. id is suffixed so React keys stay unique.
-    if (groupByPlatform) {
-      const exploded = []
-      for (const r of all) {
-        const pls = Array.isArray(r.platforms) ? r.platforms : []
-        if (pls.length <= 1) {
-          exploded.push(r)
-          continue
-        }
-        for (const p of pls) {
-          exploded.push({ ...r, id: `${r.id}__${p}`, platforms: [p], _grouped_parent_id: r.id })
-        }
-      }
-      all = exploded
-    }
-    // Sort last so the filter result is stable across sort changes.
+    // Default sort: scheduled time ascending. Earliest first, un-
+    // scheduled rows last. (The sort dropdown / group-by-platform
+    // toggle were removed at the user's request — date range stays.)
     const sorted = [...all].sort((a, b) => {
-      if (sortBy === 'created') {
-        return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
-      }
-      if (sortBy === 'title') {
-        return String(a.title || '').localeCompare(String(b.title || ''))
-      }
-      // 'scheduled' — earliest first, un-scheduled rows last.
       const ta = a.scheduled_datetime ? new Date(a.scheduled_datetime).getTime() : Infinity
       const tb = b.scheduled_datetime ? new Date(b.scheduled_datetime).getTime() : Infinity
       return ta - tb
     })
     return sorted
-  }, [scripts, tab, search, kindFilter, platformFilter, dateRange, customFrom, customTo, sortBy, groupByPlatform]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [scripts, tab, search, kindFilter, dateRange, customFrom, customTo]) // eslint-disable-line react-hooks/exhaustive-deps
   const counts = useMemo(() => {
     const out = {}
     for (const t of STATUS_TABS) out[t.id] = (scripts || []).filter(t.filter).length
@@ -1004,57 +961,6 @@ export default function BulkUploadView({ profileId, token, onChange }) {
             )
           })}
         </div>
-        {/* Platform filter chips. Multi-select — click each platform
-            you want to see, click again to remove. Empty set = no
-            filter. */}
-        <div
-          title="Filter rows by platform — click to toggle, OR semantics"
-          style={{
-            display: 'flex', gap: 4, paddingLeft: 6,
-            borderLeft: '1px solid var(--border)',
-          }}
-        >
-          {ROW_PLATFORMS.map((p) => {
-            const on = platformFilter.has(p.id)
-            return (
-              <button
-                key={p.id}
-                onClick={() => {
-                  setPlatformFilter((prev) => {
-                    const next = new Set(prev)
-                    if (next.has(p.id)) next.delete(p.id); else next.add(p.id)
-                    return next
-                  })
-                }}
-                style={{
-                  padding: 4, borderRadius: 999,
-                  background: on ? 'rgba(46,204,113,0.18)' : 'transparent',
-                  border: `1px solid ${on ? 'rgba(46,204,113,0.55)' : 'transparent'}`,
-                  cursor: 'pointer',
-                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                  opacity: on ? 1 : 0.55,
-                  transition: 'opacity 0.12s, background 0.12s',
-                }}
-                aria-pressed={on}
-                title={`${on ? 'Hide' : 'Show only'} ${p.label} posts`}
-              >
-                <PlatformBadge id={p.id} size={20} />
-              </button>
-            )
-          })}
-          {platformFilter.size > 0 && (
-            <button
-              onClick={() => setPlatformFilter(new Set())}
-              style={{
-                marginLeft: 2, padding: '4px 8px', borderRadius: 999,
-                background: 'transparent', border: '1px solid var(--border)',
-                color: 'var(--muted)', cursor: 'pointer',
-                fontFamily: 'var(--font-display)', fontSize: 10.5, fontWeight: 700,
-              }}
-              title="Clear platform filter"
-            >Clear</button>
-          )}
-        </div>
         <input
           className="input"
           placeholder="Search a post"
@@ -1104,35 +1010,6 @@ export default function BulkUploadView({ profileId, token, onChange }) {
             <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} style={{ padding: '5px 8px', fontSize: 11.5, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }} />
           </div>
         )}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--muted)', paddingLeft: 6, borderLeft: '1px solid var(--border)' }}>
-          <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 10.5, letterSpacing: '0.06em', textTransform: 'uppercase', marginRight: 4 }}>Sort</span>
-          <select
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value)}
-            style={{ padding: '5px 8px', fontSize: 11.5, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
-          >
-            <option value="scheduled">Scheduled time</option>
-            <option value="created">Recently created</option>
-            <option value="title">Title A → Z</option>
-          </select>
-        </div>
-        <label
-          title="Show one row per platform per post (fan out grouped rows)"
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6, paddingLeft: 6,
-            borderLeft: '1px solid var(--border)',
-            fontFamily: 'var(--font-display)', fontSize: 11.5, fontWeight: 700,
-            color: groupByPlatform ? 'var(--text)' : 'var(--muted)',
-            cursor: 'pointer',
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={groupByPlatform}
-            onChange={(e) => setGroupByPlatform(e.target.checked)}
-          />
-          Group by platform
-        </label>
       </div>
 
       {/* Bulk action toolbar */}
