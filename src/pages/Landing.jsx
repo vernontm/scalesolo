@@ -51,7 +51,7 @@ const features = [
   {
     icon: UserCircle2,
     title: 'AI avatars that sound like you',
-    body: 'Train an AI avatar from one selfie. Cycle outfits across runs so every video looks fresh.',
+    body: 'Build photorealistic avatars from a single photo. Cycle outfits and looks across runs so every video posts fresh.',
     img: FEAT_IMG_AVATAR,
   },
   {
@@ -75,7 +75,7 @@ const testimonials = [
   { name: 'Marcus T.',  role: 'Solo Founder',       quote: 'The auto-title + finish-video node saved me from buying CapCut. One paste-in render now produces a finished, captioned, watermarked, scored MP4.' },
   { name: 'Lena R.',    role: 'Lifestyle Creator',  quote: 'I wired in my @brand mention once and the script generator never forgets. Tone is consistent across 3 months of content.' },
   { name: 'Sam D.',     role: 'B2B Marketer',       quote: 'The schedule node + Upload-Post integration replaced two of my tools. Drafts go out at 8am Tuesdays, no babysitting.' },
-  { name: 'Aiyana W.',  role: 'Podcast Producer',   quote: 'Audio upload → ElevenLabs transcribe → split → render across looks. We cut 9-clip shorts from 60-second clips in under 4 minutes.' },
+  { name: 'Aiyana W.',  role: 'Podcast Producer',   quote: 'Upload audio, ScaleSolo transcribes, splits, and renders across looks. We cut 9-clip shorts from a 60-second source in under 4 minutes.' },
 ]
 
 export default function Landing() {
@@ -216,7 +216,7 @@ export default function Landing() {
               </a>
             </div>
             <div style={{ ...trustPills, justifyContent: 'flex-start', marginBottom: 0 }} className="fade-up hero-pills">
-              <span style={pill}><Check size={11} /> No credit card required</span>
+              <span style={pill}><Check size={11} /> 3-day trial</span>
               <span style={pill}><Check size={11} /> 5-min setup</span>
               <span style={pill}><Check size={11} /> Cancel anytime</span>
             </div>
@@ -365,7 +365,7 @@ export default function Landing() {
       <section id="pricing" style={{ ...section, position: 'relative' }} className="fade-up">
         <div aria-hidden style={{ ...sectionAura, top: '40%', left: '50%', transform: 'translate(-50%, -50%)', width: 720, height: 480, opacity: 0.55 }} />
         <h2 style={sectionH}>Choose what fits you</h2>
-        <p style={sectionSub}>All tiers include unlimited workflows, social scheduling, and brand-voice generation. Pick by output volume.</p>
+        <p style={sectionSub}>Every plan includes the full autopilot pipeline: brand voice, avatars, finishing, and native scheduling. Pick by how much you want to post.</p>
         <PricingPlans />
       </section>
 
@@ -469,7 +469,7 @@ export default function Landing() {
         <h2 style={sectionH}>Everything you need to post daily</h2>
         <p style={sectionSub}>One workspace for the whole content engine: write, render, schedule, post.</p>
         <div className="feat-grid">
-          <FeatureCard num="1" eyebrow="Realistic avatars" title="Faceless video on autopilot." body="Train an AI avatar from one selfie. Cycle outfits across runs so every video posts looking fresh.">
+          <FeatureCard num="1" eyebrow="Realistic avatars" title="Faceless video on autopilot." body="Build a photorealistic avatar from a single photo. Cycle outfits and looks across runs so every video posts fresh.">
             <AvatarMock />
           </FeatureCard>
           <FeatureCard num="2" eyebrow="Brand profiles" title="One workspace, many brands." body="Each brand keeps its own voice, cadence, platforms, and avatar. Switch profiles, never cross-pollinate.">
@@ -514,7 +514,7 @@ export default function Landing() {
             Every render lands in your library. Originals are yours to download, repost, or repurpose. No vendor lock-in.
           </FaqItem>
           <FaqItem q="Is there a free trial?">
-            Yes. Start free with no credit card. Cancel anytime, keep everything you generated.
+            Yes. Every plan starts with a 3-day trial so you can build your first faceless brand and see it post on its own before you're billed. Cancel anytime during the trial and you keep everything you've already generated.
           </FaqItem>
         </div>
       </section>
