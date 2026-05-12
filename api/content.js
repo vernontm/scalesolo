@@ -334,6 +334,8 @@ export default async function handler(req, res) {
         if (Array.isArray(next) || Array.isArray(prev)) return arraysDiffer(next, prev)
         return (next ?? null) !== (prev ?? null)
       })
+      let resynced = false
+      let resyncFields = []
       if (wasScheduled && uploadPostFieldChanged) {
         try {
           // Use the next-scheduled-iso the user is moving to (if they
@@ -350,6 +352,16 @@ export default async function handler(req, res) {
             req,
           })
           if (newReqId) updates.uploadpost_request_id = newReqId
+          resynced = true
+          // List which fields actually moved so the toast on the
+          // client can name what got pushed to Upload-Post.
+          resyncFields = UPLOAD_POST_FIELDS.filter((k) => {
+            if (!Object.prototype.hasOwnProperty.call(updates, k)) return false
+            const next = updates[k]
+            const prev = item[k]
+            if (Array.isArray(next) || Array.isArray(prev)) return arraysDiffer(next, prev)
+            return (next ?? null) !== (prev ?? null)
+          })
         } catch (e) {
           return res.status(502).json({ error: `Reschedule failed on Upload-Post: ${e.message}` })
         }
@@ -360,7 +372,11 @@ export default async function handler(req, res) {
       if (updates.status) {
         syncContentStatusInSpaces(profileId, id, updates.status).catch(() => {})
       }
-      return res.status(200).json({ item: Array.isArray(updated) ? updated[0] : updated })
+      return res.status(200).json({
+        item: Array.isArray(updated) ? updated[0] : updated,
+        upload_post_resynced: resynced,
+        upload_post_fields_changed: resyncFields,
+      })
     }
 
     if (req.method === 'DELETE') {

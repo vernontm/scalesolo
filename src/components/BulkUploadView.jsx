@@ -531,9 +531,38 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(patch),
       })
+      const body = await r.json().catch(() => ({}))
       if (!r.ok) {
-        const b = await r.json().catch(() => ({}))
-        throw new Error(b?.error || `Save failed (${r.status})`)
+        throw new Error(body?.error || `Save failed (${r.status})`)
+      }
+      // When the API actually cancelled + re-submitted the Upload-Post
+      // job (because the user edited a field that's queued there), toast
+      // so they know the change reached Upload-Post — not just the local
+      // DB. Quiet otherwise — most inline edits don't trigger this.
+      if (body?.upload_post_resynced) {
+        const changed = Array.isArray(body.upload_post_fields_changed) ? body.upload_post_fields_changed : []
+        // Map raw field names → human labels for the toast.
+        const labelOf = (k) => {
+          if (k === 'platforms') {
+            const item = body.item
+            const pls = Array.isArray(item?.platforms) ? item.platforms : []
+            const pretty = pls.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(', ')
+            return pretty ? `platforms (${pretty})` : 'platforms'
+          }
+          if (k === 'scheduled_datetime') return 'time'
+          if (k === 'media_urls' || k === 'media_type') return 'media'
+          if (k === 'caption') return 'caption'
+          if (k === 'hashtags') return 'hashtags'
+          if (k === 'first_comment') return 'first comment'
+          if (k === 'title') return 'title'
+          if (k === 'full_script') return 'script'
+          return k
+        }
+        const labels = changed.map(labelOf).join(', ')
+        toast({
+          kind: 'success',
+          message: `Updated on Upload-Post${labels ? ` · ${labels}` : ''}`,
+        })
       }
     } catch (e) {
       toast({ kind: 'error', message: `Save failed: ${e.message}` })
