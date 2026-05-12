@@ -660,12 +660,13 @@ function MusicLibrarySection({ userId, token }) {
     const added = []
     for (const f of list) {
       try {
-        // Upload to landing-media/account/<user_id>/music/<filename> so
-        // the file stays accessible across every brand the user owns.
-        // Falls back to a "shared" path when userId isn't known yet
-        // (rare — only on the first render after sign-in).
+        // Upload to landing-media/<user_id>/music/<filename>. The first
+        // segment HAS to be the user's UUID (or a brand profile UUID
+        // the user has access to) for the bucket's RLS insert policy
+        // to accept it. Falls back to "shared/" — the policy whitelists
+        // that prefix — when userId isn't known yet.
         const ext = (f.name.split('.').pop() || 'mp3').toLowerCase()
-        const folder = userId ? `account/${userId}` : 'account/shared'
+        const folder = userId || 'shared'
         const path = `${folder}/music/${Date.now()}-${Math.random().toString(36).slice(2, 6)}.${ext}`
         const { error: upErr } = await supabase.storage.from('landing-media').upload(path, f, {
           contentType: f.type || 'audio/mpeg', upsert: false,
