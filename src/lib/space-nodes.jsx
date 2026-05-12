@@ -6009,7 +6009,7 @@ export const NODE_REGISTRY = {
     // a cached upstream chain can flow through aggregators (collection,
     // combine, picker) without forcing the user to manually re-run them.
     free: true,
-    label: 'Text', description: 'Topic, hook, or any raw text.',
+    label: 'Text', description: 'Type any text here. Use it for an idea, a topic, a hook, or notes you want other steps to use.',
     icon: Type, category: 'inputs', color: '#94a3b8',
     inputs: [], outputs: [{ id: 'out', label: 'Out' }],
     initialProps: { text: '' },
@@ -6026,7 +6026,7 @@ export const NODE_REGISTRY = {
   // never re-transcribes.
   url_reference: {
     label: 'Reference URL',
-    description: 'Paste a TikTok / Reel / YouTube URL. We transcribe with ElevenLabs Scribe, then downstream nodes (Script generator → Remix) can rewrite the script in your voice. Output: { text: transcript, source_url, creator_handle }.',
+    description: 'Paste a link to a TikTok, Reel, or YouTube video. We turn the spoken words into text. Connect the Script generator after this and pick Remix to get the same idea rewritten in your own voice.',
     icon: Link2, category: 'inputs', color: '#ec4899',
     inputs: [], outputs: [{ id: 'out', label: 'Out' }],
     initialProps: { source_url: '' },
@@ -6072,7 +6072,7 @@ export const NODE_REGISTRY = {
   // run the (expensive) avatar render against the audio you approved.
   voice_gen: {
     label: 'Voice gen',
-    description: 'Synthesizes audio from a script. Two modes: (1) wire an Avatar picker upstream and the avatar\'s voice is used (downstream Avatar video reuses this audio so HeyGen never re-synths). (2) Without an avatar, pick a voice directly in the node — useful for voiceover-only workflows (script → voice → Finish video with media).',
+    description: 'Turns a written script into spoken audio. Connect a script to this node and you get a voiceover. If an Avatar is connected too, the avatar\'s voice is used. Otherwise, pick any voice from the list. Listen and approve before moving on.',
     icon: Mic, category: 'generators', color: '#22d3ee',
     inputs: [{ id: 'in', label: 'In (script, optional avatar)' }],
     outputs: [{ id: 'out', label: 'Out' }],
@@ -6271,7 +6271,7 @@ export const NODE_REGISTRY = {
 
   audio_upload: {
     free: true,
-    label: 'Audio', description: 'Upload an audio file (MP3 / WAV / M4A) to use as the voice track for an avatar render. Wire its "out" into Avatar render in place of (or alongside) a script.',
+    label: 'Audio', description: 'Upload your own voice recording (MP3, WAV, or M4A). Connect it to an Avatar video so the avatar speaks with your audio instead of a typed script.',
     icon: Mic, category: 'inputs', color: '#22d3ee',
     inputs: [], outputs: [{ id: 'out', label: 'Out' }],
     initialProps: { url: '', name: '' },
@@ -6295,7 +6295,7 @@ export const NODE_REGISTRY = {
   image_upload: {
     free: true,
     label: 'Upload media',
-    description: 'Upload reference images or vertical (9:16) videos. Each item gets an alt tag — reference one in any generator prompt with @altTag. Wire videos into Finish video to add captions / overlays / music to your own footage; multiple videos fan out automatically (one polished output per clip), then Schedule post can publish each into the next open slot of your brand schedule.',
+    description: 'Upload your own pictures or vertical videos. Give each one a short name and you can mention it in any prompt by typing @yourname. Connect videos to Finish video to add captions, your logo, and music. If you upload more than one video, each gets its own finished post.',
     icon: Upload, category: 'inputs', color: '#0ea5e9',
     inputs: [], outputs: [{ id: 'out', label: 'Out' }],
     initialProps: { urls: [] },
@@ -6318,7 +6318,7 @@ export const NODE_REGISTRY = {
   },
 
   auto_run: {
-    label: 'Auto-run', description: 'Recurring trigger that re-runs everything connected downstream on a fixed cadence. Cost-aware with a hard cap on total runs. Pauses when the canvas is closed.',
+    label: 'Auto-run', description: 'Runs your whole workflow on a schedule you set (for example, 2 times per day). Set a maximum number of runs so it stops automatically. Keep this page open if you want it to run in the background, or save and let the server run it.',
     icon: Repeat, category: 'inputs', color: '#f97316',
     inputs: [], outputs: [{ id: 'out', label: 'Out' }],
     initialProps: { runs_per_unit: 2, unit: 'day', cadence: '15m', max_runs: 10, runs_used: 0, active: false, last_run_at: null },
@@ -6328,7 +6328,7 @@ export const NODE_REGISTRY = {
 
   brand_profile: {
     free: true,
-    label: 'Brand profile', description: 'Pulls in a brand profile and exposes it to downstream generators. Per-node "inject" toggles let each space pass a different slice (voice/audience, theme, logo, bible, hashtags). When sync_all is on, this node auto-wires to every script_gen / caption_gen / image_gen on the canvas.',
+    label: 'Brand profile', description: 'Pulls in one of your saved brands so the rest of the workflow sounds like you. Pick which parts to share: voice, colors, logo, your brand notes, and your hashtags. Turn on "Sync to all" to connect it to every step that needs it.',
     icon: Building2, category: 'inputs', color: '#ec4899',
     inputs: [], outputs: [{ id: 'out', label: 'Out' }],
     initialProps: {
@@ -6374,7 +6374,7 @@ export const NODE_REGISTRY = {
   },
 
   script_gen: {
-    label: 'Script generator', description: 'AI writes a script from a topic. Supports @-mentions and an optional brand profile input.',
+    label: 'Script generator', description: 'Writes a short script for you from a topic. Just type what the video should be about and it does the rest. You can also mention a brand by typing @brandname to use that brand\'s voice.',
     icon: Wand2, category: 'generators', color: '#ef4444',
     inputs: [{ id: 'in', label: 'In (topic / brand)' }],
     outputs: [{ id: 'out', label: 'Out' }],
@@ -6445,7 +6445,7 @@ export const NODE_REGISTRY = {
 
   text_post_gen: {
     label: 'Text post',
-    description: 'Generates a native text-only social post per platform (X, Threads, Facebook, LinkedIn). Wire a Text node in for the prompt. Each platform gets its own variant tailored to the platform\'s character limit and voice. Editable inline. Output goes to Schedule post — all picked platforms publish at the same time slot.',
+    description: 'Writes text-only posts for X, Threads, Facebook, and LinkedIn. Type your idea in the Prompt box, pick which platforms you want, and it writes a version that fits each one. You can edit any of them before posting. Connect to Schedule post to publish them all at the same time.',
     icon: Type, category: 'generators', color: '#0ea5e9',
     inputs: [{ id: 'in', label: 'In (prompt / brand)' }],
     outputs: [{ id: 'out', label: 'Out (text post bundle)' }],
@@ -6518,7 +6518,7 @@ export const NODE_REGISTRY = {
   },
 
   caption_gen: {
-    label: 'Title + caption + hashtags', description: 'Generates a click-worthy title, a platform-tuned caption, and 5 hashtags. Accepts a script, voice_gen audio chunks, OR raw videos (Upload media / Collection / avatar_render output) — videos get transcribed automatically and each gets its own caption set. schedule_post matches clip[i] → captions[i].',
+    label: 'Title + caption + hashtags', description: 'Writes a catchy title, a caption, and 5 hashtags for your post. Works with a script, an audio voiceover, or your uploaded videos (we listen to the video and write the caption from what was said). If you have multiple videos, each gets its own set of captions.',
     icon: Captions, category: 'generators', color: '#f59e0b',
     inputs: [{ id: 'in', label: 'In (script / chunks / videos / brand)' }],
     outputs: [{ id: 'out', label: 'Out' }],
@@ -6697,7 +6697,7 @@ export const NODE_REGISTRY = {
   },
 
   image_gen: {
-    label: 'Image generator', description: 'KIE image gen (Nano Banana, Flux). Aspect, count, quality. The single In handle accepts brand context, text prompts, AND reference images — they\'re sorted by shape.',
+    label: 'Image generator', description: 'Creates pictures from a text prompt. Choose how many you want, the shape (vertical, square, wide), and the quality. You can also connect reference images and a brand profile so the picture matches your style.',
     icon: ImageIcon, category: 'generators', color: '#a855f7',
     inputs: [{ id: 'in',  label: 'In (prompt / brand / refs)' }],
     outputs: [{ id: 'out', label: 'Out' }],
@@ -6928,7 +6928,7 @@ export const NODE_REGISTRY = {
 
   avatar_picker: {
     free: true,
-    label: 'Avatar', description: 'Pick an avatar + a look. Image strategy = Single uses one specific image; Randomize uses every image in the chosen look (Avatar render splits the script across them). Cycle looks (orthogonal toggle) rotates which LOOK is used each run — and the chosen image strategy still applies inside that look. So Cycle on + Randomize images = a different outfit per run AND multiple angles per video. The optional In handle accepts a trigger (typically Auto-run) so the picker is part of the auto-run chain and advances the cycle on every tick.',
+    label: 'Avatar', description: 'Pick which avatar to use and which look (outfit / angle set). Choose a single image for a clean fixed shot, or Randomize to use every image in the look so the video shows different angles. Turn on Cycle looks to rotate between different looks each time the workflow runs.',
     icon: UserCircle2, category: 'inputs', color: '#60a5fa',
     inputs: [{ id: 'in', label: 'In (trigger, optional)' }],
     outputs: [{ id: 'out', label: 'Out' }],
@@ -7024,7 +7024,7 @@ export const NODE_REGISTRY = {
   },
 
   avatar_render: {
-    label: 'Avatar video', description: 'Renders an avatar from the connected look + voice. Wire a Voice gen output (preferred — review audio before HeyGen runs) OR a raw script (HeyGen synthesizes inline) OR an uploaded audio file. With Cycle Looks or Randomize, the input is split across every look image and rendered as a series of clips you can stitch with Combine videos.',
+    label: 'Avatar video', description: 'Makes a talking video of your avatar. Connect a voiceover or a script and you\'ll get a short video where the avatar speaks it. If your Avatar uses Randomize, you\'ll get one short clip per image — connect Stitch videos after this to combine them into one.',
     icon: FileVideo, category: 'generators', color: '#ef4444',
     inputs: [{ id: 'in',  label: 'In (avatar + audio / script)' }],
     outputs: [{ id: 'out', label: 'Out' }],
@@ -7272,7 +7272,7 @@ export const NODE_REGISTRY = {
 
   collection: {
     free: true,
-    label: 'Collection', description: 'Catches outputs from any connected node and gathers them into a growing list (scripts, images, videos). Accumulates across runs — every time an upstream node re-runs, new items are appended (deduped by URL/text).',
+    label: 'Collection', description: 'A bucket that holds onto everything an earlier step makes. Every time you run, new pictures, videos, or scripts get added. Connect this when you want to keep a running list instead of replacing the result each time.',
     icon: ListChecks, category: 'outputs', color: '#10b981',
     inputs: [{ id: 'in', label: 'In (anything)' }],
     outputs: [{ id: 'out', label: 'Out' }],
@@ -7330,7 +7330,7 @@ export const NODE_REGISTRY = {
   },
 
   combine_videos: {
-    label: 'Stitch videos', description: 'Joins a set of video clips end-to-end into a single longer video. If server-side ffmpeg is unavailable, the node falls back to a playlist: every clip is preserved individually so you can download or hand-edit them. (For merging a separate voiceover onto a silent clip, use the Combine node instead.)',
+    label: 'Stitch videos', description: 'Joins several short video clips together into one longer video, played one after the other. Use this after Avatar video when Randomize is on, or any time you have multiple clips and want a single finished video.',
     icon: FileVideo, category: 'generators', color: '#0ea5e9',
     inputs: [{ id: 'in', label: 'In (videos)' }],
     outputs: [{ id: 'out', label: 'Out (video)' }],
@@ -7391,7 +7391,7 @@ export const NODE_REGISTRY = {
   // input — no audio chain complexity in polish itself.
   combine_av: {
     label: 'Combine',
-    description: 'Merges a video clip with a voiceover audio file. Loops the clip if it is shorter than the audio. Output goes into Finish video like any other clip. Use this for b-roll + voiceover flows (Upload media + voice_gen) so polish only handles overlays.',
+    description: 'Puts a voiceover on top of a silent video clip. If the video is shorter than the voice, the clip loops to match the audio. Use this when you uploaded your own video and you want to add a generated voiceover before the final step.',
     icon: CombineIcon, category: 'generators', color: '#0ea5e9',
     inputs: [{ id: 'in', label: 'In (video + audio)' }],
     outputs: [{ id: 'out', label: 'Out (video)' }],
@@ -7438,7 +7438,7 @@ export const NODE_REGISTRY = {
   // ── POLISH VIDEO (title overlay + logo/watermark + bg music) ──────────
   video_polish: {
     label: 'Finish video',
-    description: 'All-in-one finisher: burned captions, title overlay, watermark, and background music in one ffmpeg pass. Toggle each section on or off in the node body, click Open settings for full customization. Replaces the standalone Captions / Title / Music nodes — one step instead of four.',
+    description: 'Polishes the video for posting. Adds subtitles you can read on the screen, a title at the top, your logo, and background music. Turn each piece on or off as you like. Open settings to fine-tune fonts, position, and volume.',
     icon: Sparkles, category: 'generators', color: '#0ea5e9',
     inputs: [{ id: 'in', label: 'In (video + logo + music)' }],
     outputs: [{ id: 'out', label: 'Out (video)' }],
@@ -7799,7 +7799,7 @@ export const NODE_REGISTRY = {
   // own node — chain captions → video_polish if you want both.
   captions: {
     hidden: true,
-    label: 'Captions (legacy)', description: 'Standalone ZapCap caption burner. Replaced by the Captions section inside the Finish video node — kept around so older spaces still load.',
+    label: 'Captions (older version)', description: 'Older "add subtitles" step. The Finish video node does this now — use that instead. This one stays here so older saved workflows keep working.',
     icon: Captions, category: 'generators', color: '#0ea5e9',
     inputs: [{ id: 'in', label: 'In (video)' }],
     outputs: [{ id: 'out', label: 'Out (video)' }],
@@ -7844,7 +7844,7 @@ export const NODE_REGISTRY = {
   },
 
   schedule_post: {
-    label: 'Schedule post', description: 'Publishes (or schedules) a video / image bundle to TikTok, Instagram, YouTube, X, LinkedIn, Threads, Facebook, or Pinterest via the upload-post.com API. Wire video/images + caption + hashtags in.',
+    label: 'Schedule post', description: 'Posts your finished content to social media. Pick the platforms (TikTok, Instagram, YouTube, X, LinkedIn, Threads, Facebook, Pinterest), and pick "now" to post right away or "next slot" to add it to your schedule. Connect a video or pictures plus the caption.',
     icon: Send, category: 'outputs', color: '#2ecc71',
     inputs: [{ id: 'in', label: 'In (video / images + caption / hashtags)' }],
     outputs: [{ id: 'out', label: 'Out (request_id)' }],
@@ -8122,7 +8122,7 @@ export const NODE_REGISTRY = {
   combine: {
     free: true,
     hidden: true,
-    label: 'Combine (legacy)', description: 'Manual bundler — replaced by Save to drafts which auto-bundles. Hidden from the palette but still loads on older spaces.',
+    label: 'Combine (older version)', description: 'Older step for bundling content before posting. Replaced by Save to drafts. This one stays so older saved workflows keep working.',
     icon: CombineIcon, category: 'generators', color: '#0ea5e9',
     inputs: [{ id: 'in', label: 'In (text + media)' }],
     outputs: [{ id: 'out', label: 'Out (post)' }],
@@ -8226,7 +8226,7 @@ export const NODE_REGISTRY = {
 
   save_library: {
     free: true,
-    label: 'Save to drafts', description: 'Bundles the incoming script + caption + hashtags + media into one in-memory package and forwards it to schedule_post. The bundle becomes a real draft you can edit on the Drafts page only when schedule_post completes — nothing is reserved in the queue until then.',
+    label: 'Save to drafts', description: 'Gathers your script, captions, hashtags, and media into one package so the next step (Schedule post) has everything it needs. The draft only shows up on your Schedule page once a post is actually published or scheduled.',
     icon: Save, category: 'outputs', color: '#2ecc71',
     inputs: [{ id: 'in', label: 'In (script / caption / image / video)' }],
     outputs: [{ id: 'out', label: 'Out (bundle for schedule_post)' }],
