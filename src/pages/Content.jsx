@@ -484,12 +484,13 @@ function CalendarView({ items, onOpen, token, onChange }) {
         })}
       </div>
 
-      {/* Day columns. Horizontal scroll on narrow viewports so the user
-          can still see all 14 days without the cards collapsing into
-          unreadable widths. */}
+      {/* Day columns. auto-fit + minmax wraps to 2-3-4-5-7 columns
+          depending on viewport width so the grid never overflows the
+          page container. On wide screens you see all 14 days as 7+7;
+          on narrower screens you scroll vertically instead. */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(7, minmax(220px, 1fr))',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
         gap: 10,
       }}>
         {days.map((d) => {

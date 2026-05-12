@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Plus, Upload, X, UserCircle2, Sparkles, Video, AlertCircle, CheckCircle2,
   RefreshCw, Trash2, Wand2, Image as ImageIcon, ArrowLeft, Play, ChevronRight,
-  ChevronLeft, Mic, Library, Volume2, Loader2, Check, Search,
+  ChevronLeft, Mic, Library, Volume2, Loader2, Check, Search, GripVertical,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
@@ -434,6 +434,26 @@ function LookFolder({ look, index, onAddImages, onDeleteImage, onRename, onReord
   const images = (look.images || []).slice().sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
   const cover = images[0]?.image_url || look.image_url
 
+  // Drag-to-reorder state. dragImageId holds the id of the image
+  // currently being dragged; dragOverIdx is the slot the mouse is
+  // hovering, used to render a drop indicator. Both clear on drop /
+  // drag end.
+  const [dragImageId, setDragImageId] = useState(null)
+  const [dragOverIdx, setDragOverIdx] = useState(-1)
+  const handleImageDrop = (targetIdx) => {
+    const id = dragImageId
+    setDragImageId(null)
+    setDragOverIdx(-1)
+    if (!id) return
+    const fromIdx = images.findIndex((x) => x.id === id)
+    if (fromIdx < 0 || fromIdx === targetIdx) return
+    // Browser drag-drop reports the index of the tile the mouse was
+    // over. When dragging RIGHT past an item, the target becomes the
+    // item AFTER drop position — onReorderImage handles the
+    // "splice + reassign order_index" logic on the parent.
+    onReorderImage(id, targetIdx)
+  }
+
   const onPick = (e) => {
     const files = Array.from(e.target.files || [])
     if (files.length) onAddImages(files)
@@ -474,10 +494,14 @@ function LookFolder({ look, index, onAddImages, onDeleteImage, onRename, onReord
               style={{ padding: '4px 8px', fontSize: 13 }}
             />
           ) : (
+            // Single-click on the name enters rename mode. We need to
+            // stopPropagation so the parent header (which toggles the
+            // folder open/closed) doesn't fire — without it the folder
+            // collapses on click and the user sees nothing change.
             <div
-              onDoubleClick={(e) => { e.stopPropagation(); setEditingName(true); setDraftName(look.name || `Look ${index + 1}`) }}
-              style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13, color: 'var(--text)' }}
-              title="Double-click to rename"
+              onClick={(e) => { e.stopPropagation(); setEditingName(true); setDraftName(look.name || `Look ${index + 1}`) }}
+              style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13, color: 'var(--text)', cursor: 'text' }}
+              title="Click to rename"
             >
               {look.name || `Look ${index + 1}`}
             </div>
@@ -492,62 +516,73 @@ function LookFolder({ look, index, onAddImages, onDeleteImage, onRename, onReord
       {open && (
         <div style={{ padding: 10, paddingTop: 0 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 8 }}>
-            {images.map((im, imIdx) => (
-              <div key={im.id} style={{ position: 'relative' }}>
-                <img src={im.image_url} alt={im.name || 'Look image'} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', borderRadius: 6, border: '1px solid var(--border)' }} />
-                {/* Reorder controls — hidden when there's only one image
-                    (nothing to reorder). The first image is the cover,
-                    so it's worth nudging up; arrows are disabled at the
-                    edges instead of vanishing so the layout stays
-                    stable as the user moves things around. */}
-                {images.length > 1 && (
-                  <div style={{
-                    position: 'absolute', bottom: 4, left: 4,
-                    display: 'flex', gap: 2,
-                  }}>
-                    <button
-                      aria-label="Move left"
-                      disabled={imIdx === 0 || busy}
-                      onClick={(e) => { e.stopPropagation(); onReorderImage(im.id, imIdx - 1) }}
-                      style={{
-                        background: imIdx === 0 ? 'rgba(0,0,0,0.4)' : 'rgba(0,0,0,0.75)',
-                        color: '#fff', border: 'none', borderRadius: 999,
-                        width: 20, height: 20, cursor: imIdx === 0 ? 'not-allowed' : 'pointer',
-                        display: 'grid', placeItems: 'center', opacity: imIdx === 0 ? 0.4 : 1,
-                      }}
-                      title="Move earlier"
-                    ><ChevronLeft size={11} /></button>
-                    <button
-                      aria-label="Move right"
-                      disabled={imIdx === images.length - 1 || busy}
-                      onClick={(e) => { e.stopPropagation(); onReorderImage(im.id, imIdx + 1) }}
-                      style={{
-                        background: imIdx === images.length - 1 ? 'rgba(0,0,0,0.4)' : 'rgba(0,0,0,0.75)',
-                        color: '#fff', border: 'none', borderRadius: 999,
-                        width: 20, height: 20, cursor: imIdx === images.length - 1 ? 'not-allowed' : 'pointer',
-                        display: 'grid', placeItems: 'center', opacity: imIdx === images.length - 1 ? 0.4 : 1,
-                      }}
-                      title="Move later"
-                    ><ChevronRight size={11} /></button>
-                  </div>
-                )}
-                <button
-                  aria-label="Delete this image"
-                  onClick={async (e) => {
-                    e.stopPropagation()
-                    const ok = await confirmDialog({ title: 'Delete this image?', confirmText: 'Delete', destructive: true })
-                    if (ok) onDeleteImage(im.id)
+            {images.map((im, imIdx) => {
+              const isDragging = dragImageId === im.id
+              const isOver = dragOverIdx === imIdx && !isDragging
+              return (
+                <div
+                  key={im.id}
+                  onDragOver={(e) => {
+                    if (!dragImageId) return
+                    e.preventDefault()
+                    if (dragOverIdx !== imIdx) setDragOverIdx(imIdx)
+                    try { e.dataTransfer.dropEffect = 'move' } catch {}
                   }}
+                  onDragLeave={() => { if (dragOverIdx === imIdx) setDragOverIdx(-1) }}
+                  onDrop={(e) => { e.preventDefault(); handleImageDrop(imIdx) }}
                   style={{
-                    position: 'absolute', top: 4, right: 4,
-                    background: 'rgba(0,0,0,0.7)', color: '#fff', border: 'none',
-                    borderRadius: 999, width: 20, height: 20, cursor: 'pointer',
-                    display: 'grid', placeItems: 'center',
+                    position: 'relative',
+                    opacity: isDragging ? 0.4 : 1,
+                    // Outline the slot the dragged tile would land in
+                    // so the user gets clear visual feedback.
+                    outline: isOver ? '2px solid #f59e0b' : 'none',
+                    outlineOffset: isOver ? 2 : 0,
+                    borderRadius: 6,
+                    transition: 'opacity 0.15s, outline-color 0.12s',
                   }}
-                  title="Remove"
-                ><X size={11} /></button>
-              </div>
-            ))}
+                >
+                  <img src={im.image_url} alt={im.name || 'Look image'} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', borderRadius: 6, border: '1px solid var(--border)', display: 'block' }} />
+                  {/* Drag handle — grab corner. Only this element is
+                      draggable (set draggable=true on the icon itself);
+                      the surrounding tile is the drop target. Hiding
+                      the handle when there's only one image keeps the
+                      tile clean. */}
+                  {images.length > 1 && (
+                    <div
+                      draggable
+                      onDragStart={(e) => {
+                        setDragImageId(im.id)
+                        try { e.dataTransfer.setData('text/plain', im.id); e.dataTransfer.effectAllowed = 'move' } catch {}
+                      }}
+                      onDragEnd={() => { setDragImageId(null); setDragOverIdx(-1) }}
+                      title="Drag to reorder"
+                      style={{
+                        position: 'absolute', top: 4, left: 4,
+                        background: 'rgba(0,0,0,0.75)', color: '#fff',
+                        borderRadius: 4, padding: '2px 3px',
+                        cursor: 'grab', userSelect: 'none',
+                        display: 'grid', placeItems: 'center',
+                      }}
+                    ><GripVertical size={12} /></div>
+                  )}
+                  <button
+                    aria-label="Delete this image"
+                    onClick={async (e) => {
+                      e.stopPropagation()
+                      const ok = await confirmDialog({ title: 'Delete this image?', confirmText: 'Delete', destructive: true })
+                      if (ok) onDeleteImage(im.id)
+                    }}
+                    style={{
+                      position: 'absolute', top: 4, right: 4,
+                      background: 'rgba(0,0,0,0.7)', color: '#fff', border: 'none',
+                      borderRadius: 999, width: 20, height: 20, cursor: 'pointer',
+                      display: 'grid', placeItems: 'center',
+                    }}
+                    title="Remove"
+                  ><X size={11} /></button>
+                </div>
+              )
+            })}
             <button
               type="button"
               onClick={() => inpRef.current?.click()}
@@ -682,9 +717,11 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
     } catch (e) { setError(e.message) }
   }
 
-  // Reorder a single image within its look. We swap order_index with
-  // whoever is currently at the target slot — keeps the rest of the
-  // list stable without re-indexing every row on every move.
+  // Reorder a single image within its look via drag-drop. Splice the
+  // image out of its current slot and re-insert at targetIdx, then
+  // PATCH each image with a fresh order_index = its new position.
+  // PATCHes run in parallel — they're independent rows. Failures get
+  // surfaced so the user can see if something didn't stick.
   const reorderImageInLook = async (lookId, imageId, targetIdx) => {
     setError(null)
     const look = looks.find((l) => l.id === lookId)
@@ -692,24 +729,21 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
     const sorted = (look.images || []).slice().sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
     const fromIdx = sorted.findIndex((im) => im.id === imageId)
     if (fromIdx < 0 || targetIdx < 0 || targetIdx >= sorted.length || fromIdx === targetIdx) return
-    const target = sorted[targetIdx]
-    const mover = sorted[fromIdx]
-    // Two PATCHes: swap the order_index between mover and the one
-    // it's displacing. Parallel — they're independent rows. Failures
-    // are surfaced so the user sees what didn't stick.
+    const next = sorted.slice()
+    const [moved] = next.splice(fromIdx, 1)
+    next.splice(targetIdx, 0, moved)
+    // Only PATCH images whose position actually changed. For drag
+    // forward N positions, that's the dragged image + every image
+    // between source and destination — same in reverse. Skipping
+    // unchanged rows keeps the network traffic tight on libraries
+    // with 10+ images.
+    const changed = next.map((im, i) => ({ im, i })).filter(({ im, i }) => (im.order_index ?? -1) !== i)
     try {
-      await Promise.all([
-        fetch(`/api/avatars/look-images?id=${mover.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ order_index: target.order_index ?? targetIdx }),
-        }),
-        fetch(`/api/avatars/look-images?id=${target.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ order_index: mover.order_index ?? fromIdx }),
-        }),
-      ])
+      await Promise.all(changed.map(({ im, i }) => fetch(`/api/avatars/look-images?id=${im.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ order_index: i }),
+      })))
       onChange()
     } catch (e) { setError(e.message) }
   }

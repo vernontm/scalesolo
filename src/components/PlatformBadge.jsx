@@ -17,23 +17,13 @@ export const PLATFORMS = [
   { id: 'x',         label: 'X',         kinds: ['image', 'video', 'text'], color: '#000000', initial: '𝕏', logo: `${SM_ICON_BASE}/x.svg` },
 ]
 
+// Letter-chip rendering keeps the schedule rows and calendar cards
+// readable at small sizes — the SVG logos were visually noisy when
+// tiled and not visually distinct enough to scan quickly. The `logo`
+// field in PLATFORMS is kept for future use (eg a larger icon view).
 export function PlatformBadge({ id, size = 18, title }) {
   const def = PLATFORMS.find((p) => p.id === id)
   if (!def) return null
-  if (def.logo) {
-    return (
-      <img
-        src={def.logo}
-        alt={def.label}
-        title={title || def.label}
-        style={{
-          width: size, height: size, borderRadius: 999,
-          objectFit: 'cover', flexShrink: 0,
-          background: '#fff',
-        }}
-      />
-    )
-  }
   return (
     <span
       title={title || def.label}
