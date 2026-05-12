@@ -28,7 +28,7 @@ import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { useCredits, fmtCount } from '../context/CreditsContext.jsx'
 import { useSpacesRun } from '../context/SpacesRunContext.jsx'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { toast, confirmDialog, chooseDialog } from '../components/Toast.jsx'
 import {
   NODE_REGISTRY, NODE_CATEGORIES, downloadUrl, readImageItems,
@@ -3708,6 +3708,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
 export default function Spaces() {
   const { session, isAdmin } = useAuth()
   const { selectedProfileId, profiles } = useProfile()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [spaces, setSpaces] = useState([])
   const [editing, setEditing] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -3729,16 +3730,42 @@ export default function Spaces() {
 
   useEffect(() => { refresh() }, [session, selectedProfileId])
 
+  // URL-driven open. /spaces?id=<id> hydrates the builder from the
+  // server on every mount, so refreshing the page (or sharing the
+  // URL) drops you back into the same workflow you were editing.
+  // When the user closes the builder we clear the param.
+  const urlSpaceId = searchParams.get('id')
+  useEffect(() => {
+    if (!session) return
+    if (!urlSpaceId) { setEditing(null); return }
+    // Already showing this space? skip the fetch.
+    if (editing?.id === urlSpaceId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const r = await fetch(`/api/spaces?id=${urlSpaceId}`, { headers: { Authorization: `Bearer ${session.access_token}` } })
+        const body = await r.json()
+        if (cancelled) return
+        if (r.ok) setEditing(body.space)
+        else {
+          // Unknown / no-access — drop the param so the user lands on
+          // the list instead of getting stuck on a stale URL.
+          setError(body.error || 'Failed to open')
+          setSearchParams({}, { replace: true })
+        }
+      } catch (e) { if (!cancelled) setError(e.message) }
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, urlSpaceId])
+
   const [creatingSpace, setCreatingSpace] = useState(false)
   const onCreate = () => setCreatingSpace(true)
 
   const onOpen = async (s) => {
-    try {
-      const r = await fetch(`/api/spaces?id=${s.id}`, { headers: { Authorization: `Bearer ${session.access_token}` } })
-      const body = await r.json()
-      if (r.ok) setEditing(body.space)
-      else setError(body.error || 'Failed to open')
-    } catch (e) { setError(e.message) }
+    // Reflect the open space in the URL so a refresh keeps the user
+    // in the same builder. The effect above handles the actual fetch.
+    setSearchParams({ id: s.id }, { replace: false })
   }
 
   const onDelete = async (s) => {
@@ -3761,7 +3788,23 @@ export default function Spaces() {
     </div>
   }
   if (loading && spaces.length === 0) return <div className="card-flat" style={{ padding: 40, textAlign: 'center' }}><span className="spinner" /></div>
-  if (editing) return <SpaceBuilder space={editing} onSave={(s) => { refresh(); setEditing(s) }} onClose={() => { refresh(); setEditing(null) }} />
+  if (editing) return <SpaceBuilder
+    space={editing}
+    onSave={(s) => {
+      refresh()
+      setEditing(s)
+      // Keep the URL synced if a save mutated the row's id (e.g. a
+      // newly-created space gets its first persisted id here).
+      if (s?.id && s.id !== urlSpaceId) setSearchParams({ id: s.id }, { replace: true })
+    }}
+    onClose={() => {
+      refresh()
+      setEditing(null)
+      // Drop the ?id= param so the back-to-list URL is clean and a
+      // refresh from there stays on the list.
+      if (urlSpaceId) setSearchParams({}, { replace: false })
+    }}
+  />
   return (
     <>
       <SpacesList
@@ -3774,7 +3817,11 @@ export default function Spaces() {
         error={error}
         token={session?.access_token}
         profileId={selectedProfileId}
-        onTemplatePicked={(space, guide) => setEditing(space ? { ...space, template_guide: guide } : space)}
+        onTemplatePicked={(space, guide) => {
+          if (!space) { setEditing(null); return }
+          setEditing({ ...space, template_guide: guide })
+          if (space.id) setSearchParams({ id: space.id }, { replace: false })
+        }}
       />
       {historyFor && (
         <RunHistoryModal
