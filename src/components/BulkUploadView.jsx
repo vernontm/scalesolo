@@ -18,6 +18,7 @@
 // Editable cells call PATCH /api/content?id=… on blur.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Upload, Loader2, Sparkles, CalendarClock, Send, Download, Trash2,
   Check, X, AlertCircle, Image as ImageIcon, Video as VideoIcon, ChevronDown, Zap,
@@ -62,23 +63,73 @@ const ROW_PLATFORMS = [
 function PlatformsCell({ value, mediaType, onSave }) {
   const cur = Array.isArray(value) ? value : []
   const [open, setOpen] = useState(false)
-  const ref = useRef(null)
+  // anchor rect drives the portal positioning so the dropdown can escape
+  // the table cell's overflow / clipping bounds and float above the
+  // surrounding frame.
+  const [anchor, setAnchor] = useState(null)
+  const btnRef = useRef(null)
+  const popRef = useRef(null)
   useEffect(() => {
     if (!open) return
-    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    const onDown = (e) => {
+      // Click-outside check has to look at BOTH the trigger button and
+      // the portaled popover, since the popover lives outside the
+      // component's DOM subtree.
+      const t = e.target
+      if (btnRef.current?.contains(t)) return
+      if (popRef.current?.contains(t)) return
+      setOpen(false)
+    }
+    const onScroll = () => {
+      // Re-measure on scroll so the popover stays glued to the button.
+      // Cheaper than a ResizeObserver because the cell rarely resizes.
+      if (btnRef.current) setAnchor(btnRef.current.getBoundingClientRect())
+    }
     document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
+    window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', onScroll)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      window.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', onScroll)
+    }
   }, [open])
+  const toggleOpen = () => {
+    if (!open && btnRef.current) setAnchor(btnRef.current.getBoundingClientRect())
+    setOpen((o) => !o)
+  }
   const toggle = (id) => {
     const next = cur.includes(id) ? cur.filter((p) => p !== id) : [...cur, id]
     onSave(next)
   }
   const visible = ROW_PLATFORMS.filter((p) => !mediaType || p.kinds.includes(mediaType))
+
+  // Position the popover relative to the viewport. If there's not
+  // enough room below the button (eg the row is near the bottom of a
+  // short table), flip above. Width matches the button so the dropdown
+  // visually anchors but never shrinks below 180px.
+  const POPOVER_HEIGHT_EST = Math.min(visible.length * 30 + 16, 320)
+  let popoverStyle = null
+  if (anchor) {
+    const spaceBelow = window.innerHeight - anchor.bottom
+    const flipUp = spaceBelow < POPOVER_HEIGHT_EST + 12 && anchor.top > POPOVER_HEIGHT_EST + 12
+    popoverStyle = {
+      position: 'fixed',
+      left: Math.max(8, anchor.left),
+      width: Math.max(180, anchor.width),
+      zIndex: 1000,
+      ...(flipUp
+        ? { bottom: window.innerHeight - anchor.top + 4 }
+        : { top: anchor.bottom + 4 }),
+    }
+  }
+
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
+    <div style={{ position: 'relative' }}>
       <button
+        ref={btnRef}
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggleOpen}
         style={{
           width: '100%', padding: '6px 8px', borderRadius: 6,
           border: '1px solid var(--border)', background: 'var(--surface-2)',
@@ -92,13 +143,16 @@ function PlatformsCell({ value, mediaType, onSave }) {
         </span>
         <ChevronDown size={11} />
       </button>
-      {open && (
-        <div style={{
-          position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 30,
-          minWidth: 180, padding: 6, borderRadius: 8,
-          background: 'var(--surface)', border: '1px solid var(--border)',
-          boxShadow: '0 6px 20px rgba(0,0,0,0.18)',
-        }}>
+      {open && popoverStyle && createPortal(
+        <div
+          ref={popRef}
+          style={{
+            ...popoverStyle,
+            padding: 6, borderRadius: 8, maxHeight: 320, overflowY: 'auto',
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            boxShadow: '0 12px 32px rgba(0,0,0,0.32)',
+          }}
+        >
           {visible.map((p) => {
             const on = cur.includes(p.id)
             return (
@@ -117,7 +171,8 @@ function PlatformsCell({ value, mediaType, onSave }) {
               </button>
             )
           })}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )
