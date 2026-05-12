@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Sparkles, Zap, ClipboardCheck, ArrowRight, Boxes, Calendar, BookOpen, CheckCircle2, Circle, Eye, Heart, MessageCircle, Share2, FileText, FilePlus2, TrendingUp, TrendingDown, Minus, Users } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
+import { useCredits } from '../context/CreditsContext.jsx'
 import CreditsPanel from '../components/CreditsPanel.jsx'
 import OnboardingSurvey from '../components/OnboardingSurvey.jsx'
 import VoiceSummaryCard from '../components/VoiceSummaryCard.jsx'
@@ -416,6 +417,7 @@ function QuickAction({ icon: Icon, label, hint, to, color }) {
 export default function Dashboard() {
   const { user, session } = useAuth()
   const { selectedProfile, selectedProfileId, profiles, refresh: refreshProfiles } = useProfile()
+  const { pools: creditPools } = useCredits()
   const navigate = useNavigate()
   const [pendingApprovals, setPendingApprovals] = useState(0)
   const [shippedThisMonth, setShippedThisMonth] = useState(null)
@@ -433,6 +435,15 @@ export default function Dashboard() {
   const surveyForced = searchParams.get('survey') === 'true' || searchParams.get('survey') === '1'
   const [onboardingState, setOnboardingState] = useState(surveyForced ? 'show' : 'unknown')
 
+  // Welcome banner: shown for the brief window after a fresh signup
+  // while the Stripe webhook + credit grant settle. Captured on mount
+  // so a manual refresh (which strips ?welcome) doesn't flicker it
+  // away mid-poll. Auto-hides once any credits show up OR after 30s.
+  const [showWelcome, setShowWelcome] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return new URLSearchParams(window.location.search).get('welcome') === '1'
+  })
+
   useEffect(() => {
     if (!session) return
     if (surveyForced) { setOnboardingState('show'); return }
@@ -448,6 +459,18 @@ export default function Dashboard() {
       .catch(() => { if (!cancelled) setOnboardingState('hide') })
     return () => { cancelled = true }
   }, [session, surveyForced])
+
+  // Hide the welcome banner the moment credits arrive (webhook landed
+   // or link-session finished). Also enforce a 30s ceiling so a totally
+   // failed grant doesn't leave the banner stuck.
+  useEffect(() => {
+    if (!showWelcome) return
+    const haveCredits = (creditPools?.video_units?.balance || 0) > 0
+      || (creditPools?.ai_tokens?.balance || 0) > 0
+    if (haveCredits) { setShowWelcome(false); return }
+    const t = setTimeout(() => setShowWelcome(false), 30_000)
+    return () => clearTimeout(t)
+  }, [showWelcome, creditPools])
 
   const closeOnboarding = () => {
     setOnboardingState('hide')
@@ -531,6 +554,33 @@ export default function Dashboard() {
           onSkip={surveyForced ? closeOnboarding : null}
         />
       )}
+      {showWelcome && (
+        <div style={{
+          marginBottom: 18, padding: '14px 18px',
+          background: 'linear-gradient(135deg, rgba(46,204,113,0.16), rgba(46,204,113,0.04))',
+          border: '1px solid rgba(46,204,113,0.35)',
+          borderRadius: 14,
+          display: 'flex', alignItems: 'center', gap: 12,
+        }}>
+          <div style={{
+            width: 38, height: 38, borderRadius: 10,
+            display: 'grid', placeItems: 'center',
+            background: 'rgba(46,204,113,0.18)', color: '#2ecc71',
+            position: 'relative',
+          }}>
+            <span className="spinner" style={{ width: 18, height: 18, borderWidth: 2, borderColor: 'rgba(46,204,113,0.35)', borderTopColor: '#2ecc71' }} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14, color: 'var(--text)' }}>
+              Setting up your account…
+            </div>
+            <div style={{ fontSize: 12.5, color: 'var(--text-soft)', marginTop: 2 }}>
+              We're finalizing your subscription and granting your trial credits. This usually takes a few seconds.
+            </div>
+          </div>
+        </div>
+      )}
+
       <section style={heroStyle}>
         <div style={heroIcon}><Sparkles size={26} strokeWidth={2.2} /></div>
         <div style={{ flex: 1 }}>

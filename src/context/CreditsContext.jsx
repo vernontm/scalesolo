@@ -76,10 +76,6 @@ export function CreditsProvider({ children }) {
       if (stopped) return
       attempts++
       await refresh()
-      // refresh() updates pools via setState which is async, so we
-      // can't read the latest value here — keep polling until we hit
-      // the cap. The cost is 12 GETs against /api/credits in the worst
-      // case, which is fine.
       if (attempts < 12) setTimeout(tick, 2000)
     }
     tick()
@@ -88,6 +84,37 @@ export function CreditsProvider({ children }) {
     window.history.replaceState({}, '', url.toString())
     return () => { stopped = true }
   }, [refresh, session])
+
+  // Realtime: subscribe to credit_pools changes for this user's customer
+  // so any deduction (avatar render, polish, top-up grant) reflects in
+  // the UI without a page refresh. RLS on credit_pools already filters
+  // server-side, so the subscription only delivers rows the user can
+  // legitimately see. We bounce through a refresh() rather than splicing
+  // the payload because the realtime row only contains the changed
+  // pool — refresh keeps the whole pools object consistent and picks
+  // up new pools (e.g. voice_minutes) added later.
+  useEffect(() => {
+    if (!session) return
+    let channel
+    try {
+      channel = supabase
+        .channel(`credit-pools:${session.user.id}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'credit_pools' },
+          () => { refresh() },
+        )
+        .subscribe()
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('[credits] realtime subscribe failed', e)
+    }
+    return () => {
+      if (channel) {
+        try { supabase.removeChannel(channel) } catch {}
+      }
+    }
+  }, [session, refresh])
 
   // Memoize so the topup-success poll (which calls refresh 4×) doesn't
   // recreate the context value object 4× and re-render every consumer.
