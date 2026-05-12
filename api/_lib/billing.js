@@ -19,7 +19,7 @@ export const TIERS = {
     monthly_price_id: process.env.STRIPE_PRICE_SOLO_STARTER,
     annual_price_id:  process.env.STRIPE_PRICE_SOLO_STARTER_ANNUAL,
     monthly_usd: 49,
-    annual_usd:  468,
+    annual_usd:  490,
     credits: { ai_tokens: 100_000, video_units: 50, voice_minutes: 0 },
     limits: {
       active_workflows: 3,
