@@ -39,8 +39,9 @@ export default async function handler(req, res) {
     const session = await stripe.createCheckoutSession({
       mode: 'subscription',
       line_items: [{ price: priceId, quantity: 1 }],
-      // Force email collection so we can resolve it post-checkout.
-      customer_creation: 'always',
+      // In subscription mode Stripe always creates a Customer + collects
+      // an email natively, so `customer_creation` is not needed (and is
+      // rejected by the API — it's a payment-mode-only flag).
       // Trial details match the logged-in flow — 3 days, card required.
       subscription_data: {
         trial_period_days: 3,
