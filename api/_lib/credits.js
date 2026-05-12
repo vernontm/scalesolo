@@ -263,13 +263,35 @@ export async function refundConsumeByMetadata({ originalAction, metadataKey, met
   return { refunded: true, amount: refundAmount, ref_id: row.ref_id || row.id }
 }
 
-// Top-up pack catalog (env-driven Stripe prices).
+// Top-up pack catalog (env-driven Stripe prices). One-time
+// purchases that grant credits on top of the user's monthly bucket.
+// Top-ups never expire — they sit alongside the monthly grant and
+// burn down naturally.
 export const TOPUP_PACKS = {
-  ai_tokens_100k:  { pool: 'ai_tokens',     amount:   100_000, usd:  10, label: '100K AI tokens',     priceId: process.env.STRIPE_PRICE_TOPUP_AI_100K },
-  ai_tokens_500k:  { pool: 'ai_tokens',     amount:   500_000, usd:  40, label: '500K AI tokens',     priceId: process.env.STRIPE_PRICE_TOPUP_AI_500K },
-  ai_tokens_2m:    { pool: 'ai_tokens',     amount: 2_000_000, usd: 120, label: '2M AI tokens',       priceId: process.env.STRIPE_PRICE_TOPUP_AI_2M },
-  video_units_10:  { pool: 'video_units',   amount:        10, usd:  20, label: '10 video units',     priceId: process.env.STRIPE_PRICE_TOPUP_VIDEO_10 },
-  video_units_50:  { pool: 'video_units',   amount:        50, usd:  80, label: '50 video units',     priceId: process.env.STRIPE_PRICE_TOPUP_VIDEO_50 },
+  topup_credits_20: {
+    pool: 'video_units', amount: 20, usd: 19,
+    label: '20 video credits',
+    description: '4 × 30-second avatar videos',
+    priceId: process.env.STRIPE_PRICE_TOPUP_CREDITS_20,
+  },
+  topup_credits_100: {
+    pool: 'video_units', amount: 100, usd: 69,
+    label: '100 video credits',
+    description: '20 × 30-second avatar videos',
+    priceId: process.env.STRIPE_PRICE_TOPUP_CREDITS_100,
+  },
+  topup_tokens_250k: {
+    pool: 'ai_tokens', amount: 250_000, usd: 9,
+    label: '250k AI tokens',
+    description: 'Extra Claude tokens for scripts + captions',
+    priceId: process.env.STRIPE_PRICE_TOPUP_TOKENS_250K,
+  },
+  topup_tokens_1m: {
+    pool: 'ai_tokens', amount: 1_000_000, usd: 25,
+    label: '1M AI tokens',
+    description: 'Best value for AI tokens',
+    priceId: process.env.STRIPE_PRICE_TOPUP_TOKENS_1M,
+  },
 }
 
 // Catalog as a public-safe JSON (strips priceId, keeps a 'available' flag).
@@ -280,6 +302,7 @@ export function publicTopupCatalog() {
       amount: v.amount,
       usd: v.usd,
       label: v.label,
+      description: v.description,
       available: !!v.priceId,
     }])
   )
