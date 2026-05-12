@@ -343,19 +343,49 @@ function ItemList({ items, emptyHint, onOpen }) {
 //     PATCH'd via the existing /api/content endpoint (which auto-
 //     resyncs the Upload-Post job behind the scenes).
 function CalendarView({ items, onOpen, token, onChange }) {
-  // Show today + the next 13 days. Two weeks is enough to read the
-  // posting cadence at a glance without the grid getting noisy.
+  // viewMonth = first day of the month the calendar is currently
+  // showing. Start at today's month; prev / next buttons step it ±1.
+  const [viewMonth, setViewMonth] = useState(() => {
+    const d = new Date()
+    d.setHours(0, 0, 0, 0)
+    d.setDate(1)
+    return d
+  })
+
+  // Build the full month grid — Sunday-aligned, 5 or 6 rows of 7 days.
+  // Days from prior / next month are included so the grid lines up
+  // (greyed in the render layer).
   const days = useMemo(() => {
+    const firstOfMonth = new Date(viewMonth)
+    firstOfMonth.setDate(1)
+    firstOfMonth.setHours(0, 0, 0, 0)
+    const gridStart = new Date(firstOfMonth)
+    gridStart.setDate(1 - firstOfMonth.getDay())   // back up to Sunday
+    const lastOfMonth = new Date(firstOfMonth)
+    lastOfMonth.setMonth(firstOfMonth.getMonth() + 1)
+    lastOfMonth.setDate(0)                          // end of current month
+    const gridEnd = new Date(lastOfMonth)
+    gridEnd.setDate(lastOfMonth.getDate() + (6 - lastOfMonth.getDay()))  // forward to Saturday
     const out = []
-    const now = new Date()
-    for (let i = 0; i < 14; i++) {
-      const d = new Date(now)
-      d.setHours(0, 0, 0, 0)
-      d.setDate(now.getDate() + i)
-      out.push(d)
+    const cursor = new Date(gridStart)
+    while (cursor <= gridEnd) {
+      out.push(new Date(cursor))
+      cursor.setDate(cursor.getDate() + 1)
     }
     return out
-  }, [])
+  }, [viewMonth])
+
+  const stepMonth = (delta) => {
+    const d = new Date(viewMonth)
+    d.setMonth(d.getMonth() + delta)
+    setViewMonth(d)
+  }
+  const goToday = () => {
+    const d = new Date()
+    d.setHours(0, 0, 0, 0)
+    d.setDate(1)
+    setViewMonth(d)
+  }
 
   // Bucket items by local YYYY-MM-DD so calendar slots map correctly
   // against the user's timezone (toISOString().slice(0,10) is UTC, which
@@ -381,8 +411,6 @@ function CalendarView({ items, onOpen, token, onChange }) {
 
   const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   const todayKey = dayKey(new Date())
-  const maxCount = Math.max(1, ...Array.from(byDay.values()).map((a) => a.length))
-  const scrollRefs = useRef({})
 
   // Drag state — we hold the dragging item id while it's in flight so
   // hover styling on drop targets shows up.
@@ -431,95 +459,93 @@ function CalendarView({ items, onOpen, token, onChange }) {
 
   return (
     <div>
-      {/* Heatmap header — one tile per upcoming day, height scales with
-          item count. Click to scroll the matching column into view. */}
+      {/* Month / year header + pagination. Prev / next step viewMonth
+          ±1 calendar month; Today resets to the current month. */}
       <div style={{
-        display: 'grid', gridTemplateColumns: `repeat(${days.length}, 1fr)`, gap: 4,
-        marginBottom: 14, padding: 10,
+        display: 'flex', alignItems: 'center', gap: 10,
+        marginBottom: 14, padding: '10px 14px',
         background: 'var(--surface)', border: '1px solid var(--border)',
         borderRadius: 10,
       }}>
-        {days.map((d) => {
-          const k = dayKey(d)
-          const count = (byDay.get(k) || []).length
-          const ratio = count / maxCount
-          const isToday = k === todayKey
-          return (
-            <button
-              key={k}
-              onClick={() => scrollRefs.current[k]?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' })}
-              title={`${count} post${count === 1 ? '' : 's'} on ${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}`}
-              style={{
-                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-                padding: '6px 4px', borderRadius: 6,
-                background: 'transparent', border: 'none', cursor: 'pointer',
-              }}
-            >
-              <div style={{
-                fontSize: 10, fontFamily: 'var(--font-display)', fontWeight: 700,
-                color: isToday ? 'var(--red)' : 'var(--muted)',
-                letterSpacing: '0.06em', textTransform: 'uppercase',
-              }}>
-                {d.toLocaleDateString(undefined, { weekday: 'short' })}
-              </div>
-              <div style={{
-                width: '100%', height: 36,
-                position: 'relative', overflow: 'hidden',
-                borderRadius: 4, background: 'var(--surface-2)',
-              }}>
-                <div style={{
-                  position: 'absolute', left: 0, right: 0, bottom: 0,
-                  height: `${Math.max(4, ratio * 100)}%`,
-                  background: count === 0 ? 'transparent'
-                    : isToday ? 'rgba(239,68,68,0.5)'
-                    : 'rgba(14,165,233,0.45)',
-                  transition: 'height 0.2s',
-                }} />
-              </div>
-              <div style={{ fontSize: 10.5, color: isToday ? 'var(--red)' : 'var(--text-soft)' }}>
-                {d.getDate()}{count > 0 ? ` · ${count}` : ''}
-              </div>
-            </button>
-          )
-        })}
+        <div style={{
+          fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700,
+          color: 'var(--text)', flex: 1, letterSpacing: '0.02em',
+        }}>
+          {viewMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
+        </div>
+        <button
+          className="btn-ghost"
+          onClick={goToday}
+          style={{ padding: '5px 12px', fontSize: 12 }}
+          title="Jump to the current month"
+        >Today</button>
+        <button
+          className="btn-ghost"
+          onClick={() => stepMonth(-1)}
+          aria-label="Previous month"
+          style={{ padding: '5px 10px', fontSize: 12 }}
+          title="Previous month"
+        >‹</button>
+        <button
+          className="btn-ghost"
+          onClick={() => stepMonth(1)}
+          aria-label="Next month"
+          style={{ padding: '5px 10px', fontSize: 12 }}
+          title="Next month"
+        >›</button>
       </div>
 
-      {/* Day columns. auto-fit + minmax wraps to 2-3-4-5-7 columns
-          depending on viewport width so the grid never overflows the
-          page container. On wide screens you see all 14 days as 7+7;
-          on narrower screens you scroll vertically instead. */}
+      {/* Weekday labels — show once at the top, aligned with the grid below */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+        gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
+        gap: 10, marginBottom: 6,
+      }}>
+        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((lbl) => (
+          <div key={lbl} style={{
+            fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 10.5,
+            letterSpacing: '0.08em', textTransform: 'uppercase',
+            color: 'var(--muted)', textAlign: 'center',
+          }}>{lbl}</div>
+        ))}
+      </div>
+
+      {/* Day columns — always 7 across (matches the weekday header).
+          Days from the prior / next month are dimmed so the user
+          knows what month they're looking at. */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
         gap: 10,
       }}>
         {days.map((d) => {
           const k = dayKey(d)
           const dayItems = byDay.get(k) || []
           const isToday = k === todayKey
+          const isCurrentMonth = d.getMonth() === viewMonth.getMonth()
           const isDropTarget = !!dragId
           return (
             <div
               key={k}
-              ref={(el) => { scrollRefs.current[k] = el }}
               onDragOver={(e) => { if (isDropTarget) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' } }}
               onDrop={(e) => onDropDay(e, d)}
               style={{
                 background: 'var(--surface)',
                 border: `1px solid ${isToday ? 'rgba(239,68,68,0.45)' : 'var(--border)'}`,
-                borderRadius: 10, padding: 8, minHeight: 140,
+                borderRadius: 10, padding: 8, minHeight: 120,
                 position: 'relative',
+                // Dim days outside the current month so the user knows
+                // what month they're looking at without removing context
+                // (the row still grids cleanly).
+                opacity: isCurrentMonth ? 1 : 0.42,
               }}
             >
               <div style={{
                 display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 8,
                 paddingBottom: 6, borderBottom: '1px solid var(--border)',
               }}>
-                <div style={{
-                  fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 11,
-                  letterSpacing: '0.08em', textTransform: 'uppercase',
-                  color: isToday ? 'var(--red)' : 'var(--muted)',
-                }}>{d.toLocaleDateString(undefined, { weekday: 'short' })}</div>
+                {/* Weekday lives in the top header row, so cells just
+                    need the day number + a small count chip. */}
                 <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 18, color: isToday ? 'var(--red)' : 'var(--text)', lineHeight: 1 }}>
                   {d.getDate()}
                 </div>
