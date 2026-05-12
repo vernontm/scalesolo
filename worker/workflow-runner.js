@@ -513,7 +513,8 @@ const NODE_RUNNERS = {
       ? props.platforms
       : ['x', 'threads', 'facebook', 'linkedin']
     // Use the upstream Text content as the prompt. Fall back to any
-    // script-shaped input so script_gen → text_post_gen chains work.
+    // script-shaped input, then to the node's in-body Prompt textarea
+    // (props.prompt).
     let prompt = ''
     for (const v of asArr(inputs)) {
       if (!v) continue
@@ -523,7 +524,8 @@ const NODE_RUNNERS = {
       if (typeof v.script === 'string' && v.script.trim()) { prompt = v.script; break }
       if (typeof v.full_script === 'string' && v.full_script.trim()) { prompt = v.full_script; break }
     }
-    if (!prompt.trim()) throw new Error('text_post_gen needs a prompt — wire a Text or Script node into "in".')
+    if (!prompt.trim()) prompt = String(props.prompt || '').trim()
+    if (!prompt.trim()) throw new Error('text_post_gen needs a prompt — type one in the node or wire a Text / Script node into "in".')
     const body = await callApi('/api/content/text-post-generate', {
       profile_id: profileId,
       prompt,

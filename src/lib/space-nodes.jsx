@@ -1349,6 +1349,7 @@ function TextPostGenBody({ data, onPatch }) {
   // remember the user's last-viewed tab in state.
   const [activeTab, setActiveTab] = useState(selected[0] || 'x')
   const [expanded, setExpanded] = useState(false)
+  const prompt = props.prompt || ''
   useEffect(() => {
     if (!selected.includes(activeTab)) setActiveTab(selected[0] || 'x')
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1376,6 +1377,23 @@ function TextPostGenBody({ data, onPatch }) {
 
   return (
     <>
+      {/* Built-in prompt. The user can type their idea directly here
+          instead of wiring a Text node into "in". A wired Text node
+          still overrides this when present (run() checks inputs first
+          and falls back to props.prompt). */}
+      <div style={{ fontSize: 10, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 3 }}>
+        Prompt
+      </div>
+      <textarea
+        className="nodrag"
+        value={prompt}
+        placeholder="What should the post be about? (e.g. 'Quick reaction to the Anthropic pricing change') — or wire a Text node into 'in'."
+        onChange={(e) => onPatch({ prompt: e.target.value })}
+        onClick={(e) => e.stopPropagation()}
+        rows={2}
+        style={{ ...tinyInput, width: '100%', fontSize: 11.5, lineHeight: 1.4, padding: 8, marginBottom: 8, resize: 'vertical' }}
+      />
+
       {/* Platform pills */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
         {TEXT_POST_PLATFORMS.map((p) => {
@@ -6432,6 +6450,7 @@ export const NODE_REGISTRY = {
     inputs: [{ id: 'in', label: 'In (prompt / brand)' }],
     outputs: [{ id: 'out', label: 'Out (text post bundle)' }],
     initialProps: {
+      prompt: '',       // in-body prompt textarea (overridden by a wired Text node when one is connected)
       platforms: ['x', 'threads', 'facebook', 'linkedin'],
       per_platform: {}, // generated per-platform text, keyed by platform id
       edited: {},       // user overrides keyed by platform id
@@ -6442,9 +6461,8 @@ export const NODE_REGISTRY = {
       const brand = pickBrand(arr)
       const profileId = brand?.profile_id || ctx.profileId
       const platforms = Array.isArray(data.props?.platforms) ? data.props.platforms : ['x']
-      // Use the upstream Text node's content as the prompt. Falls back
-      // to any script-shaped input so a script_gen → text_post_gen
-      // chain works too.
+      // Prefer the upstream Text node's content (script_gen too). If
+      // no wired prompt, fall back to the in-node Prompt textarea.
       let prompt = ''
       for (const v of arr) {
         if (!v) continue
@@ -6454,7 +6472,8 @@ export const NODE_REGISTRY = {
         if (typeof v.script === 'string' && v.script.trim()) { prompt = v.script; break }
         if (typeof v.full_script === 'string' && v.full_script.trim()) { prompt = v.full_script; break }
       }
-      if (!prompt.trim()) throw new Error('text_post_gen needs a prompt — wire a Text or Script node into "in".')
+      if (!prompt.trim()) prompt = (data.props?.prompt || '').trim()
+      if (!prompt.trim()) throw new Error('text_post_gen needs a prompt — type one in the node or wire a Text / Script node into "in".')
       if (!platforms.length) throw new Error('Pick at least one platform.')
 
       const r = await fetch('/api/content/text-post-generate', {
