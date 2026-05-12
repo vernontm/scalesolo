@@ -207,7 +207,24 @@ export default function Login() {
         // sign-in success — if there's a pending tier, the useEffect above will fire after session lands
       } else {
         const { error: err } = await signUp(email, password)
-        if (err) throw err
+        if (err) {
+          // "User already registered" is the common case when somebody
+          // came back from Stripe Checkout, submitted once, and is now
+          // trying again. Auto-resend the confirmation so they get a
+          // fresh email instead of a dead-end error.
+          const msg = (err.message || '').toLowerCase()
+          if (msg.includes('already registered') || msg.includes('already exists') || msg.includes('user already')) {
+            try {
+              await supabase.auth.resend({ type: 'signup', email })
+              setInfo('That email is already pending confirmation. We sent a fresh confirmation link, check your inbox (and spam).')
+              setResendCooldown(60)
+              return
+            } catch (resendErr) {
+              throw new Error('That email is already registered. Try signing in instead.')
+            }
+          }
+          throw err
+        }
         // If Supabase email confirmation is OFF, signUp returns a session immediately.
         const { data: { session } } = await supabase.auth.getSession()
         // Stripe-first flow: link the freshly-created account to the
@@ -367,10 +384,12 @@ export default function Login() {
           </button>
         </form>
 
-        {/* Resend confirmation email — only useful after a signup attempt
-            that triggered the "check your email" path. Hidden until the
-            user has typed an email and we've shown the info banner. */}
-        {mode === 'signup' && info && email && (
+        {/* Resend confirmation email. Shown whenever:
+              - we've already shown the "check your email" banner (post-submit), OR
+              - the page loaded from a Stripe success URL with the email
+                pre-filled (we want a one-click recovery path if the
+                first confirmation email never arrived). */}
+        {mode === 'signup' && (info || (stripeSessionId && emailLocked)) && email && (
           <div style={{ ...switchLine, marginTop: 12 }}>
             Didn't get the email?
             <button
