@@ -82,11 +82,19 @@ export default function Login() {
   // Pull intent from query string OR localStorage (Pricing page stashes it before routing here).
   const initialTier = params.get('tier') || (typeof window !== 'undefined' ? localStorage.getItem('scalesolo.signup.tier') : null)
   const initialCycle = params.get('cycle') || (typeof window !== 'undefined' ? localStorage.getItem('scalesolo.signup.cycle') : null) || 'monthly'
+  // Stripe-first signup: ?stripe_session=cs_xxx in the URL means
+  // they just finished anonymous Stripe Checkout and need to create
+  // their Supabase account. We pre-fill + LOCK the email (it has to
+  // match the Stripe customer) and link the customer after signup.
+  const stripeSessionId = params.get('stripe_session')
 
   // ?mode=signup explicitly opens the signup form (used by every CTA on
   // the landing page that says "Get started" / "Try free"). A pending
-  // tier always wins (came from /pricing or a checkout retry).
-  const initialMode = initialTier ? 'signup' : (params.get('mode') === 'signup' ? 'signup' : 'signin')
+  // tier always wins (came from /pricing or a checkout retry). A
+  // returning-from-Stripe session forces signup mode.
+  const initialMode = stripeSessionId ? 'signup'
+    : initialTier ? 'signup'
+    : (params.get('mode') === 'signup' ? 'signup' : 'signin')
   const [mode, setMode] = useState(initialMode)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -95,11 +103,41 @@ export default function Login() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [info, setInfo] = useState(null)
+  // Stripe-session prefill: read email + tier off the session and
+  // lock the email field so the account ties to the right Stripe
+  // customer. emailLocked turns the input read-only.
+  const [emailLocked, setEmailLocked] = useState(false)
+  useEffect(() => {
+    if (!stripeSessionId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const r = await fetch(`/api/stripe-resolve-session?id=${encodeURIComponent(stripeSessionId)}`)
+        const body = await r.json()
+        if (cancelled || !r.ok) return
+        if (body.email) { setEmail(body.email); setEmailLocked(true) }
+        // If they're somehow already signed in with this email,
+        // immediately link the customer + bounce to dashboard.
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.user?.email && session.user.email.toLowerCase() === (body.email || '').toLowerCase()) {
+          await fetch('/api/stripe-link-session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+            body: JSON.stringify({ session_id: stripeSessionId }),
+          })
+          window.location.href = '/dashboard?welcome=1'
+        }
+      } catch { /* fall through to normal signup */ }
+    })()
+    return () => { cancelled = true }
+  }, [stripeSessionId])
 
   // If there's a pending tier and the user is already signed in (e.g. came back from confirm email),
-  // bounce them straight to checkout.
+  // bounce them straight to checkout. SKIP this when stripeSessionId
+  // is set — that flow finished checkout already and just needs the
+  // signup completion.
   useEffect(() => {
-    if (!tier) return
+    if (!tier || stripeSessionId) return
     let cancelled = false
     ;(async () => {
       const { data: { session } } = await supabase.auth.getSession()
@@ -145,12 +183,27 @@ export default function Login() {
         if (err) throw err
         // If Supabase email confirmation is OFF, signUp returns a session immediately.
         const { data: { session } } = await supabase.auth.getSession()
+        // Stripe-first flow: link the freshly-created account to the
+        // Stripe customer that was created during anonymous checkout.
+        if (session && stripeSessionId) {
+          try {
+            await fetch('/api/stripe-link-session', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+              body: JSON.stringify({ session_id: stripeSessionId }),
+            })
+          } catch { /* don't block signup over link failure — webhook still works */ }
+          window.location.href = '/dashboard?welcome=1'
+          return
+        }
         if (session && tier) {
           await startCheckout()
           return
         }
         if (session && !tier) return // App will route to dashboard
-        setInfo('Check your email to confirm your account, then come back to finish checkout.')
+        setInfo(stripeSessionId
+          ? 'Check your email to confirm your account, then come back to finish setup.'
+          : 'Check your email to confirm your account, then come back to finish checkout.')
       }
     } catch (err) {
       setError(err.message || 'Something went wrong.')
@@ -226,6 +279,19 @@ export default function Login() {
               : 'Free to start. Upgrade when you need more.'}
         </div>
 
+        {stripeSessionId && (
+          <div style={{
+            padding: '10px 12px', marginBottom: 14, borderRadius: 10,
+            background: 'rgba(46,204,113,0.10)',
+            border: '1px solid rgba(46,204,113,0.35)',
+            fontSize: 12.5, color: 'var(--text-soft)', lineHeight: 1.5,
+          }}>
+            <strong style={{ color: '#2ecc71', fontFamily: 'var(--font-display)' }}>
+              Payment received.
+            </strong>{' '}
+            Pick a password to finish your account. Your trial starts immediately and your saved card kicks in after day 3 unless you cancel.
+          </div>
+        )}
         <form style={formStack} onSubmit={onSubmit}>
           <div>
             <label className="label" htmlFor="email">Email</label>
@@ -236,7 +302,10 @@ export default function Login() {
               autoComplete="email"
               required
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => emailLocked ? null : setEmail(e.target.value)}
+              readOnly={emailLocked}
+              title={emailLocked ? 'Email is locked to the one used at checkout' : ''}
+              style={emailLocked ? { opacity: 0.7, cursor: 'not-allowed' } : null}
               placeholder="you@example.com"
             />
           </div>

@@ -101,6 +101,34 @@ async function findCustomerRowByStripeId(stripeCustomerId) {
   return rows?.[0] || null
 }
 
+// Used by the public-signup flow: when a webhook fires for a Stripe
+// customer we've never seen (anonymous checkout, signup hasn't
+// happened yet), create the billing_customers row with user_id=null
+// + email pulled from Stripe so we don't lose the subscription. The
+// signup page calls /api/stripe-link-session post-account-creation
+// to fill in user_id.
+async function ensureCustomerRowForStripe(stripeCustomerId, fallbackEmail) {
+  if (!stripeCustomerId) return null
+  const existing = await findCustomerRowByStripeId(stripeCustomerId)
+  if (existing) return existing
+  let email = fallbackEmail || null
+  if (!email) {
+    try {
+      const cust = await stripeGet(`/customers/${encodeURIComponent(stripeCustomerId)}`)
+      email = cust?.email || null
+    } catch { /* swallow — email is best-effort here */ }
+  }
+  const created = await supa('billing_customers', {
+    method: 'POST',
+    body: {
+      user_id: null,
+      email,
+      stripe_customer_id: stripeCustomerId,
+    },
+  })
+  return Array.isArray(created) ? created[0] : created
+}
+
 // ── Affiliate commissions ──────────────────────────────────────────────────
 // Tier rates kept in sync with api/_lib/affiliate.js — duplicated here
 // because the webhook runs in Edge runtime and the shared helper isn't
@@ -228,7 +256,12 @@ async function priorSub(stripeSubId) {
 }
 
 async function upsertSubscription(sub, eventType) {
-  const customerRow = await findCustomerRowByStripeId(sub.customer)
+  // Public-signup flow: this may be the FIRST webhook for a Stripe
+  // customer we've never seen (visitor checked out before they had
+  // a Supabase account). Auto-create the billing_customers row so we
+  // don't drop the subscription on the floor; signup links user_id
+  // afterwards via /api/stripe-link-session.
+  const customerRow = await ensureCustomerRowForStripe(sub.customer)
   if (!customerRow) return
   const priceId = sub.items?.data?.[0]?.price?.id
   const tier = tierForPriceId(priceId) || sub.metadata?.tier || 'solo_starter'

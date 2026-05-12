@@ -99,28 +99,38 @@ export default function PricingPlans() {
 
   const handleSubscribe = async (tier) => {
     setError(null)
-    if (!user) {
-      // Stash intent so the signup flow can pre-select the chosen plan,
-      // then route to /login (the signup page).
-      try { localStorage.setItem('scalesolo.signup.tier', tier) } catch {}
-      try { localStorage.setItem('scalesolo.signup.cycle', cycle) } catch {}
-      navigate(`/login?tier=${tier}&cycle=${cycle}`)
-      return
-    }
     setLoadingTier(tier)
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      const r = await fetch('/api/stripe-checkout', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session?.access_token}`,
-        },
-        body: JSON.stringify({ tier, billing_cycle: cycle }),
-      })
-      const body = await r.json()
-      if (!r.ok || !body.url) throw new Error(body.error || 'Checkout could not start.')
-      window.location.href = body.url
+      // Two paths:
+      //   - Logged-in user → /api/stripe-checkout (auth required;
+      //     attaches checkout to their existing billing_customer)
+      //   - Anonymous visitor → /api/stripe-checkout-public (no auth;
+      //     Stripe collects the email; the success_url routes back
+      //     to /login?stripe_session=cs_xxx where the signup page
+      //     pre-fills the email + creates the Supabase account +
+      //     links it to the Stripe customer.)
+      let url, body
+      if (user) {
+        const { data: { session } } = await supabase.auth.getSession()
+        const r = await fetch('/api/stripe-checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token}` },
+          body: JSON.stringify({ tier, billing_cycle: cycle }),
+        })
+        body = await r.json()
+        if (!r.ok || !body.url) throw new Error(body.error || 'Checkout could not start.')
+        url = body.url
+      } else {
+        const r = await fetch('/api/stripe-checkout-public', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tier, billing_cycle: cycle }),
+        })
+        body = await r.json()
+        if (!r.ok || !body.url) throw new Error(body.error || 'Checkout could not start.')
+        url = body.url
+      }
+      window.location.href = url
     } catch (e) {
       setError(e.message)
       setLoadingTier(null)
