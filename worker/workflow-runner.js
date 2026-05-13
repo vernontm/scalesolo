@@ -783,15 +783,25 @@ ${String(script).slice(0, 2000)}
       }
       if (!musicUrl && p.music_url) musicUrl = p.music_url
     }
-    let titleText = upstreamTitle || (p.title || '').trim()
-    // Auto-title fallback. The browser path calls /api/videos/auto-title
-    // (Scribe transcribe + LLM) when title_mode='auto' and no upstream
-    // title is wired into polish. Without this, server runs whose
-    // graphs wire caption_gen → schedule_post (but NOT caption_gen →
-    // polish) silently published with no big text overlay on the
-    // video, even though the title shows up in the schedule queue.
-    // Mirrors the auto-title branch in src/lib/space-nodes.jsx.
-    if (!titleText && p.title_enabled !== false && (p.title_mode || 'auto') === 'auto') {
+    // Title resolution. Three paths:
+    //   - manual mode: use p.title verbatim (user typed it in)
+    //   - auto mode + upstream wired:  use the upstream title
+    //   - auto mode + no upstream:    call /api/videos/auto-title to
+    //                                 transcribe + generate a fresh one
+    //
+    // Previously this was `upstreamTitle || p.title` which meant a
+    // stale manually-typed value leaked into every auto-mode run when
+    // the upstream wasn't wired — the OR short-circuited before
+    // auto-title could fire. Now p.title is ONLY consulted in manual
+    // mode, so auto runs always regenerate.
+    const titleMode = p.title_mode || 'auto'
+    let titleText = ''
+    if (titleMode === 'manual') {
+      titleText = (p.title || '').trim()
+    } else {
+      titleText = upstreamTitle || ''
+    }
+    if (!titleText && p.title_enabled !== false && titleMode === 'auto') {
       try {
         const at = await callApi('/api/videos/auto-title', {
           profile_id: ctx.profileId,

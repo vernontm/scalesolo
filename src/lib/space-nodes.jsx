@@ -7658,43 +7658,57 @@ export const NODE_REGISTRY = {
         const tag = total > 1 ? ` (clip ${idx + 1}/${total})` : ''
         let resolvedTitle = ''
         if (p.title_enabled !== false) {
-          if ((p.title_mode || 'auto') === 'auto') {
-            try {
-              // Prefer per-clip chunk script, then full upstream script,
-              // and only fall through to ElevenLabs Scribe if neither
-              // exists. Saves 5-15s per clip when the script came from
-              // voice_gen / Text / script_gen — no transcription round
-              // trip needed.
-              let chunkScript = null
-              if (Array.isArray(upstreamChunkScripts)) {
-                const match = upstreamChunkScripts.find((c) => c.order === idx) || upstreamChunkScripts[idx]
-                if (match?.sentence) chunkScript = match.sentence
-              }
-              const transcriptHint = chunkScript || upstreamScript || null
-              reportProgress?.({
-                message: transcriptHint ? `Generating title${tag}…` : `Transcribing for auto-title${tag}…`,
-                done: idx, total,
-              })
-              const ar = await fetch('/api/videos/auto-title', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
-                body: JSON.stringify({
-                  profile_id: ctx.profileId,
-                  video_url: videoUrl,
-                  topic: (p.title_topic || '').trim() || undefined,
-                  // Bypass ElevenLabs Scribe when we already have the
-                  // script — saves the slowest part of auto-title.
-                  transcript: transcriptHint || undefined,
-                }),
-              })
-              const ab = await ar.json().catch(() => ({}))
-              if (ar.ok && ab?.title) resolvedTitle = ab.title
-            } catch (e) {
-              console.warn('auto-title failed, falling back —', e?.message || e)
-            }
-            if (!resolvedTitle) resolvedTitle = upstreamTitle || (p.title || '').trim()
+          const titleMode = p.title_mode || 'auto'
+          if (titleMode === 'manual') {
+            // Manual mode: user typed it in, use it verbatim. No
+            // upstream override — if they wanted auto-derivation, they
+            // would have picked auto mode.
+            resolvedTitle = (p.title || '').trim()
           } else {
-            resolvedTitle = upstreamTitle || (p.title || '').trim()
+            // Auto mode: prefer an upstream title (e.g. wired from
+            // Title + caption). Otherwise call /api/videos/auto-title
+            // to transcribe + generate a fresh one. Critically: do NOT
+            // fall back to p.title here — that's a stale manual value
+            // from before the user switched to auto mode, and using it
+            // makes every run produce the same dead title even when
+            // the upstream script has changed.
+            if (upstreamTitle) {
+              resolvedTitle = upstreamTitle
+            } else {
+              try {
+                // Prefer per-clip chunk script, then full upstream script,
+                // and only fall through to ElevenLabs Scribe if neither
+                // exists. Saves 5-15s per clip when the script came from
+                // voice_gen / Text / script_gen — no transcription round
+                // trip needed.
+                let chunkScript = null
+                if (Array.isArray(upstreamChunkScripts)) {
+                  const match = upstreamChunkScripts.find((c) => c.order === idx) || upstreamChunkScripts[idx]
+                  if (match?.sentence) chunkScript = match.sentence
+                }
+                const transcriptHint = chunkScript || upstreamScript || null
+                reportProgress?.({
+                  message: transcriptHint ? `Generating title${tag}…` : `Transcribing for auto-title${tag}…`,
+                  done: idx, total,
+                })
+                const ar = await fetch('/api/videos/auto-title', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
+                  body: JSON.stringify({
+                    profile_id: ctx.profileId,
+                    video_url: videoUrl,
+                    topic: (p.title_topic || '').trim() || undefined,
+                    // Bypass ElevenLabs Scribe when we already have the
+                    // script — saves the slowest part of auto-title.
+                    transcript: transcriptHint || undefined,
+                  }),
+                })
+                const ab = await ar.json().catch(() => ({}))
+                if (ar.ok && ab?.title) resolvedTitle = ab.title
+              } catch (e) {
+                console.warn('auto-title failed; skipping title overlay this clip —', e?.message || e)
+              }
+            }
           }
         }
         const titleOn = (p.title_enabled !== false) && !!resolvedTitle
