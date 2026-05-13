@@ -3542,7 +3542,20 @@ function SpaceBuilder({ space, onSave, onClose }) {
           const ss = String(secs % 60).padStart(2, '0')
           const durationLabel = mins > 0 ? `${mins}:${ss}` : `${secs}s`
           const platformsLabel = prettyPlatforms(serverRun.platforms)
-          const firstError = serverRun.errors?.[0]?.msg
+          // Pretty-name the failing nodes. Downstream "Blocked by
+          // upstream failure" entries are de-emphasized — the user
+          // cares about the FIRST real cause, not the cascade.
+          const allErrors = Array.isArray(serverRun.errors) ? serverRun.errors : []
+          const realErrors = allErrors.filter((e) => !/blocked by upstream/i.test(e?.msg || ''))
+          const cascadeCount = allErrors.length - realErrors.length
+          const nodeLabel = (nodeId) => {
+            const n = nodesRef.current?.find((x) => x.id === nodeId)
+            return n?.data?.name || NODE_REGISTRY[n?.data?.type]?.label || nodeId?.slice(0, 8) || 'Unknown step'
+          }
+          const succeeded = Math.max(0, serverRun.total - allErrors.length)
+          const stepsLine = isSuccess
+            ? `${serverRun.completed ?? serverRun.total}/${serverRun.total} steps`
+            : `${succeeded}/${serverRun.total} succeeded · ${realErrors.length} failed${cascadeCount ? `, ${cascadeCount} skipped` : ''}`
           return (
             <div
               role="status" aria-live="polite"
@@ -3567,7 +3580,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
                     {headline}
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--text-soft)', marginTop: 2 }}>
-                    {serverRun.brand ? `${serverRun.brand} · ` : ''}{serverRun.completed}/{serverRun.total} steps · {durationLabel}
+                    {serverRun.brand ? `${serverRun.brand} · ` : ''}{stepsLine} · {durationLabel}
                   </div>
                 </div>
                 <button
@@ -3576,33 +3589,75 @@ function SpaceBuilder({ space, onSave, onClose }) {
                   style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 0, fontSize: 16, lineHeight: 1 }}
                 >×</button>
               </div>
-              {platformsLabel && (
+              {/* Only show "Scheduled to ..." on actually-successful runs.
+                  If the run failed before reaching schedule_post, the
+                  platforms list is empty and showing a fake "scheduled
+                  to ..." line is misleading. */}
+              {platformsLabel && isSuccess && (
                 <div style={{ fontSize: 11.5, color: 'var(--text-soft)', marginBottom: 8 }}>
                   Scheduled to {platformsLabel}
                 </div>
               )}
-              {firstError && !isSuccess && (
-                <div style={{
-                  fontSize: 11, color: 'var(--red)', marginBottom: 8,
-                  padding: '6px 8px', borderRadius: 6,
-                  background: 'rgba(239,68,68,0.10)',
-                  border: '1px solid rgba(239,68,68,0.3)',
-                  wordBreak: 'break-word',
-                }}>
-                  {firstError}
-                  {serverRun.errors.length > 1 ? ` (+${serverRun.errors.length - 1} more)` : ''}
+              {/* Anchor each real error to the node that produced it,
+                  with a click target that scrolls + focuses the node so
+                  the user can fix the specific step. Downstream cascades
+                  are mentioned but not enumerated. */}
+              {realErrors.length > 0 && (
+                <div style={{ marginBottom: 8 }}>
+                  {realErrors.slice(0, 3).map((err, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => {
+                        try {
+                          // Open the node's editor drawer (same as
+                          // clicking the settings icon on the card)
+                          // so the user can read the error inline and
+                          // tweak settings.
+                          window.__spaceOpenEditor?.(err.nodeId)
+                        } catch {}
+                        setServerRun(null)
+                      }}
+                      style={{
+                        display: 'block', width: '100%', textAlign: 'left',
+                        fontSize: 11, color: 'var(--red)', marginBottom: 6,
+                        padding: '6px 8px', borderRadius: 6,
+                        background: 'rgba(239,68,68,0.10)',
+                        border: '1px solid rgba(239,68,68,0.3)',
+                        cursor: 'pointer', fontFamily: 'inherit',
+                        wordBreak: 'break-word',
+                      }}
+                    >
+                      <strong>{nodeLabel(err.nodeId)}:</strong> {err.msg}
+                    </button>
+                  ))}
+                  {realErrors.length > 3 && (
+                    <div style={{ fontSize: 10.5, color: 'var(--muted)' }}>
+                      +{realErrors.length - 3} more error{realErrors.length - 3 === 1 ? '' : 's'}
+                    </div>
+                  )}
+                  {cascadeCount > 0 && (
+                    <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 2 }}>
+                      {cascadeCount} downstream step{cascadeCount === 1 ? '' : 's'} skipped (blocked by upstream failure)
+                    </div>
+                  )}
                 </div>
               )}
-              <a
-                href="/schedule"
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 4,
-                  fontFamily: 'var(--font-display)', fontWeight: 700,
-                  fontSize: 11.5, color: accent, textDecoration: 'none',
-                }}
-              >
-                Open Schedule →
-              </a>
+              {/* "Open Schedule" only makes sense when something actually
+                  reached schedule_post. Hide on failed runs — they have
+                  nothing scheduled. */}
+              {platformsLabel && (
+                <a
+                  href="/schedule"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    fontFamily: 'var(--font-display)', fontWeight: 700,
+                    fontSize: 11.5, color: accent, textDecoration: 'none',
+                  }}
+                >
+                  Open Schedule →
+                </a>
+              )}
             </div>
           )
         })()}

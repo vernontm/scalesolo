@@ -15,7 +15,7 @@ import {
   ListChecks, FileVideo, Upload, Loader2, Maximize2, ArrowUpRight,
   Download, Trash2, Building2, Repeat, Play, Pause, Combine as CombineIcon,
   Mic, Sparkles, Send, Copy, X, Lock, Link2, AlertCircle, ExternalLink,
-  Library as LibraryIcon,
+  Library as LibraryIcon, Edit3,
 } from 'lucide-react'
 import { supabase } from './supabase.js'
 import MusicMixPreview from '../components/MusicMixPreview.jsx'
@@ -1160,6 +1160,27 @@ function ScriptGenBody({ data, onPatch }) {
   const out = data.output
   const script = out?.script || out?.full_script || ''
   const [copied, setCopied] = useState(false)
+  // Inline editor state. Lets the user tweak the generated script
+  // before it flows downstream to voice_gen / avatar_render. The
+  // edited text replaces both `script` and `full_script` on the
+  // node's output (downstream consumers prefer full_script).
+  const [editingScript, setEditingScript] = useState(false)
+  const [scriptDraft, setScriptDraft] = useState('')
+  const beginEdit = () => { setScriptDraft(script); setEditingScript(true) }
+  const cancelEdit = () => { setEditingScript(false); setScriptDraft('') }
+  const saveEdit = () => {
+    const trimmed = (scriptDraft || '').trim()
+    if (!data.__id || typeof window === 'undefined' || !window.__spacePatchOutput) {
+      setEditingScript(false)
+      return
+    }
+    // Preserve every other output field (hook, title, etc.) — only
+    // overwrite the script. patchOutput swaps data.output wholesale
+    // so we have to spread the previous output to keep them.
+    const nextOut = { ...(out || {}), script: trimmed, full_script: trimmed }
+    window.__spacePatchOutput(data.__id, nextOut)
+    setEditingScript(false)
+  }
 
   const onAutoPrompt = () => {
     // Build a generic-enough auto-prompt that works for any brand
@@ -1285,7 +1306,7 @@ function ScriptGenBody({ data, onPatch }) {
           ))}
         </select>
       </div>
-      {script && (
+      {script && !editingScript && (
         <div style={{
           marginTop: 8, padding: '10px 12px', borderRadius: 8,
           background: 'var(--surface-2)', border: '1px solid var(--border)',
@@ -1295,23 +1316,88 @@ function ScriptGenBody({ data, onPatch }) {
           {script}
         </div>
       )}
-      {script && (
-        <button
-          type="button"
-          className="nodrag"
-          onClick={(e) => { e.stopPropagation(); copyScript() }}
+      {script && editingScript && (
+        <textarea
+          className="nodrag nowheel"
+          autoFocus
+          value={scriptDraft}
+          onChange={(e) => setScriptDraft(e.target.value)}
+          onClick={(e) => e.stopPropagation()}
           style={{
-            marginTop: 6, width: '100%', padding: '6px 8px', fontSize: 11,
-            background: copied ? 'rgba(46,204,113,0.15)' : 'var(--surface-2)',
-            border: `1px solid ${copied ? 'rgba(46,204,113,0.40)' : 'var(--border)'}`,
-            borderRadius: 6,
-            color: copied ? '#2ecc71' : 'var(--text)',
-            cursor: 'pointer', fontFamily: 'var(--font-display)', fontWeight: 700,
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            marginTop: 8, width: '100%', minHeight: 220, maxHeight: 360,
+            padding: '10px 12px', borderRadius: 8,
+            background: 'var(--surface)', border: '1px solid var(--red)',
+            fontSize: 11.5, lineHeight: 1.5, color: 'var(--text)',
+            fontFamily: 'inherit', resize: 'vertical',
+            boxShadow: '0 0 0 3px rgba(239,68,68,0.10)',
           }}
-        >
-          <Copy size={11} /> {copied ? 'Copied!' : 'Copy script'}
-        </button>
+        />
+      )}
+      {script && !editingScript && (
+        <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+          <button
+            type="button"
+            className="nodrag"
+            onClick={(e) => { e.stopPropagation(); beginEdit() }}
+            style={{
+              flex: 1, padding: '6px 8px', fontSize: 11,
+              background: 'var(--surface-2)', border: '1px solid var(--border)',
+              borderRadius: 6, color: 'var(--text)',
+              cursor: 'pointer', fontFamily: 'var(--font-display)', fontWeight: 700,
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            }}
+          >
+            <Edit3 size={11} /> Edit
+          </button>
+          <button
+            type="button"
+            className="nodrag"
+            onClick={(e) => { e.stopPropagation(); copyScript() }}
+            style={{
+              flex: 1, padding: '6px 8px', fontSize: 11,
+              background: copied ? 'rgba(46,204,113,0.15)' : 'var(--surface-2)',
+              border: `1px solid ${copied ? 'rgba(46,204,113,0.40)' : 'var(--border)'}`,
+              borderRadius: 6,
+              color: copied ? '#2ecc71' : 'var(--text)',
+              cursor: 'pointer', fontFamily: 'var(--font-display)', fontWeight: 700,
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            }}
+          >
+            <Copy size={11} /> {copied ? 'Copied!' : 'Copy'}
+          </button>
+        </div>
+      )}
+      {script && editingScript && (
+        <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+          <button
+            type="button"
+            className="nodrag"
+            onClick={(e) => { e.stopPropagation(); cancelEdit() }}
+            style={{
+              flex: 1, padding: '6px 8px', fontSize: 11,
+              background: 'var(--surface-2)', border: '1px solid var(--border)',
+              borderRadius: 6, color: 'var(--text-soft)',
+              cursor: 'pointer', fontFamily: 'var(--font-display)', fontWeight: 700,
+            }}
+          >Cancel</button>
+          <button
+            type="button"
+            className="nodrag"
+            onClick={(e) => { e.stopPropagation(); saveEdit() }}
+            disabled={!scriptDraft.trim()}
+            style={{
+              flex: 1, padding: '6px 8px', fontSize: 11,
+              background: scriptDraft.trim()
+                ? 'linear-gradient(135deg, var(--red), var(--red-dark))'
+                : 'var(--surface-2)',
+              border: '1px solid var(--red)',
+              borderRadius: 6, color: '#fff',
+              cursor: scriptDraft.trim() ? 'pointer' : 'not-allowed',
+              fontFamily: 'var(--font-display)', fontWeight: 700,
+              opacity: scriptDraft.trim() ? 1 : 0.5,
+            }}
+          >Save script</button>
+        </div>
       )}
       {!script && <NodePreview status={data.status} output={null} error={data.error} />}
     </>
