@@ -8,6 +8,7 @@ import BulkUploadView from '../components/BulkUploadView.jsx'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { useCredits } from '../context/CreditsContext.jsx'
+import TrialGate from '../components/TrialGate.jsx'
 
 // Format a UTC ISO timestamp as a "YYYY-MM-DDTHH:mm" string in the browser's
 // local timezone — the format <input type="datetime-local"> expects. Pre-filling
@@ -834,6 +835,7 @@ export default function Content() {
   }
 
   return (
+    <TrialGate page="schedule">
     <div className="fade-up">
       <SocialAccountsPanel profileId={selectedProfileId} token={session?.access_token} />
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14, gap: 10 }}>
@@ -887,5 +889,6 @@ export default function Content() {
       )}
       {opened && <ItemDetail item={opened} onClose={() => setOpened(null)} onUpdate={() => { refresh(); refreshPending() }} />}
     </div>
+    </TrialGate>
   )
 }

@@ -1,5 +1,6 @@
-import { setCors, requireUser, supaFetch, assertProfileAccess } from './_lib/supabase.js'
+import { setCors, requireUser, supaFetch, assertProfileAccess, isAdminUser } from './_lib/supabase.js'
 import { indexBrandBible } from './_lib/embeddings.js'
+import { TIERS, profileLimitForTier } from './_lib/billing.js'
 
 export default async function handler(req, res) {
   setCors(req, res)
@@ -21,6 +22,59 @@ export default async function handler(req, res) {
     if (req.method === 'POST') {
       const body = req.body || {}
       if (!body.business_name) return res.status(400).json({ error: 'business_name required' })
+
+      // Tier-gate brand profile creation. Each tier has a profile_limit
+      // (Starter=1, Pro=2, Studio=5, Founding=2). We compare against the
+      // user's CURRENT owned-profile count and refuse to create if it
+      // would exceed the limit.
+      //
+      // Error shape:
+      //   error    — friendly user-facing message ("Upgrade to add more
+      //              brand profiles."). This is the message a regular
+      //              user sees in toasts / form errors.
+      //   detail   — admin-only diagnostic ("Limit of N profiles for
+      //              plan X."). Only attached when the caller is an
+      //              admin so the dev tools network panel doesn't leak
+      //              plan names / numbers to end users debugging in
+      //              their own browser.
+      try {
+        const cust = await supaFetch(`billing_customers?user_id=eq.${userId}&select=id`)
+        const customerId = cust?.[0]?.id || null
+        let tier = null
+        if (customerId) {
+          const subs = await supaFetch(`billing_subscriptions?customer_id=eq.${customerId}&order=created_at.desc&limit=1&select=tier,status`)
+          const sub = subs?.[0]
+          // Only honor a tier if the subscription is currently
+          // money-good: trialing / active / past_due. Cancelled or
+          // unpaid subs revert the user to the floor (Solo Starter).
+          if (sub && ['trialing','active','past_due'].includes(sub.status)) {
+            tier = sub.tier
+          }
+        }
+        const effectiveTier = tier || 'solo_starter'
+        const limit = profileLimitForTier(effectiveTier)
+        const owned = await supaFetch(`profile_access?user_id=eq.${userId}&role=eq.owner&select=profile_id`)
+        const ownedCount = Array.isArray(owned) ? owned.length : 0
+        if (ownedCount >= limit) {
+          const tierName = TIERS[effectiveTier]?.name || effectiveTier
+          const friendly = limit === 1
+            ? 'Your current plan includes one brand profile. Upgrade to add more.'
+            : `Your current plan caps brand profiles at ${limit}. Upgrade to add more.`
+          const payload = { error: friendly, code: 'profile_limit_reached' }
+          // Admin-only detail (matches the message format the user asked
+          // to be admin-side-only): "limit of N profiles for plan <tier>".
+          if (await isAdminUser(auth)) {
+            payload.detail = `Limit of ${limit} profiles for plan ${tierName} (${effectiveTier}); user owns ${ownedCount}.`
+          }
+          return res.status(402).json(payload)
+        }
+      } catch (limitErr) {
+        // If the limit check itself fails (e.g. DB hiccup), fail open
+        // rather than blocking a paying user. The next sync will catch
+        // any over-limit profiles for cleanup.
+        console.warn('[profiles] profile-limit check failed:', limitErr.message)
+      }
+
       // Whitelist what we let through on create. Mirrors PATCH so the
       // onboarding survey can hand us a brand_bible / target_audience /
       // tone all at once and have them stick. Anything else is dropped.
