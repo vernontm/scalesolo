@@ -3014,6 +3014,24 @@ function intervalLabel(ms) {
 // Rough per-run cost in ai_tokens for budget hint. Avatar render uses
 // video_units, tracked separately, but we count an avg cost in tokens for
 // the warning UI.
+// Per-node label shown on the canvas card so the user can see what
+// running THIS step will cost before they click Run. Avatar render is
+// a special case — it bills the video_units pool at 0.15 units/sec, so
+// we surface a duration-anchored estimate instead of a flat number.
+// Returns null for free nodes (no badge needed).
+export function nodeCostLabel(nodeType) {
+  if (nodeType === 'avatar_render') {
+    // ~5 video credits per 30s of output (0.15 units/sec, rounded up).
+    return { amount: '~5', unit: 'video credits / 30s', pool: 'video' }
+  }
+  if (nodeType === 'voice_gen') {
+    return { amount: '~1', unit: 'AI token per character', pool: 'ai' }
+  }
+  const tokens = NODE_COST_HINT[nodeType]
+  if (!tokens) return null
+  return { amount: `~${tokens.toLocaleString()}`, unit: 'AI tokens', pool: 'ai' }
+}
+
 export const NODE_COST_HINT = {
   text_input:    0,
   image_upload:  0,

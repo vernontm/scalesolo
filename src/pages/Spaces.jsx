@@ -32,7 +32,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { toast, confirmDialog, chooseDialog } from '../components/Toast.jsx'
 import {
   NODE_REGISTRY, NODE_CATEGORIES, downloadUrl, readImageItems,
-  AUTORUN_OPTIONS, autoRunIntervalMs, NODE_COST_HINT,
+  AUTORUN_OPTIONS, autoRunIntervalMs, NODE_COST_HINT, nodeCostLabel,
   findUpstreamVideoUrl, findUpstreamScript, findUpstreamLogoUrl,
   findUpstreamAvatarPicker, findUpstreamTextPost,
 } from '../lib/space-nodes.jsx'
@@ -388,6 +388,37 @@ function SpaceNode({ id, data, selected }) {
           {status}
         </span>
       </div>
+      {(() => {
+        // Cost hint — small per-node estimate so the user knows what
+        // Run will draw against their credits before they click it.
+        // Hidden for free nodes (text input, brand picker, collection,
+        // etc.) so the canvas isn't littered with "0 tokens" badges.
+        const cost = nodeCostLabel(data.type)
+        if (!cost) return null
+        const isVideo = cost.pool === 'video'
+        return (
+          <div
+            title="Approximate cost. The real charge depends on output length and runs against your video credits for avatar render, AI tokens for everything else."
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '6px 12px',
+              fontSize: 10.5, color: 'var(--muted)',
+              background: isVideo ? 'rgba(245,158,11,0.08)' : 'rgba(168,85,247,0.08)',
+              borderBottom: '1px solid var(--border)',
+              fontFamily: 'var(--font-display)',
+            }}
+          >
+            <span style={{
+              width: 6, height: 6, borderRadius: '50%',
+              background: isVideo ? '#f59e0b' : '#a855f7',
+              flexShrink: 0,
+            }} />
+            <span>
+              Costs <strong style={{ color: 'var(--text)' }}>{cost.amount}</strong> {cost.unit}
+            </span>
+          </div>
+        )
+      })()}
       <div style={{ padding: 12 }}>
         <Body data={{ ...data, __id: id }} onPatch={onPatch} />
       </div>
