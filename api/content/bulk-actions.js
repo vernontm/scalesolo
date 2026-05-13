@@ -100,19 +100,39 @@ async function generateCaptions({ res, profile_id, script_ids, user_id }) {
     }
   }
 
-  // Single brand-context block reused by both the video and image
-  // prompts. Includes the bible, the distilled voice summary, approved
-  // hooks, disliked patterns, and hard rules. The core hashtags get
-  // appended at the end so Claude can satisfy "include core brand
-  // hashtags from the brand bible first."
-  const brandBlocks = renderBrandContextMarkdown(ctx, {
-    include: ['identity', 'bible', 'summary', 'hooks', 'bad_patterns', 'rules'],
-    bibleCharLimit: 2500,
-  })
-  const coreHashtagsTail = profile.core_hashtags
-    ? `\n\nCore brand hashtags (always lead with these in the hashtags field): ${profile.core_hashtags}`
+  // Minimal, voice-only brand context. Anything topical (target
+  // audience descriptions, content pillars, exemplar scripts, voice
+  // summary derived from past posts) is intentionally dropped — those
+  // fields leak topic-words like "fitness", "brunch", "Houston" into
+  // the prompt and Claude leans on them when the transcript is weak.
+  // What survives:
+  //   - business name + tone (style, not topic)
+  //   - do_not_say / always_include / brand_cta (hard rules)
+  //   - bad patterns (style anti-rules)
+  //   - core hashtags (the only place topical leakage is wanted)
+  //   - the full brand bible IF the user wrote one (it's the canonical
+  //     voice source; capped to 2,500 chars). Empty bibles drop out.
+  const bibleText = (profile.brand_bible || '').trim().slice(0, 2500)
+  const toneLine = profile.preferred_tone ? `Voice / tone: ${profile.preferred_tone.trim()}` : ''
+  const dnsArr = Array.isArray(profile.do_not_say) ? profile.do_not_say.filter(Boolean) : []
+  const aiArr  = Array.isArray(profile.always_include) ? profile.always_include.filter(Boolean) : []
+  const ctaStr = (profile.brand_cta || '').trim()
+  const ruleLines = []
+  if (dnsArr.length) ruleLines.push(`- NEVER use these words/phrases: ${dnsArr.map((s) => `"${s}"`).join(', ')}`)
+  if (aiArr.length)  ruleLines.push(`- ALWAYS include at least one of: ${aiArr.map((s) => `"${s}"`).join(', ')}`)
+  if (ctaStr)        ruleLines.push(`- Brand CTA (use when natural): "${ctaStr}"`)
+  const badPatternsBlock = renderBrandContextMarkdown(ctx, { include: ['bad_patterns'] })
+  const coreHashtagsLine = profile.core_hashtags
+    ? `Core brand hashtags (lead with these in the hashtags field): ${profile.core_hashtags}`
     : ''
-  const brandContext = `${brandBlocks}${coreHashtagsTail}`.trim()
+  const brandContext = [
+    profile.business_name ? `Brand: ${profile.business_name}` : null,
+    toneLine,
+    ruleLines.length ? `Brand rules:\n${ruleLines.join('\n')}` : null,
+    bibleText ? `Brand bible (voice reference, NOT a topic prompt):\n<brand_bible>\n${bibleText}\n</brand_bible>` : null,
+    badPatternsBlock || null,
+    coreHashtagsLine,
+  ].filter(Boolean).join('\n\n').trim()
   const today = new Date().toISOString().slice(0, 10)
 
   // Per-media-type prompt builders. The user message carries the actual
@@ -227,15 +247,23 @@ Return ONLY valid JSON:
     // prompt when neither is available (rare; the upstream filter
     // mostly catches this).
     if (s.media_type === 'video' || (s.full_script && !isImage)) {
-      const transcript = (s.full_script || s.hook || s.title || '').trim()
+      // Transcript is the ONLY topic signal for videos. We deliberately
+      // do not fall back to s.hook / s.title here anymore — those are
+      // often empty or contain stale auto-generated text, and Claude
+      // ends up writing from the brand context alone (which is heavy
+      // on Houston / fitness / brunch flavor for Kara, hence the gym
+      // captions on non-gym videos).
+      const transcript = (s.full_script || '').trim()
       if (!transcript) {
-        // No transcript, no image, no script — bail with a generic
-        // placeholder rather than hallucinating from the bible.
+        // Genuinely no audio content. Return a true placeholder so
+        // the user knows to write the caption themselves rather than
+        // shipping a Claude-improvised brand-flavored guess.
         return {
-          title: 'Untitled post',
-          caption: 'New post.',
+          title: 'Add a caption',
+          caption: '',
           hashtags: profile.core_hashtags || '',
           first_comment: '',
+          _no_transcript: true,
         }
       }
       try {
@@ -335,6 +363,18 @@ Return ONLY valid JSON:
       console.error('bulk-caption: consume_credits threw', { customerId, fee, profile_id, message: e?.message })
     }
   }
+  // Per-row debug data so we can answer "why did Claude write that?"
+  // without running blind. transcript_preview is the first 200 chars
+  // of what Scribe returned for video rows (or whatever we used as
+  // the topic signal). Useful in DevTools and we'll surface it in the
+  // UI when results look off.
+  const debug = scripts.map((s, i) => ({
+    id: s.id,
+    media_type: s.media_type,
+    transcript_chars: (s.full_script || '').length,
+    transcript_preview: (s.full_script || '').slice(0, 200),
+    ai_status: captionResults[i] ? (captionResults[i]._no_transcript ? 'placeholder_no_transcript' : 'ok') : 'failed',
+  }))
   return res.status(200).json({
     updated,
     total: scripts.length,
@@ -342,6 +382,7 @@ Return ONLY valid JSON:
     // UI can toast "n video(s) couldn't be transcribed — their captions
     // may be generic." Better than silently shipping brand-only captions.
     transcript_failures: transcriptFailures,
+    debug,
   })
 }
 
