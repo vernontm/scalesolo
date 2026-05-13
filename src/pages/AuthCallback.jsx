@@ -43,14 +43,18 @@ export default function AuthCallback() {
           return
         }
 
-        // Stripe-first signup path: a stripe_session was stashed during
-        // /login submit. Link it to the freshly-confirmed account now so
-        // the dashboard has the subscription + credits as soon as it
-        // loads. We do this BEFORE the tier check below so a brand-new
-        // subscriber never falls through to a re-checkout.
-        const stripeSessionStashed = (() => {
-          try { return localStorage.getItem('scalesolo.signup.stripe_session') } catch { return null }
-        })()
+        // Stripe-first signup path: a stripe_session was carried over
+        // from the /login submit. Prefer the URL param (set on the
+        // confirmation-email link's emailRedirectTo so it survives a
+        // cross-browser click like incognito → default browser); fall
+        // back to localStorage for same-browser flows. We link it to
+        // the freshly-confirmed account before doing anything else so
+        // the dashboard has the subscription + credits on first paint.
+        const stripeSessionStashed =
+          url.searchParams.get('stripe_session')
+          || (() => {
+            try { return localStorage.getItem('scalesolo.signup.stripe_session') } catch { return null }
+          })()
         if (stripeSessionStashed) {
           try {
             await fetch('/api/stripe-link-session', {

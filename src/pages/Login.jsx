@@ -207,13 +207,18 @@ export default function Login() {
         // sign-in success — if there's a pending tier, the useEffect above will fire after session lands
       } else {
         // Stash the stripe_session_id so AuthCallback can pick it up
-        // after the user clicks the confirmation link. Without this,
-        // the ?stripe_session URL param is lost the moment we route
-        // away from the Login page and link-session never runs.
+        // after the user clicks the confirmation link. We send it
+        // TWO ways for resilience:
+        //   1. localStorage — works for same-browser flows
+        //   2. emailRedirectTo query string — survives cross-browser
+        //      (incognito → default browser is the common case)
+        // AuthCallback prefers the URL param when both are present.
         if (stripeSessionId) {
           try { localStorage.setItem('scalesolo.signup.stripe_session', stripeSessionId) } catch {}
         }
-        const { data: signUpData, error: err } = await signUp(email, password)
+        const { data: signUpData, error: err } = await signUp(email, password, null, {
+          redirectQuery: stripeSessionId ? { stripe_session: stripeSessionId } : null,
+        })
         // Supabase silently no-ops signUp when the email already exists
         // (returns success-shaped data with no error). The tell is an
         // empty `identities` array on the returned user. We detect that

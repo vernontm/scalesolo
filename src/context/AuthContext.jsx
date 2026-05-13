@@ -98,8 +98,27 @@ export function AuthProvider({ children }) {
       options: { redirectTo: window.location.origin },
     })
 
-  const signUp = (email, password, meta) =>
-    supabase.auth.signUp({
+  // signUp accepts an optional `extra` object:
+  //   meta          → arbitrary user_metadata
+  //   redirectQuery → query params appended to the confirm-email
+  //                   redirect URL. Used to carry signup-time state
+  //                   (e.g. stripe_session) across the email round
+  //                   trip so it survives even when the user clicks
+  //                   the confirmation link in a different browser /
+  //                   incognito mode (where localStorage doesn't
+  //                   cross over).
+  const signUp = (email, password, meta, extra = {}) => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : ''
+    let redirect = origin ? `${origin}/auth/callback` : undefined
+    if (redirect && extra.redirectQuery && typeof extra.redirectQuery === 'object') {
+      const qs = new URLSearchParams()
+      for (const [k, v] of Object.entries(extra.redirectQuery)) {
+        if (v != null && v !== '') qs.set(k, String(v))
+      }
+      const sep = redirect.includes('?') ? '&' : '?'
+      if ([...qs].length) redirect = `${redirect}${sep}${qs.toString()}`
+    }
+    return supabase.auth.signUp({
       email,
       password,
       options: {
@@ -108,9 +127,10 @@ export function AuthProvider({ children }) {
         // confirm-email link always lands somewhere this SPA can handle.
         // Whatever origin must also be whitelisted in Supabase → Auth →
         // URL Configuration → Redirect URLs.
-        emailRedirectTo: typeof window !== 'undefined' ? `${window.location.origin}/auth/callback` : undefined,
+        emailRedirectTo: redirect,
       },
     })
+  }
 
   const signOut = () => supabase.auth.signOut()
 
