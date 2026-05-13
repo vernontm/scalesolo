@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { UserCircle2, Plus, Trash2, X, Loader2, Save, Image as ImageIcon, EyeOff, Eye, Upload, Mic } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 
@@ -248,7 +249,11 @@ function EditDrawer({ avatar, onClose, onSaved }) {
     finally { setSaving(false) }
   }
 
-  return (
+  // Portal to document.body so the modal escapes any parent
+  // containing-block (App sidebar grid, Admin layout, etc.) and
+  // truly uses the full viewport via position:fixed.
+  if (typeof document === 'undefined') return null
+  return createPortal((
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-card modal-card-lg" onClick={(e) => e.stopPropagation()} style={{ position: 'relative' }}>
         <button onClick={onClose} style={closeBtn} aria-label="Close"><X size={16} /></button>
@@ -427,7 +432,7 @@ function EditDrawer({ avatar, onClose, onSaved }) {
         </div>
       </div>
     </div>
-  )
+  ), document.body)
 }
 
 function Field({ label, value, onChange, placeholder, multiline, type = 'text' }) {
