@@ -3754,10 +3754,11 @@ function AvatarPickerBody({ data, onPatch }) {
 }
 
 // ─── 7. AVATAR RENDER ───────────────────────────────────────────────────────
-// Free-trial lock notice. Rendered above the body when _ctxIsTrialing is
-// true so users see why an avatar render or schedule_post can't fire yet,
-// plus a 20%-off CTA that takes them to /billing with the upsell preselected.
-function TrialLockNotice({ feature, savingsPct = 20 }) {
+// Free-trial lock notice. Rendered above paid-only features (currently
+// only schedule_post; avatar render runs on the user's 5 trial credits
+// instead of being blocked). CTA routes to /billing where the user can
+// convert their trial into a paid subscription immediately.
+function TrialLockNotice({ feature }) {
   return (
     <div
       onClick={(e) => { e.stopPropagation() }}
@@ -3776,10 +3777,10 @@ function TrialLockNotice({ feature, savingsPct = 20 }) {
         </div>
       </div>
       <div style={{ fontSize: 11.5, color: 'var(--text-soft)', lineHeight: 1.5, marginBottom: 6 }}>
-        {feature} is a paid feature. Upgrade now and we'll knock <strong>{savingsPct}% off</strong> your first month.
+        {feature} is a paid feature. Start your subscription to unlock it.
       </div>
       <a
-        href={`/billing?upsell=trial-unlock&promo=TRIAL${savingsPct}`}
+        href="/billing"
         onClick={(e) => e.stopPropagation()}
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -3789,7 +3790,7 @@ function TrialLockNotice({ feature, savingsPct = 20 }) {
           fontFamily: 'var(--font-display)', fontSize: 11.5, fontWeight: 700,
         }}
       >
-        <Sparkles size={11} /> Unlock with {savingsPct}% off
+        <Sparkles size={11} /> Start subscription now
       </a>
     </div>
   )
@@ -3801,8 +3802,10 @@ function AvatarRenderBody({ data }) {
   const partialFails = Array.isArray(out?.partial_failures) ? out.partial_failures.length : 0
   return (
     <>
-      {data._ctxIsTrialing && <TrialLockNotice feature="Avatar video render" />}
-
+      {/* No trial lock here on purpose — trial users have 5 video
+          credits exactly so they CAN render their first avatar video.
+          Server-side trial locks (V4, 30s cap, watermark) still apply
+          via api/avatars/render. Only schedule_post stays locked. */}
       {data.status !== 'done' && data.status !== 'failed' && data.status !== 'running' &&
         <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
           Connect an Avatar picker + voice gen (or a script / audio file).
@@ -5723,9 +5726,16 @@ function SchedulePostBody({ data, onPatch }) {
     return () => { cancelled = true }
   }, [when, profileId])
 
+  const trialLocked = !!data._ctxIsTrialing
   return (
     <>
-      {data._ctxIsTrialing && <TrialLockNotice feature="Schedule / publish post" />}
+      {trialLocked && <TrialLockNotice feature="Schedule / publish post" />}
+      {/* Lock the rest of the body's interactive controls while
+          trialing. pointer-events: none kills clicks on platform pills
+          + selects + date input + manage links, and opacity dims the
+          UI so the gate is visible. The TrialLockNotice above stays
+          interactive (its href is the upgrade CTA). */}
+      <div style={trialLocked ? { pointerEvents: 'none', opacity: 0.55, userSelect: 'none' } : null}>
       <div style={{ fontSize: 10.5, color: 'var(--muted)', marginBottom: 8, lineHeight: 1.4 }}>
         Posts via the connected social accounts on this brand profile.
         {' '}
@@ -5919,6 +5929,7 @@ function SchedulePostBody({ data, onPatch }) {
       )}
       {data.status === 'failed' && <NodePreview status="failed" error={data.error} />}
       {data.status === 'running' && <NodePreview status="running" />}
+      </div>
     </>
   )
 }
