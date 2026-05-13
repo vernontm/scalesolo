@@ -415,6 +415,12 @@ a:focus-visible {
 /* Below 900px: main content takes full width, sidebar is mobile-drawer only. */
 @media (max-width: 900px) {
   .app-main { margin-left: 0 !important; }
+  /* Tighten the sticky top header on mobile so it doesn't eat ~22%
+     of a phone viewport. Single row, small gaps, slimmer padding. */
+  .app-header { padding: 10px 14px !important; gap: 8px !important; }
+}
+@media (max-width: 700px) {
+  .app-header { padding: 10px 10px !important; gap: 6px !important; }
 }
 
 /* Spaces builder: subtle dot-grid texture that fades out toward the edges.

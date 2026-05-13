@@ -36,7 +36,11 @@ const headerStyle = {
   backdropFilter: 'blur(14px)',
   WebkitBackdropFilter: 'blur(14px)',
   borderBottom: '1px solid var(--border)',
-  flexWrap: 'wrap',
+  // No flexWrap on mobile — overflow / hide-on-mobile classes keep
+  // the header single-row. Wrapping was producing 3-row stacks on
+  // narrow viewports.
+  flexWrap: 'nowrap',
+  minWidth: 0,
 }
 const titleStyle = {
   fontFamily: 'var(--font-display)',
@@ -105,7 +109,7 @@ export default function Header({ onOpenSidebar }) {
   const meta = titles[pathname] || { t: 'ScaleSolo', s: '' }
 
   return (
-    <header style={headerStyle}>
+    <header className="app-header" style={headerStyle}>
       <button
         className="mobile-only"
         style={menuBtn}
@@ -115,9 +119,11 @@ export default function Header({ onOpenSidebar }) {
         <Menu size={18} />
       </button>
 
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <h1 style={titleStyle}>{meta.t}</h1>
-        {meta.s && <span style={subtitleStyle}>{meta.s}</span>}
+      <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+        <h1 style={{ ...titleStyle, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{meta.t}</h1>
+        {/* Subtitle hides under 700px — verbose, eats two lines on
+            mobile, and isn't load-bearing copy. */}
+        {meta.s && <span className="hide-on-narrow" style={subtitleStyle}>{meta.s}</span>}
       </div>
 
       {/* AI CEO ⌘K — beta-only. The Agent surface is gated out of the
@@ -138,21 +144,25 @@ export default function Header({ onOpenSidebar }) {
         </button>
       )}
 
-      <ProfileSwitcher />
-
-      <CreditsBadge />
+      {/* On mobile (<900px) we hide ProfileSwitcher, CreditsBadge, and
+          ThemeToggle from the header — they're surfaced at the top of
+          the sidebar drawer instead so the header stays a single
+          single-row line: [burger, title, bell, Generate]. */}
+      <span className="hide-on-mobile" style={{ display: 'inline-flex' }}><ProfileSwitcher /></span>
+      <span className="hide-on-mobile" style={{ display: 'inline-flex' }}><CreditsBadge /></span>
 
       <NotificationBell />
 
-      <ThemeToggle />
+      <span className="hide-on-mobile" style={{ display: 'inline-flex' }}><ThemeToggle /></span>
 
       <button
         style={newBtn}
         onClick={() => navigate('/schedule')}
         title="Generate new content"
+        aria-label="Generate new content"
       >
         <Sparkles size={14} strokeWidth={2.5} />
-        Generate
+        <span className="hide-on-narrow">Generate</span>
       </button>
     </header>
   )

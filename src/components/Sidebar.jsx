@@ -22,6 +22,9 @@ import {
   Gift,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
+import ProfileSwitcher from './ProfileSwitcher.jsx'
+import CreditsBadge from './CreditsBadge.jsx'
+import ThemeToggle from './ThemeToggle.jsx'
 
 // Sidebar groups. `beta: true` items only show when the URL has ?beta=1
 // (or localStorage has scalesolo:beta='1'). The product is intentionally
@@ -272,6 +275,27 @@ export default function Sidebar({ mobile = false, compact = false, onClose }) {
           </div>
         )}
       </div>
+
+      {/* Mobile drawer surfaces the controls that get hidden in the
+          header on narrow viewports (ProfileSwitcher, CreditsBadge,
+          ThemeToggle) so they stay reachable behind one tap on the
+          hamburger. Desktop sidebar doesn't need this — header has
+          plenty of room. */}
+      {mobile && (
+        <div style={{
+          display: 'flex', flexDirection: 'column', gap: 8,
+          padding: '0 4px 14px', marginBottom: 8,
+          borderBottom: '1px solid var(--border)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <ProfileSwitcher />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <CreditsBadge />
+            <ThemeToggle />
+          </div>
+        </div>
+      )}
 
       <nav style={navStyle}>
         {visibleGroups.map((group) => (
