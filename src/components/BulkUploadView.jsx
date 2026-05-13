@@ -754,7 +754,16 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         : body.submitted != null ? `${label}: ${body.submitted} submitted${body.failed ? `, ${body.failed} failed` : ''}`
         : body.resynced != null ? `${label}: ${body.resynced} resynced${body.failed ? `, ${body.failed} failed` : ''}${body.skipped ? `, ${body.skipped} skipped` : ''}`
         : `${label} done`
-      toast({ kind: 'success', message: summary })
+      // Surface caption-generation failures so the user understands why
+      // some rows didn't get captioned. Without this, a silent / music-
+      // only video looks like the button did nothing.
+      const tFails = Array.isArray(body.transcript_failures) ? body.transcript_failures : []
+      if (tFails.length && action === 'generate-captions') {
+        const tail = ` · ${tFails.length} video${tFails.length === 1 ? '' : 's'} had no detectable speech, write a caption manually or add a script first.`
+        toast({ kind: body.updated > 0 ? 'success' : 'warn', message: summary + tail })
+      } else {
+        toast({ kind: 'success', message: summary })
+      }
       refresh()
     } catch (e) {
       toast({ kind: 'error', message: e.message })

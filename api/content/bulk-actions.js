@@ -250,21 +250,14 @@ Return ONLY valid JSON:
       // Transcript is the ONLY topic signal for videos. We deliberately
       // do not fall back to s.hook / s.title here anymore — those are
       // often empty or contain stale auto-generated text, and Claude
-      // ends up writing from the brand context alone (which is heavy
-      // on Houston / fitness / brunch flavor for Kara, hence the gym
-      // captions on non-gym videos).
+      // ends up writing from the brand context alone.
       const transcript = (s.full_script || '').trim()
       if (!transcript) {
-        // Genuinely no audio content. Return a true placeholder so
-        // the user knows to write the caption themselves rather than
-        // shipping a Claude-improvised brand-flavored guess.
-        return {
-          title: 'Add a caption',
-          caption: '',
-          hashtags: profile.core_hashtags || '',
-          first_comment: '',
-          _no_transcript: true,
-        }
+        // Silent or music-only video. Return a sentinel so the caller
+        // can skip the row entirely (no caption patch, no status flip
+        // to caption_ready) and surface a clear "needs manual caption"
+        // failure to the user.
+        return { _no_transcript: true }
       }
       try {
         const ai = await message({
@@ -310,11 +303,18 @@ Return ONLY valid JSON:
   // pre-check up top — we pre-debited the whole batch.
   const captionResults = await Promise.all(scripts.map(captionFor))
 
-  // Patch rows. Video responses additionally write hook + full_script
-  // (the cleaned-up readable version Claude returned).
+  // Patch rows. Skip rows that came back with _no_transcript — those
+  // need a manual caption (silent/music-only videos). Track them in
+  // transcriptFailures so the UI can toast a clear "n video(s)
+  // couldn't be auto-captioned" message instead of leaving the user
+  // confused about why nothing changed.
   const results = await Promise.allSettled(captionResults.map((r, i) => {
     const script = scripts[i]
     if (!script || !r) return Promise.resolve({ ok: false })
+    if (r._no_transcript) {
+      transcriptFailures.push({ id: script.id, reason: 'no_speech_detected' })
+      return Promise.resolve({ ok: false, skipped: 'no_transcript' })
+    }
     const patch = {
       caption: r.caption || null,
       hashtags: r.hashtags || null,
