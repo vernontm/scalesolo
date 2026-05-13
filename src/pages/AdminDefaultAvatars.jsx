@@ -1,6 +1,22 @@
-import { useEffect, useState, useCallback } from 'react'
-import { UserCircle2, Plus, Trash2, X, Loader2, Save, Image as ImageIcon, EyeOff, Eye } from 'lucide-react'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import { UserCircle2, Plus, Trash2, X, Loader2, Save, Image as ImageIcon, EyeOff, Eye, Upload, Mic } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+
+// Upload to Supabase Storage and return the public URL. Same bucket
+// the user-side Avatars page uses — but under a top-level `defaults/`
+// folder so admin-curated images are filterable. Bypasses Vercel's
+// 4.5MB request body limit.
+async function uploadDefaultAvatarImage(file) {
+  const ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
+  const path = `defaults/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+  const { error } = await supabase.storage.from('avatar-media').upload(path, file, {
+    contentType: file.type || 'image/jpeg',
+    upsert: false,
+  })
+  if (error) throw new Error(`Storage upload failed: ${error.message}`)
+  const { data } = supabase.storage.from('avatar-media').getPublicUrl(path)
+  return data.publicUrl
+}
 
 // Admin: manage the default avatars that appear on every user's
 // /avatars page. CRUD + look management. Voice swap is per-user
@@ -123,8 +139,43 @@ function EditDrawer({ avatar, onClose, onSaved }) {
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
   const [looks, setLooks] = useState(avatar?.looks || [])
-  const [newLook, setNewLook] = useState({ image_url: '', label: '', heygen_look_id: '' })
   const isNew = !avatar?.id
+
+  // Pulled once on drawer open. Picker dropdown lists every voice the
+  // master ElevenLabs key can see (premade + professional + cloned).
+  const [voices, setVoices] = useState(null)
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const r = await authedFetch('/api/voices/library?admin=1')
+        const b = await r.json()
+        if (cancelled) return
+        if (!r.ok) throw new Error(b?.error || `Voices ${r.status}`)
+        setVoices(b.admin || [])
+      } catch (e) {
+        // Surface but don't block — admin can still paste a voice id
+        // manually if the picker fails.
+        if (!cancelled) setErr(`Voice picker: ${e.message} (you can still paste a voice id below)`)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  // Upload handler shared by the preview image + new-look buttons.
+  // Uploads first, swaps in the public URL once the bucket returns it.
+  const previewFileRef = useRef(null)
+  const newLookFileRef = useRef(null)
+  const [uploading, setUploading] = useState(null) // 'preview' | 'look' | null
+  const onPickPreview = async (file) => {
+    if (!file) return
+    setErr(null); setUploading('preview')
+    try {
+      const url = await uploadDefaultAvatarImage(file)
+      setDraft((d) => ({ ...d, preview_image_url: url }))
+    } catch (e) { setErr(e.message) }
+    finally { setUploading(null) }
+  }
 
   const save = async () => {
     setSaving(true); setErr(null)
@@ -156,21 +207,31 @@ function EditDrawer({ avatar, onClose, onSaved }) {
     }
   }
 
-  const addLook = async () => {
+  // Upload one or more look images via the file picker. Each file
+  // uploads to Storage in parallel; the resulting public URL is then
+  // POSTed to /api/admin/default-avatars?action=add_look. Same UX as
+  // the user-side Avatars page (uploadToStorage → add-look API).
+  const addLookFiles = async (files) => {
     if (!avatar?.id) { setErr('Save the avatar first, then add looks.'); return }
-    if (!newLook.image_url) { setErr('image_url required'); return }
-    setSaving(true); setErr(null)
+    if (!files?.length) return
+    setSaving(true); setUploading('look'); setErr(null)
     try {
-      const r = await authedFetch(`/api/admin/default-avatars?id=${avatar.id}&action=add_look`, {
-        method: 'POST',
-        body: JSON.stringify(newLook),
-      })
-      const b = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(b?.error || `Add look failed (${r.status})`)
-      setLooks((arr) => [...arr, b.look])
-      setNewLook({ image_url: '', label: '', heygen_look_id: '' })
+      for (const file of files) {
+        const url = await uploadDefaultAvatarImage(file)
+        const r = await authedFetch(`/api/admin/default-avatars?id=${avatar.id}&action=add_look`, {
+          method: 'POST',
+          body: JSON.stringify({
+            image_url: url,
+            label: file.name?.replace(/\.[^.]+$/, '') || '',
+            angle_order: looks.length,
+          }),
+        })
+        const b = await r.json().catch(() => ({}))
+        if (!r.ok) throw new Error(b?.error || `Add look failed (${r.status})`)
+        setLooks((arr) => [...arr, b.look])
+      }
     } catch (e) { setErr(e.message) }
-    finally { setSaving(false) }
+    finally { setSaving(false); setUploading(null) }
   }
 
   const deleteLook = async (lookId) => {
@@ -200,15 +261,94 @@ function EditDrawer({ avatar, onClose, onSaved }) {
         <div style={{ display: 'grid', gap: 12 }}>
           <Field label="Name *" value={draft.name} onChange={(v) => setDraft({ ...draft, name: v })} placeholder="e.g. Kara" />
           <Field label="Description" multiline value={draft.description} onChange={(v) => setDraft({ ...draft, description: v })} placeholder="What's the vibe / archetype of this avatar?" />
-          <Field label="Preview image URL" value={draft.preview_image_url} onChange={(v) => setDraft({ ...draft, preview_image_url: v })} placeholder="https://…/preview.png" />
+
+          {/* Preview image — file upload that mirrors the user-side
+              Avatars page. Click to pick a file; on upload the
+              public URL fills draft.preview_image_url. */}
+          <div>
+            <div style={{ fontSize: 12, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--text-soft)', marginBottom: 4 }}>Preview image</div>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <div style={{
+                width: 80, height: 80, borderRadius: 10,
+                background: draft.preview_image_url ? `url(${draft.preview_image_url}) center/cover` : 'var(--surface-2)',
+                border: '1px solid var(--border)', flexShrink: 0,
+                display: 'grid', placeItems: 'center', color: 'var(--muted)',
+              }}>
+                {!draft.preview_image_url && <ImageIcon size={20} />}
+              </div>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <button
+                  type="button"
+                  onClick={() => previewFileRef.current?.click()}
+                  disabled={uploading === 'preview'}
+                  className="btn-secondary"
+                  style={{ alignSelf: 'flex-start', padding: '8px 12px' }}
+                >
+                  {uploading === 'preview' ? <><Loader2 size={13} className="spin" /> Uploading…</> : <><Upload size={13} /> Choose photo</>}
+                </button>
+                <input
+                  ref={previewFileRef} type="file" accept="image/jpeg,image/png,image/webp"
+                  hidden
+                  onChange={(e) => { onPickPreview(e.target.files?.[0]); e.target.value = '' }}
+                />
+                {draft.preview_image_url && (
+                  <button
+                    type="button" onClick={() => setDraft({ ...draft, preview_image_url: '' })}
+                    style={{ alignSelf: 'flex-start', background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 11, padding: 0, textDecoration: 'underline' }}
+                  >Remove</button>
+                )}
+              </div>
+            </div>
+          </div>
+
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <Field label="HeyGen group id" value={draft.heygen_group_id} onChange={(v) => setDraft({ ...draft, heygen_group_id: v })} placeholder="grp_…" />
             <Field label="Sort order" type="number" value={draft.sort_order} onChange={(v) => setDraft({ ...draft, sort_order: v })} />
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Field label="ElevenLabs voice id" value={draft.elevenlabs_voice_id} onChange={(v) => setDraft({ ...draft, elevenlabs_voice_id: v })} placeholder="vc_…" />
-            <Field label="Voice label (shown to user)" value={draft.default_voice_label} onChange={(v) => setDraft({ ...draft, default_voice_label: v })} placeholder="e.g. Kara (warm Houston AAVE)" />
+
+          {/* Voice picker — dropdown of every voice the master ElevenLabs
+              key can see. Picking one auto-fills BOTH the voice id and
+              the user-facing label so admins don't have to type either
+              by hand. Falls back to manual paste if the API call fails. */}
+          <div>
+            <div style={{ fontSize: 12, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--text-soft)', marginBottom: 4 }}>
+              ElevenLabs voice
+            </div>
+            {Array.isArray(voices) && voices.length > 0 ? (
+              <select
+                className="input"
+                value={draft.elevenlabs_voice_id || ''}
+                onChange={(e) => {
+                  const id = e.target.value
+                  const v = voices.find((x) => x.voice_id === id)
+                  setDraft({
+                    ...draft,
+                    elevenlabs_voice_id: id,
+                    default_voice_label: v ? (v.description ? `${v.name} (${v.description})` : v.name) : draft.default_voice_label,
+                  })
+                }}
+                style={{ width: '100%' }}
+              >
+                <option value="">— Pick a voice —</option>
+                {voices.map((v) => (
+                  <option key={v.voice_id} value={v.voice_id}>
+                    {v.name}{v.category ? ` · ${v.category}` : ''}{v.description ? ` — ${v.description.slice(0, 40)}` : ''}
+                  </option>
+                ))}
+              </select>
+            ) : voices === null ? (
+              <div style={{ fontSize: 12, color: 'var(--muted)', padding: '8px 10px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 8 }}>
+                <Loader2 size={11} className="spin" style={{ verticalAlign: '-1px', marginRight: 4 }} /> Loading voices from ElevenLabs…
+              </div>
+            ) : (
+              <Field label="" value={draft.elevenlabs_voice_id} onChange={(v) => setDraft({ ...draft, elevenlabs_voice_id: v })} placeholder="vc_…" />
+            )}
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+              Pulls live from your master ElevenLabs account (premade + professional + your cloned voices). Picking auto-fills the label below.
+            </div>
           </div>
+          <Field label="Voice label (shown to user)" value={draft.default_voice_label} onChange={(v) => setDraft({ ...draft, default_voice_label: v })} placeholder="e.g. Kara (warm Houston AAVE)" />
+
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-soft)' }}>
             <input type="checkbox" checked={draft.is_active !== false} onChange={(e) => setDraft({ ...draft, is_active: e.target.checked })} />
             Active (visible to users)
@@ -217,7 +357,11 @@ function EditDrawer({ avatar, onClose, onSaved }) {
 
         {!isNew && (
           <div style={{ marginTop: 22 }}>
-            <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 14, marginBottom: 8 }}>Looks</div>
+            <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 14, marginBottom: 4 }}>Looks</div>
+            <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 12, lineHeight: 1.5 }}>
+              Add one or more photos of the same avatar — different outfits, angles, settings. Users pick a look at render time or cycle through them automatically. Drop multiple files at once to add them in one go.
+            </div>
+
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10, marginBottom: 12 }}>
               {looks.map((l) => (
                 <div key={l.id} style={{
@@ -235,17 +379,42 @@ function EditDrawer({ avatar, onClose, onSaved }) {
                   ><Trash2 size={11} /></button>
                 </div>
               ))}
-              {looks.length === 0 && (
-                <div style={{ gridColumn: '1 / -1', fontSize: 12, color: 'var(--muted)' }}>No looks yet. Add one below.</div>
-              )}
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 8, alignItems: 'end' }}>
-              <Field label="Image URL" value={newLook.image_url} onChange={(v) => setNewLook({ ...newLook, image_url: v })} placeholder="https://…/look.png" />
-              <Field label="Label (optional)" value={newLook.label} onChange={(v) => setNewLook({ ...newLook, label: v })} placeholder="e.g. Black tee" />
-              <Field label="HeyGen look id (optional)" value={newLook.heygen_look_id} onChange={(v) => setNewLook({ ...newLook, heygen_look_id: v })} />
-              <button onClick={addLook} disabled={saving || !newLook.image_url} className="btn-secondary" style={{ padding: '8px 12px' }}>
-                <Plus size={12} /> Add look
-              </button>
+              {/* Inline add tile — clicking opens the file picker, drop
+                  onto it works too. Same UX pattern as the user-facing
+                  Avatars page but with multi-file support since admins
+                  often want to load a whole library in one shot. */}
+              <label
+                onDragOver={(e) => { e.preventDefault() }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  const files = Array.from(e.dataTransfer?.files || []).filter((f) => /^image\//.test(f.type))
+                  if (files.length) addLookFiles(files)
+                }}
+                style={{
+                  aspectRatio: '1 / 1', borderRadius: 8,
+                  border: '1.5px dashed var(--border)',
+                  background: 'var(--surface-2)',
+                  display: 'grid', placeItems: 'center',
+                  color: 'var(--muted)', cursor: 'pointer',
+                  textAlign: 'center', padding: 10,
+                  fontSize: 11, lineHeight: 1.4,
+                }}
+              >
+                {uploading === 'look' ? (
+                  <span><Loader2 size={16} className="spin" style={{ display: 'block', margin: '0 auto 4px' }} /> Uploading…</span>
+                ) : (
+                  <span>
+                    <Plus size={18} style={{ display: 'block', margin: '0 auto 4px', color: 'var(--text-soft)' }} />
+                    Add look
+                    <div style={{ fontSize: 10, marginTop: 2 }}>(click or drop)</div>
+                  </span>
+                )}
+                <input
+                  ref={newLookFileRef} type="file" accept="image/jpeg,image/png,image/webp"
+                  multiple hidden
+                  onChange={(e) => { addLookFiles(Array.from(e.target.files || [])); e.target.value = '' }}
+                />
+              </label>
             </div>
           </div>
         )}

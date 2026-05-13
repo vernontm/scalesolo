@@ -12,7 +12,7 @@
 //      list voices in their own ElevenLabs workspace. 401 if they
 //      haven't connected yet.
 
-import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { setCors, requireUser, supaFetch, assertProfileAccess, isAdminUser } from '../_lib/supabase.js'
 import { decryptSecret } from '../_lib/crypto.js'
 
 const MASTER_KEY = process.env.ELEVENLABS_API_KEY
@@ -69,6 +69,18 @@ export default async function handler(req, res) {
       // professional, and cloned. They're paying for them, they should
       // see all of them.
       return res.status(200).json({ byok: all })
+    }
+
+    // Admin mode — returns EVERY voice the master ElevenLabs account
+    // has access to (premade, professional, AND any cloned voices the
+    // admin has set up in our workspace). Used by /admin/default-
+    // avatars so admins can pick voices for the curated avatars,
+    // including their custom-cloned ones.
+    if (req.query.admin === '1') {
+      if (!await isAdminUser(auth)) return res.status(403).json({ error: 'Admin only' })
+      if (!MASTER_KEY) return res.status(500).json({ error: 'ELEVENLABS_API_KEY not configured' })
+      const allVoices = await listVoicesWithKey(MASTER_KEY)
+      return res.status(200).json({ admin: allVoices })
     }
 
     // Default: shared library, only premade + professional. Filter
