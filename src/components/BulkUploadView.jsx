@@ -755,12 +755,22 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         : body.resynced != null ? `${label}: ${body.resynced} resynced${body.failed ? `, ${body.failed} failed` : ''}${body.skipped ? `, ${body.skipped} skipped` : ''}`
         : `${label} done`
       // Surface caption-generation failures so the user understands why
-      // some rows didn't get captioned. Without this, a silent / music-
-      // only video looks like the button did nothing.
+      // some rows didn't get captioned. Show the actual underlying
+      // reason (Scribe error / empty / no_speech_detected) when we
+      // have one so it's diagnosable instead of a generic blame line.
       const tFails = Array.isArray(body.transcript_failures) ? body.transcript_failures : []
       if (tFails.length && action === 'generate-captions') {
-        const tail = ` · ${tFails.length} video${tFails.length === 1 ? '' : 's'} had no detectable speech, write a caption manually or add a script first.`
+        // Group identical reasons so a batch with the same Scribe error
+        // doesn't print 10 separate copies.
+        const reasons = {}
+        for (const f of tFails) reasons[f.reason || 'unknown'] = (reasons[f.reason || 'unknown'] || 0) + 1
+        const detail = Object.entries(reasons)
+          .map(([r, n]) => `${n}× ${r}`)
+          .join(', ')
+        const tail = ` · ${tFails.length} video${tFails.length === 1 ? '' : 's'} couldn't be transcribed (${detail})`
         toast({ kind: body.updated > 0 ? 'success' : 'warn', message: summary + tail })
+        // eslint-disable-next-line no-console
+        console.warn('[generate-captions] transcript failures', tFails, 'debug:', body.debug)
       } else {
         toast({ kind: 'success', message: summary })
       }
