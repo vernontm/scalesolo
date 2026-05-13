@@ -1318,8 +1318,14 @@ a:focus-visible {
 }
 .modal-card-sm  { max-width: 460px; }
 .modal-card-md  { max-width: 560px; }
-.modal-card-lg  { max-width: 720px; }
-.modal-card-xl  { max-width: 1080px; }
+/* Large editor modals (admin default-avatar editor, AdminTemplates,
+   profile editor, etc.) fill almost the entire viewport height even
+   when their content is short — feels like a "full editor surface"
+   instead of a small dialog floating in dimmed space. Combined with
+   max-height: 96vh from .modal-card, the card always lands between
+   96vh tall (full) and 96vh tall (capped) — i.e. exactly 96vh. */
+.modal-card-lg  { max-width: 720px;  min-height: 96vh; }
+.modal-card-xl  { max-width: 1080px; min-height: 96vh; }
 
 /* Profile editor rail collapses to a horizontal scroll-tab strip on
    narrow screens. The inline width/border-right come from the rail
