@@ -2260,9 +2260,61 @@ function SpaceBuilder({ space, onSave, onClose }) {
         { event: 'UPDATE', schema: 'public', table: 'space_runs', filter: `space_id=eq.${spaceId}` },
         (payload) => applyRow(payload.new))
       .subscribe()
+
+    // Failsafe 1: refetch on tab-focus. Realtime can silently drop the
+    // websocket when the tab backgrounds (browser throttles, OS sleeps,
+    // network blips). When the user returns, pull the latest row once
+    // so they don't have to hit refresh.
+    const refetchLatest = async () => {
+      if (cancelled) return
+      try {
+        const { data } = await supabase
+          .from('space_runs')
+          .select('id, status, node_count, node_progress, triggered_by, started_at, finished_at, duration_ms, errors')
+          .eq('space_id', spaceId)
+          .order('started_at', { ascending: false })
+          .limit(1)
+        if (data?.[0]) applyRow(data[0])
+      } catch { /* ok */ }
+    }
+    const onVisibility = () => { if (!document.hidden) refetchLatest() }
+    document.addEventListener('visibilitychange', onVisibility)
+
+    // Failsafe 2: light polling while a run is active. Auto-run fires
+    // workflows on a cron — when the tab has been open for a while
+    // Realtime may have died silently. Polling every 5s while there's
+    // a running row makes sure progress visibly updates either way.
+    // We back off to 30s when there's no active run so we don't hammer
+    // the DB pointlessly.
+    let pollTimer = null
+    const pollTick = async () => {
+      if (cancelled) return
+      try {
+        const { data } = await supabase
+          .from('space_runs')
+          .select('id, status, node_count, node_progress, triggered_by, started_at, finished_at, duration_ms, errors')
+          .eq('space_id', spaceId)
+          .order('started_at', { ascending: false })
+          .limit(1)
+        const row = data?.[0]
+        if (row) applyRow(row)
+        const isActive = row?.status === 'running'
+        const nextDelay = isActive ? 5_000 : 30_000
+        pollTimer = setTimeout(pollTick, nextDelay)
+      } catch {
+        // Don't let a transient error kill the loop entirely — back off
+        // to 30s and try again.
+        pollTimer = setTimeout(pollTick, 30_000)
+      }
+    }
+    // First tick at 30s so we don't double up with the prime fetch above.
+    pollTimer = setTimeout(pollTick, 30_000)
+
     return () => {
       cancelled = true
       try { channel.unsubscribe() } catch {}
+      document.removeEventListener('visibilitychange', onVisibility)
+      if (pollTimer) clearTimeout(pollTimer)
     }
     // patchNode is stable via useCallback. spaceIdRef.current change after
     // first save triggers a re-run via the spaceIdRef.current dep.
