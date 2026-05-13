@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { createPortal } from 'react-dom'
-import { Sparkles, ArrowRight, X, Check, BookOpen, Boxes, UserCircle2, Calendar, Zap } from 'lucide-react'
+import { Sparkles, ArrowRight, Check, BookOpen, Boxes, UserCircle2, Calendar, Zap } from 'lucide-react'
 
 // Five-stop guided tour for first-run users. Fires once after the
 // onboarding survey completes. Renders as a fixed bottom-right card
@@ -88,7 +88,6 @@ export default function GuidedTour({ open, onClose }) {
     }
   }
   const back = () => setStepIdx((i) => Math.max(0, i - 1))
-  const skip = () => finish()
   const finish = () => {
     try { localStorage.setItem(STORAGE_KEY, '1') } catch {}
     onClose?.()
@@ -99,11 +98,14 @@ export default function GuidedTour({ open, onClose }) {
   const Icon = stop.Icon
   return createPortal((
     <>
-      {/* Soft backdrop — clickable to advance (doesn't lock the user
-          on the underlying page). Bottom-right card so the highlighted
-          page content stays visible above. */}
+      {/* Soft backdrop. NOT clickable — the tour is required so the
+          user has to actually advance via the button. Without this,
+          clicking the backdrop 5 times would rush through every stop
+          and defeat the point. Pointer events on the backdrop are
+          captured so underlying page clicks also can't accidentally
+          fire (e.g. clicking a sidebar link mid-tour). */}
       <div
-        onClick={next}
+        aria-hidden
         style={{
           position: 'fixed', inset: 0, zIndex: 220,
           background: 'rgba(0,0,0,0.18)',
@@ -142,16 +144,10 @@ export default function GuidedTour({ open, onClose }) {
               Quick tour · Step {stepIdx + 1} of {STOPS.length}
             </div>
           </div>
-          <button
-            type="button" onClick={skip}
-            aria-label="Skip tour"
-            title="Skip tour (you can replay it from Settings)"
-            style={{
-              background: 'transparent', border: 'none', color: 'var(--muted)',
-              cursor: 'pointer', padding: 4, borderRadius: 6,
-              display: 'grid', placeItems: 'center',
-            }}
-          ><X size={14} /></button>
+          {/* No skip / close button — the tour is required for
+              first-run users so they understand the pipeline before
+              they start clicking around. They can still replay it
+              later from Settings. */}
         </div>
 
         <h2 id="tour-title" style={{
@@ -208,15 +204,6 @@ export default function GuidedTour({ open, onClose }) {
               }}
             >Back</button>
           )}
-          <button
-            type="button" onClick={skip}
-            style={{
-              padding: '8px 12px', borderRadius: 8,
-              background: 'transparent', border: 'none',
-              color: 'var(--muted)', cursor: 'pointer',
-              fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 12.5,
-            }}
-          >Skip tour</button>
           <div style={{ flex: 1 }} />
           <button
             type="button" onClick={next}

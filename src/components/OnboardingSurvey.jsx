@@ -220,8 +220,11 @@ export default function OnboardingSurvey({ token, onComplete, onSkip = null }) {
 
   const canProceed = (() => {
     if (step.type === 'brand_setup') {
-      // business name is the only hard requirement; brand bible is optional.
-      return !!(answers.brandBusinessName && answers.brandBusinessName.trim())
+      // Brand setup is entirely optional. Users who want to explore
+      // first can skip this step and add a brand profile later from
+      // /profiles. The Next button stays enabled regardless; a "Skip
+      // for now" affordance is also added in the footer below.
+      return true
     }
     const v = answers[step.id]
     const hasAnswer = step.type === 'multi' ? (Array.isArray(v) && v.length > 0) : !!v
@@ -427,6 +430,31 @@ export default function OnboardingSurvey({ token, onComplete, onSkip = null }) {
               </button>
             ) : <div style={{ flex: '0 0 auto' }} />}
             <div style={{ flex: 1 }} />
+            {/* "Skip for now" — only shown on the brand-setup step.
+                Wipes the local brand fields so onComplete doesn't try
+                to POST /api/profiles with stale state, then advances
+                to the next step normally. The user can add a brand
+                profile later from /profiles. */}
+            {step.type === 'brand_setup' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setAnswers((a) => ({
+                    ...a,
+                    brandBusinessName: '',
+                    brandBible: '',
+                  }))
+                  next()
+                }}
+                disabled={busy}
+                style={{
+                  background: 'transparent', border: 'none',
+                  color: 'var(--muted)', cursor: busy ? 'not-allowed' : 'pointer',
+                  fontFamily: 'var(--font-display)', fontSize: 12, fontWeight: 600,
+                  padding: '8px 12px',
+                }}
+              >Skip for now</button>
+            )}
             <button type="button" onClick={next} disabled={!canProceed || busy} style={nextBtn(canProceed && !busy)}>
               {busy ? <Loader2 size={14} className="spin" /> :
                 stepIdx === STEPS.length - 1 ? <><Sparkles size={14} /> Get started</> :
