@@ -160,7 +160,15 @@ function AppShell() {
               brand switches. Fallback key 'no-profile' keeps the
               initial render stable while ProfileContext loads. */}
           <Routes key={selectedProfileId || 'no-profile'}>
-            <Route path="/auth/callback" element={<Navigate to="/dashboard" replace />} />
+            {/* Even when signed in, we route /auth/callback to the real
+                AuthCallback component (not a Navigate). When somebody
+                clicks the email-confirm link, Supabase consumes the hash
+                fragment into a live session BEFORE React renders the
+                route. The user lands here "signed in" but with an
+                unresolved stripe_session in the URL. AuthCallback is
+                what reads that param and calls /api/stripe-link-session.
+                If we Navigate away, link-session never runs. */}
+            <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/spaces"    element={<Spaces />} />
             <Route path="/schedule"  element={<Content />} />
