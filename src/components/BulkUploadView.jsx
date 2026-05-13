@@ -524,23 +524,40 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         }
         return
       }
-      setAutoStage('schedule')
-      const s = await fetch(`/api/content/bulk-actions?action=auto-schedule`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ profile_id: profileId, script_ids: ids }),
-      })
-      const sb = await s.json().catch(() => ({}))
-      if (!s.ok) {
-        toast({ kind: 'error', message: `Auto-schedule failed: ${sb?.error || s.status}. Rows are caption-ready; click Auto Schedule to retry.` })
-        return
+      // Only schedule rows that actually got captions. Anything that
+      // failed transcription (silent / music-only video, Scribe error)
+      // stays at status=pending so the user has to write the caption
+      // before it ships. Without this, blank captions auto-posted —
+      // we don't want that.
+      const failedIds = new Set((cb.transcript_failures || []).map((f) => f.id))
+      const schedulableIds = ids.filter((id) => !failedIds.has(id))
+
+      let scheduled = 0
+      let skipped = 0
+      if (schedulableIds.length) {
+        setAutoStage('schedule')
+        const s = await fetch(`/api/content/bulk-actions?action=auto-schedule`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ profile_id: profileId, script_ids: schedulableIds }),
+        })
+        const sb = await s.json().catch(() => ({}))
+        if (!s.ok) {
+          toast({ kind: 'error', message: `Auto-schedule failed: ${sb?.error || s.status}. Rows are caption-ready; click Auto Schedule to retry.` })
+          return
+        }
+        scheduled = sb.scheduled ?? 0
+        skipped = sb.skipped ?? 0
       }
-      const captioned = cb.updated ?? ids.length
-      const scheduled = sb.scheduled ?? 0
-      const skipped = sb.skipped ?? 0
+
+      const captioned = cb.updated ?? 0
+      const heldBack = failedIds.size
+      const parts = [`${captioned} captioned`, `${scheduled} scheduled`]
+      if (skipped)   parts.push(`${skipped} skipped (no open slots)`)
+      if (heldBack)  parts.push(`${heldBack} held back (no transcript, write caption manually)`)
       toast({
-        kind: 'success',
-        message: `Auto-processed ${ids.length}: ${captioned} captioned, ${scheduled} scheduled${skipped ? `, ${skipped} skipped (no open slots — set a posting schedule on the profile)` : ''}.`,
+        kind: heldBack && !scheduled ? 'warn' : 'success',
+        message: `Auto-processed ${ids.length}: ${parts.join(', ')}.`,
       })
     } catch (e) {
       toast({ kind: 'error', message: `Auto-process failed: ${e.message}` })
