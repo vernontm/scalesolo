@@ -117,6 +117,18 @@ function BrandCompletenessCard({ profile, onEdit }) {
   )
 }
 
+// Format an integer number of seconds as a compact, glance-readable
+// label. Used by the workflow-speed stat tiles ("2m 14s", "44s", "—").
+function fmtRunSecs(secs) {
+  if (secs == null || !Number.isFinite(secs) || secs <= 0) return '—'
+  if (secs < 60) return `${secs}s`
+  const m = Math.floor(secs / 60)
+  const s = secs % 60
+  if (m < 60) return s ? `${m}m ${s}s` : `${m}m`
+  const h = Math.floor(m / 60)
+  return `${h}h ${m % 60}m`
+}
+
 // Compact metric tile for the pipeline row. Number + label + colored icon.
 function StatTile({ icon: Icon, label, value, color }) {
   return (
@@ -665,6 +677,23 @@ export default function Dashboard() {
             <StatTile icon={Calendar} label="Scheduled" value={stats.scheduled}        color="#3b82f6" />
             <StatTile icon={FileText} label="Drafts"   value={stats.drafts}            color="#94a3b8" />
             <StatTile icon={Sparkles} label="Shipped"  value={stats.shipped_month}     color="#2ecc71" />
+          </div>
+        </>
+      )}
+
+      {/* Workflow pipeline speed — end-to-end run times pulled from
+          space_runs.duration_ms over the last 30 days. Lets the user
+          see "I made a fully captioned, polished, scheduled video in
+          X minutes" without doing the math by hand. Only renders when
+          there's at least one successful run to draw stats from. */}
+      {selectedProfile && stats?.run_stats?.total_runs > 0 && (
+        <>
+          <div style={sectionLabel}><span>Workflow speed (last 30 days)</span></div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
+            <StatTile icon={Sparkles} label="Last run"     value={fmtRunSecs(stats.run_stats.last_run_secs)}    color="#0ea5e9" />
+            <StatTile icon={TrendingUp} label="Average"    value={fmtRunSecs(stats.run_stats.avg_run_secs)}     color="#a855f7" />
+            <StatTile icon={Zap}      label="Fastest"      value={fmtRunSecs(stats.run_stats.fastest_run_secs)} color="#2ecc71" />
+            <StatTile icon={CheckCircle2} label="Total runs" value={stats.run_stats.total_runs}                 color="#94a3b8" />
           </div>
         </>
       )}

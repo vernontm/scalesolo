@@ -54,12 +54,42 @@ export default async function handler(req, res) {
       count(`${base}&approval_status=eq.pending`),
     ])
 
+    // Workflow run-time stats: average end-to-end duration of a
+    // successful run across this profile's spaces in the last 30
+    // days. Lets the dashboard show "average workflow time" so the
+    // user can see how fast their pipeline is.
+    let runStats = { total_runs: 0, avg_run_secs: null, fastest_run_secs: null, last_run_secs: null }
+    try {
+      const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+      const spaces = await supaFetch(`spaces?profile_id=eq.${profileId}&select=id`)
+      const spaceIds = (spaces || []).map((s) => s.id)
+      if (spaceIds.length) {
+        const idsParam = spaceIds.map((id) => `"${id}"`).join(',')
+        const recent = await supaFetch(
+          `space_runs?status=eq.success&duration_ms=not.is.null` +
+          `&space_id=in.(${idsParam})&started_at=gte.${encodeURIComponent(monthAgo)}` +
+          `&select=duration_ms,started_at&order=started_at.desc&limit=200`,
+        )
+        const durations = (recent || []).map((r) => Number(r.duration_ms)).filter((n) => n > 0)
+        if (durations.length) {
+          const totalMs = durations.reduce((a, b) => a + b, 0)
+          runStats = {
+            total_runs:       durations.length,
+            avg_run_secs:     Math.round(totalMs / durations.length / 1000),
+            fastest_run_secs: Math.round(Math.min(...durations) / 1000),
+            last_run_secs:    Math.round(durations[0] / 1000),
+          }
+        }
+      }
+    } catch { /* run stats are best-effort; keep the rest of the response */ }
+
     return res.status(200).json({
       created_month: createdMonth,
       shipped_month: shippedMonth,
       scheduled,
       drafts,
       pending_approval: pendingApproval,
+      run_stats: runStats,
     })
   } catch (err) {
     return res.status(500).json({ error: err.message })
