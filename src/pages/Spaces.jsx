@@ -208,16 +208,23 @@ function SpaceNode({ id, data, selected }) {
     borderBottom: '1px solid var(--border)',
     borderTopLeftRadius: 11, borderTopRightRadius: 11,
   }
+  // Running nodes get a pulsing amber halo so progress is obvious at a
+  // glance — applies whether the run is client-side or driven by the
+  // Fly worker via Realtime (both paths set data.status='running').
+  const isRunning = status === 'running'
   const card = {
     width: 280,
     background: 'var(--surface)',
     border: selected
       ? `1px solid ${def.color || 'var(--red)'}`
+      : isRunning ? '1px solid rgba(245,158,11,0.65)'
       : (status === 'failed' ? '1px solid rgba(239,68,68,0.6)' : '1px solid var(--border)'),
     borderRadius: 12,
     boxShadow: selected ? '0 12px 30px rgba(0,0,0,0.45)' : '0 4px 14px rgba(0,0,0,0.18)',
     fontFamily: 'var(--font-body)',
     color: 'var(--text)',
+    animation: isRunning ? 'spaceNodeRunPulse 1.6s ease-in-out infinite' : undefined,
+    position: 'relative',
   }
   const statusPill = {
     fontSize: 10, fontFamily: 'var(--font-display)', fontWeight: 700,
@@ -371,7 +378,15 @@ function SpaceNode({ id, data, selected }) {
             {status === 'running' ? 'Stop' : 'Run'}
           </button>
         )}
-        <span style={{ ...statusPill, marginLeft: data.type === 'collection' ? 'auto' : 0 }}>{status}</span>
+        <span style={{ ...statusPill, marginLeft: data.type === 'collection' ? 'auto' : 0, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+          {isRunning && <span aria-hidden style={{
+            width: 6, height: 6, borderRadius: '50%',
+            background: '#f59e0b',
+            animation: 'pulse 1.2s ease-in-out infinite',
+            display: 'inline-block',
+          }} />}
+          {status}
+        </span>
       </div>
       <div style={{ padding: 12 }}>
         <Body data={{ ...data, __id: id }} onPatch={onPatch} />
