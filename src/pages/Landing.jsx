@@ -80,8 +80,11 @@ const testimonials = [
 
 export default function Landing() {
   const nav = useNavigate()
-  // "Sign in" goes to the login page for existing users.
-  const goSignin = () => nav('/login')
+  // "Sign in" goes to the login page for existing users. We pass
+  // ?mode=signin explicitly so Login.jsx forces the sign-in tab even
+  // if a previous browse session stashed a signup tier in localStorage
+  // (otherwise initialTier wins and the signup form opens by mistake).
+  const goSignin = () => nav('/login?mode=signin')
   // "Start free" and other primary CTAs scroll to the pricing section
   // so the visitor picks a plan first. Plan buttons in <PricingPlans />
   // route anonymous users straight to Stripe Checkout, and after

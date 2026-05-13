@@ -88,13 +88,21 @@ export default function Login() {
   // match the Stripe customer) and link the customer after signup.
   const stripeSessionId = params.get('stripe_session')
 
-  // ?mode=signup explicitly opens the signup form (used by every CTA on
-  // the landing page that says "Get started" / "Try free"). A pending
-  // tier always wins (came from /pricing or a checkout retry). A
-  // returning-from-Stripe session forces signup mode.
+  // Mode resolution order:
+  //   1. ?stripe_session present → signup (returning from Stripe, must
+  //      finish account creation)
+  //   2. ?mode=signin → signin (explicit. Landing's "Sign in" button
+  //      passes this; we honor it even if a stale tier sits in
+  //      localStorage from an earlier browse session.)
+  //   3. ?mode=signup → signup (explicit)
+  //   4. tier stashed from /pricing → signup (resume checkout flow)
+  //   5. default → signin
+  const explicitMode = params.get('mode')
   const initialMode = stripeSessionId ? 'signup'
+    : explicitMode === 'signin' ? 'signin'
+    : explicitMode === 'signup' ? 'signup'
     : initialTier ? 'signup'
-    : (params.get('mode') === 'signup' ? 'signup' : 'signin')
+    : 'signin'
   const [mode, setMode] = useState(initialMode)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
