@@ -43,6 +43,37 @@ export default function AuthCallback() {
           return
         }
 
+        // Stripe-first signup path: a stripe_session was stashed during
+        // /login submit. Link it to the freshly-confirmed account now so
+        // the dashboard has the subscription + credits as soon as it
+        // loads. We do this BEFORE the tier check below so a brand-new
+        // subscriber never falls through to a re-checkout.
+        const stripeSessionStashed = (() => {
+          try { return localStorage.getItem('scalesolo.signup.stripe_session') } catch { return null }
+        })()
+        if (stripeSessionStashed) {
+          try {
+            await fetch('/api/stripe-link-session', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${session.access_token}`,
+              },
+              body: JSON.stringify({ session_id: stripeSessionStashed }),
+            })
+          } catch { /* link-session is best-effort; webhook is the backup */ }
+          try {
+            localStorage.removeItem('scalesolo.signup.stripe_session')
+            // The tier/cycle stashed by PricingPlans is no longer needed
+            // — checkout already happened. Clear them so the next
+            // /login load doesn't try to re-trigger checkout.
+            localStorage.removeItem('scalesolo.signup.tier')
+            localStorage.removeItem('scalesolo.signup.cycle')
+          } catch {}
+          navigate('/dashboard?welcome=1', { replace: true })
+          return
+        }
+
         // If a tier was stashed pre-auth, App routing + Login.jsx already
         // know how to resume checkout. Otherwise just go home.
         const tier = (() => {

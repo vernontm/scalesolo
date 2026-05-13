@@ -206,6 +206,13 @@ export default function Login() {
         if (err) throw err
         // sign-in success — if there's a pending tier, the useEffect above will fire after session lands
       } else {
+        // Stash the stripe_session_id so AuthCallback can pick it up
+        // after the user clicks the confirmation link. Without this,
+        // the ?stripe_session URL param is lost the moment we route
+        // away from the Login page and link-session never runs.
+        if (stripeSessionId) {
+          try { localStorage.setItem('scalesolo.signup.stripe_session', stripeSessionId) } catch {}
+        }
         const { data: signUpData, error: err } = await signUp(email, password)
         // Supabase silently no-ops signUp when the email already exists
         // (returns success-shaped data with no error). The tell is an
@@ -252,6 +259,7 @@ export default function Login() {
               body: JSON.stringify({ session_id: stripeSessionId }),
             })
           } catch { /* don't block signup over link failure — webhook still works */ }
+          try { localStorage.removeItem('scalesolo.signup.stripe_session') } catch {}
           window.location.href = '/dashboard?welcome=1'
           return
         }
