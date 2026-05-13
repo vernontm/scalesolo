@@ -180,8 +180,28 @@ export default function OnboardingSurvey({ token, onComplete, onSkip = null }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const step = STEPS[stepIdx]
+  // Ref-to-latest-next so the auto-advance setTimeout can fire with
+  // the current closure's `next` (which captures the latest stepIdx
+  // and answers) without us re-running every effect on every render.
+  const nextRef = useRef(null)
 
   const setSingle = (id, value) => setAnswers((a) => ({ ...a, [id]: value }))
+
+  // Auto-advance: when the user picks a single-select option that ISN'T
+  // "Other" (which needs the follow-up text input), wait a beat so the
+  // selected state visibly registers, then jump to the next step. Skip
+  // for multi-select and brand_setup (which has free-text fields).
+  const pickAndMaybeAdvance = (id, value, opts) => {
+    setSingle(id, value)
+    if (opts?.autoAdvance && value !== 'other') {
+      window.setTimeout(() => {
+        // Use the ref-style advance — we can't read state directly here
+        // since setSingle is async, but next() rechecks canProceed via
+        // the latest state on its own call.
+        nextRef.current?.()
+      }, 220)
+    }
+  }
   const toggleMulti = (id, value) => setAnswers((a) => {
     const cur = Array.isArray(a[id]) ? a[id] : []
     return {
@@ -268,6 +288,10 @@ export default function OnboardingSurvey({ token, onComplete, onSkip = null }) {
 
   const back = () => { if (stepIdx > 0) setStepIdx(stepIdx - 1) }
 
+  // Keep nextRef pointing at the latest `next` so pickAndMaybeAdvance's
+  // setTimeout calls the right closure.
+  useEffect(() => { nextRef.current = next })
+
   // Lock body scroll while the survey is up.
   useEffect(() => {
     const prev = document.body.style.overflow
@@ -322,7 +346,7 @@ export default function OnboardingSurvey({ token, onComplete, onSkip = null }) {
                 const Icon = o.Icon
                 const active = answers[step.id] === o.value
                 return (
-                  <button key={o.value} type="button" onClick={() => setSingle(step.id, o.value)} style={optionGrid(active)}>
+                  <button key={o.value} type="button" onClick={() => pickAndMaybeAdvance(step.id, o.value, { autoAdvance: true })} style={optionGrid(active)}>
                     {Icon && <Icon size={16} style={{ color: active ? 'var(--red)' : 'var(--muted)', marginBottom: 8 }} />}
                     <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13, color: 'var(--text)' }}>{o.label}</div>
                     {active && <Check size={13} style={{ position: 'absolute', top: 8, right: 8, color: 'var(--red)' }} />}
@@ -341,7 +365,7 @@ export default function OnboardingSurvey({ token, onComplete, onSkip = null }) {
                 return (
                   <button
                     key={o.value} type="button"
-                    onClick={() => step.type === 'multi' ? toggleMulti(step.id, o.value) : setSingle(step.id, o.value)}
+                    onClick={() => step.type === 'multi' ? toggleMulti(step.id, o.value) : pickAndMaybeAdvance(step.id, o.value, { autoAdvance: true })}
                     style={optionList(active)}
                   >
                     {Icon && <Icon size={15} style={{ color: active ? 'var(--red)' : 'var(--muted)', flexShrink: 0 }} />}
@@ -368,7 +392,7 @@ export default function OnboardingSurvey({ token, onComplete, onSkip = null }) {
                 return (
                   <button
                     key={o.value} type="button"
-                    onClick={() => step.type === 'multi' ? toggleMulti(step.id, o.value) : setSingle(step.id, o.value)}
+                    onClick={() => step.type === 'multi' ? toggleMulti(step.id, o.value) : pickAndMaybeAdvance(step.id, o.value, { autoAdvance: true })}
                     style={chip(active)}
                   >
                     {active && <Check size={11} style={{ marginRight: 4 }} />}

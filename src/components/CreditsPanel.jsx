@@ -120,7 +120,15 @@ export default function CreditsPanel({ compact = false }) {
               {Object.values(topupCatalog).some((p) => p.pool === d.key && p.available) && (
                 <button
                   style={topUpBtn}
-                  onClick={() => setModal({ pool: d.key })}
+                  onClick={() => {
+                    // Scroll the page to the top before opening so the
+                    // fixed-position modal lines up over the visible
+                    // viewport instead of feeling "off-screen" on
+                    // mobile and on pages where the click happened
+                    // way down (e.g. after the transactions table).
+                    try { window.scrollTo({ top: 0, behavior: 'smooth' }) } catch {}
+                    setModal({ pool: d.key })
+                  }}
                   onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgba(239,68,68,0.3)'; e.currentTarget.style.color = 'var(--text)' }}
                   onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-soft)' }}
                 >
