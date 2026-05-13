@@ -29,10 +29,56 @@ export default async function handler(req, res) {
     if (!script && !audio_url) return res.status(400).json({ error: 'script or audio_url required' })
 
     // Public-library avatars are passed through as `pub:<heygen_group_id>`.
-    // Skip the Supabase lookup and render directly via the V3 endpoint.
+    // Default avatars (admin-curated, shared) are passed as
+    // `default:<default_avatar_id>` — we resolve them like a regular
+    // avatar but read from default_avatars and apply any per-user
+    // voice override.
     const isPublic = typeof avatar_id === 'string' && avatar_id.startsWith('pub:')
+    const isDefault = typeof avatar_id === 'string' && avatar_id.startsWith('default:')
     let avatar = null
-    if (!isPublic) {
+    if (isDefault) {
+      const defId = avatar_id.slice('default:'.length)
+      const defRows = await supaFetch(
+        `default_avatars?id=eq.${encodeURIComponent(defId)}&is_active=eq.true&select=*,looks:default_avatar_looks(id,image_url,heygen_look_id,label,angle_order)`
+      )
+      const def = defRows?.[0]
+      if (!def) return res.status(404).json({ error: 'Default avatar not found or inactive' })
+      // Voice resolution order:
+      //   request body voice_id  (workflow may override per render)
+      //   user's voice override  (set via /api/avatars/default-voice)
+      //   default avatar's admin-set voice
+      let resolvedVoice = req.body?.voice_id || null
+      if (!resolvedVoice) {
+        try {
+          const ov = await supaFetch(
+            `default_avatar_voice_overrides?user_id=eq.${auth.user.id}&default_avatar_id=eq.${encodeURIComponent(defId)}&select=elevenlabs_voice_id`
+          )
+          resolvedVoice = ov?.[0]?.elevenlabs_voice_id || null
+        } catch {}
+      }
+      if (!resolvedVoice) resolvedVoice = def.elevenlabs_voice_id || null
+      // Shim into the avatar-shaped object the rest of the file
+      // expects. profile_id stays null — the user MUST supply a
+      // profile_id on the request (same convention as public avatars)
+      // so we can charge credits + persist the render row.
+      if (!req.body?.profile_id) {
+        return res.status(400).json({ error: 'profile_id required when using a default avatar' })
+      }
+      await assertProfileAccess(auth.user.id, req.body.profile_id)
+      avatar = {
+        id: defId,
+        profile_id: req.body.profile_id,
+        name: def.name,
+        heygen_group_id: def.heygen_group_id,
+        elevenlabs_voice_id: resolvedVoice,
+        model_version: model_version || 'v4',
+        // Default avatars never write back to public.avatars on the
+        // render row — the avatar_id column there expects a real
+        // avatars.id. We special-case render-row persistence below.
+        _is_default: true,
+        looks: def.looks || [],
+      }
+    } else if (!isPublic) {
       const aRows = await supaFetch(`avatars?id=eq.${avatar_id}&select=*`)
       avatar = aRows?.[0]
       if (!avatar) return res.status(404).json({ error: 'Avatar not found' })
@@ -277,7 +323,13 @@ export default async function handler(req, res) {
       video_units_charged: unitsToCharge,
       duration_secs: durationSecs,
     }
-    if (!isPublic) renderBody.avatar_id = avatar_id
+    // Persist avatar_id only when it's a real public.avatars row. For
+    // public-library + default-avatar renders, skip the FK so the
+    // insert doesn't bomb on avatar_renders.avatar_id (FK to
+    // public.avatars). The metadata still carries enough to identify
+    // the source: heygen_group_id is preserved, and for defaults the
+    // _is_default flag would have already shaped the render output.
+    if (!isPublic && !avatar._is_default) renderBody.avatar_id = avatar_id
     const renderRow = await supaFetch('avatar_renders', { method: 'POST', body: renderBody })
     const render = Array.isArray(renderRow) ? renderRow[0] : renderRow
 

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Plus, Upload, X, UserCircle2, Sparkles, Video, AlertCircle, CheckCircle2,
   RefreshCw, Trash2, Wand2, Image as ImageIcon, ArrowLeft, Play, ChevronRight,
-  ChevronLeft, Mic, Library, Volume2, Loader2, Check, Search, GripVertical,
+  ChevronLeft, Mic, Library, Volume2, Loader2, Check, Search, GripVertical, Save,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
@@ -1911,6 +1911,171 @@ function CloneVoiceForm({ session, profileId, onCloned }) {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Default avatars section — admin-curated avatars shown on every user's
+// page. Read-only (no edit / add look / delete), but the voice can be
+// swapped per-user via /api/avatars/default-voice.
+function DefaultAvatarsSection({ avatars, token, onChanged }) {
+  const [voiceEditing, setVoiceEditing] = useState(null) // avatar object or null
+  return (
+    <div className="fade-up" style={{ marginBottom: 22 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, margin: 0 }}>
+          Ready-to-use avatars
+        </h2>
+        <span style={{
+          padding: '3px 8px', borderRadius: 999,
+          background: 'rgba(46,204,113,0.16)', border: '1px solid rgba(46,204,113,0.4)',
+          color: '#2ecc71', fontSize: 10.5, fontWeight: 700, letterSpacing: '0.06em',
+          textTransform: 'uppercase', fontFamily: 'var(--font-display)',
+        }}>Free to use</span>
+        <div style={{ flex: 1 }} />
+      </div>
+      <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 12, lineHeight: 1.5 }}>
+        Pre-built avatars with voice already attached. Drop them into any workflow's Avatar picker. You can't edit the looks, but you can swap the voice to your own ElevenLabs voice.
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14 }}>
+        {avatars.map((a) => (
+          <div key={a.id} className="card-flat lift" style={{ padding: 12 }}>
+            <div style={{
+              aspectRatio: '1 / 1',
+              backgroundImage: a.preview_image_url ? `url(${a.preview_image_url})` : 'none',
+              backgroundSize: 'cover', backgroundPosition: 'center',
+              background: a.preview_image_url ? undefined : 'var(--surface-2)',
+              borderRadius: 10, marginBottom: 10, position: 'relative',
+            }}>
+              <div style={{
+                position: 'absolute', top: 8, left: 8,
+                padding: '3px 8px', borderRadius: 999,
+                background: 'rgba(14,165,233,0.85)', color: '#fff',
+                fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+                fontFamily: 'var(--font-display)',
+              }}>Default</div>
+              {(a.looks?.length || 0) > 0 && (
+                <div style={{
+                  position: 'absolute', bottom: 8, right: 8,
+                  padding: '3px 8px', borderRadius: 999,
+                  background: 'rgba(0,0,0,0.55)', color: '#fff',
+                  fontSize: 10.5, fontWeight: 700,
+                }}>{a.looks.length} look{a.looks.length === 1 ? '' : 's'}</div>
+              )}
+            </div>
+            <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 14, color: 'var(--text)' }}>{a.name}</div>
+            {a.description && (
+              <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 4, lineHeight: 1.45 }}>{a.description}</div>
+            )}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 6, marginTop: 10,
+              padding: '7px 9px', borderRadius: 8,
+              background: 'var(--surface-2)', border: '1px solid var(--border)',
+              fontSize: 11, color: 'var(--text-soft)',
+            }}>
+              <Mic size={11} style={{ color: a.voice_override ? '#0ea5e9' : '#94a3b8', flexShrink: 0 }} />
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {a.effective_voice_label || (a.effective_voice_id ? a.effective_voice_id.slice(0, 12) + '…' : 'No voice set')}
+                {a.voice_override && (
+                  <span style={{ color: '#0ea5e9', fontSize: 9.5, marginLeft: 6, fontWeight: 700 }}>YOURS</span>
+                )}
+              </span>
+              <button
+                onClick={() => setVoiceEditing(a)}
+                style={{
+                  background: 'transparent', border: 'none', color: 'var(--red)',
+                  fontSize: 10.5, fontFamily: 'var(--font-display)', fontWeight: 700,
+                  cursor: 'pointer', padding: 2,
+                }}
+              >Change</button>
+            </div>
+          </div>
+        ))}
+      </div>
+      {voiceEditing && (
+        <DefaultVoiceModal
+          avatar={voiceEditing}
+          token={token}
+          onClose={() => setVoiceEditing(null)}
+          onSaved={() => { setVoiceEditing(null); onChanged?.() }}
+        />
+      )}
+    </div>
+  )
+}
+
+// Modal: swap the ElevenLabs voice on a default avatar. Stores a row
+// in default_avatar_voice_overrides for this user; clearing it falls
+// back to the admin-set default voice.
+function DefaultVoiceModal({ avatar, token, onClose, onSaved }) {
+  const [voiceId, setVoiceId] = useState(avatar.voice_override?.elevenlabs_voice_id || '')
+  const [label, setLabel]     = useState(avatar.voice_override?.voice_label || '')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+
+  const save = async () => {
+    if (!voiceId.trim()) { setErr('Paste an ElevenLabs voice id'); return }
+    setBusy(true); setErr(null)
+    try {
+      const r = await fetch('/api/avatars/default-voice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          default_avatar_id: avatar.id,
+          elevenlabs_voice_id: voiceId.trim(),
+          voice_label: label.trim() || null,
+        }),
+      })
+      const b = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(b?.error || `Save failed (${r.status})`)
+      onSaved?.()
+    } catch (e) { setErr(e.message); setBusy(false) }
+  }
+  const revert = async () => {
+    setBusy(true); setErr(null)
+    try {
+      const r = await fetch(`/api/avatars/default-voice?id=${avatar.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!r.ok && r.status !== 204) throw new Error(`Revert failed (${r.status})`)
+      onSaved?.()
+    } catch (e) { setErr(e.message); setBusy(false) }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card modal-card-sm" onClick={(e) => e.stopPropagation()} style={{ position: 'relative' }}>
+        <button
+          onClick={onClose}
+          style={{ position: 'absolute', top: 14, right: 14, background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6 }}
+          aria-label="Close"
+        ><X size={16} /></button>
+        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 18, marginBottom: 6 }}>Change voice on {avatar.name}</div>
+        <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 14, lineHeight: 1.5 }}>
+          Paste an ElevenLabs voice id to use your own voice on this default avatar. Affects only your account; other users keep the admin default ({avatar.default_voice_label || avatar.elevenlabs_voice_id?.slice(0, 12) || 'not set'}).
+        </div>
+        {err && <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '8px 12px', borderRadius: 8, fontSize: 13, marginBottom: 10 }}>{err}</div>}
+        <label style={{ display: 'block', fontSize: 12, color: 'var(--text-soft)', marginBottom: 10 }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, marginBottom: 4 }}>ElevenLabs voice id</div>
+          <input className="input" value={voiceId} onChange={(e) => setVoiceId(e.target.value)} placeholder="vc_…" style={{ width: '100%' }} />
+        </label>
+        <label style={{ display: 'block', fontSize: 12, color: 'var(--text-soft)', marginBottom: 14 }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, marginBottom: 4 }}>Voice label (optional)</div>
+          <input className="input" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. My clone" style={{ width: '100%' }} />
+        </label>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {avatar.voice_override && (
+            <button onClick={revert} disabled={busy} className="btn-ghost" style={{ flexShrink: 0 }}>Revert to default</button>
+          )}
+          <div style={{ flex: 1 }} />
+          <button onClick={onClose} className="btn-ghost">Cancel</button>
+          <button onClick={save} disabled={busy} className="btn-primary">
+            {busy ? <Loader2 size={13} className="spin" /> : <Save size={13} />} Save
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Avatar list view
 function AvatarList({ avatars, models, onCreate, onOpen }) {
   return (
@@ -1977,6 +2142,7 @@ export default function Avatars() {
   const { session } = useAuth()
   const { selectedProfileId } = useProfile()
   const [avatars, setAvatars] = useState([])
+  const [defaultAvatars, setDefaultAvatars] = useState([])
   const [models, setModels] = useState({})
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
@@ -1991,6 +2157,7 @@ export default function Avatars() {
     if (r.ok) {
       const body = await r.json()
       setAvatars(body.avatars || [])
+      setDefaultAvatars(body.default_avatars || [])
       setModels(body.models || {})
     }
     setLoading(false)
@@ -2025,6 +2192,13 @@ export default function Avatars() {
 
   return (
     <>
+      {defaultAvatars.length > 0 && (
+        <DefaultAvatarsSection
+          avatars={defaultAvatars}
+          token={session?.access_token}
+          onChanged={refresh}
+        />
+      )}
       <AvatarList
         avatars={avatars}
         models={models}

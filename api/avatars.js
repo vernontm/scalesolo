@@ -34,7 +34,45 @@ export default async function handler(req, res) {
       const rows = await supaFetch(
         `avatars?profile_id=eq.${profileId}&order=created_at.desc&select=*,looks:avatar_looks(id,name,kind,images:avatar_look_images(id,image_url,name,order_index))`
       )
-      return res.status(200).json({ avatars: rows || [], models: MODELS })
+
+      // Default avatars (admin-curated, shared across every user). We
+      // attach a per-user voice override if the user has one — that
+      // lets the user-side dropdown show their preferred voice without
+      // a second round trip. Tagged with is_default=true so the
+      // /avatars page can render them read-only.
+      let defaults = []
+      try {
+        const [defaultRows, overrideRows] = await Promise.all([
+          supaFetch(
+            'default_avatars?is_active=eq.true' +
+            '&select=id,name,description,heygen_group_id,elevenlabs_voice_id,default_voice_label,preview_image_url,sort_order,looks:default_avatar_looks(id,image_url,label,heygen_look_id,angle_order)' +
+            '&order=sort_order.asc,created_at.asc'
+          ),
+          supaFetch(
+            `default_avatar_voice_overrides?user_id=eq.${auth.user.id}` +
+            '&select=default_avatar_id,elevenlabs_voice_id,voice_label'
+          ).catch(() => []),
+        ])
+        const overrideByAvatarId = {}
+        for (const o of overrideRows || []) overrideByAvatarId[o.default_avatar_id] = o
+        defaults = (defaultRows || []).map((d) => {
+          const ov = overrideByAvatarId[d.id]
+          return {
+            ...d,
+            is_default: true,
+            voice_override: ov ? { elevenlabs_voice_id: ov.elevenlabs_voice_id, voice_label: ov.voice_label || null } : null,
+            // Effective voice = user override > admin default.
+            effective_voice_id:    ov?.elevenlabs_voice_id   || d.elevenlabs_voice_id || null,
+            effective_voice_label: ov?.voice_label           || d.default_voice_label  || null,
+          }
+        })
+      } catch { /* defaults are best-effort; never block the response */ }
+
+      return res.status(200).json({
+        avatars: rows || [],
+        default_avatars: defaults,
+        models: MODELS,
+      })
     }
 
     if (req.method === 'POST') {
