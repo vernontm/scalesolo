@@ -127,8 +127,21 @@ export default async function handler(req, res) {
 
       if (action === 'comp_credits') {
         const customers = await supaFetch(`billing_customers?user_id=eq.${user_id}&select=id`)
-        const customerId = customers?.[0]?.id
-        if (!customerId) return res.status(404).json({ error: 'No billing customer for that user' })
+        let customerId = customers?.[0]?.id
+        // Auto-create a billing_customers row if missing — lets us comp
+        // credits to users who haven't gone through checkout yet (free
+        // trial signups, manually invited testers, etc.).
+        if (!customerId) {
+          const userBody = await authAdmin(`users/${encodeURIComponent(user_id)}`).catch(() => null)
+          const email = userBody?.email || null
+          const created = await supaFetch('billing_customers', {
+            method: 'POST',
+            body: { user_id, email },
+          })
+          const row = Array.isArray(created) ? created[0] : created
+          customerId = row?.id
+          if (!customerId) return res.status(500).json({ error: 'Failed to create billing customer' })
+        }
         const aiTokens = Number(req.body?.ai_tokens) || 0
         const videoUnits = Number(req.body?.video_units) || 0
         if (aiTokens <= 0 && videoUnits <= 0) return res.status(400).json({ error: 'ai_tokens or video_units must be a positive number' })

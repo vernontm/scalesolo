@@ -27,7 +27,8 @@ const initials = (color) => ({
 const dropdown = {
   position: 'absolute',
   top: 'calc(100% + 6px)', right: 0,
-  width: 280, maxHeight: 380, overflow: 'auto',
+  width: 280, maxWidth: 'calc(100vw - 16px)',
+  maxHeight: 380, overflow: 'auto',
   background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12,
   padding: 6, zIndex: 50,
   boxShadow: 'var(--shadow-pop)',
@@ -97,7 +98,7 @@ export default function ProfileSwitcher() {
       </button>
 
       {open && (
-        <div style={dropdown}>
+        <div className="profile-switcher-dropdown" style={dropdown}>
           {profiles.length === 0 ? (
             <div style={empty}>No brand profiles yet.</div>
           ) : (
