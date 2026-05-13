@@ -70,9 +70,16 @@ export async function transcribeFromUrl(mediaUrl, opts = {}) {
   const callScribe = async (formBuilder) => {
     const form = new FormData()
     formBuilder(form)
-    form.set('model_id', opts.model_id || 'scribe_v1')
+    // Default to scribe_v2 — v1 rejects the no_verbatim parameter as of
+    // ElevenLabs's 2025 API change. v2 is also the newer/better model.
+    const modelId = opts.model_id || 'scribe_v2'
+    form.set('model_id', modelId)
     if (opts.language_code) form.set('language_code', opts.language_code)
-    form.set('no_verbatim', String(opts.no_verbatim ?? true))
+    // no_verbatim is v2-only. Skip it for v1 callers (only ones who
+    // explicitly opt out by passing model_id: 'scribe_v1').
+    if (modelId !== 'scribe_v1') {
+      form.set('no_verbatim', String(opts.no_verbatim ?? true))
+    }
     if (opts.diarize) form.set('diarize', 'true')
     const r = await fetch(SCRIBE_URL, {
       method: 'POST',
