@@ -694,6 +694,15 @@ export default async function handler(req, res) {
       const inPath = join(workdir, 'in.mp4')
       const outPath = join(workdir, 'out.mp4')
       await writeFile(inPath, await fetchToBuffer(video_url))
+      // Probe the source duration ONCE up front so:
+      //  - The music-mix branch below has it without re-probing.
+      //  - The ffmpeg-run timeout can scale with it (long clips
+      //    need more wall time than the 90s default would allow).
+      // probeDurationSecs throws on weird/corrupt files; we swallow
+      // and treat it as 0 (which makes timeoutForDuration fall back
+      // to the default budget — still beats a hard 90s ceiling).
+      let videoDur = 0
+      try { videoDur = await probeDurationSecs(inPath) } catch { videoDur = 0 }
 
       if (effectiveLogoUrl && watermark_position !== 'none') {
         try {
@@ -815,9 +824,9 @@ export default async function handler(req, res) {
         //   • afade out cleanly at exactly (videoDuration - fadeSecs),
         //     so the track always ends with a deliberate fade instead
         //     of a hard cut at amix-time.
-        let videoDur = 0
-        try { videoDur = await probeDurationSecs(inPath) } catch { videoDur = 0 }
-
+        // videoDur was probed at the top of the wantsFfmpeg block so
+        // both the music-mix filter chain and the run timeout can use
+        // it without a second probe.
         const audioChain = []
         audioChain.push(`volume=${vol}`)
         // Loop forever, then cap with atrim. -1 = infinite. amix's
