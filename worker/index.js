@@ -467,11 +467,26 @@ app.post('/jobs/run-workflow', requireSecret, async (req, res) => {
           if (spaceRow?.nodes && Array.isArray(spaceRow.nodes)) {
             const nextNodes = spaceRow.nodes.map((n) => {
               const np = nodeProgress[n?.id]
-              if (!np || !np.output) return n
-              return {
-                ...n,
-                data: { ...(n.data || {}), output: np.output },
+              if (!np) return n
+              // Map worker statuses → canvas statuses. The "self_only"
+              // run-from-node check requires data.status === 'done' on
+              // every direct parent before it'll reuse cached output,
+              // so we MUST write status here too. Without it, every
+              // downstream Run prompts "X hasn't run yet" even though
+              // outputs are present.
+              const next = { ...n, data: { ...(n.data || {}) } }
+              if (np.status === 'success') {
+                next.data.status = 'done'
+                next.data.error = null
+                if (np.output) next.data.output = np.output
+              } else if (np.status === 'failed') {
+                next.data.status = 'failed'
+                if (np.error) next.data.error = np.error
+              } else if (np.status === 'running') {
+                // Transient — leave the row alone; the next finalize
+                // will flip it.
               }
+              return next
             })
             await supabase
               .from('spaces')

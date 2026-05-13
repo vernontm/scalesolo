@@ -2228,14 +2228,25 @@ function SpaceBuilder({ space, onSave, onClose }) {
         if (row.status === 'running') {
           applyRow(row)
         } else if (row.node_progress && Object.keys(row.node_progress).length) {
-          // Completed run: silently hydrate node outputs without flashing
-          // the run-finished summary panel (which is for live finishes).
-          // We only patch `output` here — status/error are left alone so
-          // the canvas doesn't show stale red badges from old failures.
+          // Completed run: silently hydrate node outputs AND statuses
+          // from node_progress. Status is required for the self_only
+          // run-from-node prereq check to recognize a parent as cached
+          // — without it the user gets "X hasn't run yet" prompts on
+          // every downstream Run click even though outputs are sitting
+          // on the nodes. We translate worker statuses to canvas ones:
+          //   success → done, failed → failed, anything else skipped.
           for (const [nodeId, prog] of Object.entries(row.node_progress)) {
-            if (prog?.output && typeof prog.output === 'object') {
-              patchNode(nodeId, { output: prog.output })
+            if (!prog) continue
+            const patch = {}
+            if (prog.status === 'success') {
+              patch.status = 'done'
+              patch.error = null
+              if (prog.output && typeof prog.output === 'object') patch.output = prog.output
+            } else if (prog.status === 'failed') {
+              patch.status = 'failed'
+              if (prog.error) patch.error = prog.error
             }
+            if (Object.keys(patch).length) patchNode(nodeId, patch)
           }
         }
       } catch { /* ok */ }
