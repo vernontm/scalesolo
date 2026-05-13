@@ -54,42 +54,92 @@ export async function resolveTikTokUrl(url) {
   }
 }
 
-// Submit the URL to Scribe. Falls back to the multipart-upload path if
-// the cloud_storage_url method 4xx's (some buckets reject Scribe's
-// fetcher). We don't currently fetch + reupload — that's the next
-// fallback if real users hit it.
+// Submit the URL to Scribe. Two-step:
+//   1. cloud_storage_url — Scribe fetches the file. Fast (no proxy).
+//   2. If step 1 either 4xx's OR returns an empty transcript (Scribe
+//      sometimes silently fails to fetch from certain CDNs and
+//      returns 200 with text=""), fall back to fetching the bytes
+//      ourselves and POSTing as multipart. Slower but reliable —
+//      we control the network path.
 //
 // Returns { text, language_code, duration_secs }.
-// no_verbatim: true keeps the transcript clean (drops "uh", "um"…),
-// matching the user's spec.
+// no_verbatim: true keeps the transcript clean (drops "uh", "um"…).
 export async function transcribeFromUrl(mediaUrl, opts = {}) {
   if (!mediaUrl) throw new Error('mediaUrl required')
-  const form = new FormData()
-  form.set('cloud_storage_url', mediaUrl)
-  form.set('model_id', opts.model_id || 'scribe_v1')
-  if (opts.language_code) form.set('language_code', opts.language_code)
-  // Default true — we want clean transcripts for downstream Claude analysis.
-  form.set('no_verbatim', String(opts.no_verbatim ?? true))
-  if (opts.diarize) form.set('diarize', 'true')
 
-  const r = await fetch(SCRIBE_URL, {
-    method: 'POST',
-    headers: { 'xi-api-key': elKey(), Accept: 'application/json' },
-    body: form,
-  })
-  const text = await r.text()
-  let body = null
-  try { body = JSON.parse(text) } catch { body = { raw: text } }
-  if (!r.ok) {
-    const err = new Error(`ElevenLabs Scribe ${r.status}: ${body?.detail?.message || body?.error || text.slice(0, 300)}`)
-    err.status = r.status
-    err.data = body
+  const callScribe = async (formBuilder) => {
+    const form = new FormData()
+    formBuilder(form)
+    form.set('model_id', opts.model_id || 'scribe_v1')
+    if (opts.language_code) form.set('language_code', opts.language_code)
+    form.set('no_verbatim', String(opts.no_verbatim ?? true))
+    if (opts.diarize) form.set('diarize', 'true')
+    const r = await fetch(SCRIBE_URL, {
+      method: 'POST',
+      headers: { 'xi-api-key': elKey(), Accept: 'application/json' },
+      body: form,
+    })
+    const text = await r.text()
+    let body = null
+    try { body = JSON.parse(text) } catch { body = { raw: text } }
+    return { r, body, rawText: text }
+  }
+
+  // STEP 1: cloud_storage_url path.
+  let { r, body, rawText } = await callScribe((f) => f.set('cloud_storage_url', mediaUrl))
+  if (r.ok) {
+    const txt = body?.text || body?.transcript || ''
+    if (txt && txt.trim()) {
+      return {
+        text:          txt,
+        language_code: body.language_code || body.detected_language || null,
+        duration_secs: body.audio_duration_seconds || body.duration_secs || null,
+        raw:           body,
+      }
+    }
+    // 200 but empty — fall through to multipart
+    console.warn('[scribe] cloud_storage_url returned 200 + empty transcript, retrying multipart')
+  } else {
+    console.warn(`[scribe] cloud_storage_url ${r.status}: ${body?.detail?.message || body?.error || rawText.slice(0, 200)} — retrying multipart`)
+  }
+
+  // STEP 2: multipart fallback. Fetch bytes ourselves, send as `file`.
+  // Cap at 200MB (Scribe's hard limit is higher but we don't want runaway
+  // memory on a serverless worker).
+  const dl = await fetch(mediaUrl)
+  if (!dl.ok) {
+    const err = new Error(`ElevenLabs Scribe (multipart): could not fetch media ${dl.status} from ${mediaUrl}`)
+    err.status = dl.status
+    throw err
+  }
+  const buf = await dl.arrayBuffer()
+  if (buf.byteLength === 0) {
+    throw new Error('ElevenLabs Scribe (multipart): media body was empty')
+  }
+  if (buf.byteLength > 200 * 1024 * 1024) {
+    throw new Error(`ElevenLabs Scribe (multipart): file too large (${(buf.byteLength / 1024 / 1024).toFixed(1)}MB > 200MB)`)
+  }
+  const guessedType =
+    dl.headers.get('content-type') ||
+    (/\.mp3$/i.test(mediaUrl) ? 'audio/mpeg'  :
+     /\.wav$/i.test(mediaUrl) ? 'audio/wav'   :
+     /\.m4a$/i.test(mediaUrl) ? 'audio/mp4'   :
+     'video/mp4')
+  const filename =
+    (mediaUrl.split('?')[0].split('/').pop() || 'media') || 'media'
+  const blob = new Blob([buf], { type: guessedType })
+
+  const fb = await callScribe((f) => f.set('file', blob, filename))
+  if (!fb.r.ok) {
+    const err = new Error(`ElevenLabs Scribe (multipart) ${fb.r.status}: ${fb.body?.detail?.message || fb.body?.error || fb.rawText.slice(0, 300)}`)
+    err.status = fb.r.status
+    err.data = fb.body
     throw err
   }
   return {
-    text:           body.text || body.transcript || '',
-    language_code:  body.language_code || body.detected_language || null,
-    duration_secs:  body.audio_duration_seconds || body.duration_secs || null,
-    raw:            body,
+    text:          fb.body.text || fb.body.transcript || '',
+    language_code: fb.body.language_code || fb.body.detected_language || null,
+    duration_secs: fb.body.audio_duration_seconds || fb.body.duration_secs || null,
+    raw:           fb.body,
   }
 }
