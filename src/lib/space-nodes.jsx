@@ -3119,26 +3119,46 @@ function AutoRunBody({ data, onPatch }) {
   const unitMeta = AUTORUN_UNITS.find((u) => u.id === unitId) || AUTORUN_UNITS[1]
   const estPerRun = Number(data?._ctxCostPerRun ?? 0)
 
+  // Confirmation modal: opens BEFORE the auto-run actually starts so
+  // the user has to re-read the cadence + budget + max-runs and tick
+  // a box before the cron fires. Prevents accidental "I clicked Start
+  // and it burned 50 credits before I realized."
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [acknowledged, setAcknowledged] = useState(false)
+
+  // Derive daily / weekly run counts from the chosen cadence so the
+  // modal can spell out "this will fire ~X times per day."
+  const runsPerDay = intervalMs > 0 ? (24 * 60 * 60 * 1000) / intervalMs : 0
+  const runsPerDayLabel = runsPerDay >= 1
+    ? `${runsPerDay >= 10 ? Math.round(runsPerDay) : runsPerDay.toFixed(runsPerDay < 2 ? 1 : 0)} per day`
+    : `~${(runsPerDay * 7).toFixed(1)} per week`
+  const totalBudget = estPerRun * Math.max(0, (maxRuns - runsUsed))
+
+  const actuallyStart = async () => {
+    onPatch({ active: true, runs_used: 0, last_run_at: null })
+    if (typeof window !== 'undefined' && window.__spaceStartServerSchedule) {
+      await window.__spaceStartServerSchedule(data.__id, {
+        interval_ms: intervalMs,
+        max_runs: maxRuns,
+      })
+    }
+    setConfirmOpen(false)
+    setAcknowledged(false)
+  }
+  const actuallyStop = async () => {
+    onPatch({ active: false })
+    if (typeof window !== 'undefined' && window.__spaceStopServerSchedule) {
+      await window.__spaceStopServerSchedule(data.__id)
+    }
+  }
   const toggle = async () => {
     if (!active) {
-      // Starting fresh — reset run counter so user can re-run after hitting cap.
-      onPatch({ active: true, runs_used: 0, last_run_at: null })
-      // Persist to the server scheduler so the workflow fires even
-      // with the canvas tab closed. The browser-side timer still
-      // also runs (defense in depth — if the cron is delayed for
-      // some reason the local tick covers it; on overlapping fires
-      // the worker job-id dedup catches it).
-      if (typeof window !== 'undefined' && window.__spaceStartServerSchedule) {
-        await window.__spaceStartServerSchedule(data.__id, {
-          interval_ms: intervalMs,
-          max_runs: maxRuns,
-        })
-      }
+      // Open the confirmation modal first — don't kick off the
+      // schedule until the user explicitly acknowledges.
+      setAcknowledged(false)
+      setConfirmOpen(true)
     } else {
-      onPatch({ active: false })
-      if (typeof window !== 'undefined' && window.__spaceStopServerSchedule) {
-        await window.__spaceStopServerSchedule(data.__id)
-      }
+      await actuallyStop()
     }
   }
   const reset = () => {
@@ -3269,6 +3289,151 @@ function AutoRunBody({ data, onPatch }) {
       >
         {active ? <><Pause size={12} /> Active — every {intervalText}</> : <><Play size={12} /> Start auto-run</>}
       </button>
+
+      {/* Pre-start confirmation modal. Locked closed until the user
+          ticks the acknowledgement checkbox. Renders into a portal-
+          style fixed overlay; clicks outside the card or the Cancel
+          button dismiss without starting. */}
+      {confirmOpen && (
+        <div
+          onClick={(e) => { e.stopPropagation(); setConfirmOpen(false); setAcknowledged(false) }}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 200,
+            background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)',
+            WebkitBackdropFilter: 'blur(4px)',
+            display: 'grid', placeItems: 'center', padding: '5vh 24px',
+            overflowY: 'auto',
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="nodrag"
+            style={{
+              width: '100%', maxWidth: 480,
+              background: 'var(--surface)', border: '1px solid var(--border)',
+              borderRadius: 16, padding: 24,
+              boxShadow: 'var(--shadow-pop)', color: 'var(--text)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+              <div style={{
+                width: 36, height: 36, borderRadius: 10,
+                background: 'linear-gradient(135deg, var(--red), var(--red-dark))',
+                color: '#fff', display: 'grid', placeItems: 'center',
+              }}>
+                <Play size={16} strokeWidth={2.4} />
+              </div>
+              <div>
+                <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 18, color: 'var(--text)' }}>
+                  Start auto-run?
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 1 }}>
+                  Confirm your settings before the schedule starts firing.
+                </div>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 14, display: 'grid', gap: 8 }}>
+              <div style={{
+                padding: '10px 12px', borderRadius: 8,
+                background: 'var(--surface-2)', border: '1px solid var(--border)',
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+                fontSize: 12.5,
+              }}>
+                <span style={{ color: 'var(--text-soft)' }}>Cadence</span>
+                <strong style={{ color: 'var(--text)' }}>Every {intervalText}</strong>
+              </div>
+              <div style={{
+                padding: '10px 12px', borderRadius: 8,
+                background: 'var(--surface-2)', border: '1px solid var(--border)',
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+                fontSize: 12.5,
+              }}>
+                <span style={{ color: 'var(--text-soft)' }}>Frequency</span>
+                <strong style={{ color: 'var(--text)' }}>{runsPerDayLabel}</strong>
+              </div>
+              <div style={{
+                padding: '10px 12px', borderRadius: 8,
+                background: 'var(--surface-2)', border: '1px solid var(--border)',
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+                fontSize: 12.5,
+              }}>
+                <span style={{ color: 'var(--text-soft)' }}>Stops after</span>
+                <strong style={{ color: 'var(--text)' }}>{maxRuns} run{maxRuns === 1 ? '' : 's'}</strong>
+              </div>
+              {estPerRun > 0 && (
+                <div style={{
+                  padding: '10px 12px', borderRadius: 8,
+                  background: 'rgba(245,158,11,0.10)', border: '1px solid rgba(245,158,11,0.35)',
+                  fontSize: 12.5, color: 'var(--text-soft)', lineHeight: 1.5,
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                    <span>Est. cost per run</span>
+                    <strong style={{ color: 'var(--text)' }}>~{estPerRun.toLocaleString()} AI tokens</strong>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginTop: 4 }}>
+                    <span>Total batch budget</span>
+                    <strong style={{ color: '#fbbf24' }}>~{totalBudget.toLocaleString()} AI tokens</strong>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <label
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                display: 'flex', alignItems: 'flex-start', gap: 10,
+                padding: '10px 12px', borderRadius: 8,
+                background: 'var(--surface-2)', border: `1px solid ${acknowledged ? '#2ecc71' : 'var(--border)'}`,
+                cursor: 'pointer', fontSize: 12.5, color: 'var(--text-soft)',
+                marginBottom: 14, lineHeight: 1.5,
+                transition: 'border-color 120ms ease',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={acknowledged}
+                onChange={(e) => setAcknowledged(e.target.checked)}
+                style={{ marginTop: 2, accentColor: '#2ecc71', flexShrink: 0 }}
+              />
+              <span>
+                I understand this workflow will run on its own at the cadence above and will keep firing until it hits the run cap or I stop it manually.
+              </span>
+            </label>
+
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setConfirmOpen(false); setAcknowledged(false) }}
+                style={{
+                  flex: 1, padding: '10px 14px', borderRadius: 8,
+                  background: 'var(--surface-2)', border: '1px solid var(--border)',
+                  color: 'var(--text-soft)', cursor: 'pointer',
+                  fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13,
+                }}
+              >Cancel</button>
+              <button
+                type="button"
+                disabled={!acknowledged}
+                onClick={(e) => { e.stopPropagation(); if (acknowledged) actuallyStart() }}
+                style={{
+                  flex: 1, padding: '10px 14px', borderRadius: 8,
+                  background: acknowledged
+                    ? 'linear-gradient(135deg, var(--red), var(--red-dark))'
+                    : 'var(--surface-2)',
+                  border: '1px solid var(--red)',
+                  color: '#fff', opacity: acknowledged ? 1 : 0.5,
+                  cursor: acknowledged ? 'pointer' : 'not-allowed',
+                  fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13,
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                }}
+              >
+                <Play size={12} /> Start auto-run
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={{ marginTop: 8, fontSize: 10.5, lineHeight: 1.5, color: 'var(--muted)' }}>
         <div>Runs used: <strong style={{ color: 'var(--text)' }}>{runsUsed} / {maxRuns}</strong> ({remaining} left)</div>
