@@ -623,8 +623,8 @@ export default function Dashboard() {
         </div>
       )}
 
-      <section style={heroStyle}>
-        <div style={heroIcon}><Sparkles size={26} strokeWidth={2.2} /></div>
+      <section className="dashboard-hero" style={heroStyle}>
+        <div className="dashboard-hero-icon" style={heroIcon}><Sparkles size={26} strokeWidth={2.2} /></div>
         <div style={{ flex: 1 }}>
           <div style={heroTitle}>{greeting}, {name}.</div>
           <div style={heroSub}>
@@ -669,8 +669,8 @@ export default function Dashboard() {
       )}
 
       {/* The headline number — what your workflows did this month. */}
-      <div style={{ ...shippedCardStyle, marginTop: 18 }}>
-        <div style={bigNumber}>{shippedThisMonth ?? '—'}</div>
+      <div className="dashboard-shipped" style={{ ...shippedCardStyle, marginTop: 18 }}>
+        <div className="dashboard-shipped-num" style={bigNumber}>{shippedThisMonth ?? '—'}</div>
         <div style={{ flex: 1 }}>
           <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16, color: 'var(--text)' }}>
             posts shipped this month

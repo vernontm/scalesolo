@@ -423,6 +423,45 @@ a:focus-visible {
   .app-header { padding: 10px 10px !important; gap: 6px !important; }
 }
 
+/* Dashboard hero (red "Good afternoon, ray") + shipped card (big-number
+   green) take ~25vh of empty-feeling viewport on phones. Tighten
+   padding, shrink the giant icon + number, and let text wrap instead
+   of pushing the CTA off-row. */
+@media (max-width: 700px) {
+  .dashboard-hero {
+    padding: 14px 14px !important;
+    gap: 10px !important;
+    flex-wrap: wrap !important;
+    align-items: flex-start !important;
+  }
+  .dashboard-hero-icon {
+    width: 38px !important;
+    height: 38px !important;
+    border-radius: 10px !important;
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.32) !important;
+  }
+  .dashboard-hero-icon svg { width: 18px !important; height: 18px !important; }
+  .dashboard-hero h1,
+  .dashboard-hero > div > div:first-child {
+    font-size: 16px !important;
+  }
+  .dashboard-hero p,
+  .dashboard-hero > div > div:nth-child(2) {
+    font-size: 12.5px !important;
+    line-height: 1.45 !important;
+  }
+  .dashboard-shipped {
+    padding: 14px 14px !important;
+    gap: 14px !important;
+  }
+  .dashboard-shipped-num {
+    font-size: 40px !important;
+  }
+  .dashboard-shipped > div:nth-child(2) > div:first-child {
+    font-size: 13.5px !important;
+  }
+}
+
 /* Spaces builder: subtle dot-grid texture that fades out toward the edges.
    ::before paints the repeating dot pattern; -webkit-mask-image uses a
    radial gradient to fade the pattern out at the edges so it never crowds
