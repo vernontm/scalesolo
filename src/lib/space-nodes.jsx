@@ -3287,12 +3287,12 @@ async function uploadAudioToBucket(file, profileId) {
   return data.publicUrl
 }
 
-// Hard cap on audio length. Avatar render with audio uses the
-// transcribe + chunk + slice flow; longer audio means longer rendering
-// time and more HeyGen credits, and ElevenLabs STT scales linearly too.
-// 60s is roughly a TikTok / IG Reel ceiling and keeps Vercel function
-// time + cost predictable.
-const AUDIO_MAX_SECONDS = 60
+// Platform safety ceiling on audio uploads. Real gating happens
+// server-side via video-credit pre-flight (api/avatars/audio-chunks.js);
+// this is just a "don't accidentally upload your 90-min podcast" guard.
+// Bumped from 60s → 600s so users with enough credits can render
+// long-form. Trial users are still capped at 30s server-side.
+const AUDIO_MAX_SECONDS = 600
 
 // Read duration from a File via an off-DOM <audio> element. Resolves
 // in 1-2s for typical 60s clips. Used to reject long audio at upload

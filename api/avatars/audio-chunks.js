@@ -18,6 +18,9 @@
 // preserved.
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { isUserOnTrial, TRIAL_LOCKS } from '../_lib/billing.js'
+import { customerIdForUser } from '../_lib/credits.js'
+import { MODELS } from '../_lib/heygen.js'
 import { spawn } from 'node:child_process'
 import { mkdtemp, writeFile, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -30,7 +33,11 @@ const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY
 const SUPABASE_URL  = process.env.SUPABASE_URL
 const SERVICE_KEY   = process.env.SUPABASE_SERVICE_KEY
 
-const MAX_AUDIO_SECONDS = 60
+// Platform-wide safety ceiling. We do not enforce 60s anymore — paying
+// users can render whatever length they have credits for. This 10-min
+// cap is just a runaway-abuse guard so an accidentally-huge upload
+// doesn't ring up a four-figure HeyGen invoice before anyone notices.
+const ABSOLUTE_MAX_AUDIO_SECONDS = 600
 
 export const config = { maxDuration: 120 }
 
@@ -186,14 +193,51 @@ export default async function handler(req, res) {
     const inPath = join(workdir, 'in.mp3')
     await writeFile(inPath, await fetchToBuffer(audio_url))
 
-    // Hard duration cap. Reject anything over MAX_AUDIO_SECONDS so we
-    // don't accidentally pay HeyGen + ElevenLabs for something the
-    // server-side rule would have stopped.
+    // Duration check, three layers:
+    //   1. Trial users: cap at TRIAL_LOCKS.max_duration_secs (30s).
+    //      Reject hard — trials can't render long-form, period.
+    //   2. Paying users: gated by video credits, not a flat cap.
+    //      We pre-flight the credit cost (V4 = 0.15 video_units/sec)
+    //      against the user's video_units balance and refuse if
+    //      they're short.
+    //   3. ABSOLUTE_MAX_AUDIO_SECONDS (10 min) as a runaway-abuse
+    //      ceiling for any user. Real long-form lives above this only
+    //      via explicit admin override.
     const totalDuration = await probeDurationSecs(inPath)
-    if (totalDuration > MAX_AUDIO_SECONDS + 0.5) {
+    const onTrial = await isUserOnTrial(auth.user.id).catch(() => false)
+    if (onTrial && totalDuration > TRIAL_LOCKS.max_duration_secs + 0.5) {
       return res.status(400).json({
-        error: `Audio is ${Math.round(totalDuration)}s — max is ${MAX_AUDIO_SECONDS}s. Trim it before uploading.`,
+        error: `Trial is capped at ${TRIAL_LOCKS.max_duration_secs}s per render. Upgrade for longer videos.`,
+        code: 'trial_duration_exceeded',
       })
+    }
+    if (totalDuration > ABSOLUTE_MAX_AUDIO_SECONDS + 0.5) {
+      return res.status(400).json({
+        error: `Audio is ${Math.round(totalDuration)}s — platform limit is ${ABSOLUTE_MAX_AUDIO_SECONDS}s. Contact support if you need longer.`,
+        code: 'audio_over_absolute_max',
+      })
+    }
+    if (!onTrial) {
+      // Credit pre-flight. V4 burns 0.15 video_units per second (see
+      // api/_lib/heygen.js MODELS.v4). Round UP so a 33.4s clip is
+      // billed at 5.1 units, not 5.0. If the user lacks balance, fail
+      // BEFORE we call HeyGen or ElevenLabs.
+      const unitsPerSec = MODELS.v4?.video_units_per_sec || 0.15
+      const need = Math.max(1, Math.ceil(totalDuration * unitsPerSec))
+      const customerId = await customerIdForUser(auth.user.id).catch(() => null)
+      if (customerId) {
+        const pools = await supaFetch(
+          `credit_pools?customer_id=eq.${customerId}&pool_type=eq.video_units&select=balance`,
+        ).catch(() => [])
+        const have = Number(pools?.[0]?.balance ?? 0)
+        if (have < need) {
+          return res.status(402).json({
+            error: `This ${Math.round(totalDuration)}s clip needs ${need} video credits — you have ${have}. Top up or trim the audio.`,
+            code: 'insufficient_credits',
+            need, have,
+          })
+        }
+      }
     }
 
     // ── Transcribe with ElevenLabs (word-level timings) ──────────────
