@@ -319,16 +319,23 @@ const PILL = {
   posted:        { bg: 'rgba(96,165,250,0.16)',  fg: '#60a5fa',     label: 'Published' },
   failed:        { bg: 'rgba(239,68,68,0.16)',   fg: 'var(--red)',  label: 'Failed' },
 }
-function StatusPill({ status }) {
+function StatusPill({ status, error }) {
   const p = PILL[status] || PILL.draft
+  // Failed rows: show the Upload-Post error on hover so users can
+  // self-diagnose instead of pinging support every time.
+  const tooltip = status === 'failed' && error ? error : undefined
   return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 4,
-      padding: '3px 8px', borderRadius: 999,
-      background: p.bg, color: p.fg,
-      fontSize: 10.5, fontFamily: 'var(--font-display)', fontWeight: 700,
-      letterSpacing: '0.04em',
-    }}>{p.label}</span>
+    <span
+      title={tooltip}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 4,
+        padding: '3px 8px', borderRadius: 999,
+        background: p.bg, color: p.fg,
+        fontSize: 10.5, fontFamily: 'var(--font-display)', fontWeight: 700,
+        letterSpacing: '0.04em',
+        cursor: tooltip ? 'help' : 'default',
+      }}
+    >{p.label}{tooltip ? ' ⓘ' : ''}</span>
   )
 }
 
@@ -1322,7 +1329,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                       />
                     </td>
                     <td style={{ padding: 8, verticalAlign: 'top' }}>
-                      <StatusPill status={r.status} />
+                      <StatusPill status={r.status} error={r.last_error} />
                     </td>
                     <td style={{ padding: 8, verticalAlign: 'top' }}>
                       <button

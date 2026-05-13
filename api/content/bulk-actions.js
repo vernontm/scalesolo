@@ -518,19 +518,26 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
       })
       const body = await upRes.json().catch(() => ({}))
       if (!upRes.ok) {
+        // Persist the full Upload-Post error body to the row so the UI can
+        // show why this failed instead of a generic "failed" pill. We
+        // truncate to 1k chars to keep the column lean.
+        const errText = (body?.error || body?.message || JSON.stringify(body || {}) || `Upload-Post ${upRes.status}`).toString().slice(0, 1000)
         await supaFetch(`content_scripts?id=eq.${r.id}`, {
-          method: 'PATCH', body: { status: 'failed' },
+          method: 'PATCH', body: { status: 'failed', last_error: `[${upRes.status}] ${errText}`, last_error_at: new Date().toISOString() },
         })
-        results.push({ id: r.id, ok: false, error: body?.error || `Upload-Post ${upRes.status}` })
+        results.push({ id: r.id, ok: false, error: errText })
         continue
       }
       const requestId = body?.request_id || body?.id || null
       await supaFetch(`content_scripts?id=eq.${r.id}`, {
         method: 'PATCH',
-        body: { status: 'posted', uploadpost_request_id: requestId, scheduled_datetime: null },
+        body: { status: 'posted', uploadpost_request_id: requestId, scheduled_datetime: null, last_error: null, last_error_at: null },
       })
       results.push({ id: r.id, ok: true, request_id: requestId })
     } catch (e) {
+      await supaFetch(`content_scripts?id=eq.${r.id}`, {
+        method: 'PATCH', body: { status: 'failed', last_error: String(e?.message || e).slice(0, 1000), last_error_at: new Date().toISOString() },
+      }).catch(() => {})
       results.push({ id: r.id, ok: false, error: e.message })
     }
   }
