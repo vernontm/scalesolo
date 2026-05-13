@@ -5249,41 +5249,6 @@ export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges })
         />
         {props.title_enabled !== false && (
           <>
-            {/* Quick presets — one click, they can fine-tune below. */}
-            <div style={labelStyle}>Style preset</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4, marginBottom: 14 }}>
-              {[
-                { id: 'tiktok',    name: 'TikTok',    font: 'Montserrat ExtraBold', color: '#ffffff', bg_color: '#e0467a', size: 72,  padding: 28, uppercase: false },
-                { id: 'instagram', name: 'Instagram', font: 'Poppins ExtraBold',    color: '#ffffff', bg_color: '#000000', size: 64,  padding: 22, uppercase: true  },
-                { id: 'youtube',   name: 'YouTube',   font: 'Inter ExtraBold',      color: '#ffffff', bg_color: '#ef4444', size: 80,  padding: 32, uppercase: true  },
-                { id: 'minimal',   name: 'Minimal',   font: 'Bebas Neue',           color: '#1f1f1f', bg_color: '#fde68a', size: 56,  padding: 18, uppercase: false },
-              ].map((preset) => {
-                const isActive =
-                  props.title_font === preset.font &&
-                  props.title_color === preset.color &&
-                  props.title_bg_color === preset.bg_color &&
-                  Number(props.title_size) === preset.size
-                return (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    onClick={() => setP({
-                      title_font: preset.font, title_color: preset.color,
-                      title_bg_color: preset.bg_color, title_size: preset.size,
-                      title_bg_padding: preset.padding, title_uppercase: preset.uppercase,
-                    })}
-                    style={{
-                      padding: '7px 6px', borderRadius: 6, fontSize: 10.5,
-                      border: `1px solid ${isActive ? '#0ea5e9' : 'var(--border)'}`,
-                      background: isActive ? 'rgba(14,165,233,0.16)' : 'var(--surface-2)',
-                      color: isActive ? '#0ea5e9' : 'var(--text-soft)',
-                      cursor: 'pointer', fontFamily: 'var(--font-display)', fontWeight: 700,
-                    }}
-                  >{preset.name}</button>
-                )
-              })}
-            </div>
-
             <NodeField label="Title source">
               <select className="nodrag"
                 style={tinyInput}
