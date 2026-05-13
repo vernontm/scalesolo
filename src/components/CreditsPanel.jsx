@@ -121,12 +121,14 @@ export default function CreditsPanel({ compact = false }) {
                 <button
                   style={topUpBtn}
                   onClick={() => {
-                    // Scroll the page to the top before opening so the
-                    // fixed-position modal lines up over the visible
-                    // viewport instead of feeling "off-screen" on
-                    // mobile and on pages where the click happened
-                    // way down (e.g. after the transactions table).
-                    try { window.scrollTo({ top: 0, behavior: 'smooth' }) } catch {}
+                    // Snap the page to the top before opening so the
+                    // fixed-position modal is the first thing in view.
+                    // Use 'auto' (instant) instead of smooth — smooth
+                    // scroll interrupted by the modal open animation
+                    // leaves Safari halfway, which is worse than just
+                    // jumping. TopUpModal additionally locks body
+                    // scroll on mount as the real safety net.
+                    try { window.scrollTo({ top: 0, behavior: 'auto' }) } catch {}
                     setModal({ pool: d.key })
                   }}
                   onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgba(239,68,68,0.3)'; e.currentTarget.style.color = 'var(--text)' }}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { X, Sparkles, Video, Mic, ExternalLink } from 'lucide-react'
 import { useCredits, POOL_META } from '../context/CreditsContext.jsx'
 import { supabase } from '../lib/supabase.js'
@@ -73,8 +73,29 @@ export default function TopUpModal({ pool, onClose }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    // Lock body scroll so the user can't drift past the fixed-position
+    // modal — especially important on mobile Safari, where overscroll
+    // can hide a position:fixed overlay behind the address bar.
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prevOverflow
+    }
   }, [onClose])
+
+  // Ensure the modal card is in view on mount. position:fixed plus
+  // padding: 5vh in the overlay puts it near the top of the viewport,
+  // but iOS Safari's collapsing address bar + interrupted scrolling
+  // can leave the card just out of frame. Force the overlay's scroll
+  // position back to 0 on every open so the title is the first thing
+  // the user sees.
+  const overlayRef = useRef(null)
+  useEffect(() => {
+    if (overlayRef.current) {
+      try { overlayRef.current.scrollTop = 0 } catch {}
+    }
+  }, [])
 
   const packs = Object.entries(topupCatalog)
     .filter(([, v]) => !pool || v.pool === pool)
@@ -103,7 +124,7 @@ export default function TopUpModal({ pool, onClose }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div ref={overlayRef} className="modal-overlay" onClick={onClose}>
       <div className="modal-card modal-card-md" style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
         <button style={close} onClick={onClose} aria-label="Close"><X size={18} /></button>
 
