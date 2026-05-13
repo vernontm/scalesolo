@@ -56,16 +56,21 @@ export default async function handler(req, res) {
   const startedAt = Date.now()
   const stats = { scanned: 0, dispatched: 0, errors: 0, skipped_claimed: 0, swept_zombie_runs: 0 }
 
-  // Zombie space_runs sweep. Browser-side runs write a row at
-  // start and update it on finish. If the user closes the tab
-  // mid-run, the row never reaches finished_at and shows up in
-  // the canvas Run history as "running" forever. Cap at 15 min
-  // since the slowest legitimate workflow (5-clip polish + ZapCap)
-  // tops out around 7-8 min. Anything past 15 is dead.
+  // Zombie space_runs sweep. ONLY targets browser-side runs, which
+  // depend on the user's tab staying open to finalize. Server-side
+  // runs (triggered_by manual_server / server_cron) execute on the
+  // Fly worker, which writes finished_at itself when done — even a
+  // 30-minute multi-clip render is legit, not a zombie. Sweeping
+  // those was killing in-progress runs mid-execution and reporting
+  // them to the user as failed.
+  //
+  // Sweep cap raised to 60 min to give browser-side runs more rope
+  // too — a 5-clip polish + ZapCap can flirt with 15 min under load.
   try {
-    const sweepCutoff = new Date(Date.now() - 15 * 60_000).toISOString()
+    const sweepCutoff = new Date(Date.now() - 60 * 60_000).toISOString()
     const swept = await supaFetch(
       `space_runs?status=eq.running&started_at=lt.${encodeURIComponent(sweepCutoff)}` +
+      `&triggered_by=in.(per_node,auto_run,manual)` +
       `&select=id&limit=100`
     ).catch(() => [])
     if (swept?.length) {
@@ -77,7 +82,7 @@ export default async function handler(req, res) {
           body: {
             status: 'failed',
             finished_at: new Date().toISOString(),
-            errors: [{ msg: 'Browser tab closed before run completed (auto-cleanup)' }],
+            errors: [{ msg: 'Run did not finalize within 60 minutes (likely the browser tab was closed mid-run). The auto-cleanup marked it failed.' }],
           },
           prefer: 'return=minimal',
         }
