@@ -3373,12 +3373,15 @@ async function uploadAudioToBucket(file, profileId) {
   return data.publicUrl
 }
 
-// Platform safety ceiling on audio uploads. Real gating happens
-// server-side via video-credit pre-flight (api/avatars/audio-chunks.js);
-// this is just a "don't accidentally upload your 90-min podcast" guard.
-// Bumped from 60s → 600s so users with enough credits can render
-// long-form. Trial users are still capped at 30s server-side.
-const AUDIO_MAX_SECONDS = 600
+// Frontend ceiling for the audio uploader. Real gating is server-side
+// in api/avatars/audio-chunks.js:
+//   - HeyGen renders top out at 179s per clip
+//   - With N looks the audio splits into N chunks, so the whole upload
+//     cap is 179 × N (max look_count is 8 → 1432s upper bound)
+// This 1500s value is just a "don't drop a 90-min podcast" guard;
+// the server still rejects with a clearer message that knows the
+// avatar's actual look count.
+const AUDIO_MAX_SECONDS = 1500
 
 // Read duration from a File via an off-DOM <audio> element. Resolves
 // in 1-2s for typical 60s clips. Used to reject long audio at upload

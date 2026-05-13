@@ -33,11 +33,13 @@ const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY
 const SUPABASE_URL  = process.env.SUPABASE_URL
 const SERVICE_KEY   = process.env.SUPABASE_SERVICE_KEY
 
-// Platform-wide safety ceiling. We do not enforce 60s anymore — paying
-// users can render whatever length they have credits for. This 10-min
-// cap is just a runaway-abuse guard so an accidentally-huge upload
-// doesn't ring up a four-figure HeyGen invoice before anyone notices.
-const ABSOLUTE_MAX_AUDIO_SECONDS = 600
+// HeyGen rejects any single render longer than 180 seconds. We use 179
+// as a safety margin (rounding + chunk-boundary jitter can otherwise
+// trip the limit on a "180.04s" clip). For multi-look renders the audio
+// is split into N buckets, so the effective cap on the WHOLE upload
+// is 179 × look_count — but each individual bucket must still be ≤179s
+// after the split, which we verify post-balance.
+const HEYGEN_MAX_RENDER_SECS = 179
 
 export const config = { maxDuration: 120 }
 
@@ -193,16 +195,15 @@ export default async function handler(req, res) {
     const inPath = join(workdir, 'in.mp3')
     await writeFile(inPath, await fetchToBuffer(audio_url))
 
-    // Duration check, three layers:
+    // Duration gates, in order:
     //   1. Trial users: cap at TRIAL_LOCKS.max_duration_secs (30s).
     //      Reject hard — trials can't render long-form, period.
-    //   2. Paying users: gated by video credits, not a flat cap.
-    //      We pre-flight the credit cost (V4 = 0.15 video_units/sec)
-    //      against the user's video_units balance and refuse if
-    //      they're short.
-    //   3. ABSOLUTE_MAX_AUDIO_SECONDS (10 min) as a runaway-abuse
-    //      ceiling for any user. Real long-form lives above this only
-    //      via explicit admin override.
+    //   2. HeyGen per-render limit: 179s per CHUNK. Single-image
+    //      renders are one chunk; multi-look randomized renders
+    //      split into `n` chunks, so the effective whole-upload
+    //      cap is 179 × n. The post-balance check below enforces
+    //      the per-chunk limit after the split actually lands.
+    //   3. Video credit pre-flight: V4 = 0.15 video_units/sec.
     const totalDuration = await probeDurationSecs(inPath)
     const onTrial = await isUserOnTrial(auth.user.id).catch(() => false)
     if (onTrial && totalDuration > TRIAL_LOCKS.max_duration_secs + 0.5) {
@@ -211,10 +212,17 @@ export default async function handler(req, res) {
         code: 'trial_duration_exceeded',
       })
     }
-    if (totalDuration > ABSOLUTE_MAX_AUDIO_SECONDS + 0.5) {
+    const effectiveMax = HEYGEN_MAX_RENDER_SECS * n
+    if (totalDuration > effectiveMax + 0.5) {
+      const friendly = n === 1
+        ? `Audio is ${Math.round(totalDuration)}s — HeyGen renders top out at ${HEYGEN_MAX_RENDER_SECS}s per single-image clip. Trim it, or switch the avatar's image strategy to "Randomize" so we can split across multiple looks.`
+        : `Audio is ${Math.round(totalDuration)}s — with ${n} looks the cap is ${effectiveMax}s (${HEYGEN_MAX_RENDER_SECS}s per look). Trim it or add more looks to the avatar.`
       return res.status(400).json({
-        error: `Audio is ${Math.round(totalDuration)}s — platform limit is ${ABSOLUTE_MAX_AUDIO_SECONDS}s. Contact support if you need longer.`,
-        code: 'audio_over_absolute_max',
+        error: friendly,
+        code: 'audio_over_heygen_max',
+        per_render_max_secs: HEYGEN_MAX_RENDER_SECS,
+        effective_max_secs: effectiveMax,
+        look_count: n,
       })
     }
     if (!onTrial) {
@@ -263,6 +271,26 @@ export default async function handler(req, res) {
     // ── Distribute sentences into N buckets balanced by duration ──────
     const buckets = balanceIntoBuckets(sentences, n, totalDuration)
     if (!buckets.length) return res.status(422).json({ error: 'Could not split audio into chunks' })
+
+    // Sentence-boundary balancing can put more time in one bucket than
+    // the simple "totalDuration / n" estimate — especially when one
+    // sentence is much longer than the others. If any bucket would
+    // overshoot HeyGen's 179s render limit, refuse here BEFORE calling
+    // HeyGen. The user's options are to trim the audio or add more
+    // looks (which gives the balancer more buckets to spread into).
+    const longest = buckets.reduce((max, b) => {
+      const dur = (b?.[b.length - 1]?.end || 0) - (b?.[0]?.start || 0)
+      return dur > max ? dur : max
+    }, 0)
+    if (longest > HEYGEN_MAX_RENDER_SECS + 0.5) {
+      return res.status(400).json({
+        error: `Splitting this audio across ${n} look${n === 1 ? '' : 's'} still leaves one chunk at ${Math.round(longest)}s — HeyGen renders top out at ${HEYGEN_MAX_RENDER_SECS}s per clip. Add more looks to the avatar so the chunks come out shorter, or trim the audio.`,
+        code: 'chunk_over_heygen_max',
+        longest_chunk_secs: Math.round(longest),
+        per_render_max_secs: HEYGEN_MAX_RENDER_SECS,
+        look_count: n,
+      })
+    }
 
     // ── ffmpeg-slice each bucket into its own MP3 ─────────────────────
     const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
