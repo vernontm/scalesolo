@@ -450,6 +450,39 @@ app.post('/jobs/run-workflow', requireSecret, async (req, res) => {
         }).eq('id', spaceRunId).then(() => {}, (e) => console.warn(`[wf ${jobLabel}] space_runs finish update failed:`, e?.message))
       }
 
+      // Merge each completed node's output back into spaces.nodes so a
+      // refresh re-hydrates the canvas with the generated assets
+      // (avatar videos, stitched videos, polished videos, etc.). Without
+      // this, server-side runs end up "invisible" on the canvas — only
+      // space_runs.node_progress holds the outputs, and that's a transient
+      // Realtime source not consulted by GET /api/spaces. Mirrors what
+      // the client-side run path implicitly does via autosave.
+      if (supabase && body.space_id) {
+        try {
+          const { data: spaceRow } = await supabase
+            .from('spaces')
+            .select('nodes')
+            .eq('id', body.space_id)
+            .single()
+          if (spaceRow?.nodes && Array.isArray(spaceRow.nodes)) {
+            const nextNodes = spaceRow.nodes.map((n) => {
+              const np = nodeProgress[n?.id]
+              if (!np || !np.output) return n
+              return {
+                ...n,
+                data: { ...(n.data || {}), output: np.output },
+              }
+            })
+            await supabase
+              .from('spaces')
+              .update({ nodes: nextNodes, updated_at: new Date().toISOString() })
+              .eq('id', body.space_id)
+          }
+        } catch (e) {
+          console.warn(`[wf ${jobLabel}] merge node outputs to spaces failed:`, e?.message)
+        }
+      }
+
       // Only attribute the error back to a scheduled_workflows row
       // when this run was actually triggered by one. Manual one-shots
       // have no schedule to update.

@@ -2193,18 +2193,36 @@ function SpaceBuilder({ space, onSave, onClose }) {
         } catch { /* silent */ }
       }
     }
-    // Prime: fetch the latest running row (if any) so a remount mid-run
-    // catches up without waiting for a Realtime event.
+    // Prime: fetch the latest run (any status) so:
+    //   - A remount mid-run catches up without waiting for a Realtime event.
+    //   - A remount AFTER a server-side run has completed re-hydrates the
+    //     node outputs from node_progress (the worker also merges these
+    //     into spaces.nodes now, but this is a belt-and-suspenders backstop
+    //     for already-completed runs from before that fix landed, and for
+    //     the rare case where the merge-write fails).
     ;(async () => {
       try {
         const { data } = await supabase
           .from('space_runs')
-          .select('id, status, node_count, node_progress, triggered_by, started_at')
+          .select('id, status, node_count, node_progress, triggered_by, started_at, finished_at, duration_ms, errors')
           .eq('space_id', spaceId)
-          .eq('status', 'running')
           .order('started_at', { ascending: false })
           .limit(1)
-        if (data?.[0]) applyRow(data[0])
+        const row = data?.[0]
+        if (!row) return
+        if (row.status === 'running') {
+          applyRow(row)
+        } else if (row.node_progress && Object.keys(row.node_progress).length) {
+          // Completed run: silently hydrate node outputs without flashing
+          // the run-finished summary panel (which is for live finishes).
+          // We only patch `output` here — status/error are left alone so
+          // the canvas doesn't show stale red badges from old failures.
+          for (const [nodeId, prog] of Object.entries(row.node_progress)) {
+            if (prog?.output && typeof prog.output === 'object') {
+              patchNode(nodeId, { output: prog.output })
+            }
+          }
+        }
       } catch { /* ok */ }
     })()
     const channel = supabase
