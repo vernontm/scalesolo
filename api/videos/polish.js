@@ -252,13 +252,25 @@ function probeDurationSecs(filePath) {
   })
 }
 
-// Tightened budget so ffmpeg + ZapCap fits comfortably under Vercel's
-// 300s gateway timeout. A 60s vertical clip with title+watermark+music
-// composites in ~20-45s; 90s gives safety margin without risking a
-// Vercel kill. Above this we return a real error the user can retry,
-// not a 502 from the gateway.
-const FFMPEG_TIMEOUT_MS = 90_000
-function runFFmpeg(args, timeoutMs = FFMPEG_TIMEOUT_MS) {
+// ffmpeg budget scales with source length. Title + watermark + music
+// composites at ~0.5-1× realtime on Vercel's serverless x86 runtime,
+// so a 60s clip wraps in 30-60s and a 180s clip wraps in 90-180s.
+// We give a generous 2.5× source duration with a 30s baseline for
+// startup + I/O, then cap at 260s so there's still ~40s of headroom
+// before Vercel's 300s gateway timeout (which would 502 the user).
+//
+// For callers that don't know the duration (probe failed, etc.) we
+// default to 240s which handles anything up to ~90s of source.
+const FFMPEG_BASE_TIMEOUT_MS = 30_000
+const FFMPEG_PER_SEC_MS      = 2_500
+const FFMPEG_TIMEOUT_CAP_MS  = 260_000
+const FFMPEG_DEFAULT_TIMEOUT_MS = 240_000
+function timeoutForDuration(durationSecs) {
+  if (!durationSecs || durationSecs <= 0) return FFMPEG_DEFAULT_TIMEOUT_MS
+  const calc = FFMPEG_BASE_TIMEOUT_MS + Math.ceil(durationSecs * FFMPEG_PER_SEC_MS)
+  return Math.min(FFMPEG_TIMEOUT_CAP_MS, calc)
+}
+function runFFmpeg(args, timeoutMs = FFMPEG_DEFAULT_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] })
     let stderr = ''
@@ -266,7 +278,7 @@ function runFFmpeg(args, timeoutMs = FFMPEG_TIMEOUT_MS) {
     proc.stdout.on('data', () => {}) // drain
     const timer = setTimeout(() => {
       proc.kill('SIGKILL')
-      reject(new Error(`ffmpeg timed out after ${Math.round(timeoutMs / 1000)}s. The source video is likely longer than 60s or has unusually heavy filtering. Try a shorter clip or fewer overlays.`))
+      reject(new Error(`ffmpeg timed out after ${Math.round(timeoutMs / 1000)}s. The clip may be longer than the function's budget allows (~${Math.round(FFMPEG_TIMEOUT_CAP_MS / 1000 / 2.5)}s of source max), or the filter chain is unusually heavy. Try a shorter clip or fewer overlays.`))
     }, timeoutMs)
     proc.on('error', (err) => { clearTimeout(timer); reject(err) })
     proc.on('close', (code) => {
@@ -848,9 +860,10 @@ export default async function handler(req, res) {
       // No silent fallback — if the overlay chain fails we want the user to
       // know, not to ship them the unmodified video and call it done. The
       // ffmpeg stderr tail surfaces in the response so the failing filter
-      // is obvious.
+      // is obvious. Timeout scales with the source's duration so a 3-min
+      // clip doesn't get killed at 90s mid-encode.
       try {
-        await runFFmpeg(args)
+        await runFFmpeg(args, timeoutForDuration(videoDur))
       } catch (e) {
         const tail = String(e?.message || e).split('\n').slice(-8).join('\n')
         console.error('Polish: ffmpeg chain failed\nfilter_complex:\n' + filters.join(';') + '\n\nstderr tail:\n' + tail)
