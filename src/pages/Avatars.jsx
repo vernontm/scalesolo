@@ -1656,7 +1656,7 @@ function VoiceList({ list, currentVoiceId, previewingId, onPreview, onPick }) {
             {!active && (
               <button
                 type="button" className="btn-secondary"
-                onClick={() => onPick(v.voice_id)}
+                onClick={() => onPick(v.voice_id, v)}
                 style={{ fontSize: 11.5, padding: '6px 10px' }}
               >
                 <Check size={11} /> Use
@@ -1914,8 +1914,22 @@ function CloneVoiceForm({ session, profileId, onCloned }) {
 // Default avatars section — admin-curated avatars shown on every user's
 // page. Read-only (no edit / add look / delete), but the voice can be
 // swapped per-user via /api/avatars/default-voice.
-function DefaultAvatarsSection({ avatars, token, onChanged }) {
+function DefaultAvatarsSection({ avatars, session, profileId, onChanged }) {
   const [voiceEditing, setVoiceEditing] = useState(null) // avatar object or null
+
+  // Wipe a per-user voice override so the avatar reverts to the
+  // admin's default voice. Called from the per-card Revert link
+  // (only rendered when voice_override is present).
+  const revertVoice = async (avatarId) => {
+    try {
+      const r = await fetch(`/api/avatars/default-voice?id=${avatarId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${session?.access_token}` },
+      })
+      if (!r.ok && r.status !== 204) throw new Error(`Revert failed (${r.status})`)
+      onChanged?.()
+    } catch (e) { alert(e.message) }
+  }
   return (
     <div className="fade-up" style={{ marginBottom: 22 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
@@ -2006,6 +2020,17 @@ function DefaultAvatarsSection({ avatars, token, onChanged }) {
                   cursor: 'pointer', padding: 2,
                 }}
               >Change</button>
+              {a.voice_override && (
+                <button
+                  onClick={() => revertVoice(a.id)}
+                  title="Wipe your override and use the admin default voice"
+                  style={{
+                    background: 'transparent', border: 'none', color: 'var(--muted)',
+                    fontSize: 10.5, fontFamily: 'var(--font-display)', fontWeight: 600,
+                    cursor: 'pointer', padding: 2,
+                  }}
+                >Revert</button>
+              )}
             </div>
           </div>
         ))}
@@ -2013,7 +2038,8 @@ function DefaultAvatarsSection({ avatars, token, onChanged }) {
       {voiceEditing && (
         <DefaultVoiceModal
           avatar={voiceEditing}
-          token={token}
+          session={session}
+          profileId={profileId}
           onClose={() => setVoiceEditing(null)}
           onSaved={() => { setVoiceEditing(null); onChanged?.() }}
         />
@@ -2022,78 +2048,47 @@ function DefaultAvatarsSection({ avatars, token, onChanged }) {
   )
 }
 
-// Modal: swap the ElevenLabs voice on a default avatar. Stores a row
-// in default_avatar_voice_overrides for this user; clearing it falls
-// back to the admin-set default voice.
-function DefaultVoiceModal({ avatar, token, onClose, onSaved }) {
-  const [voiceId, setVoiceId] = useState(avatar.voice_override?.elevenlabs_voice_id || '')
-  const [label, setLabel]     = useState(avatar.voice_override?.voice_label || '')
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState(null)
-
-  const save = async () => {
-    if (!voiceId.trim()) { setErr('Paste an ElevenLabs voice id'); return }
-    setBusy(true); setErr(null)
+// Thin wrapper that reuses VoicePickerModal (Library / My voices / Clone)
+// for the default-avatar voice swap. When the user picks a voice the
+// picker's onPick fires with (voiceId, voiceObject); we POST that to
+// /api/avatars/default-voice and auto-fill voice_label from the voice
+// name so the chip on the card shows something readable. No manual
+// label input — picking does it all.
+function DefaultVoiceModal({ avatar, session, profileId, onClose, onSaved }) {
+  const handlePick = async (voiceId, voiceObj) => {
     try {
       const r = await fetch('/api/avatars/default-voice', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
         body: JSON.stringify({
           default_avatar_id: avatar.id,
-          elevenlabs_voice_id: voiceId.trim(),
-          voice_label: label.trim() || null,
+          elevenlabs_voice_id: voiceId,
+          // Auto-derive the label from the picker's voice object so
+          // the chip shows "Roger · premade" or similar instead of a
+          // raw voice id. Falls back gracefully if the picker passes
+          // only the id (older onPick signature).
+          voice_label: voiceObj
+            ? [voiceObj.name, voiceObj.category].filter(Boolean).join(' · ').slice(0, 80)
+            : null,
         }),
       })
       const b = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(b?.error || `Save failed (${r.status})`)
       onSaved?.()
-    } catch (e) { setErr(e.message); setBusy(false) }
+    } catch (e) {
+      // Surface inline via window alert — we don't have a toast handle
+      // inside the picker. Rare path.
+      alert(`Couldn't save voice: ${e.message}`)
+    }
   }
-  const revert = async () => {
-    setBusy(true); setErr(null)
-    try {
-      const r = await fetch(`/api/avatars/default-voice?id=${avatar.id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!r.ok && r.status !== 204) throw new Error(`Revert failed (${r.status})`)
-      onSaved?.()
-    } catch (e) { setErr(e.message); setBusy(false) }
-  }
-
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-card modal-card-sm" onClick={(e) => e.stopPropagation()} style={{ position: 'relative' }}>
-        <button
-          onClick={onClose}
-          style={{ position: 'absolute', top: 14, right: 14, background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6 }}
-          aria-label="Close"
-        ><X size={16} /></button>
-        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 18, marginBottom: 6 }}>Change voice on {avatar.name}</div>
-        <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 14, lineHeight: 1.5 }}>
-          Paste an ElevenLabs voice id to use your own voice on this default avatar. Affects only your account; other users keep the admin default ({avatar.default_voice_label || avatar.elevenlabs_voice_id?.slice(0, 12) || 'not set'}).
-        </div>
-        {err && <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '8px 12px', borderRadius: 8, fontSize: 13, marginBottom: 10 }}>{err}</div>}
-        <label style={{ display: 'block', fontSize: 12, color: 'var(--text-soft)', marginBottom: 10 }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, marginBottom: 4 }}>ElevenLabs voice id</div>
-          <input className="input" value={voiceId} onChange={(e) => setVoiceId(e.target.value)} placeholder="vc_…" style={{ width: '100%' }} />
-        </label>
-        <label style={{ display: 'block', fontSize: 12, color: 'var(--text-soft)', marginBottom: 14 }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, marginBottom: 4 }}>Voice label (optional)</div>
-          <input className="input" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. My clone" style={{ width: '100%' }} />
-        </label>
-        <div style={{ display: 'flex', gap: 8 }}>
-          {avatar.voice_override && (
-            <button onClick={revert} disabled={busy} className="btn-ghost" style={{ flexShrink: 0 }}>Revert to default</button>
-          )}
-          <div style={{ flex: 1 }} />
-          <button onClick={onClose} className="btn-ghost">Cancel</button>
-          <button onClick={save} disabled={busy} className="btn-primary">
-            {busy ? <Loader2 size={13} className="spin" /> : <Save size={13} />} Save
-          </button>
-        </div>
-      </div>
-    </div>
+    <VoicePickerModal
+      session={session}
+      profileId={profileId}
+      currentVoiceId={avatar.effective_voice_id || avatar.elevenlabs_voice_id || null}
+      onPick={handlePick}
+      onClose={onClose}
+    />
   )
 }
 
@@ -2217,7 +2212,8 @@ export default function Avatars() {
       {defaultAvatars.length > 0 && (
         <DefaultAvatarsSection
           avatars={defaultAvatars}
-          token={session?.access_token}
+          session={session}
+          profileId={selectedProfileId}
           onChanged={refresh}
         />
       )}
