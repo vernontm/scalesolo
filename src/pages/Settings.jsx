@@ -285,6 +285,22 @@ export default function Settings() {
             <div style={rowHint}>Manage profiles, billing, and team in their dedicated pages.</div>
           </div>
         </div>
+        <div style={row}>
+          <div>
+            <div style={rowLabel}>Replay product tour</div>
+            <div style={rowHint}>Walk through the 5-step onboarding tour again. Helpful after a feature update or for showing a teammate how the app fits together.</div>
+          </div>
+          <a
+            href="/dashboard?tour=1"
+            style={{
+              padding: '8px 14px', borderRadius: 8,
+              background: 'var(--surface-2)', border: '1px solid var(--border)',
+              color: 'var(--text)', textDecoration: 'none',
+              fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 12.5,
+              whiteSpace: 'nowrap',
+            }}
+          >Replay tour</a>
+        </div>
         <DataExportDeleteSection />
       </div>
     </div>

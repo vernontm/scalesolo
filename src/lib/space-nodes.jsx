@@ -10,6 +10,7 @@
 //   being sent to APIs. Resolution uses the source node's editable name.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Type, Wand2, Captions, UserCircle2, Save, Image as ImageIcon,
   ListChecks, FileVideo, Upload, Loader2, Maximize2, ArrowUpRight,
@@ -3290,11 +3291,12 @@ function AutoRunBody({ data, onPatch }) {
         {active ? <><Pause size={12} /> Active — every {intervalText}</> : <><Play size={12} /> Start auto-run</>}
       </button>
 
-      {/* Pre-start confirmation modal. Locked closed until the user
-          ticks the acknowledgement checkbox. Renders into a portal-
-          style fixed overlay; clicks outside the card or the Cancel
-          button dismiss without starting. */}
-      {confirmOpen && (
+      {/* Pre-start confirmation modal. Portaled to document.body so
+          it escapes React Flow's transform context — without the
+          portal, position:fixed anchors to the transformed canvas
+          parent and the modal renders centered over the node instead
+          of over the whole viewport. */}
+      {confirmOpen && typeof document !== 'undefined' && createPortal((
         <div
           onClick={(e) => { e.stopPropagation(); setConfirmOpen(false); setAcknowledged(false) }}
           style={{
@@ -3433,7 +3435,7 @@ function AutoRunBody({ data, onPatch }) {
             </div>
           </div>
         </div>
-      )}
+      ), document.body)}
 
       <div style={{ marginTop: 8, fontSize: 10.5, lineHeight: 1.5, color: 'var(--muted)' }}>
         <div>Runs used: <strong style={{ color: 'var(--text)' }}>{runsUsed} / {maxRuns}</strong> ({remaining} left)</div>

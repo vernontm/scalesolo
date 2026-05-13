@@ -7,6 +7,7 @@ import { useCredits } from '../context/CreditsContext.jsx'
 import CreditsPanel from '../components/CreditsPanel.jsx'
 import OnboardingSurvey from '../components/OnboardingSurvey.jsx'
 import VoiceSummaryCard from '../components/VoiceSummaryCard.jsx'
+import GuidedTour, { isTourDone } from '../components/GuidedTour.jsx'
 
 // ScaleSolo's wedge: automated content workflows in your brand voice.
 // The dashboard's job is to reflect that — one big "shipped while you
@@ -484,6 +485,12 @@ export default function Dashboard() {
     return () => clearTimeout(t)
   }, [showWelcome, creditPools])
 
+  // Guided tour state. Fires once on the first dashboard mount after
+  // the user finishes the onboarding survey. Can also be re-triggered
+  // by visiting /dashboard?tour=1 (used by the Settings "Replay tour"
+  // action and the survey-completion hook).
+  const [tourOpen, setTourOpen] = useState(false)
+
   const closeOnboarding = () => {
     setOnboardingState('hide')
     // The survey just created the user's first brand profile via
@@ -498,7 +505,29 @@ export default function Dashboard() {
       next.delete('survey')
       setSearchParams(next, { replace: true })
     }
+    // Survey just finished. Kick off the guided tour unless the user
+    // has already seen it (rare — survey only fires for first-runs,
+    // but handles the edge case where they dismissed the tour on a
+    // prior account / browser).
+    if (!isTourDone()) {
+      // Small delay so the confetti can play before the tour card
+      // slides in.
+      setTimeout(() => setTourOpen(true), 1200)
+    }
   }
+
+  // ?tour=1 in the URL force-opens the tour. Lets the Settings page
+  // (or a marketing link, or a support agent troubleshooting onboarding)
+  // re-trigger it without needing the user to delete the localStorage
+  // flag manually.
+  useEffect(() => {
+    if (searchParams.get('tour') === '1') {
+      setTourOpen(true)
+      const next = new URLSearchParams(searchParams)
+      next.delete('tour')
+      setSearchParams(next, { replace: true })
+    }
+  }, [searchParams, setSearchParams])
 
   // "Shipped" = content_scripts rows with status='posted' (auto or
   // manual) inside the current calendar month. Single GET, no expensive
@@ -566,6 +595,7 @@ export default function Dashboard() {
           onSkip={surveyForced ? closeOnboarding : null}
         />
       )}
+      <GuidedTour open={tourOpen} onClose={() => setTourOpen(false)} />
       {showWelcome && (
         <div style={{
           marginBottom: 18, padding: '14px 18px',
