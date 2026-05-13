@@ -481,6 +481,12 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
       if (!Array.isArray(r.media_urls) || !r.media_urls.length) {
         results.push({ id: r.id, ok: false, error: 'no media' }); continue
       }
+      // If this row was previously scheduled at Upload-Post, cancel the
+      // pending job first so we don't double-post (once now, once at the
+      // original scheduled time).
+      if (r.uploadpost_request_id) {
+        try { await uploadpostCancelScheduled(r.uploadpost_request_id) } catch {}
+      }
       const isVideo = r.media_type === 'video'
       const platforms = Array.isArray(r.platforms) && r.platforms.length ? r.platforms : ['tiktok']
 
@@ -491,9 +497,10 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
       if (desc) fd.append('description', desc)
       if (r.title && platforms.includes('tiktok')) fd.append('tiktok_title', String(r.title).slice(0, 90))
       if (r.first_comment) fd.append('first_comment', String(r.first_comment).slice(0, 2200))
-      if (r.scheduled_datetime && new Date(r.scheduled_datetime).getTime() > Date.now() + 30000) {
-        fd.append('scheduled_date', new Date(r.scheduled_datetime).toISOString())
-      }
+      // NOTE: publish-selected is explicit "post now" — we intentionally
+      // ignore any future scheduled_datetime on the row. Sending
+      // scheduled_date here would just re-queue it at Upload-Post and the
+      // post wouldn't go out immediately.
 
       // Stream the media bytes through.
       for (let i = 0; i < r.media_urls.length; i++) {
@@ -520,7 +527,7 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
       const requestId = body?.request_id || body?.id || null
       await supaFetch(`content_scripts?id=eq.${r.id}`, {
         method: 'PATCH',
-        body: { status: 'posted', uploadpost_request_id: requestId },
+        body: { status: 'posted', uploadpost_request_id: requestId, scheduled_datetime: null },
       })
       results.push({ id: r.id, ok: true, request_id: requestId })
     } catch (e) {
