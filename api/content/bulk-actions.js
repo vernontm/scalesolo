@@ -105,25 +105,28 @@ async function generateCaptions({ res, profile_id, script_ids, user_id }) {
   // it. Per-call user content (the actual scripts + images) goes into
   // the user message so it doesn't bust the cache. Same approach as
   // the script generator.
-  // Trim the brand context aggressively for caption work. The bible is
-  // voice / style guidance, not topic guidance — letting it dominate
-  // the prompt caused Claude to write captions that sounded on-brand
-  // but had nothing to do with the actual video/image. We keep voice
-  // summary + bad patterns + rules (which shape HOW the caption reads)
-  // and drop the full bible block (which kept steering topic toward
-  // whatever the bible most often talked about).
+  // Brand context for caption work. Two-layer rule:
+  //   - TOPIC: comes from the user message (transcript / image / script).
+  //   - VOICE: comes from the brand context below.
+  // We include the bible (capped to 1,500 chars — voice indicators are
+  // up top in most bibles) PLUS the distilled voice summary, hooks,
+  // bad patterns, and rules. The system prompt below tells Claude
+  // unambiguously to treat all of this as STYLE guidance, never as
+  // topic.
   const brandBlocks = renderBrandContextMarkdown(ctx, {
-    include: ['identity', 'summary', 'hooks', 'bad_patterns', 'rules'],
-    bibleCharLimit: 1200,
+    include: ['identity', 'bible', 'summary', 'hooks', 'bad_patterns', 'rules'],
+    bibleCharLimit: 1500,
   })
   const coreHashtagsLine = profile.core_hashtags
     ? `\n\nMANDATORY core hashtags (always include first): ${profile.core_hashtags}`
     : ''
-  const systemPrompt = `You are a social media caption writer for the brand below.
+  const systemPrompt = `You are a social media caption writer for the brand described below.
 
-CRITICAL TOPIC RULE: Every caption you write must be ABOUT what's in the SCRIPT / IMAGE you receive in the user message. The brand context that follows is HOW to write (voice, vocabulary, hashtags, off-limits phrases) — NOT what to write about. If the script is about cooking pasta, the caption is about cooking pasta, not about the brand's usual topics. Read the script carefully and write directly about its subject matter.
+YOUR JOB SPLITS INTO TWO SEPARATE INPUTS:
+  TOPIC SOURCE — comes from the user message. For VIDEO posts you'll receive a transcript of what's actually said in the video. For IMAGE posts you'll receive the image itself; read it visually and describe what's literally in the frame. The topic, the angle, the subject matter — all of it comes from this source ONLY.
+  VOICE SOURCE — comes from the brand context that follows (bible, voice summary, approved hooks, do-not-say list, rules). This shapes HOW the caption reads: tone, sentence rhythm, vocabulary, signature phrases, hashtags style. It does NOT shape WHAT the caption is about.
 
-For each script you receive a SCRIPT block (the actual content of the post), and (when present) an IMAGE the post will publish with. Read the image visually — describe what's literally in it in the caption — combined with the brand voice below.
+CRITICAL: do not pull topics, claims, or subject matter from the brand bible. If the video transcript is about pasta and the brand bible is about fitness, the caption is about pasta written in the brand's fitness-coach voice. Never the reverse. Treat the brand context as a style sheet, not a topic prompt.
 
 For each script return: title, caption, hashtags, first_comment.${brandBlocks}${coreHashtagsLine}`
 
