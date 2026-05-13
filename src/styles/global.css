@@ -1289,10 +1289,10 @@ a:focus-visible {
      a tall modal never gets its title pushed above the viewport.
      overflow-y on the overlay still acts as the outer-scroll fallback
      in case the card itself can't constrain (e.g. iOS Safari address-
-     bar quirks). Tight vertical padding so the modal can fill nearly
-     the whole viewport height when its content asks for it. */
+     bar quirks). Minimal vertical padding so large editor modals
+     reach top + bottom of the viewport. */
   overflow-y: auto;
-  padding: 2vh 24px;
+  padding: 8px 16px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1301,12 +1301,12 @@ a:focus-visible {
 .modal-card {
   width: 100%;
   max-width: 720px;
-  /* Cap card height to ~96% of viewport and scroll its OWN content
-     when it exceeds. Combined with the small overlay padding, the
-     modal can use nearly the full screen height for long forms
-     without ever clipping at the edges. Short modals shrink to fit
-     their content naturally — the cap is a ceiling, not a height. */
-  max-height: 96vh;
+  /* Cap card height to ~98% of viewport so the rounded corners
+     breathe slightly above and below — the rest of the modal frame
+     fills nearly edge-to-edge. Long forms scroll their own content
+     inside the card; short modals shrink to their content
+     naturally. */
+  max-height: calc(100vh - 16px);
   overflow-y: auto;
   overscroll-behavior: contain;
   background: var(--surface);
@@ -1319,13 +1319,13 @@ a:focus-visible {
 .modal-card-sm  { max-width: 460px; }
 .modal-card-md  { max-width: 560px; }
 /* Large editor modals (admin default-avatar editor, AdminTemplates,
-   profile editor, etc.) fill almost the entire viewport height even
+   profile editor, etc.) fill the entire viewport top-to-bottom even
    when their content is short — feels like a "full editor surface"
-   instead of a small dialog floating in dimmed space. Combined with
-   max-height: 96vh from .modal-card, the card always lands between
-   96vh tall (full) and 96vh tall (capped) — i.e. exactly 96vh. */
-.modal-card-lg  { max-width: 720px;  min-height: 96vh; }
-.modal-card-xl  { max-width: 1080px; min-height: 96vh; }
+   instead of a small dialog floating in dimmed space. The 16px
+   sliver of overlay padding on each side stays so rounded corners
+   are still visible against the backdrop. */
+.modal-card-lg  { max-width: 720px;  min-height: calc(100vh - 16px); }
+.modal-card-xl  { max-width: 1080px; min-height: calc(100vh - 16px); }
 
 /* Profile editor rail collapses to a horizontal scroll-tab strip on
    narrow screens. The inline width/border-right come from the rail
