@@ -160,8 +160,12 @@ export default async function handler(req, res) {
       if (filter === 'caption_ready') where += '&status=eq.caption_ready'
       if (filter === 'scheduled') where += '&status=eq.scheduled'
       if (filter === 'posted')    where += '&status=eq.posted'
+      // Calendar view: show both scheduled (queued) and posted (delivered)
+      // rows that have a scheduled_datetime, so users can see what shipped
+      // alongside what's still queued on the same calendar.
+      if (filter === 'calendar')  where += '&status=in.(scheduled,posted)&scheduled_datetime=not.is.null'
       if (filter === 'approvals') where += '&approval_status=eq.pending'
-      const order = filter === 'scheduled' ? 'scheduled_datetime.asc' : 'updated_at.desc'
+      const order = (filter === 'scheduled' || filter === 'calendar') ? 'scheduled_datetime.asc' : 'updated_at.desc'
       const rows = await supaFetch(`content_scripts?${where}&order=${order}&limit=200&select=*`)
       return res.status(200).json({ items: rows || [] })
     }

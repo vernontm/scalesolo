@@ -572,23 +572,35 @@ function CalendarView({ items, onOpen, token, onChange }) {
                     const thumb = Array.isArray(item.media_urls) && item.media_urls[0]
                     const isVideo = item.media_type === 'video'
                     const isText = item.media_type === 'text'
-                    const kindBorder = isVideo ? '#0ea5e9' : isText ? '#f59e0b' : '#a855f7'
+                    const isPosted = item.status === 'posted'
+                    // Posted (delivered) rows get a green left-border so they
+                    // pop visually as "shipped" alongside still-queued items
+                    // that show the post-kind color (video/text/image).
+                    const kindBorder = isPosted
+                      ? '#2ecc71'
+                      : isVideo ? '#0ea5e9'
+                      : isText ? '#f59e0b'
+                      : '#a855f7'
                     return (
                       <div
                         key={item.id}
-                        draggable
+                        draggable={!isPosted}
                         onDragStart={(e) => onDragStart(e, item)}
                         onDragEnd={onDragEnd}
                         onClick={() => onOpen(item)}
+                        title={isPosted ? 'Posted — already delivered' : undefined}
                         style={{
-                          background: 'var(--surface-2)',
-                          border: '1px solid var(--border)',
+                          background: isPosted
+                            ? 'linear-gradient(135deg, rgba(46,204,113,0.10), rgba(46,204,113,0.04))'
+                            : 'var(--surface-2)',
+                          border: isPosted ? '1px solid rgba(46,204,113,0.35)' : '1px solid var(--border)',
                           borderLeft: `3px solid ${kindBorder}`,
                           borderRadius: 6, padding: 6,
-                          cursor: 'grab',
-                          opacity: isDragging ? 0.5 : 1,
+                          cursor: isPosted ? 'pointer' : 'grab',
+                          opacity: isDragging ? 0.5 : isPosted ? 0.85 : 1,
                           fontSize: 11.5, color: 'var(--text-soft)',
                           display: 'flex', gap: 6, alignItems: 'flex-start',
+                          position: 'relative',
                         }}
                       >
                         {thumb ? (
@@ -611,8 +623,18 @@ function CalendarView({ items, onOpen, token, onChange }) {
                           <div style={{ fontWeight: 600, color: 'var(--text)', fontSize: 11.5, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
                             {item.title || 'Untitled'}
                           </div>
-                          <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>
-                            {new Date(item.scheduled_datetime).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                          <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 5 }}>
+                            <span>{new Date(item.scheduled_datetime).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>
+                            {isPosted && (
+                              <span style={{
+                                display: 'inline-flex', alignItems: 'center', gap: 3,
+                                padding: '1px 5px', borderRadius: 999,
+                                background: 'rgba(46,204,113,0.18)',
+                                color: '#2ecc71',
+                                fontWeight: 700, fontSize: 9,
+                                letterSpacing: '0.04em', textTransform: 'uppercase',
+                              }}>✓ Posted</span>
+                            )}
                           </div>
                           {platforms.length > 0 && (
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, marginTop: 4 }}>
@@ -788,7 +810,7 @@ const TABS = [
   { value: 'library',    label: 'All',        icon: Library,        filter: 'library',    empty: 'Generate your first piece of content to fill this view.' },
   // (the "library" tab still exists — Schedule is the page name, Library
   // is just one view inside it)
-  { value: 'calendar',   label: 'Calendar',   icon: Calendar,       filter: 'scheduled',  empty: 'Nothing scheduled in the next two weeks.' },
+  { value: 'calendar',   label: 'Calendar',   icon: Calendar,       filter: 'calendar',   empty: 'Nothing scheduled in the next two weeks.' },
   { value: 'drafts',     label: 'Drafts',     icon: FileEdit,       filter: 'drafts',     empty: 'No drafts. Generated content shows up here first.' },
   { value: 'approvals',  label: 'Approvals',  icon: ClipboardCheck, filter: 'approvals',  empty: 'No items waiting on you. Set AI CEO behavior to "Aggressive" to skip the queue entirely.' },
 ]
