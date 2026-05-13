@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { Link, Routes, Route, useNavigate } from 'react-router-dom'
-import { ShieldCheck, LayoutGrid, ArrowRight, Activity, Users, Sparkles, BookOpen, Captions } from 'lucide-react'
+import { ShieldCheck, LayoutGrid, ArrowRight, Activity, Users, Sparkles, BookOpen, Captions, UserCircle2 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import AdminTemplates from './AdminTemplates.jsx'
 import AdminUsage from './AdminUsage.jsx'
@@ -9,6 +9,7 @@ import AdminAffiliates from './AdminAffiliates.jsx'
 import AdminOps from './AdminOps.jsx'
 import AdminViralLibrary from './AdminViralLibrary.jsx'
 import AdminZapcapTemplates from './AdminZapcapTemplates.jsx'
+import AdminDefaultAvatars from './AdminDefaultAvatars.jsx'
 
 // Admin home + nested admin routes. The Sidebar only shows the link to
 // admins, but we also gate at the route level so a non-admin who guesses
@@ -69,6 +70,12 @@ const cards = [
     body: 'Sync ZapCap caption styles and attach a Supabase Storage GIF to each so users see clean previews instead of demo footage.',
     Icon: Captions,
   },
+  {
+    to: '/admin/default-avatars',
+    title: 'Default avatars',
+    body: 'Pre-built avatars shown on every user\'s /avatars page, pre-hooked with an ElevenLabs voice. Users can render with them or swap the voice; the avatar itself stays read-only.',
+    Icon: UserCircle2,
+  },
 ]
 
 function AdminHome() {
@@ -107,6 +114,7 @@ export default function Admin() {
         <Route path="/ops" element={<AdminOps />} />
         <Route path="/viral-library" element={<AdminViralLibrary />} />
         <Route path="/zapcap-templates" element={<AdminZapcapTemplates />} />
+        <Route path="/default-avatars" element={<AdminDefaultAvatars />} />
       </Routes>
     </AdminGate>
   )
