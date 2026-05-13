@@ -1938,11 +1938,33 @@ function DefaultAvatarsSection({ avatars, token, onChanged }) {
           <div key={a.id} className="card-flat lift" style={{ padding: 12 }}>
             <div style={{
               aspectRatio: '1 / 1',
-              backgroundImage: a.preview_image_url ? `url(${a.preview_image_url})` : 'none',
-              backgroundSize: 'cover', backgroundPosition: 'center',
-              background: a.preview_image_url ? undefined : 'var(--surface-2)',
-              borderRadius: 10, marginBottom: 10, position: 'relative',
+              position: 'relative',
+              borderRadius: 10,
+              marginBottom: 10,
+              overflow: 'hidden',
+              background: 'var(--surface-2)',
             }}>
+              {a.preview_image_url ? (
+                <img
+                  src={a.preview_image_url}
+                  alt={a.name}
+                  loading="lazy" decoding="async"
+                  style={{
+                    position: 'absolute', inset: 0,
+                    width: '100%', height: '100%',
+                    objectFit: 'cover',
+                  }}
+                  onError={(e) => { e.currentTarget.style.display = 'none' }}
+                />
+              ) : (
+                <div style={{
+                  position: 'absolute', inset: 0,
+                  display: 'grid', placeItems: 'center',
+                  color: 'var(--muted)',
+                }}>
+                  <ImageIcon size={26} />
+                </div>
+              )}
               <div style={{
                 position: 'absolute', top: 8, left: 8,
                 padding: '3px 8px', borderRadius: 999,

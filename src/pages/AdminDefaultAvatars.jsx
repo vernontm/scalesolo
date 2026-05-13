@@ -87,12 +87,25 @@ export default function AdminDefaultAvatars() {
           {items.map((a) => (
             <div key={a.id} style={card(a.is_active)} className="lift">
               <div style={{
-                aspectRatio: '1 / 1', background: 'var(--surface-2)',
-                backgroundImage: a.preview_image_url ? `url(${a.preview_image_url})` : 'none',
-                backgroundSize: 'cover', backgroundPosition: 'center',
+                aspectRatio: '1 / 1',
+                background: 'var(--surface-2)',
                 borderRadius: 10, marginBottom: 10,
                 position: 'relative',
+                overflow: 'hidden',
               }}>
+                {a.preview_image_url ? (
+                  <img
+                    src={a.preview_image_url}
+                    alt={a.name}
+                    loading="lazy" decoding="async"
+                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+                    onError={(e) => { e.currentTarget.style.display = 'none' }}
+                  />
+                ) : (
+                  <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: 'var(--muted)' }}>
+                    <ImageIcon size={22} />
+                  </div>
+                )}
                 {!a.is_active && (
                   <div style={inactiveBadge}><EyeOff size={11} /> Inactive</div>
                 )}
