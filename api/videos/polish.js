@@ -685,10 +685,38 @@ export default async function handler(req, res) {
 
       if (effectiveLogoUrl && watermark_position !== 'none') {
         try {
-          const ext = (effectiveLogoUrl.split('?')[0].split('.').pop() || 'png').toLowerCase()
-          const safeExt = ['png', 'jpg', 'jpeg', 'webp'].includes(ext) ? ext : 'png'
-          logoPath = join(workdir, `logo.${safeExt}`)
-          await writeFile(logoPath, await fetchToBuffer(effectiveLogoUrl))
+          const bytes = await fetchToBuffer(effectiveLogoUrl)
+          // Sniff for SVG either by file extension OR by leading bytes.
+          // The trial watermark is an SVG; ffmpeg can't decode SVG natively
+          // so we rasterize to PNG via resvg (already imported for the
+          // title overlay path) before writing it to disk. Without this
+          // step ffmpeg hits "Invalid PNG signature 0x3C73766720786D6C"
+          // (which is the ASCII for `<svg xml`).
+          const head = bytes.slice(0, 512).toString('utf8').trim().toLowerCase()
+          const isSvgByBytes = head.startsWith('<?xml') ? head.includes('<svg') : head.startsWith('<svg')
+          const isSvgByExt = /\.svg(\?|$)/i.test(effectiveLogoUrl.split('?')[0])
+          if (isSvgByExt || isSvgByBytes) {
+            try {
+              const { Resvg } = await import('@resvg/resvg-js')
+              const pngBuf = new Resvg(bytes, {
+                background: 'rgba(0,0,0,0)',
+                // Render at 512px wide — ffmpeg's overlay filter scales
+                // from there to the final video width fraction so we
+                // just need a high-resolution source.
+                fitTo: { mode: 'width', value: 512 },
+              }).render().asPng()
+              logoPath = join(workdir, 'logo.png')
+              await writeFile(logoPath, pngBuf)
+            } catch (rasterErr) {
+              console.warn('[polish] SVG rasterize failed, skipping watermark:', rasterErr.message)
+              logoPath = null
+            }
+          } else {
+            const ext = (effectiveLogoUrl.split('?')[0].split('.').pop() || 'png').toLowerCase()
+            const safeExt = ['png', 'jpg', 'jpeg', 'webp'].includes(ext) ? ext : 'png'
+            logoPath = join(workdir, `logo.${safeExt}`)
+            await writeFile(logoPath, bytes)
+          }
         } catch { logoPath = null }
       }
 
