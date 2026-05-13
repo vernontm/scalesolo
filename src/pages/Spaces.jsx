@@ -3691,13 +3691,11 @@ function SpaceBuilder({ space, onSave, onClose }) {
           }}>
             <Wand2 size={32} style={{ marginBottom: 12 }} />
             <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--text)', fontSize: 16, marginBottom: 6 }}>
-              Describe a workflow and the AI builds it
+              Build your workflow
             </div>
-            <div style={{ fontSize: 13, lineHeight: 1.55, marginBottom: 14 }}>
-              Type something like <em>“create scripts, then render avatar videos and save to library”</em> in the bar above, hit Build, and a connected node graph appears.
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.55 }}>
-              Or drag nodes from the floating palette manually. Two-finger trackpad pans the canvas. Cmd/Ctrl + scroll zooms.
+            <div style={{ fontSize: 13, lineHeight: 1.55 }}>
+              Drag nodes from the floating palette to wire up your pipeline.
+              Two-finger trackpad pans the canvas. Cmd/Ctrl + scroll zooms.
             </div>
           </div>
         )}
