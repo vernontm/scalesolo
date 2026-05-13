@@ -222,7 +222,7 @@ function SocialGrowthCard({ data, onOpen }) {
             {tm.label} vs {lm.label}
           </div>
           <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 2 }}>
-            Month over month — posts published + estimated impressions
+            Month over month: posts published + estimated impressions
           </div>
         </div>
         <button onClick={onOpen} style={{
@@ -631,7 +631,7 @@ export default function Dashboard() {
             {noProfile
               ? 'Welcome to ScaleSolo. Set up your first brand profile and your workflows can start writing in your voice.'
               : selectedProfile
-                ? <>You're on <strong>{selectedProfile.business_name}</strong>. Your spaces are running in the background — here's what shipped.</>
+                ? <>You're on <strong>{selectedProfile.business_name}</strong>. Your workflows are running in the background. Here's what shipped.</>
                 : 'Pick a brand profile to begin.'}
           </div>
         </div>
