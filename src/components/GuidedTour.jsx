@@ -30,8 +30,9 @@ const STOPS = [
     id: 'avatars',
     route: '/avatars',
     Icon: UserCircle2,
-    title: 'Step 1: Train your avatar',
-    body: 'Upload one photo of yourself (or anyone — a stand-in influencer, a stock face, whoever). ScaleSolo builds a photorealistic AI avatar that can talk in your voice. You can train multiple looks per avatar so videos stay fresh.',
+    title: 'Step 1: Pick or train an avatar',
+    body: 'At the top of this page you\'ll see "Ready-to-use avatars" — pre-built defaults with a voice already attached. Drop one into any workflow without setup. Want your own face on it? Below that, click + to train one from your photo.',
+    callout: 'Concepts you\'ll meet: (1) Looks — outfit/setting variations of the SAME person. Add a new look when you want visual variety across renders. (2) Images per look — multiple angles of the SAME outfit so HeyGen has more frames to choose from. (3) Voice — every avatar carries a default voice. On a ready-to-use avatar, click "Change" on the voice chip to swap to your own ElevenLabs clone. On a custom avatar, set the voice id at creation time or paste it later.',
     primary: 'Next →',
   },
   {
