@@ -1,5 +1,5 @@
-import { useLocation, useNavigate } from 'react-router-dom'
-import { Sparkles, Menu, Bot } from 'lucide-react'
+import { useLocation } from 'react-router-dom'
+import { Menu, Bot } from 'lucide-react'
 import ThemeToggle from './ThemeToggle.jsx'
 import NotificationBell from './NotificationBell.jsx'
 import CreditsBadge from './CreditsBadge.jsx'
@@ -75,22 +75,6 @@ const kbd = {
   borderRadius: 4,
   color: 'var(--muted)',
 }
-const newBtn = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 6,
-  height: 38,
-  padding: '0 14px',
-  background: 'linear-gradient(135deg, var(--red), var(--red-dark))',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 10,
-  cursor: 'pointer',
-  fontFamily: 'var(--font-display)',
-  fontWeight: 600,
-  fontSize: 13,
-  boxShadow: '0 4px 12px rgba(239,68,68,0.25)',
-}
 const menuBtn = {
   display: 'none',          // shown on mobile via media query in global.css
   width: 38, height: 38,
@@ -104,7 +88,6 @@ const menuBtn = {
 
 export default function Header({ onOpenSidebar }) {
   const { pathname } = useLocation()
-  const navigate = useNavigate()
   const { setOpen: setAgentOpen } = useAgent()
   const meta = titles[pathname] || { t: 'ScaleSolo', s: '' }
 
@@ -154,16 +137,9 @@ export default function Header({ onOpenSidebar }) {
       <NotificationBell />
 
       <span className="hide-on-mobile" style={{ display: 'inline-flex' }}><ThemeToggle /></span>
-
-      <button
-        style={newBtn}
-        onClick={() => navigate('/schedule')}
-        title="Generate new content"
-        aria-label="Generate new content"
-      >
-        <Sparkles size={14} strokeWidth={2.5} />
-        <span className="hide-on-narrow">Generate</span>
-      </button>
+      {/* Header Generate button removed — Spaces and Bulk Upload
+          are the canonical ways to make content, both reachable
+          from the sidebar. */}
     </header>
   )
 }

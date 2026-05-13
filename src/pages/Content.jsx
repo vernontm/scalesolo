@@ -857,9 +857,10 @@ export default function Content() {
           })}
         </div>
         <div style={{ flex: 1 }} />
-        <button className="btn-primary" onClick={() => setGenerating(true)}>
-          <Sparkles size={14} /> Generate content
-        </button>
+        {/* Generate content button removed at user's request — the
+            primary path to making content is now Spaces (workflows)
+            or Bulk Upload below. The GenerateModal still mounts
+            elsewhere if anything triggers it programmatically. */}
       </div>
 
       {tab === 'library' ? (
