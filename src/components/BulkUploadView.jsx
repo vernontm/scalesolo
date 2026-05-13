@@ -346,6 +346,15 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   // 'week', '7d' are quick presets — 'custom' arms the two from/to
   // inputs below.
   const [dateRange, setDateRange] = useState('all') // 'all' | 'today' | 'week' | '7d' | 'custom'
+  // Sort order — newest scheduled first vs oldest first. Persisted to
+  // localStorage so it sticks across reloads.
+  const [sortOrder, setSortOrderState] = useState(() => {
+    try { return localStorage.getItem('scalesolo:bulk:sortOrder') === 'newest' ? 'newest' : 'oldest' } catch { return 'oldest' }
+  })
+  const setSortOrder = (v) => {
+    setSortOrderState(v)
+    try { localStorage.setItem('scalesolo:bulk:sortOrder', v) } catch {}
+  }
   const [customFrom, setCustomFrom] = useState('')  // YYYY-MM-DD
   const [customTo, setCustomTo] = useState('')      // YYYY-MM-DD
   const [selected, setSelected] = useState(new Set())
@@ -636,16 +645,21 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         || (r.full_script || '').toLowerCase().includes(s)
         || (r.hashtags || '').toLowerCase().includes(s))
     }
-    // Default sort: scheduled time ascending. Earliest first, un-
-    // scheduled rows last. (The sort dropdown / group-by-platform
-    // toggle were removed at the user's request — date range stays.)
+    // Sort by scheduled_datetime — direction controlled by sortOrder.
+    //   oldest → earliest first, un-scheduled rows last
+    //   newest → latest first, un-scheduled rows still last
+    const newestFirst = sortOrder === 'newest'
     const sorted = [...all].sort((a, b) => {
-      const ta = a.scheduled_datetime ? new Date(a.scheduled_datetime).getTime() : Infinity
-      const tb = b.scheduled_datetime ? new Date(b.scheduled_datetime).getTime() : Infinity
-      return ta - tb
+      const ta = a.scheduled_datetime ? new Date(a.scheduled_datetime).getTime() : null
+      const tb = b.scheduled_datetime ? new Date(b.scheduled_datetime).getTime() : null
+      // Un-scheduled rows always sort to the bottom regardless of direction.
+      if (ta === null && tb === null) return 0
+      if (ta === null) return 1
+      if (tb === null) return -1
+      return newestFirst ? tb - ta : ta - tb
     })
     return sorted
-  }, [scripts, tab, search, kindFilter, dateRange, customFrom, customTo]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [scripts, tab, search, kindFilter, dateRange, customFrom, customTo, sortOrder]) // eslint-disable-line react-hooks/exhaustive-deps
   const counts = useMemo(() => {
     const out = {}
     for (const t of STATUS_TABS) out[t.id] = (scripts || []).filter(t.filter).length
@@ -1046,6 +1060,30 @@ export default function BulkUploadView({ profileId, token, onChange }) {
             <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} style={{ padding: '5px 8px', fontSize: 11.5, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }} />
           </div>
         )}
+        {/* Sort order — same pill group style as the date filters. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--muted)' }}>
+          <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 10.5, letterSpacing: '0.06em', textTransform: 'uppercase', marginRight: 4 }}>Sort</span>
+          {[
+            { id: 'newest', label: 'Newest' },
+            { id: 'oldest', label: 'Oldest' },
+          ].map((o) => {
+            const active = sortOrder === o.id
+            return (
+              <button
+                key={o.id}
+                onClick={() => setSortOrder(o.id)}
+                style={{
+                  padding: '5px 9px', borderRadius: 6,
+                  background: active ? 'var(--surface-2)' : 'transparent',
+                  border: `1px solid ${active ? 'var(--border)' : 'transparent'}`,
+                  color: active ? 'var(--text)' : 'var(--muted)',
+                  fontFamily: 'var(--font-display)', fontSize: 11.5, fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >{o.label}</button>
+            )
+          })}
+        </div>
       </div>
 
       {/* Bulk action toolbar */}

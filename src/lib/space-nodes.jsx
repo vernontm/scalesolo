@@ -8093,11 +8093,16 @@ export const NODE_REGISTRY = {
         throw new Error('Wire a video, images, or a Text post node into "in".')
       }
 
+      // Detected content kind. Declared at function scope so the
+      // return statements below can reference it for the run's
+      // metadata, regardless of which branch (text-only vs media)
+      // we ended up in.
+      const detectedKind = isTextPost ? 'text' : (videoUrl ? 'video' : 'image')
+
       // Per-platform kind validation up front so we don't waste an API
       // call. Text posts skip this — every supported platform accepts
       // text-only posts by definition.
       if (!isTextPost) {
-        const detectedKind = videoUrl ? 'video' : 'image'
         const bad = platforms.filter((id) => {
           const def = SCHEDULE_PLATFORMS.find((p) => p.id === id)
           return def && !def.kinds.includes(detectedKind)
