@@ -1818,6 +1818,27 @@ function SpaceBuilder({ space, onSave, onClose }) {
   // worker updates it; the bottom-right pill shows "N / total nodes".
   // null means no active server run for this space.
   const [serverRun, setServerRun] = useState(null)
+  // Run IDs the user has explicitly dismissed via the X on the
+  // finished-run summary panel. Persisted to localStorage so the
+  // panel doesn't reappear on refresh, focus-refetch, polling tick,
+  // or Realtime echo. applyRow checks this before re-rendering the
+  // summary for an already-finalized run.
+  const dismissedRunIdsRef = useRef(new Set())
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('scalesolo.spaces.dismissedRunIds')
+      const arr = raw ? JSON.parse(raw) : []
+      if (Array.isArray(arr)) dismissedRunIdsRef.current = new Set(arr)
+    } catch {}
+  }, [])
+  const dismissRunId = (id) => {
+    if (!id) return
+    dismissedRunIdsRef.current.add(id)
+    // Cap stored set at 50 most-recent IDs so the localStorage value
+    // doesn't grow unboundedly for power users.
+    const arr = Array.from(dismissedRunIdsRef.current).slice(-50)
+    try { localStorage.setItem('scalesolo.spaces.dismissedRunIds', JSON.stringify(arr)) } catch {}
+  }
   // Toast handle for the active server-run progress toast. We reuse
   // the same toast id so successive updates replace the previous one
   // instead of stacking. Cleared when the run finalizes.
@@ -2217,10 +2238,20 @@ function SpaceBuilder({ space, onSave, onClose }) {
         const durationMs = row.duration_ms || (row.finished_at && row.started_at
           ? new Date(row.finished_at).getTime() - new Date(row.started_at).getTime()
           : 0)
+        // Skip rendering the summary panel if the user has already
+        // dismissed THIS run id. Otherwise the panel pops back every
+        // time the prime fetch / Realtime / focus-refetch / polling
+        // re-applies the same completed row.
+        if (dismissedRunIdsRef.current.has(row.id)) {
+          // No-op for finished panel — but still let the canvas
+          // catch up on per-node statuses via the loop above.
+          return
+        }
         // Show the summary panel. Don't clear it on errors either —
         // partial runs need just as much visibility as successes.
         setServerRun({
           finished: true,
+          id: row.id,
           status: row.status, // success | partial | failed
           completed, failed, total,
           brand: brandName,
@@ -3668,7 +3699,13 @@ function SpaceBuilder({ space, onSave, onClose }) {
                 </div>
                 <button
                   aria-label="Dismiss"
-                  onClick={() => setServerRun(null)}
+                  onClick={() => {
+                    // Remember this run id so the panel doesn't pop
+                    // back when prime-fetch / Realtime / polling
+                    // re-applies the same finalized row.
+                    dismissRunId(serverRun?.id)
+                    setServerRun(null)
+                  }}
                   style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 0, fontSize: 16, lineHeight: 1 }}
                 >×</button>
               </div>
@@ -3699,6 +3736,11 @@ function SpaceBuilder({ space, onSave, onClose }) {
                           // tweak settings.
                           window.__spaceOpenEditor?.(err.nodeId)
                         } catch {}
+                        // Same dismissal bookkeeping as the X button —
+                        // clicking an error implicitly dismisses the
+                        // summary, so persist that so it doesn't pop
+                        // back on the next refetch.
+                        dismissRunId(serverRun?.id)
                         setServerRun(null)
                       }}
                       style={{
