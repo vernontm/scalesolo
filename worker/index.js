@@ -199,20 +199,37 @@ function probeDurationSecs(filePath) {
 // so this probe is ~100ms regardless of clip length.
 async function probeRotation(filePath) {
   return new Promise((resolve) => {
+    // -noautorotate keeps ffmpeg from silently consuming the rotation
+    // metadata before we get to read it. Without this, modern ffmpeg
+    // auto-applies the rotation AND suppresses the displaymatrix line
+    // in stderr — our regex gets 0 and the polish step skips transpose
+    // even though the source needs one. iPhone HEVC .mov clips hit this
+    // consistently.
     const proc = spawn(ffmpegPath, [
-      '-i', filePath, '-hide_banner', '-frames:v', '0', '-f', 'null', '-',
+      '-noautorotate', '-i', filePath, '-hide_banner', '-frames:v', '0', '-f', 'null', '-',
     ], { stdio: ['ignore', 'ignore', 'pipe'] })
     let err = ''
     proc.stderr.on('data', (d) => { err += d.toString('utf8') })
     proc.on('close', () => {
-      // ffmpeg surfaces rotation in two forms depending on container:
-      //   "Side data: displaymatrix: rotation of -90.00 degrees"  (mp4/mov)
-      //   "rotate          : 90"                                  (older metadata tag)
+      // ffmpeg surfaces rotation in several forms depending on container
+      // and ffmpeg version. We try each pattern in order and use the
+      // first hit:
+      //   1. "displaymatrix: rotation of -90.00 degrees"  (mp4/mov, modern)
+      //   2. "rotation of -90.00 degrees"                 (older mp4)
+      //   3. "rotate          : 90"                       (metadata tag)
+      //   4. "TAG:rotate=90"                              (-show_format style)
+      //   5. "Side data:" followed by a matrix block      (HEVC HDR captures)
       let rotation = 0
-      const m1 = err.match(/rotation of (-?\d+(?:\.\d+)?) degrees?/i)
-      const m2 = err.match(/^\s*rotate\s*:\s*(-?\d+)/im)
-      if (m1) rotation = parseFloat(m1[1])
-      else if (m2) rotation = parseInt(m2[1], 10)
+      const patterns = [
+        /displaymatrix:\s*rotation of (-?\d+(?:\.\d+)?)\s*degrees?/i,
+        /rotation of (-?\d+(?:\.\d+)?)\s*degrees?/i,
+        /^\s*rotate\s*:\s*(-?\d+)/im,
+        /TAG:rotate\s*=\s*(-?\d+)/i,
+      ]
+      for (const re of patterns) {
+        const m = err.match(re)
+        if (m) { rotation = parseFloat(m[1]); break }
+      }
       // Normalize to [0, 360). -90 = 270, etc.
       resolve(((rotation % 360) + 360) % 360)
     })
@@ -229,8 +246,10 @@ async function probeRotation(filePath) {
 // dependency.
 async function probeVideo(filePath) {
   return new Promise((resolve) => {
+    // -noautorotate so the rotation metadata shows in stderr (see
+    // probeRotation note above — same reason).
     const proc = spawn(ffmpegPath, [
-      '-i', filePath, '-hide_banner', '-frames:v', '0', '-f', 'null', '-',
+      '-noautorotate', '-i', filePath, '-hide_banner', '-frames:v', '0', '-f', 'null', '-',
     ], { stdio: ['ignore', 'ignore', 'pipe'] })
     let err = ''
     proc.stderr.on('data', (d) => { err += d.toString('utf8') })
@@ -244,12 +263,18 @@ async function probeVideo(filePath) {
       // HDR markers: bt2020 colorspace, smpte2084 (HDR10 PQ), arib-std-b67 (HLG), 10-bit pixel formats with HDR primaries.
       const isHdr = /bt2020|smpte2084|smpte-2084|arib-std-b67|hlg/i.test(vLine) || /yuv4\d\dp1[02]le/i.test(pixFmt)
 
-      // Rotation (same patterns as probeRotation)
+      // Rotation (same expanded pattern set as probeRotation)
       let rotation = 0
-      const r1 = err.match(/rotation of (-?\d+(?:\.\d+)?) degrees?/i)
-      const r2 = err.match(/^\s*rotate\s*:\s*(-?\d+)/im)
-      if (r1) rotation = parseFloat(r1[1])
-      else if (r2) rotation = parseInt(r2[1], 10)
+      const rotPatterns = [
+        /displaymatrix:\s*rotation of (-?\d+(?:\.\d+)?)\s*degrees?/i,
+        /rotation of (-?\d+(?:\.\d+)?)\s*degrees?/i,
+        /^\s*rotate\s*:\s*(-?\d+)/im,
+        /TAG:rotate\s*=\s*(-?\d+)/i,
+      ]
+      for (const re of rotPatterns) {
+        const m = err.match(re)
+        if (m) { rotation = parseFloat(m[1]); break }
+      }
       rotation = ((rotation % 360) + 360) % 360
 
       // Audio stream line: "Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 256 kb/s"
@@ -333,7 +358,10 @@ function buildNormalizeFilter(probe) {
 // and normalizeVideoCore (explicit "Compress" button).
 async function normalizeFile(inPath, outPath, probe, hasAudio) {
   const vf = buildNormalizeFilter(probe)
-  const args = ['-y', '-threads', '2', '-i', inPath, '-vf', vf]
+  // -noautorotate: probe already determined rotation; the filter chain
+  // (transpose=N) bakes it in. Letting ffmpeg autorotate first would
+  // double-apply and orient the output wrong.
+  const args = ['-y', '-threads', '2', '-noautorotate', '-i', inPath, '-vf', vf]
   // H.264 high profile, CRF 23 (visually transparent for social), faststart
   // for streaming. -preset fast hits the sweet spot between CPU and bitrate.
   args.push('-c:v', 'libx264', '-preset', 'fast', '-crf', '23')
@@ -819,7 +847,15 @@ async function polishCore(body) {
     const shouldLoopVideo = !!(loop_video && voiceoverPath)
     const args = ['-y', '-threads', '2']
     if (shouldLoopVideo) args.push('-stream_loop', '-1')
-    args.push('-i', polishInputPath)
+    // -noautorotate: we explicitly handle rotation via the transpose
+    // filter further down, using probeRotation. Without this flag,
+    // modern ffmpeg silently applies the source's displaymatrix BEFORE
+    // our transpose runs, double-rotating iPhone portrait clips into
+    // upside-down or sideways output. (After auto-normalize the source
+    // has rotation baked in + metadata stripped, so -noautorotate is a
+    // no-op there; for raw sources it's the difference between a
+    // correctly-oriented post and a sideways one.)
+    args.push('-noautorotate', '-i', polishInputPath)
     let nextIdx = 1
     let titleIdx = -1, logoIdx = -1, musicIdx = -1, voiceIdx = -1
     if (titlePngPath)  { args.push('-i', titlePngPath);  titleIdx = nextIdx++ }
