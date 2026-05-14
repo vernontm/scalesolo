@@ -449,7 +449,23 @@ ${String(script).slice(0, 2000)}
     const cleaned = String(raw).replace(/```json\s*|```\s*/gi, '').trim()
     const m = cleaned.match(/\{[\s\S]*\}/)
     parsed = JSON.parse(m ? m[0] : cleaned)
-  } catch { parsed = {} }
+  } catch {
+    // Truncated / malformed JSON. Pull fields out via tolerant regex
+    // instead of giving up and dumping the raw partial JSON into the
+    // caption (which is what users saw as captions starting with
+    // `{ "title": "..."` when Claude's response hit max_tokens).
+    parsed = {}
+    const cleaned = String(raw).replace(/```json\s*|```\s*/gi, '').trim()
+    const grab = (key) => {
+      const re = new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`, 'i')
+      const m2 = cleaned.match(re)
+      return m2 ? m2[1].replace(/\\"/g, '"').replace(/\\n/g, '\n') : ''
+    }
+    parsed.title         = grab('title')
+    parsed.caption       = grab('caption')
+    parsed.hashtags      = grab('hashtags')
+    parsed.first_comment = grab('first_comment')
+  }
 
   // Tolerate the legacy per-platform shape from older saved spaces.
   const legacyKeys = ['tiktok', 'instagram', 'youtube', 'x', 'linkedin', 'facebook', 'threads']
@@ -539,7 +555,23 @@ ${chunkSentences.map((c) => `--- segment ${c.idx} ---\n${c.text.slice(0, 800)}`)
     const cleaned = String(raw).replace(/```json\s*|```\s*/gi, '').trim()
     const m = cleaned.match(/\{[\s\S]*\}/)
     parsed = JSON.parse(m ? m[0] : cleaned)
-  } catch { parsed = {} }
+  } catch {
+    // Truncated / malformed JSON. Pull fields out via tolerant regex
+    // instead of giving up and dumping the raw partial JSON into the
+    // caption (which is what users saw as captions starting with
+    // `{ "title": "..."` when Claude's response hit max_tokens).
+    parsed = {}
+    const cleaned = String(raw).replace(/```json\s*|```\s*/gi, '').trim()
+    const grab = (key) => {
+      const re = new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`, 'i')
+      const m2 = cleaned.match(re)
+      return m2 ? m2[1].replace(/\\"/g, '"').replace(/\\n/g, '\n') : ''
+    }
+    parsed.title         = grab('title')
+    parsed.caption       = grab('caption')
+    parsed.hashtags      = grab('hashtags')
+    parsed.first_comment = grab('first_comment')
+  }
 
   const sets = Array.isArray(parsed.sets) ? parsed.sets : []
   if (!sets.length) {

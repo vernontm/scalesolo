@@ -672,7 +672,22 @@ ${String(script).slice(0, 2000)}
       const cleaned = String(raw).replace(/```json\s*|```\s*/gi, '').trim()
       const m = cleaned.match(/\{[\s\S]*\}/)
       parsed = JSON.parse(m ? m[0] : cleaned)
-    } catch { parsed = {} }
+    } catch {
+      // Truncated / malformed JSON — fall back to tolerant field-by-field
+      // regex extraction so a max_tokens hit doesn't end up shoveling
+      // raw JSON into the caption.
+      parsed = {}
+      const cleaned = String(raw).replace(/```json\s*|```\s*/gi, '').trim()
+      const grab = (key) => {
+        const re = new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`, 'i')
+        const m2 = cleaned.match(re)
+        return m2 ? m2[1].replace(/\\"/g, '"').replace(/\\n/g, '\n') : ''
+      }
+      parsed.title         = grab('title')
+      parsed.caption       = grab('caption')
+      parsed.hashtags      = grab('hashtags')
+      parsed.first_comment = grab('first_comment')
+    }
 
     let canonical = {
       title:         String(parsed.title || '').slice(0, 200),

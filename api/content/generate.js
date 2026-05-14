@@ -346,7 +346,12 @@ opener in the "Previously written for this brand" list.`
       return message({
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }],
-        max_tokens: 1500,
+        // 3000 (was 1500) — caption_gen + topic-rich script prompts
+        // routinely produced 1500+ char captions that hit the old cap
+        // mid-response, leaving downstream JSON truncated and the
+        // caption field stuffed with raw partial JSON like
+        // `{ "title": "Your Calendar Reveals What You Actually Want`.
+        max_tokens: 3000,
       }).then((resp) => {
         if (resp?.usage) {
           totalUsage.input  += resp.usage.input_tokens  || 0
