@@ -489,33 +489,79 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
       }
       const isVideo = r.media_type === 'video'
       const platforms = Array.isArray(r.platforms) && r.platforms.length ? r.platforms : ['tiktok']
-
-      const fd = new FormData()
-      fd.append('user', username)
-      for (const p of platforms) fd.append('platform[]', p)
       const desc = [r.caption, r.hashtags].filter(Boolean).join('\n\n').trim() || (r.full_script || '').slice(0, 500)
-      if (desc) fd.append('description', desc)
-      if (r.title && platforms.includes('tiktok')) fd.append('tiktok_title', String(r.title).slice(0, 90))
-      if (r.first_comment) fd.append('first_comment', String(r.first_comment).slice(0, 2200))
-      // NOTE: publish-selected is explicit "post now" — we intentionally
-      // ignore any future scheduled_datetime on the row. Sending
-      // scheduled_date here would just re-queue it at Upload-Post and the
-      // post wouldn't go out immediately.
+      const hasTikTok = platforms.includes('tiktok')
 
-      // Stream the media bytes through.
-      for (let i = 0; i < r.media_urls.length; i++) {
-        const url = r.media_urls[i]
-        const fr = await fetch(url)
-        if (!fr.ok) throw new Error(`media fetch ${url} → ${fr.status}`)
-        const blob = new Blob([await fr.arrayBuffer()])
-        if (isVideo) { fd.append('video', blob, 'video.mp4'); break }
-        fd.append('photos[]', blob, `photo-${i}.jpg`)
+      // ── VIDEO: URL pass-through ─────────────────────────────────────────
+      // Upload-Post's /api/upload endpoint accepts the video as a URL string
+      // — they fetch it themselves with proper Content-Type detection. This
+      // is far more reliable than re-uploading bytes as a generic Blob:
+      //   • container/codec gets detected correctly (.mov vs .mp4 vs .webm)
+      //   • bypasses Vercel function body/timeout limits on big files
+      //   • async_upload=true lets Upload-Post process in the background
+      //     instead of failing under sync timeouts on strict platforms
+      // Mirrors the working VTM uploadpost.js flow.
+      let upRes
+      if (isVideo) {
+        const form = new URLSearchParams()
+        form.append('user', username)
+        for (const p of platforms) form.append('platform[]', p)
+        if (desc) form.append('description', desc)
+        // TikTok ignores `description` — it uses tiktok_title (up to 2200
+        // chars) as the actual caption. Send the full caption there, not
+        // just the title.
+        if (hasTikTok && desc) form.append('tiktok_title', desc.slice(0, 2200))
+        if (r.first_comment) form.append('first_comment', String(r.first_comment).slice(0, 2200))
+        form.append('async_upload', 'true')
+        // Sensible per-platform defaults. Brand-profile-level overrides can
+        // be plumbed in later (instagram_media_type, youtube_privacy,
+        // facebook_page_id, etc.) — for now these match VTM's defaults.
+        if (platforms.includes('instagram')) form.append('instagram_media_type', 'REELS')
+        if (platforms.includes('youtube'))   form.append('youtube_privacy', 'PUBLIC')
+        if (hasTikTok)                       form.append('privacy_level', 'PUBLIC_TO_EVERYONE')
+        form.append('video', r.media_urls[0])
+
+        upRes = await fetch('https://api.upload-post.com/api/upload', {
+          method: 'POST',
+          headers: { Authorization: `Apikey ${apiKey}` },
+          body: form,
+        })
+      } else {
+        // ── PHOTOS: still need real bytes ───────────────────────────────
+        // Upload-Post's /api/upload_photos does NOT accept URL strings —
+        // photos must be fetched and re-uploaded as multipart file parts.
+        const fd = new FormData()
+        fd.append('user', username)
+        for (const p of platforms) fd.append('platform[]', p)
+        if (desc) fd.append('description', desc)
+        if (hasTikTok && desc) {
+          // TikTok photo posts use tiktok_title (≤90 chars). Trim to a
+          // word boundary if the caption is longer.
+          const src = desc.replace(/\s+/g, ' ').trim()
+          fd.append('tiktok_title', src.length <= 90 ? src : src.slice(0, 90).replace(/\s+\S*$/, ''))
+        }
+        if (r.first_comment) fd.append('first_comment', String(r.first_comment).slice(0, 2200))
+        fd.append('async_upload', 'true')
+
+        for (let i = 0; i < r.media_urls.length; i++) {
+          const url = r.media_urls[i]
+          const fr = await fetch(url)
+          if (!fr.ok) throw new Error(`media fetch ${url} → ${fr.status}`)
+          const ab = await fr.arrayBuffer()
+          const extMatch = (url.match(/\.([a-z0-9]+)(?:\?|#|$)/i)?.[1] || 'jpg').toLowerCase()
+          const mime = extMatch === 'png'  ? 'image/png'
+                     : extMatch === 'webp' ? 'image/webp'
+                     : extMatch === 'gif'  ? 'image/gif'
+                     : 'image/jpeg'
+          fd.append('photos[]', new Blob([ab], { type: mime }), `image_${i + 1}.${extMatch}`)
+        }
+
+        upRes = await fetch('https://api.upload-post.com/api/upload_photos', {
+          method: 'POST',
+          headers: { Authorization: `Apikey ${apiKey}` },
+          body: fd,
+        })
       }
-
-      const endpoint = `https://api.upload-post.com/api/${isVideo ? 'upload' : 'upload_photos'}`
-      const upRes = await fetch(endpoint, {
-        method: 'POST', headers: { Authorization: `Apikey ${apiKey}` }, body: fd,
-      })
       const body = await upRes.json().catch(() => ({}))
       if (!upRes.ok) {
         // Persist the full Upload-Post error body to the row so the UI can

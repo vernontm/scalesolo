@@ -257,8 +257,14 @@ export default async function handler(req, res) {
       if (ppt.facebook)  fd.set('facebook_title',  String(ppt.facebook).slice(0, 5000))
       if (ppt.linkedin)  fd.set('linkedin_title',  String(ppt.linkedin).slice(0, 3000))
     } else if (isVideo) {
-      const blob = await fetchToBlob(video_url)
-      fd.append('video', blob, `video.${ext(video_url, 'mp4')}`)
+      // URL pass-through — Upload-Post fetches the video itself with
+      // proper Content-Type detection. Far more reliable than re-uploading
+      // bytes as a Blob (which hides codec, lies about extension, and pins
+      // us under Vercel's body/timeout limits). async_upload=true tells
+      // Upload-Post to process in the background instead of blocking us
+      // while strict platforms (LinkedIn, YouTube) chew through the file.
+      fd.append('video', video_url)
+      fd.append('async_upload', 'true')
     } else {
       for (let i = 0; i < photos.length; i++) {
         const blob = await fetchToBlob(photos[i])
