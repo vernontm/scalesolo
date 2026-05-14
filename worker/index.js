@@ -220,6 +220,136 @@ async function probeRotation(filePath) {
   })
 }
 
+// ── Video probe ────────────────────────────────────────────────────────
+// Returns { codec, width, height, fps, is_hdr, rotation, audio_codec, has_audio }
+// by parsing ffmpeg -i's stderr (cheap, ~100ms regardless of clip length —
+// ffmpeg parses container metadata then exits because we asked for 0 frames).
+// We don't ship ffprobe (the @ffmpeg-installer package only includes the
+// ffmpeg binary), so this stderr-parse approach is the path of least
+// dependency.
+async function probeVideo(filePath) {
+  return new Promise((resolve) => {
+    const proc = spawn(ffmpegPath, [
+      '-i', filePath, '-hide_banner', '-frames:v', '0', '-f', 'null', '-',
+    ], { stdio: ['ignore', 'ignore', 'pipe'] })
+    let err = ''
+    proc.stderr.on('data', (d) => { err += d.toString('utf8') })
+    proc.on('close', () => {
+      // Video stream line: "Stream #0:0(und): Video: hevc (Main 10) (hvc1 / 0x31637668), yuv420p10le(tv, bt2020nc/bt2020/smpte2084), 3840x2160 [SAR 1:1 DAR 16:9], 64210 kb/s, 60 fps, 60 tbr, ..."
+      const vLine = (err.match(/^\s*Stream #\d+:\d+.*?: Video:.*$/m) || [''])[0]
+      const codecMatch = vLine.match(/Video:\s+([a-z0-9_]+)/i)
+      const sizeMatch  = vLine.match(/,\s*(\d{2,5})x(\d{2,5})/)
+      const fpsMatch   = vLine.match(/,\s*([\d.]+)\s*fps/)
+      const pixFmt     = (vLine.match(/Video:\s+\S+\s*(?:\([^)]+\)\s*)*(?:\(\w+\s*\/\s*0x[0-9a-f]+\),)?\s*([a-z0-9_]+)/i) || [])[1] || ''
+      // HDR markers: bt2020 colorspace, smpte2084 (HDR10 PQ), arib-std-b67 (HLG), 10-bit pixel formats with HDR primaries.
+      const isHdr = /bt2020|smpte2084|smpte-2084|arib-std-b67|hlg/i.test(vLine) || /yuv4\d\dp1[02]le/i.test(pixFmt)
+
+      // Rotation (same patterns as probeRotation)
+      let rotation = 0
+      const r1 = err.match(/rotation of (-?\d+(?:\.\d+)?) degrees?/i)
+      const r2 = err.match(/^\s*rotate\s*:\s*(-?\d+)/im)
+      if (r1) rotation = parseFloat(r1[1])
+      else if (r2) rotation = parseInt(r2[1], 10)
+      rotation = ((rotation % 360) + 360) % 360
+
+      // Audio stream line: "Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 256 kb/s"
+      const aLine = (err.match(/^\s*Stream #\d+:\d+.*?: Audio:.*$/m) || [''])[0]
+      const audioCodec = (aLine.match(/Audio:\s+([a-z0-9_]+)/i) || [])[1] || null
+
+      resolve({
+        codec: codecMatch ? codecMatch[1].toLowerCase() : null,
+        width:  sizeMatch ? parseInt(sizeMatch[1], 10) : null,
+        height: sizeMatch ? parseInt(sizeMatch[2], 10) : null,
+        fps:    fpsMatch ? parseFloat(fpsMatch[1]) : null,
+        is_hdr: !!isHdr,
+        rotation,
+        audio_codec: audioCodec,
+        has_audio: !!aLine,
+        pix_fmt: pixFmt || null,
+      })
+    })
+    proc.on('error', () => resolve({ codec: null, width: null, height: null, fps: null, is_hdr: false, rotation: 0, audio_codec: null, has_audio: false, pix_fmt: null }))
+  })
+}
+
+// Decide whether the source needs a normalize pass before polish (or any
+// other downstream step). Returns a reason string when normalization is
+// recommended, or null when the source is already canonical-enough.
+//
+// Triggers we care about:
+//   • non-H.264 codec (HEVC, ProRes, VP9, AV1) — wider compat after normalize
+//   • > 1080p resolution — wasted bytes for social, hurts encode speed
+//   • > 30fps — overkill for social, doubles bitrate
+//   • HDR — washed-out output without explicit tone-map
+//   • > 80MB file — likely benefits from a CRF re-encode
+//   • rotation metadata — bake it in to avoid downstream double-rotation
+function needsNormalize(probe, sizeBytes) {
+  if (!probe || !probe.codec) return 'unknown-codec'
+  if (probe.codec !== 'h264')                  return `codec:${probe.codec}`
+  if ((probe.width || 0) > 1920)               return `width:${probe.width}`
+  if ((probe.height || 0) > 1920)              return `height:${probe.height}`  // catches vertical 4K
+  if ((probe.fps || 0) > 31)                   return `fps:${probe.fps}`
+  if (probe.is_hdr)                            return 'hdr'
+  if (sizeBytes && sizeBytes > 80 * 1024 * 1024) return `size:${(sizeBytes / 1024 / 1024).toFixed(0)}MB`
+  if (probe.rotation)                          return `rotation:${probe.rotation}`
+  return null
+}
+
+// Build the ffmpeg filter chain that produces a canonical 1080p / 30fps /
+// 8-bit yuv420p / H.264 output regardless of source weirdness. Applied
+// inside normalizeFile (below) and reusable for one-off Compress UI button.
+function buildNormalizeFilter(probe) {
+  const filters = []
+  // Honor source rotation by transposing pixels, then drop the metadata
+  // tag so downstream readers don't apply it a second time.
+  if (probe.rotation === 90)  filters.push('transpose=1')
+  if (probe.rotation === 270) filters.push('transpose=2')
+  if (probe.rotation === 180) filters.push('transpose=1,transpose=1')
+
+  // HDR (BT.2020 / PQ / HLG) → SDR (BT.709). Without this, HDR videos
+  // come out washed-out gray on platforms that don't do tone-mapping.
+  if (probe.is_hdr) {
+    filters.push('zscale=t=linear:npl=100')
+    filters.push('format=gbrpf32le')
+    filters.push('zscale=p=bt709')
+    filters.push('tonemap=tonemap=hable:desat=0')
+    filters.push('zscale=t=bt709:m=bt709:r=tv')
+  }
+
+  // Cap longest edge at 1920 (handles both landscape 1920x1080 and
+  // vertical 1080x1920 sources) without upscaling smaller sources.
+  filters.push("scale='if(gt(iw,ih),min(1920,iw),-2)':'if(gt(iw,ih),-2,min(1920,ih))':flags=lanczos")
+
+  // 30fps cap — drops slo-mo / 60fps overkill for social.
+  filters.push('fps=30')
+
+  // Always end with yuv420p for maximum decoder compatibility.
+  filters.push('format=yuv420p')
+  return filters.join(',')
+}
+
+// Normalize a video file in place: read from inPath, write a canonical
+// MP4 to outPath. Used by both polishCore (auto-normalize on bad input)
+// and normalizeVideoCore (explicit "Compress" button).
+async function normalizeFile(inPath, outPath, probe, hasAudio) {
+  const vf = buildNormalizeFilter(probe)
+  const args = ['-y', '-threads', '2', '-i', inPath, '-vf', vf]
+  // H.264 high profile, CRF 23 (visually transparent for social), faststart
+  // for streaming. -preset fast hits the sweet spot between CPU and bitrate.
+  args.push('-c:v', 'libx264', '-preset', 'fast', '-crf', '23')
+  args.push('-profile:v', 'high', '-level', '4.1', '-pix_fmt', 'yuv420p')
+  if (hasAudio) {
+    args.push('-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2')
+  } else {
+    args.push('-an')
+  }
+  args.push('-movflags', '+faststart')
+  // Strip rotation metadata — we already baked it into the pixel data.
+  args.push('-metadata:s:v:0', 'rotate=0')
+  args.push(outPath)
+  await runFFmpeg(args, 15 * 60_000)
+}
+
 // 20 min cap. Was 10 min, but long voiceover-driven polishes (script
 // → voice_gen → -stream_loop video) routinely run 8-12 min on
 // shared-cpu-2x when the voiceover is multi-minute, so 10 min was
@@ -601,7 +731,31 @@ async function polishCore(body) {
     workdir = await mkdtemp(join(tmpdir(), 'polish-'))
     const inPath  = join(workdir, 'in.mp4')
     const outPath = join(workdir, 'out.mp4')
-    await writeFile(inPath, await fetchToBuffer(video_url))
+    const sourceBuf = await fetchToBuffer(video_url)
+    await writeFile(inPath, sourceBuf)
+
+    // ── Auto-normalize the source if it's "weird" ──────────────────────
+    // Probes the file (codec / size / fps / HDR / rotation) and runs a
+    // canonicalization pass to 1080p / 30fps / 8-bit H.264 / AAC MP4
+    // when needed. Lets users upload anything (4K HEVC HDR iPhone .mov,
+    // ProRes from a DSLR, 60fps slo-mo, sideways portrait) and have
+    // polish "just work" on a known-good intermediate. Already-canonical
+    // sources skip this step entirely.
+    let polishInputPath = inPath
+    const probe = await probeVideo(inPath)
+    const normReason = needsNormalize(probe, sourceBuf.byteLength)
+    if (normReason) {
+      console.log(`[polish] normalizing source (${normReason})`)
+      const normPath = join(workdir, 'normalized.mp4')
+      try {
+        await normalizeFile(inPath, normPath, probe, probe.has_audio)
+        polishInputPath = normPath
+      } catch (e) {
+        // Normalize is best-effort — if it fails we fall back to the raw
+        // source and let polish try anyway. Logs surface the reason.
+        console.warn(`[polish] normalize failed, using raw source: ${e?.message}`)
+      }
+    }
 
     let titlePngPath = null
     if (title) {
@@ -665,7 +819,7 @@ async function polishCore(body) {
     const shouldLoopVideo = !!(loop_video && voiceoverPath)
     const args = ['-y', '-threads', '2']
     if (shouldLoopVideo) args.push('-stream_loop', '-1')
-    args.push('-i', inPath)
+    args.push('-i', polishInputPath)
     let nextIdx = 1
     let titleIdx = -1, logoIdx = -1, musicIdx = -1, voiceIdx = -1
     if (titlePngPath)  { args.push('-i', titlePngPath);  titleIdx = nextIdx++ }
@@ -685,7 +839,10 @@ async function polishCore(body) {
     //   270 = recorded landscape, displayed CCW → transpose=2 (CCW)
     //   180 = upside down                       → transpose=1,transpose=1
     //   0   = native, no transform
-    const rotation = await probeRotation(inPath).catch(() => 0)
+    // After auto-normalize, rotation is already baked into the pixels and
+    // metadata is stripped — re-probing would return 0 anyway. Probe the
+    // file we're actually feeding to ffmpeg below.
+    const rotation = await probeRotation(polishInputPath).catch(() => 0)
     if (rotation === 90 || rotation === 270 || rotation === 180) {
       const step = rotation === 90 ? 'transpose=1'
         : rotation === 270 ? 'transpose=2'
@@ -750,7 +907,7 @@ async function polishCore(body) {
       const vol = Math.max(0, Math.min(1, Number(music_volume)))
       const fadeSecs = Math.max(0, Math.min(10, Number(music_fade_secs ?? 1.0)))
       let videoDur = 0
-      try { videoDur = await probeDurationSecs(inPath) } catch { videoDur = 0 }
+      try { videoDur = await probeDurationSecs(polishInputPath) } catch { videoDur = 0 }
       const audioChain = [`volume=${vol}`]
       if (videoDur > 0) {
         audioChain.push(`aloop=loop=-1:size=2e+09`)
@@ -1036,6 +1193,74 @@ app.post('/jobs/extract-audio', requireSecret, async (req, res) => {
     res.json(result)
   } catch (err) {
     console.error('extract-audio job error:', err?.stack || err)
+    res.status(500).json({ error: String(err?.message || err) })
+  }
+})
+
+// ── Normalize / compress a video to canonical MP4 ──────────────────────
+// Body: { profile_id, video_url, force?: bool }
+// Returns: { video_url, bytes, normalized: bool, reason: string|null,
+//            probe: { codec, width, height, fps, is_hdr, rotation, ... } }
+//
+// Reads the probe; if the source isn't already canonical (or force=true),
+// runs a CRF 23 H.264 / AAC pass capped at 1080p / 30fps with HDR
+// tone-mapping + rotation baked in, then writes to
+// landing-media/<profile_id>/normalized/. When the source is already
+// canonical we just echo the original URL back (no wasted encode).
+//
+// Used by:
+//   • polishCore (auto-normalizes weird sources before applying overlays)
+//   • the Vercel /api/videos/normalize endpoint that the "Compress" UI
+//     button on Bulk Upload rows posts to
+async function normalizeVideoCore(body) {
+  const { profile_id, video_url, force = false } = body || {}
+  if (!profile_id || !video_url) throw new Error('profile_id + video_url required')
+  if (!SUPABASE_URL || !SERVICE_KEY) throw new Error('Storage not configured on worker')
+
+  let workdir = null
+  try {
+    workdir = await mkdtemp(join(tmpdir(), 'norm-'))
+    const inPath  = join(workdir, 'in.mp4')
+    const outPath = join(workdir, 'out.mp4')
+    const srcBuf = await fetchToBuffer(video_url)
+    await writeFile(inPath, srcBuf)
+
+    const probe = await probeVideo(inPath)
+    const reason = force ? 'force' : needsNormalize(probe, srcBuf.byteLength)
+    if (!reason) {
+      // Already canonical — short-circuit, return original URL.
+      return {
+        video_url, bytes: srcBuf.byteLength,
+        normalized: false, reason: null, probe,
+      }
+    }
+
+    await normalizeFile(inPath, outPath, probe, probe.has_audio)
+    const buf = await readFile(outPath)
+
+    const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
+    const path = `${profile_id}/normalized/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`
+    const { error: upErr } = await supabase.storage.from('landing-media').upload(path, buf, {
+      contentType: 'video/mp4', upsert: false,
+    })
+    if (upErr) throw new Error(`Upload failed: ${upErr.message}`)
+    const { data: pub } = supabase.storage.from('landing-media').getPublicUrl(path)
+    return {
+      video_url: pub.publicUrl, bytes: buf.byteLength,
+      normalized: true, reason, probe,
+      source_bytes: srcBuf.byteLength,
+    }
+  } finally {
+    if (workdir) { try { await rm(workdir, { recursive: true, force: true }) } catch {} }
+  }
+}
+
+app.post('/jobs/normalize-video', requireSecret, async (req, res) => {
+  try {
+    const result = await normalizeVideoCore(req.body || {})
+    res.json(result)
+  } catch (err) {
+    console.error('normalize-video job error:', err?.stack || err)
     res.status(500).json({ error: String(err?.message || err) })
   }
 })

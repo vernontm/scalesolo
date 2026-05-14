@@ -22,7 +22,7 @@ import { createPortal } from 'react-dom'
 import {
   Upload, Loader2, Sparkles, CalendarClock, Send, Download, Trash2,
   Check, X, AlertCircle, Image as ImageIcon, Video as VideoIcon, ChevronDown, Zap,
-  RefreshCw, Type,
+  RefreshCw, Type, Wand2,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase.js'
 import { toast, confirmDialog } from './Toast.jsx'
@@ -384,6 +384,9 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   // Tracks "we're running the auto-pipeline right now" so the toolbar
   // shows the right status banner instead of a silent spinner.
   const [autoStage, setAutoStage] = useState(null) // null | 'captions' | 'schedule'
+  // Tracks the id of the row currently being normalized via the Compress
+  // button. Disables the button + shows a spinner; null when idle.
+  const [compressingId, setCompressingId] = useState(null)
   // Default platforms for newly-uploaded rows — sourced from the
   // profile's uploadpost_platforms (set during onboarding / Profiles
   // editor). Empty until the fetch lands; filtered per row by media
@@ -734,6 +737,51 @@ export default function BulkUploadView({ profileId, token, onChange }) {
       refresh()
     }
   }
+  // Compress / normalize the source video for a row. Hits the worker
+  // (via /api/videos/normalize) which probes the file; if it's already
+  // canonical, returns the same URL (no-op, instant). Otherwise produces
+  // a 1080p / 30fps / H.264 / AAC MP4 with HDR tone-mapped and rotation
+  // baked in, and we PATCH the row's media_urls to point to that file.
+  // Solves the "iPhone 4K HEVC HDR rotated .mov breaks every downstream
+  // step" failure mode in one click.
+  const compressRow = async (row) => {
+    if (!row?.media_urls?.[0]) return
+    setCompressingId(row.id)
+    try {
+      const r = await fetch('/api/videos/normalize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ profile_id: profileId, video_url: row.media_urls[0] }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(body?.error || `Compress failed (${r.status})`)
+
+      if (!body.normalized) {
+        toast({ kind: 'info', message: 'Video is already optimized — no changes needed.' })
+        return
+      }
+
+      // Swap the row's media URL to the canonical MP4. patchScript handles
+      // optimistic local state + the API PATCH (which also resyncs
+      // Upload-Post if the row is already scheduled there).
+      await patchScript(row.id, { media_urls: [body.video_url] })
+      const savedMB = body.source_bytes
+        ? ((body.source_bytes - body.bytes) / 1024 / 1024).toFixed(1)
+        : null
+      const reason = body.reason ? ` (${body.reason})` : ''
+      toast({
+        kind: 'success',
+        message: savedMB && Number(savedMB) > 0
+          ? `Compressed${reason}: saved ${savedMB}MB`
+          : `Compressed${reason}`,
+      })
+    } catch (e) {
+      toast({ kind: 'error', message: `Compress failed: ${e.message}` })
+    } finally {
+      setCompressingId(null)
+    }
+  }
+
   const deleteScript = async (id) => {
     const ok = await confirmDialog({ title: 'Delete this row?', confirmText: 'Delete', destructive: true })
     if (!ok) return
@@ -1332,16 +1380,38 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                       <StatusPill status={r.status} error={r.last_error} />
                     </td>
                     <td style={{ padding: 8, verticalAlign: 'top' }}>
-                      <button
-                        aria-label="Delete row"
-                        onClick={() => deleteScript(r.id)}
-                        style={{
-                          background: 'transparent', border: 'none',
-                          color: 'var(--muted)', cursor: 'pointer',
-                          padding: 6, borderRadius: 6,
-                        }}
-                        title="Delete"
-                      ><Trash2 size={14} /></button>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        {/* Compress / normalize the source video — runs the
+                            ffmpeg worker pass that fixes HEVC, HDR, 4K,
+                            sideways, and 60fps quirks in one go. Only shown
+                            on video rows that aren't currently compressing. */}
+                        {r.media_type === 'video' && Array.isArray(r.media_urls) && r.media_urls[0] && (
+                          <button
+                            aria-label="Compress / optimize source video"
+                            disabled={compressingId === r.id}
+                            onClick={() => compressRow(r)}
+                            style={{
+                              background: 'transparent', border: 'none',
+                              color: 'var(--muted)', cursor: 'pointer',
+                              padding: 6, borderRadius: 6,
+                              opacity: compressingId === r.id ? 0.5 : 1,
+                            }}
+                            title={compressingId === r.id ? 'Compressing…' : 'Compress / optimize video (fixes HEVC, HDR, 4K, rotation)'}
+                          >
+                            {compressingId === r.id ? <Loader2 size={14} className="spin" /> : <Wand2 size={14} />}
+                          </button>
+                        )}
+                        <button
+                          aria-label="Delete row"
+                          onClick={() => deleteScript(r.id)}
+                          style={{
+                            background: 'transparent', border: 'none',
+                            color: 'var(--muted)', cursor: 'pointer',
+                            padding: 6, borderRadius: 6,
+                          }}
+                          title="Delete"
+                        ><Trash2 size={14} /></button>
+                      </div>
                     </td>
                   </tr>
                 )
