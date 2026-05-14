@@ -690,6 +690,20 @@ ${String(script).slice(0, 2000)}
     if (!canonical.hashtags && raw) {
       canonical.hashtags = (String(raw).match(/#[\w]+/g) || []).slice(0, 5).join(' ')
     }
+
+    // Forward upstream videos so downstream nodes (video_polish,
+    // schedule_post) can still find the media via pickAllVideoUrls.
+    // Without this, wiring Upload media → caption_gen → Finish video
+    // bombs the polish node with "needs an upstream video" because
+    // caption_gen would otherwise strip everything but the caption text
+    // fields. Mirrors the browser-side attachVideos pass.
+    const upstreamVideoUrls = pickAllVideoUrls(inputs)
+    if (upstreamVideoUrls.length) {
+      canonical.videos = upstreamVideoUrls.map((url, i) => ({ video_url: url, idx: i }))
+      // Single-clip convenience: also expose the first URL flat so
+      // older consumers that read `video_url` directly still pick it up.
+      canonical.video_url = upstreamVideoUrls[0]
+    }
     return canonical
   },
 
