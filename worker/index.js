@@ -325,11 +325,16 @@ function needsNormalize(probe, sizeBytes) {
 // inside normalizeFile (below) and reusable for one-off Compress UI button.
 function buildNormalizeFilter(probe) {
   const filters = []
-  // Honor source rotation by transposing pixels, then drop the metadata
-  // tag so downstream readers don't apply it a second time.
-  if (probe.rotation === 90)  filters.push('transpose=1')
-  if (probe.rotation === 270) filters.push('transpose=2')
-  if (probe.rotation === 180) filters.push('transpose=1,transpose=1')
+  // Honor source rotation by transposing pixels (we apply the INVERSE of
+  // the displaymatrix transform — this matches ffmpeg's own autorotate
+  // logic). Then drop the metadata tag so downstream readers don't apply
+  // it a second time.
+  //   rotation 90  → transpose=2 (CCW) — sensor recorded with +90 tag
+  //   rotation 270 → transpose=1 (CW)  — typical iPhone vertical (-90 tag)
+  //   rotation 180 → vflip,hflip
+  if (probe.rotation === 90)  filters.push('transpose=2')
+  if (probe.rotation === 270) filters.push('transpose=1')
+  if (probe.rotation === 180) filters.push('vflip,hflip')
 
   // HDR (BT.2020 / PQ / HLG) → SDR (BT.709). Without this, HDR videos
   // come out washed-out gray on platforms that don't do tone-mapping.
@@ -873,14 +878,13 @@ async function polishCore(body) {
     let vLabel = '[0:v]'
 
     // Bake rotation metadata into the pixels BEFORE any overlay
-    // filtering. We probe the input once and prepend a transpose
-    // step when needed. After this, vLabel points to a stream that
-    // already has the correct pixel dimensions (portrait if the
-    // source was a rotated landscape phone capture).
-    //   90  = recorded landscape, displayed CW  → transpose=1 (CW)
-    //   270 = recorded landscape, displayed CCW → transpose=2 (CCW)
-    //   180 = upside down                       → transpose=1,transpose=1
-    //   0   = native, no transform
+    // filtering. We apply the INVERSE of the displaymatrix transform —
+    // same convention ffmpeg's autorotate uses internally.
+    //   90  → transpose=2 (CCW) — undoes +90 displaymatrix
+    //   270 → transpose=1 (CW)  — undoes -90 displaymatrix (typical iPhone vertical)
+    //   180 → vflip,hflip
+    //   0   → no transform
+    //
     // If auto-normalize already ran, rotation was baked into the pixels.
     // But some muxers can leave the displaymatrix side data on the output
     // anyway, so a re-probe might claim rotation != 0 and we'd transpose
@@ -890,9 +894,9 @@ async function polishCore(body) {
       ? 0
       : await probeRotation(polishInputPath).catch(() => 0)
     if (rotation === 90 || rotation === 270 || rotation === 180) {
-      const step = rotation === 90 ? 'transpose=1'
-        : rotation === 270 ? 'transpose=2'
-        : 'transpose=1,transpose=1'
+      const step = rotation === 90 ? 'transpose=2'
+        : rotation === 270 ? 'transpose=1'
+        : 'vflip,hflip'
       filters.push(`${vLabel}${step}[vrot]`)
       vLabel = '[vrot]'
     }
