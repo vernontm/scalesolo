@@ -11,6 +11,12 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+// useNodes / useEdges from @xyflow/react are reactive subscriptions to
+// the parent ReactFlow's node + edge state. We alias them so any node
+// Body can walk the graph to inspect siblings' outputs (used by
+// ImageUploadBody to render per-clip processing badges during a fan-out
+// run).
+import { useNodes as useReactFlowNodes, useEdges as useReactFlowEdges } from '@xyflow/react'
 import {
   Type, Wand2, Captions, UserCircle2, Save, Image as ImageIcon,
   ListChecks, FileVideo, Upload, Loader2, Maximize2, ArrowUpRight,
@@ -2514,6 +2520,70 @@ function ImageUploadBody({ data, onPatch }) {
   const items = readImageItems(data.props).map((it) => ({ kind: it.kind || 'image', ...it }))
   const profileId = data?._ctxProfileId
 
+  // ── Per-video processing status from downstream nodes ──────────────
+  // Walks the canvas graph downstream from this Upload media node and
+  // reads each downstream node's data.output to figure out which clip
+  // idxes have been captioned, polished, and scheduled. Renders a small
+  // badge on each thumbnail so the user can watch progress fill in
+  // during a multi-video fan-out run.
+  const allNodes = useReactFlowNodes()
+  const allEdges = useReactFlowEdges()
+  const myId = data?.__id
+  const stageByIdx = useMemo(() => {
+    const result = new Map()  // idx -> { captioned, polished, scheduled, failed }
+    if (!myId || !items.length) return result
+    // BFS downstream from myId
+    const downstream = new Set()
+    const queue = [myId]
+    while (queue.length) {
+      const cur = queue.shift()
+      for (const e of allEdges) {
+        if (e.source === cur && !downstream.has(e.target)) {
+          downstream.add(e.target)
+          queue.push(e.target)
+        }
+      }
+    }
+    // For each video item, default to all-false.
+    items.forEach((_, i) => {
+      result.set(i, { captioned: false, polished: false, scheduled: false, failed: false })
+    })
+    // Scan each downstream node's output.
+    for (const id of downstream) {
+      const n = allNodes.find((x) => x.id === id)
+      const out = n?.data?.output
+      if (!out) continue
+      const type = n.data?.type
+      if (type === 'caption_gen' && Array.isArray(out.captions)) {
+        for (const c of out.captions) {
+          const s = result.get(c.idx)
+          if (s && (c.title || c.caption)) s.captioned = true
+        }
+      }
+      if (type === 'video_polish' && Array.isArray(out.videos)) {
+        for (const v of out.videos) {
+          const s = result.get(v.idx)
+          if (s && v.video_url) s.polished = true
+        }
+        if (Array.isArray(out.polish_failures)) {
+          for (const f of out.polish_failures) {
+            const s = result.get(f.idx)
+            if (s) s.failed = true
+          }
+        }
+      }
+      if (type === 'schedule_post' && Array.isArray(out.clips)) {
+        for (const c of out.clips) {
+          const s = result.get(c.idx)
+          if (!s) continue
+          if (c.ok) s.scheduled = true
+          else s.failed = true
+        }
+      }
+    }
+    return result
+  }, [allNodes, allEdges, myId, items.length])
+
   async function onPick(e) {
     const files = Array.from(e.target.files || [])
     if (!files.length || !profileId) return
@@ -2640,13 +2710,42 @@ function ImageUploadBody({ data, onPatch }) {
     <>
       {items.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 8 }}>
-          {items.map((it, idx) => (
+          {items.map((it, idx) => {
+            // Resolve this thumbnail's processing stage. videoIdx mirrors
+            // the idx the worker assigns to its videos[] output — for
+            // mixed (image + video) bags, downstream pipelines only fan
+            // out videos so images stay at stage=null and get no badge.
+            const stage = it.kind === 'video' ? stageByIdx.get(idx) : null
+            const badge = !stage ? null
+              : stage.failed    ? { label: '!', color: '#ef4444', bg: 'rgba(239,68,68,0.95)',  title: 'Failed somewhere downstream' }
+              : stage.scheduled ? { label: '✓', color: '#fff',     bg: 'rgba(46,204,113,0.95)', title: 'Scheduled to publish' }
+              : stage.polished  ? { label: '●', color: '#fff',     bg: 'rgba(14,165,233,0.95)', title: 'Polished, awaiting schedule' }
+              : stage.captioned ? { label: '●', color: '#fff',     bg: 'rgba(245,158,11,0.95)', title: 'Captioned, awaiting polish' }
+              : null
+            return (
             <div key={`${it.url}-${idx}`} style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 2 }}>
               <div style={{ position: 'relative', aspectRatio: '1', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)', background: '#000' }}>
                 {it.kind === 'video' ? (
                   <video src={it.url} muted playsInline preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 ) : (
                   <img src={it.url} alt={it.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                )}
+                {/* Per-clip status badge — green ✓ means fully scheduled,
+                    blue ● polished but not yet scheduled, amber ●
+                    captioned but not yet polished, red ! failed. */}
+                {badge && (
+                  <div
+                    title={badge.title}
+                    style={{
+                      position: 'absolute', top: 2, left: 2,
+                      width: 18, height: 18, borderRadius: 999,
+                      background: badge.bg, color: badge.color,
+                      display: 'grid', placeItems: 'center',
+                      fontSize: 11, fontWeight: 800,
+                      boxShadow: '0 1px 4px rgba(0,0,0,0.5)',
+                      pointerEvents: 'auto',
+                    }}
+                  >{badge.label}</div>
                 )}
                 <button
                   onClick={(e) => { e.stopPropagation(); remove(idx) }}
@@ -2686,7 +2785,8 @@ function ImageUploadBody({ data, onPatch }) {
                 >@{it.name.replace(/\s+/g, '')}</div>
               )}
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
       {/* Per-file upload progress panel. Visible during an active
