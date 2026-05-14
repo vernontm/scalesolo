@@ -7867,7 +7867,7 @@ export const NODE_REGISTRY = {
     },
     Body: VideoPolishBody,
     Editor: VideoPolishEditor,
-    run: async ({ data, inputs, ctx, reportProgress }) => {
+    run: async ({ id, data, inputs, ctx, reportProgress }) => {
       const arr = asArr(inputs?.in)
       let logoUrl = null, musicUrl = null, voiceoverUrl = null
       const p = data.props || {}
@@ -7959,7 +7959,20 @@ export const NODE_REGISTRY = {
       // shape so downstream nodes (schedule_post, captions, etc.) keep
       // working without changes. Multi-video case fans out and emits
       // a videos[] array.
-      const urls = pickAllVideoUrls(arr)
+      let urls = pickAllVideoUrls(arr)
+      // Graph-walk fallback. If our immediate upstream doesn't expose a
+      // video (e.g. caption_gen run from a stale cache that pre-dates
+      // attachVideos, or an intermediate node that lost the video on its
+      // output), search every ancestor in the workflow. As long as SOME
+      // upstream node produced a video URL, we can polish it. This
+      // sidesteps having to manually re-run every node to bust caches.
+      if (urls.length === 0 && typeof ctx?.findUpstreamVideoUrls === 'function') {
+        const fallback = ctx.findUpstreamVideoUrls(id)
+        if (fallback.length) {
+          console.info(`[polish] recovered ${fallback.length} video URL(s) via upstream-chain fallback`)
+          urls = fallback
+        }
+      }
       if (urls.length === 0) {
         const shapes = arr.map((v) => {
           if (!v || typeof v !== 'object') return typeof v
@@ -8894,8 +8907,48 @@ export async function runSpace({ ctx, nodes, edges, onNodeChange }) {
         }, 500)
       })
       const reportProgress = (progress) => onNodeChange?.(id, { progress })
+
+      // Walk the graph backwards from `startId` and collect every video
+      // URL we can find on any upstream node's output (live `outputsById`
+      // first, falling back to cached `node.data.output`). Exposed on ctx
+      // so video-consuming nodes (video_polish, captions, schedule_post)
+      // can recover from stale immediate-upstream outputs — e.g. a
+      // caption_gen that was cached BEFORE we started forwarding videos
+      // through its output. Without this, the user has to manually re-run
+      // every node in the chain to bust the cache. With it, polish just
+      // finds the video wherever it actually lives in the workflow.
+      const findUpstreamVideoUrls = (startId) => {
+        const seen = new Set()
+        const urls = []
+        const push = (u) => { if (u && !urls.includes(u)) urls.push(u) }
+        const scan = (out) => {
+          if (!out || typeof out !== 'object') return
+          if (out.video_url) push(out.video_url)
+          if (out.video?.video_url) push(out.video.video_url)
+          if (Array.isArray(out.videos)) for (const v of out.videos) push(v?.video_url || v?.url)
+          if (Array.isArray(out.images)) for (const im of out.images) {
+            if (im?.url && /\.(mp4|mov|webm|m4v)(\?|#|$)/i.test(im.url)) push(im.url)
+          }
+          if (Array.isArray(out.items)) for (const it of out.items) {
+            if (it?.kind === 'video' && it.url) push(it.url)
+          }
+        }
+        const stack = [startId]
+        while (stack.length) {
+          const cur = stack.pop()
+          if (seen.has(cur)) continue
+          seen.add(cur)
+          for (const e of (incoming.get(cur) || [])) {
+            scan(outputsById.get(e.source) || nodes.find((n) => n.id === e.source)?.data?.output)
+            stack.push(e.source)
+          }
+        }
+        return urls
+      }
+      const nodeCtx = { ...ctx, findUpstreamVideoUrls }
+
       const result = await Promise.race([
-        def.run({ id, data: node.data, inputs: inputObj, inputsByName, ctx, reportProgress }),
+        def.run({ id, data: node.data, inputs: inputObj, inputsByName, ctx: nodeCtx, reportProgress }),
         abortPromise,
       ]).finally(() => { try { clearInterval(abortTimer) } catch {} })
       outputsById.set(id, result || {})
