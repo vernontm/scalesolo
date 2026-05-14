@@ -105,6 +105,17 @@ function pickAllVideoUrls(bag) {
   }
   return out
 }
+function pickAllImageUrls(bag) {
+  const seen = new Set(), out = []
+  const push = (u) => { if (u && !seen.has(u)) { seen.add(u); out.push(u) } }
+  for (const v of asArr(bag)) {
+    if (!v || typeof v !== 'object') continue
+    if (Array.isArray(v.images)) for (const im of v.images) if (im?.url) push(im.url)
+    if (typeof v.url === 'string' && /\.(png|jpe?g|webp|gif)(\?|#|$)/i.test(v.url)) push(v.url)
+    if (typeof v.image_url === 'string') push(v.image_url)
+  }
+  return out
+}
 
 // ── per-node runners ───────────────────────────────────────────────────────
 // Each returns the same shape the browser-side run() would return so
@@ -483,8 +494,34 @@ const NODE_RUNNERS = {
     const brand = pickBrand(inputs)
     const profileId = brand?.profile_id || ctx.profileId
     const props = node.data?.props || {}
-    const topic = (props.topic || '').trim() || pickScript(inputs) || ''
-    if (!topic) throw new Error('script_gen needs a topic')
+    let topic = (props.topic || '').trim() || pickScript(inputs) || ''
+
+    // Media-derived topic fallback. If no explicit topic is set:
+    //   • video upstream → transcribe it, use the transcript as topic
+    //     (script_gen will then rewrite a fresh on-brand version)
+    //   • image upstream → Claude vision reads the image and proposes
+    //     a brand-aligned topic angle
+    // Lets users wire Upload media → script_gen → ... and have it Just
+    // Work for either media type.
+    if (!topic) {
+      const videoUrls = pickAllVideoUrls(inputs)
+      const imageUrls = pickAllImageUrls(inputs)
+      const mediaBody = videoUrls[0] ? { video_url: videoUrls[0] }
+                     : imageUrls[0] ? { image_url: imageUrls[0] }
+                     : null
+      if (mediaBody) {
+        try {
+          const body = await callApi('/api/content/topic-from-media', {
+            profile_id: profileId, ...mediaBody,
+          }, ctx.headers)
+          topic = String(body?.topic || '').trim()
+        } catch (e) {
+          throw new Error(`script_gen could not derive a topic from upstream media: ${e?.message || e}`)
+        }
+      }
+    }
+
+    if (!topic) throw new Error('script_gen needs a topic, video, or image upstream')
     const body = await callApi('/api/content/generate', {
       profile_id: profileId,
       format: props.format || 'tiktok-script',

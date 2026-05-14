@@ -6710,7 +6710,7 @@ export const NODE_REGISTRY = {
   },
 
   script_gen: {
-    label: 'Script generator', description: 'Writes a short script for you from a topic. Just type what the video should be about and it does the rest. You can also mention a brand by typing @brandname to use that brand\'s voice.',
+    label: 'Script generator', description: 'Writes a short script for you. Type a topic, or wire upstream content in: a video gets transcribed and rewritten on-brand; an image gets analyzed by vision and turned into a brand-aligned angle. You can also mention a brand by typing @brandname to use that brand\'s voice.',
     icon: Wand2, category: 'generators', color: '#ef4444',
     inputs: [{ id: 'in', label: 'In (topic / brand)' }],
     outputs: [{ id: 'out', label: 'Out' }],
@@ -6745,6 +6745,47 @@ export const NODE_REGISTRY = {
       }
 
       let topic = (data.props?.topic || '').trim() || (mode === 'remix' ? '' : pickScript(incoming))
+
+      // Media-derived topic fallback. If no explicit topic is set and
+      // no script is wired in, but there's a video or image upstream:
+      //   • video → transcribe via Scribe (transcript becomes the topic
+      //     so script_gen rewrites a fresh on-brand version of what
+      //     was actually said)
+      //   • image → Claude vision describes the image and proposes a
+      //     brand-aligned topic angle
+      // Mirrors the worker-side fallback so both run paths behave
+      // identically. Lets the user wire Upload media → script_gen
+      // without typing a topic.
+      if (mode !== 'remix' && !topic) {
+        const videoUrls = pickAllVideoUrls(asArr(incoming))
+        const imageUrls = (function () {
+          const seen = new Set(), out = []
+          const push = (u) => { if (u && !seen.has(u)) { seen.add(u); out.push(u) } }
+          for (const v of asArr(incoming)) {
+            if (!v || typeof v !== 'object') continue
+            if (Array.isArray(v.images)) for (const im of v.images) if (im?.url) push(im.url)
+            if (typeof v.url === 'string' && /\.(png|jpe?g|webp|gif)(\?|#|$)/i.test(v.url)) push(v.url)
+            if (typeof v.image_url === 'string') push(v.image_url)
+          }
+          return out
+        })()
+        const mediaBody = videoUrls[0] ? { video_url: videoUrls[0] }
+                       : imageUrls[0] ? { image_url: imageUrls[0] }
+                       : null
+        if (mediaBody) {
+          const profIdForMedia = brand?.profile_id || ctx.profileId
+          reportProgress?.({ message: videoUrls[0] ? 'Transcribing video…' : 'Reading image…' })
+          const mr = await fetch('/api/content/topic-from-media', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
+            body: JSON.stringify({ profile_id: profIdForMedia, ...mediaBody }),
+          })
+          const mb = await mr.json().catch(() => ({}))
+          if (!mr.ok) throw new Error(mb?.error || `Topic from media failed (${mr.status})`)
+          topic = String(mb?.topic || '').trim()
+        }
+      }
+
       if (mode !== 'remix' && !topic) throw new Error('No topic / text provided')
       if (topic) topic = expandMentions(topic, inputsByName)
       // @brand-mention takes priority — wires the script gen to that brand

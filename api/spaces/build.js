@@ -48,7 +48,7 @@ const NODE_CATALOG = {
   },
   script_gen: {
     label: 'Script generator',
-    description: 'Claude writes a script. props: format (tiktok-script | ig-post | thread | youtube-short | email-subject | blog-post), topic (string, supports @-mentions), target_length_secs (number — only honored for tiktok-script and youtube-short, default 45; valid values 15/30/45/60/90/120 seconds, drives a target word count via ~150 wpm). The single "in" handle accepts upstream text (topic) and/or a brand profile.',
+    description: 'Claude writes a script. props: format (tiktok-script | ig-post | thread | youtube-short | email-subject | blog-post), topic (string, supports @-mentions), target_length_secs (number — only honored for tiktok-script and youtube-short, default 45; valid values 15/30/45/60/90/120 seconds, drives a target word count via ~150 wpm). The single "in" handle accepts upstream text (topic), a video (auto-transcribed via Scribe and rewritten on-brand), an image (described via Claude vision and framed as a brand-aligned topic), and/or a brand profile.',
     inputs: ['in'],
     outputs: ['out'],
     initialProps: { format: 'tiktok-script', topic: '', target_length_secs: 45 },
