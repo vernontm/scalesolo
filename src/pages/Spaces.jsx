@@ -2512,10 +2512,61 @@ function SpaceBuilder({ space, onSave, onClose }) {
   // are interactive "just re-run THIS step" actions that need live
   // canvas feedback.
   //
+  // ── Upload-aware Run queue ─────────────────────────────────────────
+  // Tracks in-flight uploads from ImageUploadBody nodes (broadcast via
+  // 'scalesolo:upload-status' window events). When the user clicks Run
+  // mid-upload, we don't fire immediately — instead we mark the run as
+  // queued and auto-fire the moment every upload finishes. Lets users
+  // hit Run as soon as they've kicked off the upload without losing any
+  // pending files to a snapshot taken too early.
+  const [uploadStatusByNode, setUploadStatusByNode] = useState({})  // nodeId → { total, completed, isUploading }
+  const [runQueued, setRunQueued] = useState(false)
+
+  useEffect(() => {
+    const onStatus = (e) => {
+      const d = e?.detail
+      if (!d?.nodeId) return
+      setUploadStatusByNode((prev) => {
+        const next = { ...prev }
+        if (!d.isUploading && d.total === 0) {
+          delete next[d.nodeId]
+        } else {
+          next[d.nodeId] = { total: d.total, completed: d.completed, isUploading: d.isUploading }
+        }
+        return next
+      })
+    }
+    window.addEventListener('scalesolo:upload-status', onStatus)
+    return () => window.removeEventListener('scalesolo:upload-status', onStatus)
+  }, [])
+
+  const uploadSummary = useMemo(() => {
+    let total = 0, completed = 0, active = 0
+    for (const s of Object.values(uploadStatusByNode)) {
+      total += s.total
+      completed += s.completed
+      if (s.isUploading) active += s.total - s.completed
+    }
+    return { total, completed, active, pending: total - completed }
+  }, [uploadStatusByNode])
+
+  // Auto-fire the queued run when uploads finish. Triggered by the
+  // summary going from active>0 → active===0.
+  useEffect(() => {
+    if (!runQueued) return
+    if (uploadSummary.active > 0) return
+    // All uploads done — fire the actual run and clear the queue flag.
+    setRunQueued(false)
+    // Defer to next tick so the latest node.data.props.urls (just
+    // patched by the upload handlers) has committed to React state
+    // before snapshot.
+    setTimeout(() => { runImmediate() }, 50)
+  }, [runQueued, uploadSummary.active])
+
   // We require the space to be saved first because the worker's job
   // record links back to a real space_id. A "__transient__" id would
   // produce orphaned space_runs rows that the user can't find later.
-  const run = async () => {
+  const runImmediate = async () => {
     if (running) return
     if (!spaceIdRef.current) {
       setError('Save the space first — server runs need a real space_id.')
@@ -2547,6 +2598,26 @@ function SpaceBuilder({ space, onSave, onClose }) {
       setError(e.message || 'Could not start server run.')
       toast({ kind: 'error', message: e.message || 'Could not start server run.' })
     }
+  }
+
+  // Public Run wrapper. If uploads are in flight, queue the run instead
+  // of firing immediately — the effect above auto-fires once everything
+  // settles. Clicking Run a second time while queued cancels the queue.
+  const run = () => {
+    if (runQueued) {
+      setRunQueued(false)
+      toast({ kind: 'info', message: 'Queued run cancelled.' })
+      return
+    }
+    if (uploadSummary.active > 0) {
+      setRunQueued(true)
+      toast({
+        kind: 'info',
+        message: `Run queued — will start when ${uploadSummary.active} more upload${uploadSummary.active === 1 ? '' : 's'} finish${uploadSummary.active === 1 ? 'es' : ''}. Click Run again to cancel.`,
+      })
+      return
+    }
+    runImmediate()
   }
 
   // Run a node with one of three scopes:
@@ -3510,8 +3581,20 @@ function SpaceBuilder({ space, onSave, onClose }) {
         <button className="btn-secondary" onClick={() => save()} disabled={busy} title="Force a save now">
           {busy ? <span className="spinner" /> : <Save size={13} />} Save
         </button>
-        <button className="btn-primary" onClick={run} disabled={running || nodes.length === 0}>
-          {running ? <span className="spinner" /> : <Play size={13} />} Run
+        <button
+          className="btn-primary"
+          onClick={run}
+          disabled={running || nodes.length === 0}
+          title={runQueued ? 'Click again to cancel the queued run' : (uploadSummary.active > 0 ? `Will queue — ${uploadSummary.active} upload${uploadSummary.active === 1 ? '' : 's'} still in flight` : 'Run the whole workflow on the server')}
+          style={runQueued ? { background: 'rgba(245,158,11,0.20)', borderColor: 'rgba(245,158,11,0.5)', color: '#f59e0b' } : undefined}
+        >
+          {running ? <span className="spinner" />
+            : runQueued ? <span className="spinner" />
+            : <Play size={13} />}
+          {' '}
+          {runQueued
+            ? `Queued · ${uploadSummary.completed}/${uploadSummary.total}`
+            : 'Run'}
         </button>
       </div>
 

@@ -2513,6 +2513,29 @@ function ImageUploadBody({ data, onPatch }) {
   // status, error }. Lives only during the active upload — cleared once
   // all files settle so the panel disappears.
   const [uploads, setUploads] = useState([])
+
+  // Broadcast upload status to the parent canvas. Spaces.jsx listens for
+  // these events to (a) show a "Run queued — waiting for uploads" state
+  // if the user clicks Run mid-upload and (b) auto-fire the queued run
+  // the moment the last file finishes. Fires whenever uploads state
+  // changes — covers every path (success, failure, manual clear).
+  useEffect(() => {
+    if (!data?.__id || typeof window === 'undefined') return
+    const total = uploads.length
+    if (total === 0) {
+      // Cleared (or never started) — explicit "done" event lets the
+      // canvas remove this node from its pending set.
+      window.dispatchEvent(new CustomEvent('scalesolo:upload-status', {
+        detail: { nodeId: data.__id, total: 0, completed: 0, isUploading: false },
+      }))
+      return
+    }
+    const completed = uploads.filter((u) => u.status === 'done' || u.status === 'failed').length
+    const isUploading = completed < total
+    window.dispatchEvent(new CustomEvent('scalesolo:upload-status', {
+      detail: { nodeId: data.__id, total, completed, isUploading },
+    }))
+  }, [uploads, data?.__id])
   // The node's data shape used to be just images. Now it carries
   // mixed media — each item has `url`, `name` (alt tag), and `kind`
   // ('image' | 'video'). Old saved spaces have no kind field; treat
