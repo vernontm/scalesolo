@@ -91,6 +91,26 @@ export async function uploadpostGenerateJwt(username, opts = {}) {
   })
 }
 
+// List scheduled jobs for an Upload-Post user. Used by the cleanup
+// endpoint to reconcile what's actually queued on Upload-Post against
+// what our content_scripts table thinks should be there. Returns the
+// raw response; callers normalize the shape (Upload-Post historically
+// returns either { posts: [...] } or { results: [...] } depending on
+// the endpoint family).
+export async function uploadpostListScheduled(username, opts = {}) {
+  if (!username) return { posts: [] }
+  // Default: scheduled-status posts. limit=200 covers any reasonable
+  // brand's pending queue without paging.
+  const qs = new URLSearchParams({ status: 'scheduled', limit: String(opts.limit || 200) })
+  const data = await uploadpost(`/api/uploadposts/posts/${encodeURIComponent(username)}?${qs}`).catch((e) => {
+    // Upload-Post sometimes 404s when there are no scheduled jobs on a
+    // user; treat that as an empty list, not a hard failure.
+    if (e.status === 404) return { posts: [] }
+    throw e
+  })
+  return data || { posts: [] }
+}
+
 // Cancel a scheduled Upload-Post job. Fails soft on 404 (already fired or
 // never existed) so callers can use this in cascade-delete paths without
 // blocking the local delete.
