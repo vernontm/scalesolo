@@ -9,34 +9,20 @@
 // is 'auto' so the user doesn't have to type a title every run.
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { transcribeFromUrl as scribeTranscribe } from '../_lib/scribe.js'
 
-export const config = { maxDuration: 120 }
+export const config = { maxDuration: 300 }
 
-const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY
 const ANTHROPIC_API_KEY  = process.env.ANTHROPIC_API_KEY
 
-// Scribe v1 accepts EITHER a multipart `file` upload OR a public
-// `cloud_storage_url` it fetches itself. URL mode is dramatically
-// cheaper for our Vercel function: no inbound bandwidth, no buffering
-// the video bytes (which OOMs the 1024 MB function on 100 MB+ files
-// with the FUNCTION_INVOCATION_FAILED Vercel error). We default to
-// URL mode whenever the caller hands us a fetchable URL.
-async function transcribeFromUrl(videoUrl) {
-  if (!ELEVENLABS_API_KEY) throw new Error('ELEVENLABS_API_KEY not configured')
-  const fd = new FormData()
-  fd.append('model_id', 'scribe_v1')
-  fd.append('cloud_storage_url', videoUrl)
-  const r = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
-    method: 'POST',
-    headers: { 'xi-api-key': ELEVENLABS_API_KEY },
-    body: fd,
-  })
-  if (!r.ok) {
-    const txt = await r.text().catch(() => '')
-    throw new Error(`ElevenLabs STT ${r.status}: ${txt.slice(0, 200)}`)
-  }
-  const data = await r.json()
-  return String(data?.text || '').trim()
+// Delegates to the centralized scribe.js helper so we get the audio-extract
+// pre-step (worker /jobs/extract-audio pulls audio out before sending to
+// Scribe, sidestepping the 200MB+ video limits) AND the multipart fallback
+// for free. The local copy this replaced was a thin cloud_storage_url-only
+// wrapper that 4xx'd silently on large iPhone HEVC .mov captures.
+async function transcribeFromUrl(videoUrl, profileId) {
+  const result = await scribeTranscribe(videoUrl, { no_verbatim: true, profile_id: profileId })
+  return String(result?.text || '').trim()
 }
 
 async function titleFromTranscript({ transcript, profile, topic }) {
@@ -191,7 +177,7 @@ export default async function handler(req, res) {
       // URL mode: Scribe pulls the video directly from Supabase Storage.
       // Our Vercel function never holds the bytes, so even multi-100MB
       // clips no longer OOM the runtime.
-      transcript = await transcribeFromUrl(video_url)
+      transcript = await transcribeFromUrl(video_url, profile_id)
       if (!transcript) return res.status(200).json({ title: '', transcript: '', warning: 'Empty transcript' })
     }
 

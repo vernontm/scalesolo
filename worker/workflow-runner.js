@@ -550,8 +550,32 @@ const NODE_RUNNERS = {
   caption_gen: async ({ inputs, ctx }) => {
     const brand = pickBrand(inputs)
     const profileId = brand?.profile_id || ctx.profileId
-    const script = pickScript(inputs)
-    if (!script) throw new Error('caption_gen needs a script upstream')
+    let script = pickScript(inputs)
+
+    // Video-only fallback (mirrors the browser caption_gen path). If no
+    // script was wired in but there's a video URL on the bag, transcribe
+    // it via Scribe → use the transcript as the script. Lets users wire
+    // Upload media → caption_gen directly without a separate transcribe
+    // node. Multi-video bags use only the first clip's transcript here
+    // (server runner doesn't support multi-clip fan-out yet — single
+    // caption result represents the whole batch).
+    if (!script) {
+      const videoUrls = pickAllVideoUrls(inputs)
+      if (videoUrls.length > 0) {
+        try {
+          const body = await callApi('/api/videos/auto-title', {
+            profile_id: profileId,
+            video_url: videoUrls[0],
+            transcript_only: true,
+          }, ctx.headers)
+          script = String(body?.transcript || '').trim()
+        } catch (e) {
+          throw new Error(`caption_gen could not transcribe video: ${e?.message || e}`)
+        }
+      }
+    }
+
+    if (!script) throw new Error('caption_gen needs a script or a video upstream')
     // Use the same /api/content/generate endpoint the browser hits.
     // dry_run avoids inserting a separate content_scripts row — the
     // bundle gets persisted by schedule_post when it actually fires.
