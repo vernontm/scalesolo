@@ -372,7 +372,11 @@ async function normalizeFile(inPath, outPath, probe, hasAudio) {
     args.push('-an')
   }
   args.push('-movflags', '+faststart')
-  // Strip rotation metadata — we already baked it into the pixel data.
+  // Strip the legacy rotation metadata tag — we already baked the rotation
+  // into the pixel data via the transpose filter. The displaymatrix side
+  // data is harder to clear portably (bitstream filters vary by ffmpeg
+  // build); polishCore handles that case by short-circuiting the rotation
+  // probe entirely when it knows we just normalized (didNormalize flag).
   args.push('-metadata:s:v:0', 'rotate=0')
   args.push(outPath)
   await runFFmpeg(args, 15 * 60_000)
@@ -770,6 +774,7 @@ async function polishCore(body) {
     // polish "just work" on a known-good intermediate. Already-canonical
     // sources skip this step entirely.
     let polishInputPath = inPath
+    let didNormalize = false  // when true, polish must NOT re-apply rotation
     const probe = await probeVideo(inPath)
     const normReason = needsNormalize(probe, sourceBuf.byteLength)
     if (normReason) {
@@ -778,6 +783,7 @@ async function polishCore(body) {
       try {
         await normalizeFile(inPath, normPath, probe, probe.has_audio)
         polishInputPath = normPath
+        didNormalize = true
       } catch (e) {
         // Normalize is best-effort — if it fails we fall back to the raw
         // source and let polish try anyway. Logs surface the reason.
@@ -875,10 +881,14 @@ async function polishCore(body) {
     //   270 = recorded landscape, displayed CCW → transpose=2 (CCW)
     //   180 = upside down                       → transpose=1,transpose=1
     //   0   = native, no transform
-    // After auto-normalize, rotation is already baked into the pixels and
-    // metadata is stripped — re-probing would return 0 anyway. Probe the
-    // file we're actually feeding to ffmpeg below.
-    const rotation = await probeRotation(polishInputPath).catch(() => 0)
+    // If auto-normalize already ran, rotation was baked into the pixels.
+    // But some muxers can leave the displaymatrix side data on the output
+    // anyway, so a re-probe might claim rotation != 0 and we'd transpose
+    // a SECOND time (double-rotate → 180° wrong output). Skip the probe
+    // entirely when we know we normalized.
+    const rotation = didNormalize
+      ? 0
+      : await probeRotation(polishInputPath).catch(() => 0)
     if (rotation === 90 || rotation === 270 || rotation === 180) {
       const step = rotation === 90 ? 'transpose=1'
         : rotation === 270 ? 'transpose=2'
