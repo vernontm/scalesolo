@@ -967,6 +967,79 @@ app.post('/jobs/combine-av', requireSecret, async (req, res) => {
   }
 })
 
+// ── Extract audio for transcription ──────────────────────────────────────
+// Body: { profile_id, video_url }
+// Returns: { audio_url, bytes, duration_secs? }
+//
+// Pulls the audio track out of a video and writes a mono 16kHz mp3 to
+// landing-media/<profile_id>/transcripts/. The output is 10–100x smaller
+// than the source video (e.g. 200MB .mov → ~2MB .mp3), which lets us
+// send it to ElevenLabs Scribe (or any STT) without hitting size or
+// timeout limits. Speech recognition doesn't benefit from stereo or
+// high sample rates — 16kHz mono is the standard input.
+async function extractAudioCore(body) {
+  const { profile_id, video_url } = body || {}
+  if (!profile_id || !video_url) throw new Error('profile_id + video_url required')
+  if (!SUPABASE_URL || !SERVICE_KEY) throw new Error('Storage not configured on worker')
+
+  let workdir = null
+  try {
+    workdir = await mkdtemp(join(tmpdir(), 'audio-'))
+    // Keep the original extension so ffmpeg's demuxer picks the right
+    // parser (some containers need the .mov / .webm hint to decode
+    // cleanly even though ffmpeg can detect by bytes).
+    const extMatch = video_url.split('?')[0].match(/\.([a-z0-9]+)$/i)
+    const ext = extMatch ? extMatch[1].toLowerCase() : 'mp4'
+    const vPath = join(workdir, `in.${ext}`)
+    const aPath = join(workdir, 'out.mp3')
+
+    const r = await fetch(video_url)
+    if (!r.ok) throw new Error(`Video download ${r.status}`)
+    await writeFile(vPath, Buffer.from(await r.arrayBuffer()))
+
+    // -vn: drop video stream.
+    // -ac 1: mono — speech recognition doesn't use stereo.
+    // -ar 16000: 16kHz sample rate (Scribe's preferred input).
+    // -b:a 64k: 64kbps mp3 — clear voice, tiny file (~30KB/sec).
+    // -map 0:a:0?: only first audio track, error-tolerant for silent
+    //   videos (the `?` makes the mapping optional so we get an empty
+    //   output instead of failing — caller can detect and skip).
+    const args = [
+      '-y', '-i', vPath,
+      '-vn', '-ac', '1', '-ar', '16000', '-b:a', '64k',
+      '-map', '0:a:0?',
+      aPath,
+    ]
+    await runFFmpeg(args, 10 * 60_000)
+
+    const buf = await readFile(aPath)
+    if (buf.byteLength === 0) {
+      throw new Error('Extracted audio is empty (video may have no audio track)')
+    }
+
+    const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
+    const path = `${profile_id}/transcripts/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`
+    const { error: upErr } = await supabase.storage.from('landing-media').upload(path, buf, {
+      contentType: 'audio/mpeg', upsert: false,
+    })
+    if (upErr) throw new Error(`Upload failed: ${upErr.message}`)
+    const { data: pub } = supabase.storage.from('landing-media').getPublicUrl(path)
+    return { audio_url: pub.publicUrl, bytes: buf.byteLength }
+  } finally {
+    if (workdir) { try { await rm(workdir, { recursive: true, force: true }) } catch {} }
+  }
+}
+
+app.post('/jobs/extract-audio', requireSecret, async (req, res) => {
+  try {
+    const result = await extractAudioCore(req.body || {})
+    res.json(result)
+  } catch (err) {
+    console.error('extract-audio job error:', err?.stack || err)
+    res.status(500).json({ error: String(err?.message || err) })
+  }
+})
+
 // Sync wrapper around polishCore. Kept for backward compat — small
 // clips (< ~60 MB) finish well within Vercel's 300s timeout via
 // this path. Larger clips should use /jobs/polish-async + status

@@ -204,7 +204,7 @@ Return ONLY valid JSON:
   if (videoRowsNeedingTranscript.length) {
     await Promise.all(videoRowsNeedingTranscript.map(async ({ s }) => {
       try {
-        const result = await transcribeFromUrl(s.media_urls[0])
+        const result = await transcribeFromUrl(s.media_urls[0], { profile_id })
         const transcript = String(result?.text || '').trim()
         if (transcript) {
           s.full_script = transcript

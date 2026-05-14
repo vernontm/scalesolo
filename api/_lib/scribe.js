@@ -54,7 +54,55 @@ export async function resolveTikTokUrl(url) {
   }
 }
 
-// Submit the URL to Scribe. Two-step:
+// Pre-step: extract audio from a video URL via the Fly.io ffmpeg worker.
+// Outputs a mono 16kHz mp3 (~30KB/sec) so Scribe receives a tiny, clean
+// audio file regardless of the source video's container, codec, or size.
+// Permanently fixes the "201MB .mov fails to transcribe" failure mode.
+//
+// Only fires when:
+//   • opts.profile_id is provided (worker writes to landing-media/<profile_id>/transcripts/)
+//   • WORKER_URL is configured
+//   • the URL looks like video (or its content-type does)
+// Falls back to the original URL silently when any condition isn't met.
+export async function extractAudioForTranscription(videoUrl, profileId) {
+  if (!videoUrl || !profileId) return null
+  const WORKER_URL = process.env.WORKER_URL
+  const WORKER_SECRET = process.env.WORKER_SHARED_SECRET
+  if (!WORKER_URL) return null
+  try {
+    const r = await fetch(`${WORKER_URL.replace(/\/$/, '')}/jobs/extract-audio`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(WORKER_SECRET ? { 'x-worker-secret': WORKER_SECRET } : {}),
+      },
+      body: JSON.stringify({ profile_id: profileId, video_url: videoUrl }),
+    })
+    const body = await r.json().catch(() => ({}))
+    if (!r.ok || !body?.audio_url) {
+      console.warn(`[scribe] audio extract failed (${r.status}): ${body?.error || 'unknown'} — falling back to original URL`)
+      return null
+    }
+    return body.audio_url
+  } catch (e) {
+    console.warn('[scribe] audio extract threw:', e?.message)
+    return null
+  }
+}
+
+// Lightweight heuristic for "is this a video URL?" — used to decide
+// whether to run the audio-extract pre-step. We err on the side of
+// extracting (cheap when small, huge win when large) but skip for
+// obvious audio files where extract is wasted work.
+function looksLikeVideo(url) {
+  return /\.(mp4|mov|webm|m4v|mkv|avi|wmv|flv|mpg|mpeg)(\?|#|$)/i.test(String(url || ''))
+}
+
+// Submit the URL to Scribe. Three-step now:
+//   0. (NEW) If this is a video URL and we have a profile_id, extract
+//      the audio track to mp3 via the ffmpeg worker FIRST. Tiny files
+//      transcribe faster and bypass Scribe's quirks with large/.mov
+//      cloud_storage_url fetches.
 //   1. cloud_storage_url — Scribe fetches the file. Fast (no proxy).
 //   2. If step 1 either 4xx's OR returns an empty transcript (Scribe
 //      sometimes silently fails to fetch from certain CDNs and
@@ -64,8 +112,23 @@ export async function resolveTikTokUrl(url) {
 //
 // Returns { text, language_code, duration_secs }.
 // no_verbatim: true keeps the transcript clean (drops "uh", "um"…).
+// opts.profile_id: pass to enable the audio-extract pre-step.
 export async function transcribeFromUrl(mediaUrl, opts = {}) {
   if (!mediaUrl) throw new Error('mediaUrl required')
+
+  // Step 0 — extract audio for video URLs when worker is available.
+  // Replaces mediaUrl with the tiny mp3 for the rest of the function;
+  // Scribe then deals with a 1-3MB audio file instead of a 200MB video.
+  if (opts.profile_id && looksLikeVideo(mediaUrl)) {
+    const audioUrl = await extractAudioForTranscription(mediaUrl, opts.profile_id)
+    if (audioUrl) {
+      console.log(`[scribe] using extracted audio for transcription (was video URL)`)
+      mediaUrl = audioUrl
+    }
+    // If extract failed, fall through to the original URL — Scribe may
+    // still handle it; the prior 200MB cap on multipart fallback was
+    // the bigger blocker.
+  }
 
   const callScribe = async (formBuilder) => {
     const form = new FormData()
@@ -123,8 +186,13 @@ export async function transcribeFromUrl(mediaUrl, opts = {}) {
   if (buf.byteLength === 0) {
     throw new Error('ElevenLabs Scribe (multipart): media body was empty')
   }
-  if (buf.byteLength > 200 * 1024 * 1024) {
-    throw new Error(`ElevenLabs Scribe (multipart): file too large (${(buf.byteLength / 1024 / 1024).toFixed(1)}MB > 200MB)`)
+  // Cap is 500MB now (was 200MB). The ffmpeg-worker audio-extract pre-step
+  // means we should almost never hit the multipart fallback with a raw
+  // video anymore; this cap is the safety net when WORKER_URL isn't set
+  // or extract failed. Scribe itself accepts ~2GB; we stay well under to
+  // avoid Vercel function memory pressure.
+  if (buf.byteLength > 500 * 1024 * 1024) {
+    throw new Error(`ElevenLabs Scribe (multipart): file too large (${(buf.byteLength / 1024 / 1024).toFixed(1)}MB > 500MB). Try compressing the video before upload.`)
   }
   const guessedType =
     dl.headers.get('content-type') ||

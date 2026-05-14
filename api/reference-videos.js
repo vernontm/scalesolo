@@ -166,7 +166,7 @@ export default async function handler(req, res) {
     //    return the error — user can retry via UI.
     let transcript
     try {
-      transcript = await transcribeFromUrl(mediaUrl, { no_verbatim: true })
+      transcript = await transcribeFromUrl(mediaUrl, { no_verbatim: true, profile_id })
     } catch (e) {
       await supaFetch(`reference_videos?id=eq.${encodeURIComponent(id)}`, {
         method: 'PATCH',
