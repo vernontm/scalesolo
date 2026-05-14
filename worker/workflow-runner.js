@@ -631,8 +631,21 @@ const NODE_RUNNERS = {
         throw new Error(`caption_gen could not transcribe any of ${upstreamVideoUrls.length} videos${errs ? ` — ${errs}` : ''}`)
       }
 
-      // Multi-caption prompt mirrors src/lib/space-nodes.jsx runMultiCaption.
-      const intro = `From the ${valid.length} short script segments below, write ${valid.length} INDEPENDENT caption sets — one per segment. Each segment becomes its own social post (different clip, different audience scroll), so each set must stand on its own.
+      // ── Auto-batching ───────────────────────────────────────────────
+      // Each caption set is ~200 output tokens (title + 1500-char caption
+      // + hashtags + first_comment all serialized as JSON). With Claude
+      // max_tokens=3000 we can fit ~12-14 sets cleanly; past that the
+      // response truncates mid-JSON and later sets come back empty.
+      // BATCH_SIZE=10 leaves comfortable headroom for the prompt prefix
+      // and the closing JSON syntax — solid up to N=∞ since we just spin
+      // up more batches in parallel.
+      const BATCH_SIZE = 10
+      const batches = []
+      for (let i = 0; i < valid.length; i += BATCH_SIZE) {
+        batches.push(valid.slice(i, i + BATCH_SIZE))
+      }
+
+      const buildBatchPrompt = (batch) => `From the ${batch.length} short script segments below, write ${batch.length} INDEPENDENT caption sets — one per segment. Each segment becomes its own social post (different clip, different audience scroll), so each set must stand on its own.
 
 Per-set rules (apply to EVERY set):
 - title: ≤ 80 chars, click-worthy, no number prefix.
@@ -647,34 +660,49 @@ Across-the-batch rules:
 
 Voice: NEVER use em dashes. Use commas, periods, or colons.
 
-Return ONLY valid JSON, no preamble, no markdown fences. Exact shape:
+Return ONLY valid JSON, no preamble, no markdown fences. Use each segment's exact "idx" value as the set's idx (do NOT renumber from 0). Exact shape:
 {
   "sets": [
-    { "idx": 0, "title": "", "caption": "", "hashtags": "#a #b #c #d #e", "first_comment": "" }
+    { "idx": ${batch[0].idx}, "title": "", "caption": "", "hashtags": "#a #b #c #d #e", "first_comment": "" }
   ]
 }
 
 Segments:
-${valid.map((c) => `--- segment ${c.idx} ---\n${c.text.slice(0, 800)}`).join('\n\n')}`
+${batch.map((c) => `--- segment ${c.idx} ---\n${c.text.slice(0, 800)}`).join('\n\n')}`
 
-      const mcBody = await callApi('/api/content/generate', {
-        profile_id: profileId,
-        format: 'ig-post',
-        topic: intro,
-        count: 1,
-        dry_run: true,
-      }, ctx.headers)
-      const rawMc = mcBody.items?.[0]?.full_script || mcBody.items?.[0]?.caption || ''
-      let parsedMc = {}
-      try {
-        const cleaned = String(rawMc).replace(/```json\s*|```\s*/gi, '').trim()
-        const m = cleaned.match(/\{[\s\S]*\}/)
-        parsedMc = JSON.parse(m ? m[0] : cleaned)
-      } catch { parsedMc = {} }
-      const sets = Array.isArray(parsedMc.sets) ? parsedMc.sets : []
-      if (!sets.length) throw new Error('caption_gen multi-clip fan-out returned no sets')
+      const runBatch = async (batch) => {
+        try {
+          const mcBody = await callApi('/api/content/generate', {
+            profile_id: profileId,
+            format: 'ig-post',
+            topic: buildBatchPrompt(batch),
+            count: 1,
+            dry_run: true,
+          }, ctx.headers)
+          const rawMc = mcBody.items?.[0]?.full_script || mcBody.items?.[0]?.caption || ''
+          let parsedMc = {}
+          try {
+            const cleaned = String(rawMc).replace(/```json\s*|```\s*/gi, '').trim()
+            const m = cleaned.match(/\{[\s\S]*\}/)
+            parsedMc = JSON.parse(m ? m[0] : cleaned)
+          } catch { parsedMc = {} }
+          return Array.isArray(parsedMc.sets) ? parsedMc.sets : []
+        } catch (e) {
+          console.warn(`[caption_gen] batch failed: ${e?.message}`)
+          return []
+        }
+      }
 
-      // Re-pair sets to transcripts by idx, falling back to array position.
+      // Batches are independent — run them in parallel (Anthropic handles
+      // concurrent requests fine and this keeps wall-clock to one Claude
+      // call's worth even at 30+ videos).
+      const allBatchResults = await Promise.all(batches.map(runBatch))
+      const sets = allBatchResults.flat()
+      if (!sets.length) throw new Error('caption_gen multi-clip fan-out returned no sets across any batch')
+
+      // Re-pair sets to transcripts by idx (we instructed Claude to use
+      // the segment's exact idx, so this should be a clean match even
+      // across batches). Fall back to array position for stragglers.
       const byIdx = new Map()
       sets.forEach((s, i) => { byIdx.set(Number.isFinite(s?.idx) ? s.idx : i, s) })
       const captions = transcripts.map((t, i) => {

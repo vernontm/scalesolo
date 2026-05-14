@@ -510,7 +510,20 @@ ${String(script).slice(0, 2000)}
 // One call instead of N is cheaper, faster, AND keeps voice
 // consistent across the batch.
 async function runMultiCaption({ ctx, profileId, chunkSentences, edits }) {
-  const intro = `From the ${chunkSentences.length} short script segments below, write ${chunkSentences.length} INDEPENDENT caption sets — one per segment. Each segment becomes its own social post (different clip, different audience scroll), so each set must stand on its own.
+  // ── Auto-batching ───────────────────────────────────────────────────
+  // Each caption set is ~200 output tokens once serialized as JSON. With
+  // Claude max_tokens=3000 we can fit ~12-14 sets cleanly; past that the
+  // response truncates mid-JSON and later sets come back empty. Chunking
+  // into groups of 10 keeps every batch comfortably under the cap and we
+  // run the batches in parallel so wall-clock stays one Claude call's
+  // worth even at 30+ videos.
+  const BATCH_SIZE = 10
+  const batches = []
+  for (let i = 0; i < chunkSentences.length; i += BATCH_SIZE) {
+    batches.push(chunkSentences.slice(i, i + BATCH_SIZE))
+  }
+
+  const buildBatchPrompt = (batch) => `From the ${batch.length} short script segments below, write ${batch.length} INDEPENDENT caption sets — one per segment. Each segment becomes its own social post (different clip, different audience scroll), so each set must stand on its own.
 
 Per-set rules (apply to EVERY set):
 - title: ≤ 80 chars, click-worthy, no number prefix.
@@ -519,63 +532,59 @@ Per-set rules (apply to EVERY set):
 - first_comment: ≤ 220 chars. Engagement driver, not a duplicate of the caption, no hashtags.
 
 Across-the-batch rules:
-- Each set must be DIFFERENT — different hook, different angle, different vocabulary. Don't write 6 captions about the same insight phrased 6 ways.
+- Each set must be DIFFERENT, different hook, different angle, different vocabulary. Don't write 6 captions about the same insight phrased 6 ways.
 - Match each segment's actual content. The hook of caption #3 should reflect what segment #3 says, not segment #1.
 - Voice stays consistent (same brand bible) but the substance varies per segment.
 
 Voice: NEVER use em dashes. Use commas, periods, or colons.
 
-Return ONLY valid JSON, no preamble, no markdown fences. Exact shape:
+Return ONLY valid JSON, no preamble, no markdown fences. Use each segment's EXACT "idx" value as the set's idx (do not renumber). Exact shape:
 {
   "sets": [
-    { "idx": 0, "title": "", "caption": "", "hashtags": "#a #b #c #d #e", "first_comment": "" }
+    { "idx": ${batch[0].idx}, "title": "", "caption": "", "hashtags": "#a #b #c #d #e", "first_comment": "" }
   ]
 }
 
 Segments:
-${chunkSentences.map((c) => `--- segment ${c.idx} ---\n${c.text.slice(0, 800)}`).join('\n\n')}`
+${batch.map((c) => `--- segment ${c.idx} ---\n${c.text.slice(0, 800)}`).join('\n\n')}`
 
-  const r = await fetch('/api/content/generate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
-    body: JSON.stringify({
-      profile_id: profileId,
-      format: 'ig-post',
-      topic: intro,
-      count: 1,
-      dry_run: true,
-    }),
-  })
-  const body = await r.json()
-  if (!r.ok) throw new Error(body.error || `Caption fan-out failed (${r.status})`)
-  const item = body.items?.[0] || {}
-  const raw = item.full_script || item.caption || ''
-  let parsed = {}
-  try {
-    const cleaned = String(raw).replace(/```json\s*|```\s*/gi, '').trim()
-    const m = cleaned.match(/\{[\s\S]*\}/)
-    parsed = JSON.parse(m ? m[0] : cleaned)
-  } catch {
-    // Truncated / malformed JSON. Pull fields out via tolerant regex
-    // instead of giving up and dumping the raw partial JSON into the
-    // caption (which is what users saw as captions starting with
-    // `{ "title": "..."` when Claude's response hit max_tokens).
-    parsed = {}
-    const cleaned = String(raw).replace(/```json\s*|```\s*/gi, '').trim()
-    const grab = (key) => {
-      const re = new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`, 'i')
-      const m2 = cleaned.match(re)
-      return m2 ? m2[1].replace(/\\"/g, '"').replace(/\\n/g, '\n') : ''
+  const runBatch = async (batch) => {
+    try {
+      const r = await fetch('/api/content/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
+        body: JSON.stringify({
+          profile_id: profileId,
+          format: 'ig-post',
+          topic: buildBatchPrompt(batch),
+          count: 1,
+          dry_run: true,
+        }),
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body.error || `Caption batch failed (${r.status})`)
+      const item = body.items?.[0] || {}
+      const raw = item.full_script || item.caption || ''
+      let parsed = {}
+      try {
+        const cleaned = String(raw).replace(/```json\s*|```\s*/gi, '').trim()
+        const m = cleaned.match(/\{[\s\S]*\}/)
+        parsed = JSON.parse(m ? m[0] : cleaned)
+      } catch { parsed = {} }
+      return Array.isArray(parsed.sets) ? parsed.sets : []
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('[runMultiCaption] batch failed:', e?.message)
+      return []
     }
-    parsed.title         = grab('title')
-    parsed.caption       = grab('caption')
-    parsed.hashtags      = grab('hashtags')
-    parsed.first_comment = grab('first_comment')
   }
 
-  const sets = Array.isArray(parsed.sets) ? parsed.sets : []
+  // Batches are independent — fire them in parallel so 30 clips take one
+  // Claude call's worth of wall-clock, not three.
+  const allBatchResults = await Promise.all(batches.map(runBatch))
+  const sets = allBatchResults.flat()
   if (!sets.length) {
-    throw new Error('Caption fan-out returned no sets. The model may have malformed JSON; try Re-run.')
+    throw new Error('Caption fan-out returned no sets across any batch. Try Re-run; if it persists, the model is having trouble with the transcripts.')
   }
 
   // Re-pair to chunk order (Claude usually keeps order but doesn't
