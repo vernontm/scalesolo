@@ -24,7 +24,10 @@ import {
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
 
-export const config = { maxDuration: 120 }
+// 300s gives auto-schedule headroom to submit up to 200 rows to Upload-Post
+// inline (concurrency 5, ~1s per submission = ~40s typical) on top of the
+// existing per-row PATCH writes.
+export const config = { maxDuration: 300 }
 
 export default async function handler(req, res) {
   setCors(req, res)
@@ -41,7 +44,7 @@ export default async function handler(req, res) {
 
   try {
     if (action === 'generate-captions') return generateCaptions({ res, profile_id, script_ids, user_id: auth.user.id })
-    if (action === 'auto-schedule')     return autoSchedule({ res, profile_id, script_ids })
+    if (action === 'auto-schedule')     return autoSchedule({ res, profile_id, script_ids, user_id: auth.user.id })
     if (action === 'publish-selected')  return publishSelected({ req, res, profile_id, script_ids, user_id: auth.user.id })
     if (action === 'resync-upload-post') return resyncUploadPost({ req, res, profile_id, script_ids })
     return res.status(400).json({ error: `Unknown action: ${action}` })
@@ -387,7 +390,7 @@ Return ONLY valid JSON:
 }
 
 // ── auto-schedule ──────────────────────────────────────────────────────────
-async function autoSchedule({ res, profile_id, script_ids }) {
+async function autoSchedule({ res, profile_id, script_ids, user_id }) {
   const profileRows = await supaFetch(`profiles?id=eq.${profile_id}&select=id,timezone,posting_schedule`)
   const profile = profileRows?.[0]
   if (!profile) return res.status(404).json({ error: 'Profile not found' })
@@ -437,8 +440,115 @@ async function autoSchedule({ res, profile_id, script_ids }) {
     }).catch((e) => { console.warn('auto-schedule patch failed for', a.id, e.message); throw e })
   ))
   const scheduled = results.filter((r) => r.status === 'fulfilled').length
+
+  // ── Upload-Post submission ──────────────────────────────────────────
+  // Previously auto-schedule only flipped the local row to status=scheduled
+  // and left Upload-Post completely unaware. That meant:
+  //   • the post wouldn't actually publish unless the user later clicked
+  //     "Publish Selected" or "Resync Scheduled"
+  //   • deletes couldn't cascade-cancel — the row had no
+  //     uploadpost_request_id to call Upload-Post's DELETE against, so
+  //     orphan jobs would pile up if any submission EVER did happen.
+  // Now: for video rows, we submit each one to Upload-Post inline with
+  // async_upload=true + scheduled_date, persist the returned request_id
+  // back to the row, and every future DELETE cascade-cancels cleanly.
+  // Photos still need the bytes-multipart path (Upload-Post doesn't accept
+  // URL strings for photos), so we skip them here — they continue to flow
+  // through manual Publish / Resync as before.
+  const apiKey = process.env.UPLOADPOST_API_KEY
+  let submitted = 0
+  let submitFailed = 0
+  if (apiKey && assignments.length) {
+    const username = await resolveUploadpostUser(profile_id)
+    await uploadpostEnsureUserProfile(username).catch(() => {})
+
+    const rowIds = assignments.map((a) => a.id)
+    const fullRows = await supaFetch(
+      `content_scripts?id=in.(${rowIds.map((id) => encodeURIComponent(id)).join(',')})&select=id,media_urls,media_type,platforms,caption,hashtags,full_script,title,first_comment`
+    ).catch(() => [])
+    const rowById = new Map((fullRows || []).map((r) => [r.id, r]))
+
+    const submitOne = async (a) => {
+      const row = rowById.get(a.id)
+      if (!row) return
+      // Only video rows submit inline. Photos require bytes upload — too
+      // expensive to do 200x in one Vercel function. They keep working
+      // via Publish Selected / Resync.
+      if (row.media_type !== 'video') return
+      const mediaUrl = row.media_urls?.[0]
+      if (!mediaUrl) return
+
+      const platforms = Array.isArray(row.platforms) && row.platforms.length ? row.platforms : ['tiktok']
+      const desc = [row.caption, row.hashtags].filter(Boolean).join('\n\n').trim()
+        || (row.full_script || '').slice(0, 500)
+      const hasTikTok = platforms.includes('tiktok')
+
+      const form = new URLSearchParams()
+      form.append('user', username)
+      for (const p of platforms) form.append('platform[]', p)
+      if (desc) form.append('description', desc)
+      // TikTok's caption lives in tiktok_title (it ignores `description`).
+      if (hasTikTok && desc) form.append('tiktok_title', desc.slice(0, 2200))
+      if (row.first_comment) form.append('first_comment', String(row.first_comment).slice(0, 2200))
+      form.append('async_upload', 'true')
+      form.append('video', mediaUrl)
+      form.append('scheduled_date', new Date(a.slot).toISOString())
+      // Sensible per-platform defaults (mirrors publishSelected).
+      if (platforms.includes('instagram')) form.append('instagram_media_type', 'REELS')
+      if (platforms.includes('youtube'))   form.append('youtube_privacy', 'PUBLIC')
+      if (hasTikTok)                       form.append('privacy_level', 'PUBLIC_TO_EVERYONE')
+
+      try {
+        const upRes = await fetch('https://api.upload-post.com/api/upload', {
+          method: 'POST',
+          headers: { Authorization: `Apikey ${apiKey}` },
+          body: form,
+        })
+        const body = await upRes.json().catch(() => ({}))
+        if (!upRes.ok) {
+          const errText = (body?.error || body?.message || `Upload-Post ${upRes.status}`).toString().slice(0, 1000)
+          console.warn(`auto-schedule submit failed for ${row.id}:`, errText)
+          submitFailed++
+          await supaFetch(`content_scripts?id=eq.${row.id}`, {
+            method: 'PATCH',
+            body: { last_error: `[${upRes.status}] ${errText}`, last_error_at: new Date().toISOString() },
+            prefer: 'return=minimal',
+          }).catch(() => {})
+          return
+        }
+        const requestId = body?.request_id || body?.id || null
+        if (!requestId) return
+        await supaFetch(`content_scripts?id=eq.${row.id}`, {
+          method: 'PATCH',
+          body: { uploadpost_request_id: requestId, last_error: null, last_error_at: null },
+          prefer: 'return=minimal',
+        }).catch(() => {})
+        submitted++
+      } catch (e) {
+        submitFailed++
+        console.warn(`auto-schedule submit threw for ${row.id}:`, e?.message)
+      }
+    }
+
+    // Concurrency cap — Upload-Post rate-limits per key, and we don't want
+    // 200 parallel HTTP calls from a single function invocation either. 5
+    // is the sweet spot: ~40s for 200 rows, comfortably under the function
+    // budget, and well under Upload-Post's per-key throughput cap.
+    const CONCURRENCY = 5
+    let cursor = 0
+    const workers = Array.from({ length: Math.min(CONCURRENCY, assignments.length) }, async () => {
+      while (cursor < assignments.length) {
+        const a = assignments[cursor++]
+        await submitOne(a)
+      }
+    })
+    await Promise.all(workers)
+  }
+
   return res.status(200).json({
     scheduled,
+    submitted,
+    submit_failed: submitFailed,
     skipped: candidates.length - scheduled,
     skipped_no_media: skippedNoMedia,
   })

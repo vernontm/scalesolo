@@ -836,7 +836,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
       const body = await r.json()
       if (!r.ok) throw new Error(body?.error || `${label} failed (${r.status})`)
       const summary = body.updated != null ? `${label}: ${body.updated}/${body.total ?? ids.length} updated`
-        : body.scheduled != null ? `${label}: ${body.scheduled} scheduled${body.skipped ? `, ${body.skipped} skipped` : ''}`
+        : body.scheduled != null ? `${label}: ${body.scheduled} scheduled${body.submitted ? `, ${body.submitted} queued at Upload-Post` : ''}${body.submit_failed ? `, ${body.submit_failed} submit-failed` : ''}${body.skipped ? `, ${body.skipped} skipped` : ''}`
         : body.submitted != null ? `${label}: ${body.submitted} submitted${body.failed ? `, ${body.failed} failed` : ''}`
         : body.resynced != null ? `${label}: ${body.resynced} resynced${body.failed ? `, ${body.failed} failed` : ''}${body.skipped ? `, ${body.skipped} skipped` : ''}`
         : `${label} done`
