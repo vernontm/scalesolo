@@ -850,6 +850,39 @@ export default function Content() {
 
   useEffect(() => { refresh(); refreshPending() }, [session, selectedProfileId, tab])
 
+  // Silent Upload-Post orphan cleanup on profile open. Fire-and-forget:
+  // scans Upload-Post for scheduled jobs the local DB has no row for and
+  // cancels them. No toast unless something gets cleaned (avoids noise
+  // on the 95% of opens where nothing's wrong). Runs once per profile
+  // mount; debounced through a ref so swapping tabs doesn't re-fire.
+  const orphanCleanupRanForProfileRef = useRef(null)
+  useEffect(() => {
+    if (!session?.access_token || !selectedProfileId) return
+    if (orphanCleanupRanForProfileRef.current === selectedProfileId) return
+    orphanCleanupRanForProfileRef.current = selectedProfileId
+    ;(async () => {
+      try {
+        const r = await fetch('/api/social/uploadpost-cleanup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ profile_id: selectedProfileId, mode: 'cancel_orphans' }),
+        })
+        const b = await r.json().catch(() => ({}))
+        if (r.ok && b?.counts?.canceled > 0) {
+          // Only surface when we actually did something — most opens are
+          // silent. Light info toast, not warn — this is a healthy
+          // background reconcile, not an error.
+          // eslint-disable-next-line no-console
+          console.info(`[uploadpost-cleanup] silently canceled ${b.counts.canceled} orphan${b.counts.canceled === 1 ? '' : 's'} on open`)
+        }
+      } catch (e) {
+        // Background task — failures stay in the console, not in the user's face.
+        // eslint-disable-next-line no-console
+        console.warn('[uploadpost-cleanup] background run failed:', e?.message)
+      }
+    })()
+  }, [session, selectedProfileId])
+
   if (!selectedProfileId) {
     return <div className="card-flat fade-up" style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>
       Pick a brand profile to manage content.

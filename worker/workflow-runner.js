@@ -588,27 +588,136 @@ const NODE_RUNNERS = {
     const brand = pickBrand(inputs)
     const profileId = brand?.profile_id || ctx.profileId
     let script = pickScript(inputs)
+    const upstreamVideoUrls = pickAllVideoUrls(inputs)
 
-    // Video-only fallback (mirrors the browser caption_gen path). If no
-    // script was wired in but there's a video URL on the bag, transcribe
-    // it via Scribe → use the transcript as the script. Lets users wire
-    // Upload media → caption_gen directly without a separate transcribe
-    // node. Multi-video bags use only the first clip's transcript here
-    // (server runner doesn't support multi-clip fan-out yet — single
-    // caption result represents the whole batch).
-    if (!script) {
-      const videoUrls = pickAllVideoUrls(inputs)
-      if (videoUrls.length > 0) {
+    // ── MULTI-VIDEO FAN-OUT ────────────────────────────────────────────
+    // When upload_media (or any upstream) emits 2+ videos AND there's no
+    // explicit script, transcribe each clip and ask Claude for N caption
+    // sets in ONE call. Mirrors the browser caption_gen's multi-clip
+    // path. Output shape: { captions: [{idx, title, caption, hashtags,
+    // first_comment, source_url}, ...], videos: [...] } + the first
+    // clip's fields flattened on top for backward-compat consumers.
+    if (!script && upstreamVideoUrls.length > 1) {
+      const transcribeOne = async (url, idx) => {
         try {
           const body = await callApi('/api/videos/auto-title', {
             profile_id: profileId,
-            video_url: videoUrls[0],
+            video_url: url,
             transcript_only: true,
           }, ctx.headers)
-          script = String(body?.transcript || '').trim()
+          return { idx, text: String(body?.transcript || '').trim(), source_url: url }
         } catch (e) {
-          throw new Error(`caption_gen could not transcribe video: ${e?.message || e}`)
+          console.warn(`[caption_gen] transcribe failed for clip ${idx}:`, e?.message)
+          return { idx, text: '', source_url: url, error: e?.message || String(e) }
         }
+      }
+      // Concurrency 2 — Scribe is bandwidth-heavy and rate-limited.
+      // Running all N in parallel empirically OOMs and trips per-key
+      // limits; 2 is the sweet spot.
+      const TRANSCRIBE_CONCURRENCY = 2
+      const transcripts = new Array(upstreamVideoUrls.length)
+      let tCursor = 0
+      const tWorkers = Array.from({ length: Math.min(TRANSCRIBE_CONCURRENCY, upstreamVideoUrls.length) }, async () => {
+        while (tCursor < upstreamVideoUrls.length) {
+          const i = tCursor++
+          transcripts[i] = await transcribeOne(upstreamVideoUrls[i], i)
+        }
+      })
+      await Promise.all(tWorkers)
+
+      const valid = transcripts.filter((t) => t.text.length >= 10)
+      if (!valid.length) {
+        const errs = transcripts.map((t) => t.error).filter(Boolean).slice(0, 2).join('; ')
+        throw new Error(`caption_gen could not transcribe any of ${upstreamVideoUrls.length} videos${errs ? ` — ${errs}` : ''}`)
+      }
+
+      // Multi-caption prompt mirrors src/lib/space-nodes.jsx runMultiCaption.
+      const intro = `From the ${valid.length} short script segments below, write ${valid.length} INDEPENDENT caption sets — one per segment. Each segment becomes its own social post (different clip, different audience scroll), so each set must stand on its own.
+
+Per-set rules (apply to EVERY set):
+- title: ≤ 80 chars, click-worthy, no number prefix.
+- caption: ≤ 1500 chars. Strong hook in the first sentence. Reads naturally on every platform (TikTok / IG / YouTube / Facebook / X / LinkedIn / Threads).
+- hashtags: EXACTLY 5, space-separated, each starting with #. Lead with the brand's core hashtags.
+- first_comment: ≤ 220 chars. Engagement driver, not a duplicate of the caption, no hashtags.
+
+Across-the-batch rules:
+- Each set must be DIFFERENT — different hook, different angle, different vocabulary.
+- Match each segment's actual content. The hook of caption #3 should reflect segment #3, not segment #1.
+- Voice stays consistent (same brand bible) but the substance varies per segment.
+
+Voice: NEVER use em dashes. Use commas, periods, or colons.
+
+Return ONLY valid JSON, no preamble, no markdown fences. Exact shape:
+{
+  "sets": [
+    { "idx": 0, "title": "", "caption": "", "hashtags": "#a #b #c #d #e", "first_comment": "" }
+  ]
+}
+
+Segments:
+${valid.map((c) => `--- segment ${c.idx} ---\n${c.text.slice(0, 800)}`).join('\n\n')}`
+
+      const mcBody = await callApi('/api/content/generate', {
+        profile_id: profileId,
+        format: 'ig-post',
+        topic: intro,
+        count: 1,
+        dry_run: true,
+      }, ctx.headers)
+      const rawMc = mcBody.items?.[0]?.full_script || mcBody.items?.[0]?.caption || ''
+      let parsedMc = {}
+      try {
+        const cleaned = String(rawMc).replace(/```json\s*|```\s*/gi, '').trim()
+        const m = cleaned.match(/\{[\s\S]*\}/)
+        parsedMc = JSON.parse(m ? m[0] : cleaned)
+      } catch { parsedMc = {} }
+      const sets = Array.isArray(parsedMc.sets) ? parsedMc.sets : []
+      if (!sets.length) throw new Error('caption_gen multi-clip fan-out returned no sets')
+
+      // Re-pair sets to transcripts by idx, falling back to array position.
+      const byIdx = new Map()
+      sets.forEach((s, i) => { byIdx.set(Number.isFinite(s?.idx) ? s.idx : i, s) })
+      const captions = transcripts.map((t, i) => {
+        const s = byIdx.get(t.idx) || sets[i] || {}
+        return {
+          idx: t.idx,
+          order: t.idx,
+          title:         String(s.title || '').slice(0, 200),
+          caption:       String(s.caption || '').slice(0, 2000),
+          hashtags:      String(s.hashtags || ''),
+          first_comment: String(s.first_comment || '').slice(0, 400),
+          source_url:    t.source_url,
+        }
+      })
+
+      // Return the multi-clip bundle. Flatten the first clip's fields on
+      // top for any downstream consumer that still reads the singular
+      // shape (older nodes, single-clip polishes, etc.).
+      const first = captions[0] || {}
+      return {
+        title:         first.title || '',
+        caption:       first.caption || '',
+        hashtags:      first.hashtags || '',
+        first_comment: first.first_comment || '',
+        captions,
+        videos: upstreamVideoUrls.map((url, i) => ({ video_url: url, idx: i })),
+        video_url: upstreamVideoUrls[0],
+      }
+    }
+
+    // ── SINGLE-VIDEO / SCRIPT path ─────────────────────────────────────
+    // No script and exactly one video → transcribe and continue with the
+    // single-caption path below.
+    if (!script && upstreamVideoUrls.length === 1) {
+      try {
+        const body = await callApi('/api/videos/auto-title', {
+          profile_id: profileId,
+          video_url: upstreamVideoUrls[0],
+          transcript_only: true,
+        }, ctx.headers)
+        script = String(body?.transcript || '').trim()
+      } catch (e) {
+        throw new Error(`caption_gen could not transcribe video: ${e?.message || e}`)
       }
     }
 
@@ -908,76 +1017,133 @@ ${String(script).slice(0, 2000)}
       }
     }
 
-    // Server runs use the FIRST video only — fan-out across multiple
-    // clips can be added later. Most automation cases (script →
-    // voiceover → 1 b-roll) hit this single-clip path anyway.
-    let body = await callApi('/api/videos/polish', {
-      profile_id: ctx.profileId,
-      video_url: videoUrls[0],
-      logo_url: logoUrl || undefined,
-      music_url: musicUrl || undefined,
-      voiceover_url: voiceoverUrl || undefined,
-      loop_video: voiceoverUrl ? true : undefined,
-      mute_video_audio: voiceoverUrl ? true : undefined,
-      title: titleText || undefined,
-      captions_enabled: p.captions_enabled !== false,
-      caption_template_id: p.caption_template_id || undefined,
-      watermark_position: p.watermark_position || 'br',
-      watermark_size_pct: p.watermark_size_pct ?? 25,
-      music_volume: p.music_volume ?? 0.15,
-      music_fade_secs: p.music_fade_secs ?? 1.0,
-    }, ctx.headers)
+    // Look for per-clip captions/titles on the upstream bag. caption_gen
+    // emits captions: [{ idx, title, caption, ... , source_url }] in
+    // multi-clip mode — we use each entry's title for the matching clip
+    // so polish overlays say what each video is actually about.
+    let upstreamCaptions = null
+    for (const v of asArr(inputs)) {
+      if (v && Array.isArray(v.captions) && v.captions.length > 0) {
+        upstreamCaptions = v.captions
+        break
+      }
+    }
+    const titleForClip = (idx) => {
+      if (titleMode === 'manual') return titleText
+      const c = upstreamCaptions?.find?.((x) => x.idx === idx) || upstreamCaptions?.[idx]
+      const fromCaption = c?.title ? String(c.title).slice(0, 120) : ''
+      return fromCaption || titleText
+    }
 
-    // Long jobs: when polish exceeds Vercel's 250s in-flight window the
-    // /api/videos/polish endpoint returns 202 { polling: true,
-    // worker_job_id, poll_url } and the worker keeps processing in
-    // the background. We need to keep polling here OR the runner hands
-    // schedule_post an undefined video_url and the whole workflow
-    // bombs with "needs upstream video or images" — which is exactly
-    // what was happening on Sanabreh runs that exceeded 5 min.
-    if (body?.polling && body.worker_job_id) {
-      const POLL_DEADLINE_MS = 18 * 60_000  // 18 min — well under worker's 20-min ffmpeg cap
-      const POLL_INTERVAL_MS = 5_000
-      const start = Date.now()
-      while (Date.now() - start < POLL_DEADLINE_MS) {
-        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
-        // GET, not POST — callApi only does POST so we hit fetch
-        // directly here. Same impersonation headers so requireUser
-        // accepts the call.
-        const sUrl = `${PORTABLE_BASE}/api/videos/polish-status?job_id=${encodeURIComponent(body.worker_job_id)}`
-        const status = await fetch(sUrl, { headers: ctx.headers })
-          .then(async (r) => {
-            const text = await r.text()
-            let parsed = null
-            try { parsed = text ? JSON.parse(text) : null } catch {}
-            if (!r.ok) return { status: 'error', error: parsed?.error || `polish-status ${r.status}` }
-            return parsed
-          })
-          .catch((e) => ({ status: 'error', error: e.message }))
-        if (status?.status === 'done' && status.result?.video_url) {
-          body = status.result
-          break
+    // ── Per-clip polish helper ─────────────────────────────────────────
+    // Submits ONE polish job, handles the async polling path. Extracted
+    // so the multi-clip fan-out below can call it in a concurrency-
+    // capped loop without duplicating ~50 lines of polling boilerplate.
+    const polishOne = async (videoUrl, idx) => {
+      let body = await callApi('/api/videos/polish', {
+        profile_id: ctx.profileId,
+        video_url: videoUrl,
+        logo_url: logoUrl || undefined,
+        music_url: musicUrl || undefined,
+        voiceover_url: voiceoverUrl || undefined,
+        loop_video: voiceoverUrl ? true : undefined,
+        mute_video_audio: voiceoverUrl ? true : undefined,
+        title: titleForClip(idx) || undefined,
+        captions_enabled: p.captions_enabled !== false,
+        caption_template_id: p.caption_template_id || undefined,
+        watermark_position: p.watermark_position || 'br',
+        watermark_size_pct: p.watermark_size_pct ?? 25,
+        music_volume: p.music_volume ?? 0.15,
+        music_fade_secs: p.music_fade_secs ?? 1.0,
+      }, ctx.headers)
+
+      // Long-running jobs return 202 { polling: true, worker_job_id }
+      // and we poll the worker until done. 18-min deadline stays well
+      // under the worker's 20-min ffmpeg cap.
+      if (body?.polling && body.worker_job_id) {
+        const POLL_DEADLINE_MS = 18 * 60_000
+        const POLL_INTERVAL_MS = 5_000
+        const start = Date.now()
+        while (Date.now() - start < POLL_DEADLINE_MS) {
+          await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
+          const sUrl = `${PORTABLE_BASE}/api/videos/polish-status?job_id=${encodeURIComponent(body.worker_job_id)}`
+          const status = await fetch(sUrl, { headers: ctx.headers })
+            .then(async (r) => {
+              const text = await r.text()
+              let parsed = null
+              try { parsed = text ? JSON.parse(text) : null } catch {}
+              if (!r.ok) return { status: 'error', error: parsed?.error || `polish-status ${r.status}` }
+              return parsed
+            })
+            .catch((e) => ({ status: 'error', error: e.message }))
+          if (status?.status === 'done' && status.result?.video_url) {
+            body = status.result
+            break
+          }
+          if (status?.status === 'failed' || status?.status === 'error') {
+            throw new Error(status.error || 'polish worker reported failure')
+          }
         }
-        if (status?.status === 'failed' || status?.status === 'error') {
-          throw new Error(status.error || 'polish worker reported failure')
+        if (!body?.video_url) {
+          throw new Error(`polish timed out (>${(POLL_DEADLINE_MS / 60_000) | 0}m of polling) for clip ${idx}`)
         }
-        // queued / running — keep polling
       }
-      if (!body?.video_url) {
-        throw new Error(`polish timed out (>${(POLL_DEADLINE_MS / 60_000)|0}m of polling)`)
+      if (!body?.video_url) throw new Error(`polish returned no video_url for clip ${idx}`)
+      return body.video_url
+    }
+
+    // ── Single-clip path ────────────────────────────────────────────────
+    if (videoUrls.length === 1) {
+      const finalUrl = await polishOne(videoUrls[0], 0)
+      return {
+        video: { video_url: finalUrl },
+        video_url: finalUrl,
+        polished: true,
+        title: titleForClip(0),
       }
     }
-    if (!body?.video_url) {
-      // Defense in depth: the sync path can also return without
-      // video_url if Vercel's polish.js drops the response shape on a
-      // partial error.
-      throw new Error('polish returned no video_url')
+
+    // ── Multi-clip fan-out ──────────────────────────────────────────────
+    // Concurrency 2 — ffmpeg is CPU-heavy and each polish job pegs ~2
+    // worker cores. More parallelism either OOMs or slows down so much
+    // it's net-zero. 2 is the sweet spot on shared-cpu-2x.
+    const POLISH_CONCURRENCY = 2
+    const polished = new Array(videoUrls.length)
+    const errors = []
+    let cursor = 0
+    const workers = Array.from({ length: Math.min(POLISH_CONCURRENCY, videoUrls.length) }, async () => {
+      while (cursor < videoUrls.length) {
+        const i = cursor++
+        try {
+          polished[i] = { video_url: await polishOne(videoUrls[i], i), idx: i }
+        } catch (e) {
+          console.warn(`[video_polish] clip ${i} failed: ${e?.message}`)
+          errors.push({ idx: i, error: e?.message || String(e) })
+          polished[i] = null
+        }
+      }
+    })
+    await Promise.all(workers)
+
+    const successful = polished.filter(Boolean)
+    if (!successful.length) {
+      throw new Error(`All ${videoUrls.length} clips failed to polish: ${errors.slice(0, 2).map((e) => e.error).join('; ')}`)
     }
+
     return {
-      video: { video_url: body.video_url },
-      video_url: body.video_url,
+      // First successful clip's URL flattened for backward compat (single-
+      // clip consumers downstream still work). videos[] is the canonical
+      // fan-out output — schedule_post reads this array to submit N jobs.
+      video: { video_url: successful[0].video_url },
+      video_url: successful[0].video_url,
+      videos: successful,
       polished: true,
-      title: titleText,
+      polished_count: successful.length,
+      polish_failures: errors.length ? errors : undefined,
+      // Forward upstream captions[] through polish so schedule_post can
+      // match captions[i] → polished[i] downstream.
+      captions: upstreamCaptions || undefined,
+      title: titleForClip(0),
     }
   },
 
@@ -985,10 +1151,14 @@ ${String(script).slice(0, 2000)}
     const p = node.data?.props || {}
     const platforms = Array.isArray(p.platforms) ? p.platforms : []
     if (!platforms.length) throw new Error('schedule_post needs platforms picked')
+
+    // Collect everything off the upstream bag in one pass.
     let caption = '', hashtags = '', firstComment = '', title = '', script = ''
-    let videoUrl = null
     const photoUrls = []
     let textPostBundle = null
+    let videos = []            // multi-clip output from polish (preferred when present)
+    let captionsArr = null     // per-clip caption sets from caption_gen
+    let singleVideoUrl = null
     for (const v of asArr(inputs)) {
       if (!v || typeof v !== 'object') continue
       if (!title && v.title) title = v.title
@@ -996,20 +1166,111 @@ ${String(script).slice(0, 2000)}
       if (!caption && v.caption) caption = v.caption
       if (!hashtags && v.hashtags) hashtags = v.hashtags
       if (!firstComment && v.first_comment) firstComment = v.first_comment
-      if (!videoUrl) {
-        if (v.video?.video_url) videoUrl = v.video.video_url
-        else if (v.video_url) videoUrl = v.video_url
+      if (!videos.length && Array.isArray(v.videos) && v.videos.length > 0) videos = v.videos
+      if (!singleVideoUrl) {
+        if (v.video?.video_url) singleVideoUrl = v.video.video_url
+        else if (v.video_url) singleVideoUrl = v.video_url
       }
+      if (!captionsArr && Array.isArray(v.captions) && v.captions.length > 0) captionsArr = v.captions
       if (Array.isArray(v.images)) for (const im of v.images) if (im?.url) photoUrls.push(im.url)
-      // Text post bundle from text_post_gen — per-platform variants
-      // ride downstream as v.per_platform. We forward this map to
-      // /api/social/upload-post so each platform gets its native
-      // variant instead of one shared caption.
       if (!textPostBundle && v.is_text_post && v.per_platform && typeof v.per_platform === 'object') {
         textPostBundle = v.per_platform
       }
     }
-    const isTextPost = !!textPostBundle && !videoUrl && !photoUrls.length
+
+    const isTextPost = !!textPostBundle && !videos.length && !singleVideoUrl && !photoUrls.length
+
+    // ── MULTI-CLIP FAN-OUT ─────────────────────────────────────────────
+    // When polish emitted videos[] (and ideally caption_gen emitted
+    // captions[]), submit ONE Upload-Post job per clip with its own
+    // caption set. Each call uses scheduling_mode='auto' so the server
+    // picks the next free slot from the brand's posting_schedule —
+    // because we submit serially and each post creates a `scheduled`
+    // row before the next call runs, /api/social/upload-post's slot
+    // picker sees the prior post as "taken" and steps to the next slot
+    // naturally. Result: 10 clips spread across the brand's next 10
+    // posting times.
+    if (videos.length > 1) {
+      const results = []
+      let okCount = 0
+      let failCount = 0
+
+      // Find a caption set for each clip. Prefer idx match (caption_gen
+      // stamps an idx onto each set so order isn't fragile), fall back
+      // to array position so users without caption_gen fan-out still
+      // get the canonical caption on every post.
+      const captionFor = (idx) => {
+        if (!captionsArr) {
+          return { title, caption, hashtags, first_comment: firstComment }
+        }
+        const c = captionsArr.find((x) => x?.idx === idx) || captionsArr[idx]
+        if (!c) return { title, caption, hashtags, first_comment: firstComment }
+        return {
+          title:         c.title         || title,
+          caption:       c.caption       || caption,
+          hashtags:      c.hashtags      || hashtags,
+          first_comment: c.first_comment || firstComment,
+        }
+      }
+
+      // Serialize submissions so each /api/social/upload-post call sees
+      // the prior post's `scheduled` row when computing the next slot.
+      // Parallelizing would race the slot picker and cause two clips to
+      // land on the same time.
+      for (let i = 0; i < videos.length; i++) {
+        const v = videos[i]
+        const url = v?.video_url || v?.url
+        if (!url) {
+          failCount++
+          results.push({ idx: i, ok: false, error: 'no video_url' })
+          continue
+        }
+        const c = captionFor(v?.idx ?? i)
+        const description = [c.caption, c.hashtags].filter(Boolean).join('\n\n').trim()
+          || String(script || '').slice(0, 500)
+        try {
+          const body = await callApi('/api/social/upload-post', {
+            profile_id: ctx.profileId,
+            platforms,
+            video_url: url,
+            description,
+            title:         c.title,
+            caption:       c.caption,
+            hashtags:      c.hashtags,
+            script,
+            first_comment: c.first_comment,
+            scheduling_mode: 'auto',
+          }, ctx.headers)
+          okCount++
+          results.push({
+            idx: i,
+            ok: true,
+            request_id: body?.request_id || null,
+            scheduled_iso: body?.scheduled_iso || null,
+            video_url: url,
+          })
+        } catch (e) {
+          failCount++
+          console.warn(`[schedule_post] clip ${i} failed: ${e?.message}`)
+          results.push({ idx: i, ok: false, error: e?.message || String(e), video_url: url })
+        }
+      }
+
+      if (!okCount) {
+        throw new Error(`All ${videos.length} clips failed to schedule: ${results.slice(0, 2).map((r) => r.error).filter(Boolean).join('; ')}`)
+      }
+
+      return {
+        submitted: okCount,
+        failed: failCount,
+        scheduled_count: okCount,
+        clips: results,
+        platforms,
+      }
+    }
+
+    // ── SINGLE-POST PATH ───────────────────────────────────────────────
+    const videoUrl = videos.length === 1 ? (videos[0]?.video_url || videos[0]?.url || singleVideoUrl) : singleVideoUrl
     if (!isTextPost && !videoUrl && !photoUrls.length) {
       throw new Error('schedule_post needs upstream video, images, or a text-post bundle')
     }
@@ -1025,15 +1286,9 @@ ${String(script).slice(0, 2000)}
       hashtags,
       script,
       first_comment: firstComment,
-      // Text-only post: pass the per-platform variants so each
-      // platform's submission carries its native text instead of one
-      // shared caption.
       is_text_post: isTextPost || undefined,
       per_platform_text: textPostBundle || undefined,
       // Server runs always auto-schedule into the next open slot.
-      // 'now' / 'fixed' don't make sense for a recurring cron — by
-      // the time the next tick fires the user has no chance to pick
-      // a time.
       scheduling_mode: 'auto',
     }, ctx.headers)
     return {

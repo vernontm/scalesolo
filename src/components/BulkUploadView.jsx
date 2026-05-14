@@ -782,64 +782,6 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     }
   }
 
-  // Two-step Upload-Post orphan cleanup: first LIST to count orphans,
-  // confirm with the user, then CANCEL. We don't blind-cancel — the
-  // confirm shows exactly how many jobs are about to be removed AND
-  // (when non-trivial) a peek at what they look like so the user can
-  // sanity-check they're truly orphans before clicking through.
-  const cleanupUploadPostOrphans = async () => {
-    setBusyAction('cleanup-orphans')
-    try {
-      // Step 1 — list
-      const listRes = await fetch('/api/social/uploadpost-cleanup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ profile_id: profileId, mode: 'list' }),
-      })
-      const listBody = await listRes.json().catch(() => ({}))
-      if (!listRes.ok) throw new Error(listBody?.error || `List failed (${listRes.status})`)
-      const counts = listBody?.counts || { total: 0, matched: 0, orphan: 0 }
-      if (!counts.orphan) {
-        toast({ kind: 'success', message: `No orphans found. ${counts.total} scheduled job${counts.total === 1 ? '' : 's'} on Upload-Post, all linked.` })
-        return
-      }
-      // Show a peek at a few orphan jobs in the confirm message so the
-      // user can eyeball them before nuking. Limit to first 3.
-      const peek = (listBody.jobs || [])
-        .filter((j) => !j.matched)
-        .slice(0, 3)
-        .map((j) => `• ${j.title || '(untitled)'} — ${j.scheduled_date ? new Date(j.scheduled_date).toLocaleString() : 'unscheduled'}`)
-        .join('\n')
-      const ok = await confirmDialog({
-        title: `Cancel ${counts.orphan} orphan Upload-Post job${counts.orphan === 1 ? '' : 's'}?`,
-        message:
-          `Upload-Post has ${counts.total} scheduled job${counts.total === 1 ? '' : 's'} on this brand. ` +
-          `${counts.matched} match a row here, ${counts.orphan} don't.\n\n` +
-          `Orphans (preview):\n${peek}${counts.orphan > 3 ? `\n…and ${counts.orphan - 3} more` : ''}\n\n` +
-          `Cancelling won't touch matched jobs — only the orphans.`,
-        confirmText: `Cancel ${counts.orphan} orphan${counts.orphan === 1 ? '' : 's'}`,
-        destructive: true,
-      })
-      if (!ok) return
-
-      // Step 2 — cancel
-      const cxlRes = await fetch('/api/social/uploadpost-cleanup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ profile_id: profileId, mode: 'cancel_orphans' }),
-      })
-      const cxlBody = await cxlRes.json().catch(() => ({}))
-      if (!cxlRes.ok) throw new Error(cxlBody?.error || `Cleanup failed (${cxlRes.status})`)
-      const c = cxlBody.counts || {}
-      const tail = c.failed ? `, ${c.failed} failed` : ''
-      toast({ kind: 'success', message: `Cleaned ${c.canceled || 0} orphan${(c.canceled || 0) === 1 ? '' : 's'}${tail}.` })
-    } catch (e) {
-      toast({ kind: 'error', message: `Cleanup failed: ${e.message}` })
-    } finally {
-      setBusyAction(null)
-    }
-  }
-
   const deleteScript = async (id) => {
     const ok = await confirmDialog({ title: 'Delete this row?', confirmText: 'Delete', destructive: true })
     if (!ok) return
@@ -1241,16 +1183,6 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           style={{ padding: '8px 12px' }}
           title="Cancel + re-submit every scheduled row with its current payload"
         >{busyAction === 'resync-upload-post' ? <Loader2 size={13} className="spin" /> : <RefreshCw size={13} />} Resync Scheduled</button>
-        {/* Clean up orphan Upload-Post jobs — i.e. scheduled posts that
-            exist on Upload-Post's calendar but have no matching row in
-            our DB. Happens when historical schedules ran without saving
-            the request_id back, or when DELETE didn't cascade-cancel. */}
-        <button
-          className="btn-ghost" disabled={busyAction !== null}
-          onClick={cleanupUploadPostOrphans}
-          style={{ padding: '8px 12px' }}
-          title="List + cancel scheduled Upload-Post jobs that aren't linked to any row here"
-        >{busyAction === 'cleanup-orphans' ? <Loader2 size={13} className="spin" /> : <AlertCircle size={13} />} Clean orphans</button>
         {/* Bulk delete — only renders once at least one row is checked so
            the toolbar isn't cluttered when nothing's selected. */}
         {selected.size > 0 && (
