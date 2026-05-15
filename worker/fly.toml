@@ -16,22 +16,18 @@ primary_region = 'iad'
 [http_service]
   internal_port = 8080
   force_https = true
-  # Why we DON'T auto-stop/suspend anymore:
-  # Suspend (and full stop) only consider inbound HTTP requests when
-  # deciding "idle." Long background ffmpeg jobs don't generate inbound
-  # traffic, so Fly happily suspended machines MID-ENCODE. ffmpeg got
-  # killed, the JS promise awaiting it never resolved, and the
-  # space_runs row stayed at "running" forever. We watched 5-clip
-  # polishes hang for 20+ minutes twice in a row before we caught this.
-  #
-  # min_machines_running = 1 keeps one performance-4x always alive
-  # (~$45/mo). For a single-user tool, that's the cost of reliable
-  # ffmpeg. We can revisit a smarter suspend strategy later (e.g.
-  # internal keep-alive ping while a job is in flight, or move ffmpeg
-  # to detached Fly Machines spawned per-job that can't be suspended).
-  auto_stop_machines = 'off'
+  # Suspend on idle for cost. The catch: Fly's "idle" detector watches
+  # INBOUND HTTP only, so a long background ffmpeg job (which doesn't
+  # generate inbound traffic) would get suspended mid-encode, killing
+  # ffmpeg and freezing the workflow forever. Counter-measure: the
+  # worker self-pings its own public /healthz every 30s while any
+  # background job is in flight (see startKeepAlive / jobStart in
+  # index.js). The self-ping leaves the machine, hits Fly's proxy,
+  # and comes back in — Fly counts that as inbound traffic and resets
+  # the suspend timer.
+  auto_stop_machines = 'suspend'
   auto_start_machines = true
-  min_machines_running = 1
+  min_machines_running = 0
   processes = ['app']
 
   [[http_service.checks]]

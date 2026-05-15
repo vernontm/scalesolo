@@ -76,6 +76,60 @@ app.use(express.json({ limit: '10mb' }))
 
 app.get('/healthz', (_req, res) => res.json({ ok: true, ffmpeg: !!ffmpegPath }))
 
+// ── Keep-alive against Fly auto-suspend ────────────────────────────────
+// Fly's auto-suspend only counts INBOUND HTTP. Long-running background
+// jobs (run-workflow, polish-async) don't generate inbound traffic
+// while they grind, so Fly was suspending machines mid-ffmpeg, killing
+// the encode and freezing the workflow forever.
+//
+// Fix: while any background job is active, self-ping our own public
+// /healthz every 30s. The ping leaves the machine, hits Fly's proxy
+// edge, returns to the machine — Fly counts that as inbound traffic
+// and resets the suspend timer. Idle-cost stays at $0 (suspend on no
+// jobs), but active jobs are never interrupted.
+let activeJobs = 0
+let keepAliveTimer = null
+const WORKER_PUBLIC_URL = process.env.WORKER_PUBLIC_URL
+  || (process.env.FLY_APP_NAME ? `https://${process.env.FLY_APP_NAME}.fly.dev` : null)
+
+function startKeepAlive() {
+  if (keepAliveTimer) return
+  if (!WORKER_PUBLIC_URL) {
+    console.warn('[keepalive] no public URL configured (set FLY_APP_NAME or WORKER_PUBLIC_URL); auto-suspend may interrupt long jobs')
+    return
+  }
+  console.log(`[keepalive] starting (pinging ${WORKER_PUBLIC_URL}/healthz every 30s)`)
+  keepAliveTimer = setInterval(async () => {
+    try {
+      const t0 = Date.now()
+      const r = await fetch(`${WORKER_PUBLIC_URL}/healthz`, { method: 'GET' })
+      const ms = Date.now() - t0
+      if (!r.ok) console.warn(`[keepalive] ping returned ${r.status} after ${ms}ms`)
+    } catch (e) {
+      console.warn('[keepalive] ping failed:', e?.message)
+    }
+  }, 30_000)
+}
+
+function stopKeepAlive() {
+  if (!keepAliveTimer) return
+  clearInterval(keepAliveTimer)
+  keepAliveTimer = null
+  console.log('[keepalive] stopped (no active jobs)')
+}
+
+// Increment / decrement active job count and toggle the keep-alive.
+// Pair every jobStart() with a jobEnd() (in a finally block) so the
+// counter never drifts on errors.
+function jobStart() {
+  activeJobs += 1
+  if (activeJobs === 1) startKeepAlive()
+}
+function jobEnd() {
+  activeJobs = Math.max(0, activeJobs - 1)
+  if (activeJobs === 0) stopKeepAlive()
+}
+
 // Shared-secret middleware for every job route.
 const requireSecret = (req, res, next) => {
   if (!SECRET) return next()
@@ -472,6 +526,9 @@ function newJobId() {
 async function runPolishJob(jobId, body) {
   const job = jobs.get(jobId)
   if (!job) return
+  // Mark this background job as active so the keep-alive ping fires
+  // throughout the ffmpeg encode and Fly can't auto-suspend us.
+  jobStart()
   job.status = 'running'
   job.started_at = new Date().toISOString()
   try {
@@ -484,6 +541,10 @@ async function runPolishJob(jobId, body) {
     job.error = String(err?.message || err)
     job.finished_at = new Date().toISOString()
     console.error(`polish job ${jobId} failed:`, err?.stack || err)
+  } finally {
+    // Always decrement, even on error paths — otherwise activeJobs
+    // would drift up and keep-alive would never stop.
+    jobEnd()
   }
   // Reap after 10 min so the registry doesn't grow forever.
   setTimeout(() => jobs.delete(jobId), 10 * 60 * 1000)
@@ -530,6 +591,11 @@ app.post('/jobs/run-workflow', requireSecret, async (req, res) => {
   // direct (service-role) so the schedule row's last_error reflects
   // the actual failure even when the cron is long gone.
   ;(async () => {
+    // Mark this background workflow as active so the keep-alive ping
+    // fires throughout the entire run and Fly can't suspend us mid-
+    // execution. jobEnd() is in the finally block below so a thrown
+    // exception still decrements the counter cleanly.
+    jobStart()
     const startedAt = Date.now()
     let supabase = null
     if (SUPABASE_URL && SERVICE_KEY) {
@@ -795,6 +861,10 @@ app.post('/jobs/run-workflow', requireSecret, async (req, res) => {
         href: `/spaces?id=${body.space_id || ''}`,
         meta: { schedule_id, space_id: body.space_id, error: String(err?.message || err) },
       })
+    } finally {
+      // Decrement keep-alive counter no matter how the run finished.
+      // Pairs with the jobStart() at the top of the IIFE.
+      jobEnd()
     }
   })().catch(() => {})
 })
