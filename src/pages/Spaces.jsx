@@ -2316,7 +2316,10 @@ function SpaceBuilder({ space, onSave, onClose }) {
         const np = row.node_progress || {}
         const total = row.node_count || 0
         const completed = Object.values(np).filter((p) => p && (p.status === 'success' || p.status === 'failed')).length
-        setServerRun({ id: row.id, total, completed, triggered_by: row.triggered_by, started_at: row.started_at })
+        // How many are actively running RIGHT NOW (vs done or pending).
+        // Drives the "6 running, the rest queue" hint on the panel.
+        const running = Object.values(np).filter((p) => p && p.status === 'running').length
+        setServerRun({ id: row.id, total, completed, running, triggered_by: row.triggered_by, started_at: row.started_at })
         // Reflect each node's progress on the canvas. We only patch
         // status (not output) because the worker holds the actual
         // result data — the canvas would need a separate fetch to
@@ -4088,6 +4091,14 @@ function SpaceBuilder({ space, onSave, onClose }) {
                 height: '100%', background: '#2ecc71', transition: 'width 0.4s ease',
               }} />
             </div>
+            {/* Concurrency hint — only shows while there's still work
+                queued behind the parallel cap (running >= 6 means we're
+                at the wall and at least one node is waiting). */}
+            {serverRun.running >= 6 && (serverRun.total - serverRun.completed - serverRun.running) > 0 && (
+              <div style={{ fontSize: 10.5, color: 'var(--text-soft)', marginTop: 6, lineHeight: 1.4 }}>
+                {serverRun.running} are running. The next one starts as soon as one finishes.
+              </div>
+            )}
             <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 6 }}>
               Safe to close the tab — the worker keeps going.
             </div>

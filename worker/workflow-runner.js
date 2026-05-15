@@ -1555,6 +1555,17 @@ export async function runWorkflow({ graph, userId, profileId, internalSecret, lo
   // Dispatch up to CONCURRENCY of them in parallel. await Promise.race
   // so the next descendant becomes eligible the instant ONE finishes
   // — no waiting for the slowest sibling to drain the wave.
+  // Stable left-to-right ordering for the dispatch queue. Topo order
+  // alone leaves sibling nodes (e.g. 7 image_gens that all share one
+  // Upload media parent) in graph-creation order, which doesn't match
+  // the user's visual intent on the canvas. Sorting by position.x
+  // makes "the first six run, the seventh queues" actually mean "the
+  // six leftmost run, the rightmost queues" — same as what the user
+  // sees on screen and the numbered slot badges they read off the
+  // generators. Falls back to id-string sort when positions are equal
+  // or missing, so ordering stays deterministic.
+  const nodeXById = new Map(nodes.map((n) => [n.id, Number(n?.position?.x) || 0]))
+
   while (done.size < order.length) {
     // Find ready nodes (ancestors resolved, not started, not done).
     const ready = []
@@ -1563,6 +1574,12 @@ export async function runWorkflow({ graph, userId, profileId, internalSecret, lo
       if (!ancestorsResolved(id)) continue
       ready.push(id)
     }
+    ready.sort((a, b) => {
+      const xa = nodeXById.get(a) ?? 0
+      const xb = nodeXById.get(b) ?? 0
+      if (xa !== xb) return xa - xb
+      return a < b ? -1 : a > b ? 1 : 0
+    })
 
     // Dispatch as many as we have room for.
     while (ready.length && inFlight.size < CONCURRENCY) {
