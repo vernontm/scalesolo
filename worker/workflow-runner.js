@@ -198,7 +198,7 @@ const NODE_RUNNERS = {
     }
   },
 
-  image_gen: async ({ node, inputs, ctx }) => {
+  image_gen: async ({ node, inputs, ctx, log }) => {
     const props = node.data?.props || {}
     const brand = pickBrand(inputs)
     const profileId = brand?.profile_id || ctx.profileId
