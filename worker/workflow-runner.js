@@ -1412,10 +1412,8 @@ ${String(script).slice(0, 2000)}
     }
   },
 
-  save_library: ({ inputs }) => {
-    // Same in-memory bundler the browser uses — just passes a
-    // bundle downstream. The real persistence happens via
-    // schedule_post.
+  save_library: async ({ node, inputs, ctx }) => {
+    // Bundler: collect everything upstream into one package.
     let title = '', script = '', caption = '', hashtags = '', firstComment = ''
     let videoUrl = null
     const images = []
@@ -1429,14 +1427,65 @@ ${String(script).slice(0, 2000)}
       if (!videoUrl && (v.video?.video_url || v.video_url)) videoUrl = v.video?.video_url || v.video_url
       if (Array.isArray(v.images)) for (const im of v.images) if (im?.url) images.push({ url: im.url })
     }
-    const mediaUrls = videoUrl ? [videoUrl] : (images.length ? images.map((i) => i.url) : null)
+    // Apply the user's saved carousel image_order (parity with the
+    // browser runner, so server runs save in the same slide order
+    // the user sees in the SaveBody preview).
+    let orderedImages = images
+    const savedOrder = Array.isArray(node?.data?.props?.image_order) ? node.data.props.image_order : []
+    if (savedOrder.length && images.length) {
+      const have = new Map(images.map((it) => [it.url, it]))
+      const seen = new Set()
+      const front = []
+      for (const u of savedOrder) {
+        if (have.has(u) && !seen.has(u)) { front.push(have.get(u)); seen.add(u) }
+      }
+      const back = images.filter((it) => !seen.has(it.url))
+      orderedImages = [...front, ...back]
+    }
+    const mediaUrls = videoUrl ? [videoUrl] : (orderedImages.length ? orderedImages.map((i) => i.url) : null)
+    const mediaType = videoUrl ? 'video' : (orderedImages.length ? 'image' : 'text')
+    const platforms = Array.isArray(node?.data?.props?.platforms) && node.data.props.platforms.length
+      ? node.data.props.platforms
+      : null
+    const finalTitle = (node?.data?.props?.title || '').trim() || title || (script.slice(0, 60)) || 'Untitled'
+
+    // If no schedule_post downstream, write a content_scripts row
+    // ourselves so "Save to drafts" actually lands somewhere instead
+    // of just floating as in-memory bundle data. Mirrors the browser
+    // behavior.
+    let savedContentId = null
+    const willSchedule = !!ctx?.hasDownstreamType?.(node.id, 'schedule_post')
+    if (!willSchedule && ctx?.profileId && (mediaUrls?.length || script || caption)) {
+      const status = (node?.data?.props?.status === 'caption_ready') ? 'caption_ready' : 'draft'
+      try {
+        const created = await callApi('/api/content', {
+          profile_id:    ctx.profileId,
+          title:         finalTitle,
+          full_script:   script,
+          caption,
+          hashtags,
+          first_comment: firstComment,
+          media_urls:    mediaUrls,
+          media_type:    mediaType,
+          platforms,
+          status,
+        }, ctx.headers)
+        savedContentId = created?.item?.id || null
+      } catch (e) {
+        throw new Error(`Couldn't save draft to your content library: ${e.message}`)
+      }
+    }
+
     return {
       bundle: true,
-      title, script, full_script: script, caption, hashtags, first_comment: firstComment,
+      title: finalTitle, script, full_script: script, caption, hashtags, first_comment: firstComment,
       video_url: videoUrl,
-      images: images.length ? images : undefined,
+      images: orderedImages.length ? orderedImages : undefined,
       media_urls: mediaUrls,
-      media_type: videoUrl ? 'video' : (images.length ? 'image' : 'text'),
+      media_type: mediaType,
+      platforms,
+      content_id: savedContentId,
+      saved_status: savedContentId ? ((node?.data?.props?.status === 'caption_ready') ? 'caption_ready' : 'draft') : null,
     }
   },
 }
@@ -1473,7 +1522,31 @@ export async function runWorkflow({ graph, userId, profileId, internalSecret, lo
   const outputs = new Map()
   const errors = {}
   const headers = makeHeaders({ userId, internalSecret })
-  const ctx = { userId, profileId, headers, internalSecret, localFns: localFns || null }
+  // Pre-build an outgoing-edge index so per-node runners can answer
+  // "is there a schedule_post downstream of me?" without scanning the
+  // edge array each time. Used by save_library to decide whether to
+  // do its own DB insert (no schedule_post) or stay a pure bundler.
+  const outgoingBySource = new Map()
+  for (const e of edges) {
+    if (!outgoingBySource.has(e.source)) outgoingBySource.set(e.source, [])
+    outgoingBySource.get(e.source).push(e)
+  }
+  const hasDownstreamType = (startId, type) => {
+    const stk = [startId]
+    const seen = new Set()
+    while (stk.length) {
+      const cur = stk.pop()
+      if (seen.has(cur)) continue
+      seen.add(cur)
+      for (const e of (outgoingBySource.get(cur) || [])) {
+        const target = nodes.find((n) => n.id === e.target)
+        if (target?.data?.type === type) return true
+        stk.push(e.target)
+      }
+    }
+    return false
+  }
+  const ctx = { userId, profileId, headers, internalSecret, localFns: localFns || null, hasDownstreamType }
 
   // ── rerunFromNodeId: re-run this node and every descendant ─────────
   // Computes the set of node ids that MUST re-run fresh (target +

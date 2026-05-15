@@ -9263,7 +9263,7 @@ export const NODE_REGISTRY = {
     // save_library used to insert a status='draft' row on every run,
     // which (a) cluttered the Library tab with partial drafts and
     // (b) doubled the row count when schedule_post fired right after.
-    run: async ({ data, inputs }) => {
+    run: async ({ data, inputs, ctx }) => {
       const arr = asArr(inputs?.in)
       let script = '', caption = '', hashtags = '', firstComment = '', videoUrl = null, incomingTitle = '', perPlatform = null
       const imageUrls = []
@@ -9319,8 +9319,51 @@ export const NODE_REGISTRY = {
           throw new Error(`${names} can't accept ${mediaType} content. Remove it or change what's wired in.`)
         }
       }
+      // If a schedule_post is downstream, save_library stays a pure
+      // bundler — schedule_post will insert the row itself after
+      // Upload-Post accepts the submission. If NOT, save_library writes
+      // the row itself so the user's "Save to drafts" actually lands
+      // somewhere (used to be in-memory only, which was misleading
+      // given the node label).
+      const willSchedule = !!ctx?.hasDownstreamType?.(ctx.currentNodeId, 'schedule_post')
+      let savedContentId = null
+      if (!willSchedule && ctx?.profileId && ctx?.token && (mediaUrls?.length || script || caption)) {
+        // Pull the status from the SaveBody dropdown — 'draft' (default,
+        // shows on Drafts tab) or 'caption_ready' (server auto-promotes
+        // to scheduled into the next open slot if media is present).
+        const status = (data.props?.status === 'caption_ready') ? 'caption_ready' : 'draft'
+        const body = {
+          profile_id: ctx.profileId,
+          title,
+          full_script: script,
+          caption,
+          hashtags,
+          first_comment: firstComment,
+          media_urls: mediaUrls,
+          media_type: mediaType,
+          platforms,
+          status,
+        }
+        try {
+          const r = await fetch('/api/content', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
+            body: JSON.stringify(body),
+          })
+          const respBody = await r.json().catch(() => ({}))
+          if (!r.ok) throw new Error(respBody?.error || `Save failed (${r.status})`)
+          savedContentId = respBody?.item?.id || null
+        } catch (e) {
+          // Don't blow up the whole run on a save failure — the bundle
+          // is still useful (user can still wire it downstream). Re-
+          // throw with a clearer message.
+          throw new Error(`Couldn't save draft to your content library: ${e.message}`)
+        }
+      }
+
       // Emit a complete bundle so a downstream schedule_post can run
-      // without re-walking every upstream input.
+      // without re-walking every upstream input. content_id (when set)
+      // lets Collection / downstream nodes link back to the saved row.
       return {
         bundle: true,
         title,
@@ -9335,6 +9378,8 @@ export const NODE_REGISTRY = {
         media_urls: mediaUrls,
         media_type: mediaType,
         platforms,
+        content_id: savedContentId,
+        saved_status: savedContentId ? ((data.props?.status === 'caption_ready') ? 'caption_ready' : 'draft') : null,
       }
     },
   },
@@ -9559,7 +9604,36 @@ export async function runSpace({ ctx, nodes, edges, onNodeChange }) {
         }
         return urls
       }
-      const nodeCtx = { ...ctx, findUpstreamVideoUrls }
+      // hasDownstreamType: BFS forward through outgoing edges from this
+      // node, returns true if any descendant node has the given type.
+      // Used by save_library to detect a schedule_post downstream — if
+      // present, save_library is just a bundler (schedule_post will do
+      // the DB insert after Upload-Post). If absent, save_library writes
+      // a content_scripts row itself so the user sees their draft.
+      const outgoingBySource = (() => {
+        const m = new Map()
+        for (const e of edges) {
+          if (!m.has(e.source)) m.set(e.source, [])
+          m.get(e.source).push(e)
+        }
+        return m
+      })()
+      const hasDownstreamType = (startId, type) => {
+        const stk = [startId]
+        const seen = new Set()
+        while (stk.length) {
+          const cur = stk.pop()
+          if (seen.has(cur)) continue
+          seen.add(cur)
+          for (const e of (outgoingBySource.get(cur) || [])) {
+            const target = nodes.find((n) => n.id === e.target)
+            if (target?.data?.type === type) return true
+            stk.push(e.target)
+          }
+        }
+        return false
+      }
+      const nodeCtx = { ...ctx, findUpstreamVideoUrls, hasDownstreamType, currentNodeId: id }
 
       const result = await Promise.race([
         def.run({ id, data: node.data, inputs: inputObj, inputsByName, ctx: nodeCtx, reportProgress }),
