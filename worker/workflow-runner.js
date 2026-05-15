@@ -1120,27 +1120,26 @@ ${String(script).slice(0, 2000)}
       }
     }
 
-    // ── Multi-clip fan-out ──────────────────────────────────────────────
-    // Concurrency 2 — ffmpeg is CPU-heavy and each polish job pegs ~2
-    // worker cores. More parallelism either OOMs or slows down so much
-    // it's net-zero. 2 is the sweet spot on shared-cpu-2x.
-    const POLISH_CONCURRENCY = 2
+    // ── Multi-clip fan-out (SERIAL) ─────────────────────────────────────
+    // Polish is serialized one clip at a time. We tried concurrency 2
+    // and hit FUNCTION_INVOCATION_FAILED on Vercel — running two polish
+    // chains in parallel doubles up the worker→Vercel→worker round-trip
+    // load AND fights for the same ffmpeg CPU on the Fly worker, which
+    // pushed Vercel functions past their resource budget. Serial is
+    // slower (5 clips × 60-90s ≈ 5-8 min total) but reliable. We can
+    // experiment with parallel again later once we move polish onto a
+    // direct worker job queue without the Vercel hop in between.
     const polished = new Array(videoUrls.length)
     const errors = []
-    let cursor = 0
-    const workers = Array.from({ length: Math.min(POLISH_CONCURRENCY, videoUrls.length) }, async () => {
-      while (cursor < videoUrls.length) {
-        const i = cursor++
-        try {
-          polished[i] = { video_url: await polishOne(videoUrls[i], i), idx: i }
-        } catch (e) {
-          console.warn(`[video_polish] clip ${i} failed: ${e?.message}`)
-          errors.push({ idx: i, error: e?.message || String(e) })
-          polished[i] = null
-        }
+    for (let i = 0; i < videoUrls.length; i++) {
+      try {
+        polished[i] = { video_url: await polishOne(videoUrls[i], i), idx: i }
+      } catch (e) {
+        console.warn(`[video_polish] clip ${i} failed: ${e?.message}`)
+        errors.push({ idx: i, error: e?.message || String(e) })
+        polished[i] = null
       }
-    })
-    await Promise.all(workers)
+    }
 
     const successful = polished.filter(Boolean)
     if (!successful.length) {
