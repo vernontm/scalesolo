@@ -56,8 +56,8 @@ export default async function handler(req, res) {
     const auth = await requireUser(req)
     const { profile_id, mode = 'list' } = req.body || {}
     if (!profile_id) return res.status(400).json({ error: 'profile_id required' })
-    if (!['list', 'cancel_orphans'].includes(mode)) {
-      return res.status(400).json({ error: `mode must be 'list' or 'cancel_orphans'` })
+    if (!['list', 'cancel_orphans', 'cancel_all'].includes(mode)) {
+      return res.status(400).json({ error: `mode must be 'list', 'cancel_orphans', or 'cancel_all'` })
     }
     await assertProfileAccess(auth.user.id, profile_id)
 
@@ -127,29 +127,62 @@ export default async function handler(req, res) {
       return res.status(200).json({ jobs: taggedJobs, counts, username })
     }
 
-    // 4. cancel_orphans — DELETE each orphan job on Upload-Post.
-    //    Concurrency-capped so we don't slam their API and to fit the
-    //    function budget. matched jobs are never touched.
+    // 4. cancel_orphans / cancel_all — DELETE jobs on Upload-Post.
+    //    cancel_orphans: only jobs NOT linked to a content_scripts row.
+    //    cancel_all:     every scheduled job on Upload-Post + cancel the
+    //                    matching content_scripts rows locally so our DB
+    //                    doesn't keep showing them as Scheduled.
+    //    Concurrency-capped so we don't slam Upload-Post's API.
+    const targets = mode === 'cancel_all' ? taggedJobs : orphans
     let canceled = 0
     let failed = 0
     const detail = []
+    const cancelledRequestIds = []
 
     const CONCURRENCY = 5
     let cursor = 0
-    const workers = Array.from({ length: Math.min(CONCURRENCY, orphans.length) }, async () => {
-      while (cursor < orphans.length) {
-        const j = orphans[cursor++]
+    const workers = Array.from({ length: Math.min(CONCURRENCY, targets.length) }, async () => {
+      while (cursor < targets.length) {
+        const j = targets[cursor++]
         const r = await uploadpostCancelScheduled(j.request_id)
-        if (r.ok) { canceled++; detail.push({ request_id: j.request_id, ok: true }) }
-        else      { failed++;  detail.push({ request_id: j.request_id, ok: false, reason: r.reason || 'unknown', status: r.status || null }) }
+        if (r.ok) {
+          canceled++
+          cancelledRequestIds.push(j.request_id)
+          detail.push({ request_id: j.request_id, ok: true })
+        } else {
+          failed++
+          detail.push({ request_id: j.request_id, ok: false, reason: r.reason || 'unknown', status: r.status || null })
+        }
       }
     })
     await Promise.all(workers)
 
+    // Local cleanup for cancel_all: flip any matched content_scripts row
+    // to status='cancelled' so the Schedule page doesn't keep showing
+    // them as Scheduled when Upload-Post will never fire them.
+    let localUpdated = 0
+    if (mode === 'cancel_all' && cancelledRequestIds.length) {
+      try {
+        const idList = cancelledRequestIds.map((id) => encodeURIComponent(id)).join(',')
+        const updated = await supaFetch(
+          `content_scripts?profile_id=eq.${profile_id}&uploadpost_request_id=in.(${idList})`,
+          {
+            method: 'PATCH',
+            body: { status: 'cancelled', last_error: 'Cancelled via cancel_all cleanup' },
+            prefer: 'return=representation',
+          }
+        )
+        localUpdated = Array.isArray(updated) ? updated.length : 0
+      } catch (e) {
+        console.warn('uploadpost-cleanup cancel_all: local row update failed:', e?.message)
+      }
+    }
+
     return res.status(200).json({
-      counts: { ...counts, canceled, failed },
+      counts: { ...counts, canceled, failed, local_rows_cancelled: localUpdated },
       canceled: detail,
       username,
+      mode,
     })
   } catch (err) {
     console.error('uploadpost-cleanup error:', err?.stack || err)

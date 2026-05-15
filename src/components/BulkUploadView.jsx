@@ -782,6 +782,66 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     }
   }
 
+  // Nuke every scheduled Upload-Post job for this brand. Two-step
+  // confirm: first lists how many jobs exist + a preview, then on
+  // explicit user approval calls cancel_all which deletes each
+  // scheduled job upstream AND flips the matching content_scripts
+  // rows to status='cancelled' locally.
+  const cancelAllUploadPost = async () => {
+    setBusyAction('cancel-all')
+    try {
+      // Step 1 — list to get the count + preview
+      const listRes = await fetch('/api/social/uploadpost-cleanup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ profile_id: profileId, mode: 'list' }),
+      })
+      const listBody = await listRes.json().catch(() => ({}))
+      if (!listRes.ok) throw new Error(listBody?.error || `List failed (${listRes.status})`)
+      const counts = listBody?.counts || { total: 0, matched: 0, orphan: 0 }
+      if (!counts.total) {
+        toast({ kind: 'info', message: 'No scheduled posts on Upload-Post for this brand.' })
+        return
+      }
+      const peek = (listBody.jobs || [])
+        .slice(0, 3)
+        .map((j) => `• ${j.title || '(untitled)'} — ${j.scheduled_date ? new Date(j.scheduled_date).toLocaleString() : 'unscheduled'}`)
+        .join('\n')
+      const ok = await confirmDialog({
+        title: `Cancel ALL ${counts.total} scheduled posts?`,
+        message:
+          `This will cancel every scheduled job for this brand on Upload-Post AND mark the matching rows here as cancelled. ` +
+          `Polished video files in storage are NOT deleted — you can still re-schedule them later.\n\n` +
+          `Preview of what will be cancelled:\n${peek}${counts.total > 3 ? `\n…and ${counts.total - 3} more` : ''}\n\n` +
+          `This action is not reversible — once the cancels hit Upload-Post they're gone.`,
+        confirmText: `Cancel all ${counts.total}`,
+        destructive: true,
+      })
+      if (!ok) return
+
+      // Step 2 — cancel
+      const cxlRes = await fetch('/api/social/uploadpost-cleanup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ profile_id: profileId, mode: 'cancel_all' }),
+      })
+      const cxlBody = await cxlRes.json().catch(() => ({}))
+      if (!cxlRes.ok) throw new Error(cxlBody?.error || `Cancel-all failed (${cxlRes.status})`)
+      const c = cxlBody.counts || {}
+      const tail = c.failed ? `, ${c.failed} failed` : ''
+      toast({
+        kind: 'success',
+        message: `Cancelled ${c.canceled || 0} on Upload-Post${tail}. ${c.local_rows_cancelled || 0} local rows updated.`,
+      })
+      refresh()
+      onChange?.()
+    } catch (e) {
+      toast({ kind: 'error', message: `Cancel-all failed: ${e.message}` })
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
   const deleteScript = async (id) => {
     const ok = await confirmDialog({ title: 'Delete this row?', confirmText: 'Delete', destructive: true })
     if (!ok) return
@@ -1183,6 +1243,21 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           style={{ padding: '8px 12px' }}
           title="Cancel + re-submit every scheduled row with its current payload"
         >{busyAction === 'resync-upload-post' ? <Loader2 size={13} className="spin" /> : <RefreshCw size={13} />} Resync Scheduled</button>
+        {/* Nuke every scheduled Upload-Post job for this brand. Two-step
+            confirm because this is destructive and the user can't recover
+            once the API call fires. Local content_scripts rows for the
+            same request_ids are flipped to status='cancelled'. */}
+        <button
+          className="btn-ghost"
+          disabled={busyAction !== null}
+          onClick={cancelAllUploadPost}
+          style={{
+            padding: '8px 12px',
+            color: 'var(--red)',
+            borderColor: 'rgba(239,68,68,0.35)',
+          }}
+          title="Cancel every scheduled post for this brand on Upload-Post + mark them cancelled here"
+        >{busyAction === 'cancel-all' ? <Loader2 size={13} className="spin" /> : <Trash2 size={13} />} Cancel all scheduled</button>
         {/* Bulk delete — only renders once at least one row is checked so
            the toolbar isn't cluttered when nothing's selected. */}
         {selected.size > 0 && (
