@@ -913,6 +913,71 @@ function probeVideoMeta(file) {
 }
 
 // ─── 1. TEXT INPUT ──────────────────────────────────────────────────────────
+// "Pre-written caption" node body — for when the user already has a
+// title / caption / hashtags / first comment written and doesn't want
+// the AI to generate them. Four labeled fields that emit the same
+// shape caption_gen does, so save_library + schedule_post consume
+// either source interchangeably.
+function ManualCaptionBody({ data, onPatch }) {
+  const p = data.props || {}
+  const title = p.title || ''
+  const caption = p.caption || ''
+  const hashtags = p.hashtags || ''
+  const firstComment = p.first_comment || ''
+  // Show a small char count for caption + first comment since platform
+  // limits (TikTok 2200, IG 2200, X 280) bite there. Title is short
+  // enough that nobody hits a wall.
+  return (
+    <>
+      <NodeField label="Title">
+        <input
+          className="nodrag"
+          style={tinyInput}
+          placeholder="Short post title"
+          value={title}
+          onChange={(e) => onPatch({ title: e.target.value })}
+        />
+      </NodeField>
+      <NodeField label="Caption">
+        <ExpandableTextarea
+          value={caption}
+          onChange={(v) => onPatch({ caption: v })}
+          placeholder="The body of your post. This is what people read in their feed."
+          minHeight={90}
+          title="Caption editor"
+        />
+        {caption.length > 0 && (
+          <div style={{ fontSize: 9.5, color: caption.length > 2200 ? 'var(--red)' : 'var(--muted)', marginTop: 4, textAlign: 'right' }}>
+            {caption.length.toLocaleString()} chars
+          </div>
+        )}
+      </NodeField>
+      <NodeField label="Hashtags">
+        <ExpandableTextarea
+          value={hashtags}
+          onChange={(v) => onPatch({ hashtags: v })}
+          placeholder="#contentcreator #scalesolo #buildinpublic"
+          minHeight={50}
+          title="Hashtags editor"
+        />
+      </NodeField>
+      <NodeField label="First comment (optional)">
+        <ExpandableTextarea
+          value={firstComment}
+          onChange={(v) => onPatch({ first_comment: v })}
+          placeholder="Pinned as the first comment. Common pattern: drop your hashtags here instead of in the caption."
+          minHeight={60}
+          title="First comment editor"
+        />
+      </NodeField>
+      <div style={{ marginTop: 4, fontSize: 10, color: 'var(--muted)', lineHeight: 1.4 }}>
+        Wire this into Save to drafts (or Schedule post) the same way the AI Title + caption node connects. Empty fields are skipped.
+      </div>
+      <NodePreview status={data.status} output={data.output} error={data.error} />
+    </>
+  )
+}
+
 function TextInputBody({ data, onPatch }) {
   const value = data.props?.text || ''
   const charCount = value.length
@@ -3264,6 +3329,7 @@ export function nodeCostLabel(nodeType) {
 
 export const NODE_COST_HINT = {
   text_input:    0,
+  manual_caption: 0,
   image_upload:  0,
   brand_profile: 200,
   auto_run:      0,
@@ -6805,6 +6871,33 @@ export const NODE_REGISTRY = {
     initialProps: { text: '' },
     Body: TextInputBody,
     run: async ({ data }) => ({ text: data.props?.text || '' }),
+  },
+
+  // Pre-written caption — same output shape as caption_gen, but the
+  // user types it in. Use when you already have the title / caption /
+  // hashtags / first comment ready (recycling an old post, posting
+  // something hand-written, batch-importing from a sheet, etc).
+  manual_caption: {
+    free: true,
+    label: 'Pre-written caption',
+    description: 'Already have a title, caption, hashtags, and a first comment? Type them here and skip the AI step. Wires into Save to drafts and Schedule post like the AI caption node.',
+    icon: Edit3, category: 'inputs', color: '#f59e0b',
+    inputs: [], outputs: [{ id: 'out', label: 'Out' }],
+    initialProps: { title: '', caption: '', hashtags: '', first_comment: '' },
+    Body: ManualCaptionBody,
+    run: async ({ data }) => {
+      // Mirror caption_gen's output keys verbatim so downstream
+      // consumers (save_library, schedule_post) don't need a separate
+      // branch. Empty fields are still emitted so the bundler doesn't
+      // get fooled by stale upstream values from another sibling.
+      const p = data.props || {}
+      return {
+        title:         (p.title || '').trim(),
+        caption:       (p.caption || '').trim(),
+        hashtags:      (p.hashtags || '').trim(),
+        first_comment: (p.first_comment || '').trim(),
+      }
+    },
   },
 
   // Reference URL → transcript. Pastes a TikTok / Reel / YouTube URL,

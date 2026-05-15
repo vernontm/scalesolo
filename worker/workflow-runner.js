@@ -138,6 +138,19 @@ function pickAllImageUrls(bag) {
 const NODE_RUNNERS = {
   text_input: ({ node }) => ({ text: node.data?.props?.text || '' }),
 
+  // Pre-written caption — user typed it in the browser, server just
+  // mirrors the props out under caption_gen's keys so save_library /
+  // schedule_post can consume either source interchangeably.
+  manual_caption: ({ node }) => {
+    const p = node.data?.props || {}
+    return {
+      title:         (p.title || '').trim(),
+      caption:       (p.caption || '').trim(),
+      hashtags:      (p.hashtags || '').trim(),
+      first_comment: (p.first_comment || '').trim(),
+    }
+  },
+
   url_reference: ({ node }) => ({ url: node.data?.props?.url || '' }),
 
   brand_profile: ({ node }) => ({ brand: { profile_id: node.data?.props?.profile_id, ...node.data?.props } }),
