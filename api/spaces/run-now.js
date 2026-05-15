@@ -20,7 +20,11 @@
 
 import { setCors, requireUser, assertProfileAccess } from '../_lib/supabase.js'
 
-export const config = { maxDuration: 30 }
+// 60s gives a cold-starting Railway / Fly worker enough time to come up
+// from auto-sleep. Hot workers ack in <1s; cold starts can take 20-40s
+// on the first request after idle. 30s was just enough to time out on
+// every cold start.
+export const config = { maxDuration: 60 }
 
 const WORKER_URL = process.env.WORKER_URL
 const WORKER_SECRET = process.env.WORKER_SHARED_SECRET
@@ -50,32 +54,60 @@ export default async function handler(req, res) {
     // Fire-and-forget intent. The worker writes a space_runs row on
     // its end, so a delayed/dropped response here doesn't leave the
     // canvas in the dark — Supabase realtime picks it up.
-    const wRes = await fetch(`${WORKER_URL.replace(/\/$/, '')}/jobs/run-workflow`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(WORKER_SECRET ? { 'x-worker-secret': WORKER_SECRET } : {}),
-      },
-      body: JSON.stringify({
-        // No schedule_id — this is a one-shot manual run, not a cron tick.
-        user_id: auth.user.id,
-        profile_id,
-        space_id,
-        // trigger_node_id is purely cosmetic in the worker (it's
-        // logged on the space_runs row for cron-fired runs). Manual
-        // dispatches don't have one; the worker tolerates a missing
-        // value and labels the row with triggered_by="manual_server".
-        trigger_node_id: null,
-        graph,
-        internal_secret: INTERNAL_SECRET,
-        triggered_by: 'manual_server',
-      }),
-    })
+    //
+    // AbortController-bounded fetch so we get a clear timeout error
+    // instead of Vercel's opaque 504 gateway page. 45s leaves headroom
+    // under maxDuration=60. Hot workers ack in <1s; cold workers ack in
+    // 10-30s; >45s means the worker is genuinely down.
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 45_000)
+    const t0 = Date.now()
+    let wRes
+    try {
+      wRes = await fetch(`${WORKER_URL.replace(/\/$/, '')}/jobs/run-workflow`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(WORKER_SECRET ? { 'x-worker-secret': WORKER_SECRET } : {}),
+        },
+        body: JSON.stringify({
+          user_id: auth.user.id,
+          profile_id,
+          space_id,
+          trigger_node_id: null,
+          graph,
+          internal_secret: INTERNAL_SECRET,
+          triggered_by: 'manual_server',
+        }),
+        signal: controller.signal,
+      })
+    } catch (e) {
+      clearTimeout(timeout)
+      const ms = Date.now() - t0
+      if (e?.name === 'AbortError') {
+        console.error(`run-now: worker timed out after ${ms}ms`, { WORKER_URL })
+        return res.status(504).json({
+          error: `Worker timed out after ${(ms / 1000).toFixed(0)}s. The render worker is either cold-starting from sleep or unreachable. Check Railway dashboard or retry in a moment.`,
+          worker_url: WORKER_URL,
+          elapsed_ms: ms,
+        })
+      }
+      console.error(`run-now: worker fetch failed after ${ms}ms`, e?.stack || e)
+      return res.status(502).json({
+        error: `Could not reach worker: ${e?.message || e}`,
+        worker_url: WORKER_URL,
+      })
+    }
+    clearTimeout(timeout)
+    const dispatchMs = Date.now() - t0
+    if (dispatchMs > 5_000) {
+      console.warn(`run-now: slow worker ack — ${dispatchMs}ms`)
+    }
     const wBody = await wRes.json().catch(() => ({}))
     if (!wRes.ok) {
-      return res.status(502).json({ error: wBody?.error || `Worker ${wRes.status}` })
+      return res.status(502).json({ error: wBody?.error || `Worker ${wRes.status}`, dispatch_ms: dispatchMs })
     }
-    return res.status(200).json({ ok: true, dispatched: true, job_id: wBody?.job_id || null })
+    return res.status(200).json({ ok: true, dispatched: true, job_id: wBody?.job_id || null, dispatch_ms: dispatchMs })
   } catch (err) {
     console.error('run-now error:', err?.stack || err)
     return res.status(err.status || 500).json({ error: err.message })
