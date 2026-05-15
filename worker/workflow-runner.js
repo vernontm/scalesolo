@@ -1424,23 +1424,48 @@ export async function runWorkflow({ graph, userId, profileId, internalSecret, lo
     log?.(`[rerun-from] ${rerunFromNodeId} → ${freshSet.size} node(s) will re-run fresh`)
   }
 
-  for (const id of order) {
-    // Cancellation check at each node boundary. shouldAbort() polls the
-    // space_runs row for status='cancelled' (the worker passes a polling
-    // function from index.js). If the user clicked Stop, every remaining
-    // node short-circuits with the same "cancelled" message instead of
-    // chugging through the rest of the graph.
+  // ── Parallel scheduler ─────────────────────────────────────────────
+  // Old: strict-sequential `for (const id of order)`. Independent
+  // sibling nodes (e.g. 7 image_gen nodes all wired to the same upload)
+  // ran one at a time even though their KIE calls are mostly idle
+  // network polls — a 7-node carousel took ~7× the latency of one.
+  //
+  // New: at each tick, fire every node whose ancestors are resolved
+  // (success OR failed — failures poison downstream) up to a global
+  // concurrency cap. await Promise.race to wake the loop as soon as
+  // ANY node finishes so its descendants become eligible immediately.
+  //
+  // CONCURRENCY = 6: heuristic. Most nodes are network-bound (KIE,
+  // OpenAI, Upload-Post). Video polish has its own internal cap of 2
+  // so even if 6 polish nodes were dispatched in parallel we'd cap
+  // internal-ffmpeg-workers at 12 across the machine; performance-4x
+  // has 4 vCPUs / 8GB so this is well within budget for the typical
+  // mix (1-2 polish nodes + many cheap image/caption nodes).
+  const CONCURRENCY = 6
+  const done = new Set()        // id → finished (success OR failed)
+  const inFlight = new Map()    // id → promise
+  // ancestorsResolved: all incoming-source ids are in `done`.
+  const ancestorsResolved = (id) => {
+    const inc = incoming.get(id) || []
+    for (const e of inc) if (!done.has(e.source)) return false
+    return true
+  }
+
+  const runOne = async (id) => {
+    // Cancellation re-checked per node — race-safe because we recheck
+    // before kicking off each runner. Already-running nodes can't be
+    // pre-empted; they hit their own shouldAbort polls internally.
     if (typeof shouldAbort === 'function') {
       let aborted = false
       try { aborted = !!(await shouldAbort()) } catch {}
       if (aborted) {
         errors[id] = 'Cancelled by user'
         try { await onProgress?.(id, { status: 'failed', error: 'Cancelled by user', finished_at: new Date().toISOString() }) } catch {}
-        continue
+        return
       }
     }
     const node = nodes.find((n) => n.id === id)
-    if (!node) continue
+    if (!node) return
     const type = node.data?.type
     const runner = NODE_RUNNERS[type]
 
@@ -1470,7 +1495,7 @@ export async function runWorkflow({ graph, userId, profileId, internalSecret, lo
         // helpful "needs X upstream" error.
         log?.(`[skip cached] ${id} (${type}): no cached output, target will see empty input`)
       }
-      continue
+      return
     }
 
     // Pull upstream outputs into an input bag.
@@ -1482,7 +1507,7 @@ export async function runWorkflow({ graph, userId, profileId, internalSecret, lo
     if (ancestorFailed) {
       errors[id] = `Blocked by upstream failure`
       try { await onProgress?.(id, { status: 'failed', error: 'Blocked by upstream failure', finished_at: new Date().toISOString() }) } catch {}
-      continue
+      return
     }
 
     if (!runner) {
@@ -1492,7 +1517,7 @@ export async function runWorkflow({ graph, userId, profileId, internalSecret, lo
       errors[id] = `Server runs don't support node type "${type}" yet`
       log?.(`[skip] ${id} (${type}): unsupported`)
       try { await onProgress?.(id, { status: 'failed', error: errors[id], finished_at: new Date().toISOString() }) } catch {}
-      continue
+      return
     }
 
     try {
@@ -1510,6 +1535,48 @@ export async function runWorkflow({ graph, userId, profileId, internalSecret, lo
       log?.(`[fail] ${id} (${type}): ${errors[id]}`)
       try { await onProgress?.(id, { status: 'failed', error: errors[id], finished_at: new Date().toISOString() }) } catch {}
     }
+  }
+
+  // ── Scheduler loop ─────────────────────────────────────────────────
+  // Tick: find every NOT-yet-started node whose ancestors are resolved.
+  // Dispatch up to CONCURRENCY of them in parallel. await Promise.race
+  // so the next descendant becomes eligible the instant ONE finishes
+  // — no waiting for the slowest sibling to drain the wave.
+  while (done.size < order.length) {
+    // Find ready nodes (ancestors resolved, not started, not done).
+    const ready = []
+    for (const id of order) {
+      if (done.has(id) || inFlight.has(id)) continue
+      if (!ancestorsResolved(id)) continue
+      ready.push(id)
+    }
+
+    // Dispatch as many as we have room for.
+    while (ready.length && inFlight.size < CONCURRENCY) {
+      const id = ready.shift()
+      const p = runOne(id).finally(() => {
+        done.add(id)
+        inFlight.delete(id)
+      })
+      inFlight.set(id, p)
+    }
+
+    if (!inFlight.size) {
+      // Nothing to dispatch and nothing running — deadlock guard.
+      // Mark remaining nodes failed so the run resolves instead of
+      // hanging forever. Shouldn't happen for valid DAGs.
+      for (const id of order) {
+        if (!done.has(id)) {
+          errors[id] = errors[id] || 'Scheduler deadlock — graph likely has an unresolvable cycle'
+          try { await onProgress?.(id, { status: 'failed', error: errors[id], finished_at: new Date().toISOString() }) } catch {}
+          done.add(id)
+        }
+      }
+      break
+    }
+
+    // Wake on the FIRST finisher — its descendants are now eligible.
+    await Promise.race(inFlight.values())
   }
 
   return {

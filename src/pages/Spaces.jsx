@@ -249,8 +249,44 @@ function SpaceNode({ id, data, selected }) {
   const inHandleSpacing = 100 / Math.max(def.inputs.length + 1, 2)
   const outHandleSpacing = 100 / Math.max(def.outputs.length + 1, 2)
 
+  // Carousel slot badge — populated by Spaces.renderNodes when this
+  // node feeds a save_library's image carousel. Tells the user "this
+  // generator's output is slide 3 / 7 in the final post" at a glance.
+  // Range form ("3-5 / 7") shows when one node contributes multiple
+  // slots (e.g. image_gen with count=3).
+  const carouselSlot = data._ctxCarouselSlot
+
   return (
     <div style={card}>
+      {carouselSlot && (
+        <div
+          title={
+            carouselSlot.count > 1
+              ? `Slides ${carouselSlot.start}–${carouselSlot.end} of ${carouselSlot.total} in the carousel`
+              : `Slide ${carouselSlot.start} of ${carouselSlot.total} in the carousel`
+          }
+          style={{
+            position: 'absolute',
+            top: -10, left: -10,
+            zIndex: 5,
+            minWidth: 26, height: 26,
+            padding: '0 8px',
+            borderRadius: 999,
+            background: '#2ecc71',
+            color: '#0a0a0a',
+            border: '2px solid var(--surface)',
+            display: 'grid', placeItems: 'center',
+            fontFamily: 'var(--font-display)',
+            fontSize: 11, fontWeight: 800,
+            letterSpacing: '0.02em',
+            boxShadow: '0 2px 6px rgba(0,0,0,0.35)',
+            pointerEvents: 'none',
+          }}>
+          {carouselSlot.count > 1
+            ? `${carouselSlot.start}–${carouselSlot.end}`
+            : carouselSlot.start}
+        </div>
+      )}
       {/* Inputs — drop-only (can't start a drag from here, no backward edges). */}
       {def.inputs.map((inp, i) => (
         <Handle
@@ -2292,7 +2328,16 @@ function SpaceBuilder({ space, onSave, onClose }) {
           // after a server-side run. Without this, downstream nodes
           // can't see upstream outputs and the user has to re-run the
           // whole graph just to tweak one step.
-          const patch = { status: prog.status, error: prog.error || null }
+          // Translate worker status → canvas status. Worker emits
+          // 'success'/'failed'/'running'; the canvas (SpaceNode pill,
+          // collection seed, runFromNode prereq check) uses 'done'/
+          // 'failed'/'running'. Skipping this translation here was the
+          // bug behind "clicking Run on Save-to-drafts re-runs every
+          // upstream image_gen" — chooseRunScope's allParentsCached
+          // check looks for === 'done' and was failing on freshly-
+          // finished server runs that left the canvas reading 'success'.
+          const canvasStatus = prog.status === 'success' ? 'done' : prog.status
+          const patch = { status: canvasStatus, error: prog.error || null }
           if (prog.output && typeof prog.output === 'object') patch.output = prog.output
           patchNode(nodeId, patch)
         }
@@ -2311,7 +2356,16 @@ function SpaceBuilder({ space, onSave, onClose }) {
           // after a server-side run. Without this, downstream nodes
           // can't see upstream outputs and the user has to re-run the
           // whole graph just to tweak one step.
-          const patch = { status: prog.status, error: prog.error || null }
+          // Translate worker status → canvas status. Worker emits
+          // 'success'/'failed'/'running'; the canvas (SpaceNode pill,
+          // collection seed, runFromNode prereq check) uses 'done'/
+          // 'failed'/'running'. Skipping this translation here was the
+          // bug behind "clicking Run on Save-to-drafts re-runs every
+          // upstream image_gen" — chooseRunScope's allParentsCached
+          // check looks for === 'done' and was failing on freshly-
+          // finished server runs that left the canvas reading 'success'.
+          const canvasStatus = prog.status === 'success' ? 'done' : prog.status
+          const patch = { status: canvasStatus, error: prog.error || null }
           if (prog.output && typeof prog.output === 'object') patch.output = prog.output
           patchNode(nodeId, patch)
         }
@@ -3130,12 +3184,24 @@ function SpaceBuilder({ space, onSave, onClose }) {
       const label = node?.data?.name || NODE_REGISTRY[node?.data?.type]?.label || 'this node'
       const directParents = (edgesRef.current || []).filter((e) => e.target === nodeId).map((e) => e.source)
       const hasParents = directParents.length > 0
+      // Accept either canvas status ('done') or worker status ('success')
+      // so a freshly-finished server run is recognized as cached without
+      // waiting for the status-translation step to land.
       const allParentsCached = directParents.every((pid) => {
         const p = nodesRef.current.find((n) => n.id === pid)
-        return p?.data?.status === 'done' && p?.data?.output
+        const s = p?.data?.status
+        return (s === 'done' || s === 'success') && p?.data?.output
       })
       // No parents → nothing to choose; just run.
       if (!hasParents) {
+        window.__spaceUserClickAt = Date.now()
+        return 'self_only'
+      }
+      // All parents already cached → user explicitly DOESN'T want to
+      // re-run upstream. Skip the dialog and just run this node only.
+      // Saves a click on Save-to-drafts / Schedule-post after a long
+      // multi-clip image-gen run.
+      if (allParentsCached) {
         window.__spaceUserClickAt = Date.now()
         return 'self_only'
       }
@@ -3404,7 +3470,16 @@ function SpaceBuilder({ space, onSave, onClose }) {
       const urls = t === 'image_upload'
         ? (Array.isArray(n.data?.props?.urls) ? n.data.props.urls.join(',').slice(0, 200) : '')
         : ''
-      return `${n.id}|${t}|${hasOutput}|${urls}`
+      // Output image count (when present) — drives carousel slot
+      // numbering on upstream generator nodes; must recompute when an
+      // image_gen finishes and produces N images.
+      const imgLen = Array.isArray(n.data?.output?.images) ? n.data.output.images.length : 0
+      // save_library's user-saved carousel order (image_order prop) —
+      // reorders in the body must propagate to the slot badges.
+      const order = t === 'save_library' && Array.isArray(n.data?.props?.image_order)
+        ? n.data.props.image_order.join(',').slice(0, 200)
+        : ''
+      return `${n.id}|${t}|${hasOutput}|${imgLen}|${urls}|${order}`
     }).join(';')
     const edgeBits = edges.map((e) => `${e.source}>${e.target}|${e.targetHandle || 'in'}`).join(';')
     return nodeBits + '||' + edgeBits
@@ -3417,7 +3492,16 @@ function SpaceBuilder({ space, onSave, onClose }) {
     const imageGenById = new Map()         // id → { namedImages }
     const saveLibraryById = new Map()      // id → { kind }
     const autoRunById = new Map()          // id → { costPerRun }
-    const nodesById = new Map(nodes.map((n) => [n.id, n]))
+    // Carousel slot assignment per upstream node:
+    //   id → { start, end, total, fromSaveLibId }
+    // For each save_library on the canvas, walk its incoming edges in
+    // connection order, count each predecessor's emitted image URLs
+    // (default 1 if the pred hasn't run yet), then apply the save_library's
+    // saved image_order (URL list) so the badge on each generator node
+    // reflects its slot in the FINAL carousel, not just edge order.
+    // Used by SpaceNode to render a "1 / 7"-style numbered badge so the
+    // user can see at a glance which gen feeds which slide.
+    const carouselSlotByNodeId = new Map()
 
     for (const n of nodes) {
       const t = n.data?.type
@@ -3458,6 +3542,80 @@ function SpaceBuilder({ space, onSave, onClose }) {
           }
         }
         saveLibraryById.set(n.id, { kind })
+
+        // ── Carousel slot map for upstream nodes ──────────────────────
+        // Skip when this save_library will be a video bundle — slot
+        // numbers only make sense for image carousels.
+        if (kind !== 'video') {
+          // Predecessors in edge-array order. ReactFlow keeps edges in
+          // insertion order, which is how the run engine builds
+          // inputs.in too — so this matches actual save_library run
+          // ordering before any user reorder is applied.
+          const predEdges = edges.filter((e) => e.target === n.id)
+          // Per-predecessor URL bag (preserves intra-pred ordering).
+          // Fall back to a single placeholder for unrun predecessors so
+          // they still get a slot number on the canvas before the
+          // first run completes.
+          const predRows = predEdges.map((e) => {
+            const src = nodesById.get(e.source)
+            const out = src?.data?.output
+            let urls = []
+            if (Array.isArray(out?.images)) urls = out.images.map((im) => im?.url).filter(Boolean)
+            else if (out?.url && !out?.video_url) urls = [out.url]
+            if (!urls.length) urls = [`__placeholder__${e.source}`]  // unrun pred → 1 slot
+            return { predId: e.source, urls }
+          }).filter((row) => row.predId)
+
+          // Flatten in natural (edge) order.
+          let flat = []
+          for (const row of predRows) {
+            for (const u of row.urls) flat.push({ url: u, predId: row.predId })
+          }
+
+          // Apply image_order (saved by SaveBody) if present. URLs in
+          // image_order come first; everything else preserves natural
+          // order. Mirrors save_library.run()'s own reorder logic so
+          // the badges match what gets persisted.
+          const savedOrder = Array.isArray(n.data?.props?.image_order) ? n.data.props.image_order : []
+          if (savedOrder.length) {
+            const have = new Map(flat.map((it) => [it.url, it]))
+            const seen = new Set()
+            const front = []
+            for (const u of savedOrder) {
+              const item = have.get(u)
+              if (item && !seen.has(u)) { front.push(item); seen.add(u) }
+            }
+            const back = flat.filter((it) => !seen.has(it.url))
+            flat = [...front, ...back]
+          }
+
+          // Assign slot numbers per predecessor — start, end, count.
+          // A predecessor that emits multiple images (e.g. image_gen
+          // with count=3) gets a range like "2-4" so the user can
+          // see all the slots it covers.
+          const total = flat.length
+          const perPred = new Map()
+          flat.forEach((it, i) => {
+            const slot = i + 1
+            const row = perPred.get(it.predId) || { slots: [], start: slot, end: slot }
+            row.slots.push(slot)
+            row.start = Math.min(row.start, slot)
+            row.end = Math.max(row.end, slot)
+            perPred.set(it.predId, row)
+          })
+          for (const [predId, row] of perPred) {
+            // Only attach if not already claimed by another save_library
+            // (predecessor that feeds two carousels — rare; first wins).
+            if (carouselSlotByNodeId.has(predId)) continue
+            carouselSlotByNodeId.set(predId, {
+              start: row.start,
+              end: row.end,
+              count: row.slots.length,
+              total,
+              fromSaveLibId: n.id,
+            })
+          }
+        }
       } else if (t === 'auto_run') {
         let cost = 0
         const seen = new Set([n.id])
@@ -3479,7 +3637,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
         autoRunById.set(n.id, { costPerRun: cost })
       }
     }
-    return { imageGenById, saveLibraryById, autoRunById }
+    return { imageGenById, saveLibraryById, autoRunById, carouselSlotByNodeId }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [structuralKey])
 
@@ -3488,16 +3646,22 @@ function SpaceBuilder({ space, onSave, onClose }) {
   const renderNodes = useMemo(
     () => nodes.map((n) => {
       const t = n.data?.type
-      if (t === 'avatar_picker') return { ...n, data: { ...n.data, _ctxAvatars: avatars, _ctxPublicAvatars: publicAvatars } }
-      if (t === 'avatar_render') return { ...n, data: { ...n.data, _ctxIsTrialing: subscriptionStatus === 'trialing' } }
-      if (t === 'brand_profile') return { ...n, data: { ...n.data, _ctxProfiles: profiles } }
-      if (t === 'image_upload')  return { ...n, data: { ...n.data, _ctxProfileId: selectedProfileId, _ctxToken: session?.access_token || null } }
+      // Carousel slot badge — attaches to ANY node that feeds a
+      // save_library's image carousel (image_gen, image_upload, etc).
+      // Attached as _ctxCarouselSlot so SpaceNode can render a badge
+      // without knowing the node type.
+      const slot = bfsContexts.carouselSlotByNodeId.get(n.id)
+      const withSlot = slot ? { ...n.data, _ctxCarouselSlot: slot } : n.data
+      if (t === 'avatar_picker') return { ...n, data: { ...withSlot, _ctxAvatars: avatars, _ctxPublicAvatars: publicAvatars } }
+      if (t === 'avatar_render') return { ...n, data: { ...withSlot, _ctxIsTrialing: subscriptionStatus === 'trialing' } }
+      if (t === 'brand_profile') return { ...n, data: { ...withSlot, _ctxProfiles: profiles } }
+      if (t === 'image_upload')  return { ...n, data: { ...withSlot, _ctxProfileId: selectedProfileId, _ctxToken: session?.access_token || null } }
       if (t === 'captions') {
         // Inline preview frame in the captions body needs the closest
         // upstream rendered video URL without reaching into the graph
         // from inside the ReactFlow custom node.
         return { ...n, data: {
-          ...n.data,
+          ...withSlot,
           _ctxProfileId: selectedProfileId,
           _ctxUpstreamVideoUrl: findUpstreamVideoUrl(n.id, nodes, edges),
         } }
@@ -3509,7 +3673,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
         // (user_profiles.music_tracks) so every brand the user owns
         // shares the same set of tracks in the dropdown.
         return { ...n, data: {
-          ...n.data,
+          ...withSlot,
           _ctxProfileId: selectedProfileId,
           _ctxUpstreamVideoUrl: findUpstreamVideoUrl(n.id, nodes, edges),
           _ctxUpstreamLogoUrl: findUpstreamLogoUrl(n.id, nodes, edges),
@@ -3520,7 +3684,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
         // Body uses this to switch between avatar-voice mode (when an
         // avatar_picker is upstream) and standalone voice-picker mode.
         return { ...n, data: {
-          ...n.data,
+          ...withSlot,
           _ctxProfileId: selectedProfileId,
           _ctxHasAvatarUpstream: findUpstreamAvatarPicker(n.id, nodes, edges),
         } }
@@ -3530,7 +3694,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
         // state from /api/spaces/save-schedule and show the live
         // next_fire_at / runs_used / last_error readout.
         return { ...n, data: {
-          ...n.data,
+          ...withSlot,
           _ctxSpaceId: spaceIdRef.current || space?.id || null,
         } }
       }
@@ -3563,7 +3727,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
           descLen = [captionStr, hashtagsStr].filter(Boolean).join('\n\n').trim().length
         }
         return { ...n, data: {
-          ...n.data,
+          ...withSlot,
           _ctxProfileId: selectedProfileId,
           _ctxConnectedPlatforms: connectedSocialPlatforms,
           _ctxBrandSchedule: activeProfile ? {
@@ -3585,11 +3749,11 @@ function SpaceBuilder({ space, onSave, onClose }) {
         const kind = bfsContexts.saveLibraryById.get(n.id)?.kind || 'text'
         const activeProfile = (profiles || []).find((p) => p.id === selectedProfileId)
         const synced = Array.isArray(activeProfile?.synced_platforms) ? activeProfile.synced_platforms : []
-        return { ...n, data: { ...n.data, _ctxSyncedPlatforms: synced, _ctxDetectedKind: kind } }
+        return { ...n, data: { ...withSlot, _ctxSyncedPlatforms: synced, _ctxDetectedKind: kind } }
       }
       if (t === 'auto_run') {
         const costPerRun = bfsContexts.autoRunById.get(n.id)?.costPerRun || 0
-        return { ...n, data: { ...n.data, _ctxCostPerRun: costPerRun } }
+        return { ...n, data: { ...withSlot, _ctxCostPerRun: costPerRun } }
       }
       // Generators that take prompts get _ctxProfiles for @brand autocomplete.
       // image_gen also gets named upload images via BFS-back through edges
@@ -3597,7 +3761,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
       if (t === 'script_gen' || t === 'caption_gen' || t === 'image_gen') {
         const slim = (profiles || []).map((p) => ({ id: p.id, name: p.business_name }))
         if (t !== 'image_gen') {
-          return { ...n, data: { ...n.data, _ctxProfiles: slim } }
+          return { ...n, data: { ...withSlot, _ctxProfiles: slim } }
         }
         const named = [...(bfsContexts.imageGenById.get(n.id)?.namedImages || [])]
         // Expose @brand-logo as a synthetic named image when the active brand
@@ -3606,9 +3770,9 @@ function SpaceBuilder({ space, onSave, onClose }) {
         if (activeProfileForLogo?.logo_url) {
           named.push({ name: 'brand-logo', url: activeProfileForLogo.logo_url })
         }
-        return { ...n, data: { ...n.data, _ctxNamedImages: named, _ctxProfiles: slim } }
+        return { ...n, data: { ...withSlot, _ctxNamedImages: named, _ctxProfiles: slim } }
       }
-      return n
+      return slot ? { ...n, data: withSlot } : n
     }),
     [nodes, edges, avatars, profiles, publicAvatars, selectedProfileId, connectedSocialPlatforms, subscriptionStatus, bfsContexts]
   )

@@ -22,7 +22,7 @@ import {
   ListChecks, FileVideo, Upload, Loader2, Maximize2, ArrowUpRight,
   Download, Trash2, Building2, Repeat, Play, Pause, Combine as CombineIcon,
   Mic, Sparkles, Send, Copy, X, Lock, Link2, AlertCircle, ExternalLink,
-  Library as LibraryIcon, Edit3,
+  Library as LibraryIcon, Edit3, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { supabase } from './supabase.js'
 import MusicMixPreview from '../components/MusicMixPreview.jsx'
@@ -6415,6 +6415,94 @@ function SaveBody({ data, onPatch }) {
     onPatch({ platforms: next })
   }
 
+  // ── Carousel preview + reorder ──────────────────────────────────────
+  // Walks one hop upstream and collects every image URL its predecessor
+  // nodes have produced, in the exact order save_library.run() would
+  // emit them (edge-arrival order, then each upstream output's own
+  // images[] order). Then applies any user-saved reorder (image_order
+  // prop) so the strip matches what the bundle will actually contain.
+  //
+  // Lets the user see "this carousel will be saved as A → B → C", and
+  // use ← / → to step through, plus ↑ / ↓ to nudge the focused image
+  // earlier or later in the carousel order.
+  const allNodes = useReactFlowNodes()
+  const allEdges = useReactFlowEdges()
+  const myId = data?.__id
+
+  const upstreamImages = useMemo(() => {
+    if (!myId) return []
+    // Direct predecessors in the edge array's order — this matches what
+    // the run engine builds for inputs.in (edges to this node are
+    // iterated in insertion order).
+    const preds = allEdges
+      .filter((e) => e.target === myId)
+      .map((e) => allNodes.find((n) => n.id === e.source))
+      .filter(Boolean)
+    const collected = []
+    for (const n of preds) {
+      const out = n.data?.output
+      if (!out || typeof out !== 'object') continue
+      // Skip predecessors that emit a video — carousel ordering only
+      // matters for image bundles.
+      if (out.video_url || out.video?.video_url) continue
+      if (Array.isArray(out.images)) {
+        for (const im of out.images) {
+          if (im?.url) collected.push({ url: im.url, sourceId: n.id })
+        }
+      } else if (out.url) {
+        collected.push({ url: out.url, sourceId: n.id })
+      }
+    }
+    return collected
+  }, [allNodes, allEdges, myId])
+
+  // Apply the user's saved order on top of the natural run-order. URLs
+  // present in image_order come first in the chosen order; any new URLs
+  // (e.g. the user just re-ran an upstream gen and got fresh images)
+  // append in their natural run-order, so reorder state survives
+  // upstream re-runs without orphaning newly-produced images.
+  const savedOrder = Array.isArray(data.props?.image_order) ? data.props.image_order : []
+  const orderedImages = useMemo(() => {
+    if (!upstreamImages.length) return []
+    if (!savedOrder.length) return upstreamImages
+    const byUrl = new Map(upstreamImages.map((it) => [it.url, it]))
+    const seen = new Set()
+    const out = []
+    for (const url of savedOrder) {
+      if (byUrl.has(url) && !seen.has(url)) {
+        out.push(byUrl.get(url))
+        seen.add(url)
+      }
+    }
+    for (const it of upstreamImages) {
+      if (!seen.has(it.url)) out.push(it)
+    }
+    return out
+  }, [upstreamImages, savedOrder])
+
+  // Focused tile index for the carousel pager. Clamped on every render
+  // so it can't go out of range when upstream images change.
+  const [focusIdx, setFocusIdx] = useState(0)
+  const clampedFocus = Math.min(focusIdx, Math.max(0, orderedImages.length - 1))
+
+  const writeOrder = (next) => {
+    onPatch({ image_order: next.map((it) => it.url) })
+  }
+  const moveFocused = (delta) => {
+    const i = clampedFocus
+    const j = i + delta
+    if (j < 0 || j >= orderedImages.length) return
+    const next = orderedImages.slice()
+    const [item] = next.splice(i, 1)
+    next.splice(j, 0, item)
+    writeOrder(next)
+    setFocusIdx(j)  // follow the moved tile
+  }
+  const resetOrder = () => {
+    onPatch({ image_order: [] })
+    setFocusIdx(0)
+  }
+
   // Validate compatibility between detected media kind and selected platforms.
   const incompatible = platforms.filter((id) => {
     const def = PLATFORMS.find((p) => p.id === id)
@@ -6427,6 +6515,142 @@ function SaveBody({ data, onPatch }) {
 
   return (
     <>
+      {orderedImages.length > 0 && (
+        <NodeField label={`Carousel preview (${orderedImages.length}) — saved in this order`}>
+          {/* Focused tile */}
+          <div style={{
+            position: 'relative',
+            width: '100%', aspectRatio: '1 / 1',
+            background: '#000', borderRadius: 8,
+            border: '1px solid var(--border)', overflow: 'hidden',
+          }}>
+            <img
+              src={orderedImages[clampedFocus]?.url}
+              alt={`Slide ${clampedFocus + 1}`}
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+            />
+            {/* Slide index pill */}
+            <div style={{
+              position: 'absolute', top: 6, right: 6,
+              fontSize: 10, fontWeight: 700,
+              padding: '3px 7px', borderRadius: 999,
+              background: 'rgba(0,0,0,0.6)', color: '#fff',
+              fontFamily: 'var(--font-display)',
+            }}>{clampedFocus + 1} / {orderedImages.length}</div>
+            {/* Pager arrows — only when there's more than one to flip through */}
+            {orderedImages.length > 1 && (
+              <>
+                <button
+                  type="button" className="nodrag"
+                  onClick={(e) => { e.stopPropagation(); setFocusIdx((i) => Math.max(0, i - 1)) }}
+                  disabled={clampedFocus === 0}
+                  title="Previous slide"
+                  style={{
+                    position: 'absolute', left: 6, top: '50%', transform: 'translateY(-50%)',
+                    width: 26, height: 26, borderRadius: 999, border: 'none',
+                    background: 'rgba(0,0,0,0.55)', color: '#fff',
+                    display: 'grid', placeItems: 'center',
+                    cursor: clampedFocus === 0 ? 'not-allowed' : 'pointer',
+                    opacity: clampedFocus === 0 ? 0.35 : 1,
+                  }}>
+                  <ChevronLeft size={14} />
+                </button>
+                <button
+                  type="button" className="nodrag"
+                  onClick={(e) => { e.stopPropagation(); setFocusIdx((i) => Math.min(orderedImages.length - 1, i + 1)) }}
+                  disabled={clampedFocus >= orderedImages.length - 1}
+                  title="Next slide"
+                  style={{
+                    position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)',
+                    width: 26, height: 26, borderRadius: 999, border: 'none',
+                    background: 'rgba(0,0,0,0.55)', color: '#fff',
+                    display: 'grid', placeItems: 'center',
+                    cursor: clampedFocus >= orderedImages.length - 1 ? 'not-allowed' : 'pointer',
+                    opacity: clampedFocus >= orderedImages.length - 1 ? 0.35 : 1,
+                  }}>
+                  <ChevronRight size={14} />
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* Reorder controls — move the focused slide earlier / later */}
+          {orderedImages.length > 1 && (
+            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+              <button
+                type="button" className="nodrag"
+                onClick={(e) => { e.stopPropagation(); moveFocused(-1) }}
+                disabled={clampedFocus === 0}
+                title="Move this slide earlier"
+                style={{
+                  ...tinyInput, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  gap: 4, padding: '6px', cursor: clampedFocus === 0 ? 'not-allowed' : 'pointer',
+                  opacity: clampedFocus === 0 ? 0.4 : 1, background: 'var(--surface-2)',
+                }}>
+                <ChevronLeft size={12} /> Move earlier
+              </button>
+              <button
+                type="button" className="nodrag"
+                onClick={(e) => { e.stopPropagation(); moveFocused(1) }}
+                disabled={clampedFocus >= orderedImages.length - 1}
+                title="Move this slide later"
+                style={{
+                  ...tinyInput, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  gap: 4, padding: '6px',
+                  cursor: clampedFocus >= orderedImages.length - 1 ? 'not-allowed' : 'pointer',
+                  opacity: clampedFocus >= orderedImages.length - 1 ? 0.4 : 1, background: 'var(--surface-2)',
+                }}>
+                Move later <ChevronRight size={12} />
+              </button>
+            </div>
+          )}
+
+          {/* Thumbnail strip — click a thumb to jump to it. Stays scrollable
+              horizontally; current slide highlighted with the brand color. */}
+          {orderedImages.length > 1 && (
+            <div className="nodrag" style={{
+              display: 'flex', gap: 4, marginTop: 6,
+              overflowX: 'auto', paddingBottom: 2,
+            }}>
+              {orderedImages.map((it, i) => (
+                <button
+                  key={it.url + '@' + i}
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setFocusIdx(i) }}
+                  title={`Slide ${i + 1}`}
+                  style={{
+                    flex: '0 0 auto', width: 44, height: 44, padding: 0,
+                    border: i === clampedFocus ? '2px solid #2ecc71' : '1px solid var(--border)',
+                    borderRadius: 6, overflow: 'hidden', cursor: 'pointer',
+                    background: '#000', position: 'relative',
+                  }}>
+                  <img src={it.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                  <span style={{
+                    position: 'absolute', left: 2, bottom: 2,
+                    fontSize: 8.5, fontWeight: 700, padding: '1px 4px', borderRadius: 4,
+                    background: 'rgba(0,0,0,0.65)', color: '#fff', fontFamily: 'var(--font-display)',
+                  }}>{i + 1}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Show a tiny "reset to upstream order" link only when the
+              user has actually changed the order — otherwise it's noise. */}
+          {savedOrder.length > 0 && (
+            <button
+              type="button" className="nodrag"
+              onClick={(e) => { e.stopPropagation(); resetOrder() }}
+              style={{
+                marginTop: 6, fontSize: 10, color: 'var(--muted)',
+                background: 'transparent', border: 'none', padding: 0, cursor: 'pointer',
+                textDecoration: 'underline',
+              }}>
+              Reset to upstream order
+            </button>
+          )}
+        </NodeField>
+      )}
       <NodeField label="Title (optional)">
         <input className="nodrag" style={tinyInput} placeholder="Auto-derived" value={data.props?.title || ''} onChange={(e) => onPatch({ title: e.target.value })} />
       </NodeField>
@@ -8899,7 +9123,7 @@ export const NODE_REGISTRY = {
     icon: Save, category: 'outputs', color: '#2ecc71',
     inputs: [{ id: 'in', label: 'In (script / caption / image / video)' }],
     outputs: [{ id: 'out', label: 'Out (bundle for schedule_post)' }],
-    initialProps: { title: '', platforms: [] },
+    initialProps: { title: '', platforms: [], image_order: [] },
     Body: SaveBody,
     // Pure in-memory bundler. No /api/content insert. Per the
     // 'nothing in queue until schedule_post says done' rule: the
@@ -8929,8 +9153,28 @@ export const NODE_REGISTRY = {
         else if (v.url) imageUrls.push(v.url)
       }
       const title = data.props?.title?.trim() || incomingTitle || (script.slice(0, 60)) || 'Untitled'
-      const mediaUrls = videoUrl ? [videoUrl] : (imageUrls.length ? imageUrls : null)
-      const mediaType = videoUrl ? 'video' : (imageUrls.length ? 'image' : 'text')
+
+      // Honor a user-saved carousel order from the node body. URLs listed
+      // in image_order come first in the chosen sequence; any newly-
+      // produced images (e.g. user re-ran an upstream gen and got fresh
+      // URLs not in image_order) append in their natural collection
+      // order. Symmetric with the preview logic in SaveBody — the
+      // carousel that gets saved matches what the user sees in the node.
+      const savedOrder = Array.isArray(data.props?.image_order) ? data.props.image_order : []
+      let orderedImageUrls = imageUrls
+      if (savedOrder.length && imageUrls.length) {
+        const have = new Set(imageUrls)
+        const seen = new Set()
+        const front = []
+        for (const u of savedOrder) {
+          if (have.has(u) && !seen.has(u)) { front.push(u); seen.add(u) }
+        }
+        const back = imageUrls.filter((u) => !seen.has(u))
+        orderedImageUrls = [...front, ...back]
+      }
+
+      const mediaUrls = videoUrl ? [videoUrl] : (orderedImageUrls.length ? orderedImageUrls : null)
+      const mediaType = videoUrl ? 'video' : (orderedImageUrls.length ? 'image' : 'text')
       const platforms = Array.isArray(data.props?.platforms) && data.props.platforms.length
         ? data.props.platforms
         : null
@@ -8956,7 +9200,7 @@ export const NODE_REGISTRY = {
         first_comment: firstComment,
         per_platform: perPlatform,
         video_url: videoUrl,
-        images: imageUrls.length ? imageUrls.map((url) => ({ url })) : undefined,
+        images: orderedImageUrls.length ? orderedImageUrls.map((url) => ({ url })) : undefined,
         media_urls: mediaUrls,
         media_type: mediaType,
         platforms,
