@@ -43,30 +43,14 @@ const HEADERS = () => ({
 // helpers below.
 export const MODELS = {
   v4: {
-    label:               'Avatar IV',
-    description:         'The default talking-photo renderer. Reliable, fast, predictable.',
+    label:               'Avatar Video',
+    description:         'The default talking-photo renderer.',
     engine:              'v3_avatar_iv',
     expressiveness:      'low',
-    motion_default:      false,
     cents_per_sec:       5,       // HeyGen Avatar IV Photo 720/1080p
     cents_per_sec_4k:    6.67,
     video_units_per_sec: 0.15,
     badge:               'Recommended',
-  },
-  v5: {
-    label:               'Avatar V',
-    description:         'More expressive face + body motion. Costs ~2× v4. Use for hero content where energy matters.',
-    engine:              'v3_avatar_v',     // dispatcher only branches on engine starting with 'v3'; same /v3/videos endpoint
-    expressiveness:      'high',
-    motion_default:      true,              // auto-derives a motion_prompt from the script's first sentence
-    // HeyGen's Avatar V pricing as of rollout — ~2× IV. Pricing
-    // changes on HeyGen's side over time; bump these numbers in this
-    // file if the bill doesn't match what we're charging via
-    // video_units_per_sec.
-    cents_per_sec:       10,
-    cents_per_sec_4k:    13.33,
-    video_units_per_sec: 0.30,
-    badge:               'New',
   },
 }
 

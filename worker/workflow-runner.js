@@ -401,13 +401,9 @@ const NODE_RUNNERS = {
   // Each clip submits via /api/avatars/photo-render and polls
   // /api/avatars/photo-render-status. Concurrency 4 keeps HeyGen
   // happy without serializing the whole batch.
-  avatar_render: async ({ node, inputs, ctx, log }) => {
+  avatar_render: async ({ inputs, ctx, log }) => {
     const avatar = pickAvatar(inputs)
     if (!avatar?.avatar_id) throw new Error('avatar_render needs an Avatar picker upstream')
-    // Per-render model override (set on the canvas via the Avatar
-    // video node's "Render model" picker). Falls through to the
-    // avatar's saved default, then 'v4'.
-    const modelVersion = (node?.data?.props?.model_version || avatar?.model_version || 'v4')
 
     let audioUrl = null
     let audioDurationSecs = null
@@ -435,7 +431,6 @@ const NODE_RUNNERS = {
         audio_url: audio_url || undefined,
         script: !audio_url && scriptChunk ? scriptChunk : undefined,
         voice_id: avatar.voice_id || undefined,
-        model_version: modelVersion,
       }, ctx.headers)
       const videoId = submit.video_id
       if (!videoId) throw new Error('No video_id returned from photo-render')

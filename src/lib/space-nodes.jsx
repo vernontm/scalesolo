@@ -4277,50 +4277,12 @@ function TrialLockNotice({ feature }) {
   )
 }
 
-function AvatarRenderBody({ data, onPatch }) {
+function AvatarRenderBody({ data }) {
   const out = data.output
   const clipCount = Array.isArray(out?.videos) ? out.videos.length : 0
   const partialFails = Array.isArray(out?.partial_failures) ? out.partial_failures.length : 0
-  // Model override — empty string means "use the avatar's default
-  // (set on the Avatars page)". The picker is a 3-state toggle:
-  // Avatar default / v4 / v5. v5 is more expressive but ~2× the
-  // video-units cost; the badge under each pill shows the rate.
-  const modelVersion = data.props?.model_version || ''
-  const modelOptions = [
-    { id: '', label: 'Avatar default', sub: '' },
-    { id: 'v4', label: 'Avatar IV', sub: '~5¢/sec' },
-    { id: 'v5', label: 'Avatar V', sub: '~10¢/sec, more expressive' },
-  ]
   return (
     <>
-      <NodeField label="Render model">
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-          {modelOptions.map((opt) => {
-            const on = modelVersion === opt.id
-            return (
-              <button
-                key={opt.id || 'default'}
-                type="button" className="nodrag"
-                onClick={(e) => { e.stopPropagation(); onPatch({ model_version: opt.id }) }}
-                title={opt.sub || 'Use whatever model the avatar was set up with on the Avatars page'}
-                style={{
-                  flex: 1, minWidth: 70,
-                  padding: '5px 6px', borderRadius: 6,
-                  border: `1px solid ${on ? '#ef4444' : 'var(--border)'}`,
-                  background: on ? 'rgba(239,68,68,0.16)' : 'var(--surface-2)',
-                  color: on ? '#ef4444' : 'var(--text-soft)',
-                  fontFamily: 'var(--font-display)', fontWeight: 700,
-                  fontSize: 10, letterSpacing: '0.02em',
-                  cursor: 'pointer',
-                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1,
-                }}>
-                <span>{opt.label}</span>
-                {opt.sub && <span style={{ fontSize: 8.5, color: 'var(--muted)', fontWeight: 500, letterSpacing: 0 }}>{opt.sub}</span>}
-              </button>
-            )
-          })}
-        </div>
-      </NodeField>
       {/* No trial lock here on purpose — trial users have 5 video
           credits exactly so they CAN render their first avatar video.
           Server-side trial locks (V4, 30s cap, watermark) still apply
@@ -8037,13 +7999,11 @@ export const NODE_REGISTRY = {
   },
 
   avatar_render: {
-    label: 'Avatar video', description: 'Makes a talking video of your avatar. Connect a voiceover or a script and you\'ll get a short video where the avatar speaks it. Pick the render model: Avatar IV (default, fast) or Avatar V (more expressive face + body motion, ~2× the credits). If your Avatar uses Randomize, you\'ll get one short clip per image — connect Stitch videos after this to combine them into one.',
+    label: 'Avatar video', description: 'Makes a talking video of your avatar. Connect a voiceover or a script and you\'ll get a short video where the avatar speaks it. If your Avatar uses Randomize, you\'ll get one short clip per image — connect Stitch videos after this to combine them into one.',
     icon: FileVideo, category: 'generators', color: '#ef4444',
     inputs: [{ id: 'in',  label: 'In (avatar + audio / script)' }],
     outputs: [{ id: 'out', label: 'Out' }],
-    // model_version: '' = use the avatar's saved default; 'v4' or 'v5'
-    // overrides per-render from the node body.
-    initialProps: { model_version: '' },
+    initialProps: {},
     Body: AvatarRenderBody,
     run: async ({ data, inputs, ctx, reportProgress }) => {
       // Trial users CAN run this once — the server forces V4 + 30s
@@ -9245,9 +9205,7 @@ export const NODE_REGISTRY = {
             photo_url: photoUrl,
             script,
             voice_id: voiceId,
-            // Per-render model override (node body) wins over the
-            // avatar's saved default. Empty string falls through.
-            model_version: (data.props?.model_version || avatarConfig?.model_version || 'v4'),
+            model_version: avatarConfig?.model_version || 'v4',
           }),
         })
         const submit = await submitR.json()
