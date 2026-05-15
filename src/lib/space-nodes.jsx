@@ -2571,37 +2571,70 @@ function ImageUploadBody({ data, onPatch }) {
     items.forEach((_, i) => {
       result.set(i, { captioned: false, polished: false, scheduled: false, failed: false })
     })
-    // Scan each downstream node's output.
+
+    // Scan each downstream node twice:
+    //   1. Precise — read its output's per-clip array (captions[], videos[],
+    //      clips[]) so we light up badges as individual clips finish during
+    //      fan-out (e.g. 3 of 5 polished mid-step).
+    //   2. Coarse fallback — if the node is 'done' but its output isn't
+    //      hydrated (Realtime hiccup, output stripped during serialization,
+    //      partial write), mark ALL clips as past that step. Keeps the row
+    //      from getting stuck on amber when a step finished cleanly but the
+    //      precise output didn't make it through.
+    const markAll = (key) => {
+      for (const s of result.values()) s[key] = true
+    }
     for (const id of downstream) {
       const n = allNodes.find((x) => x.id === id)
-      const out = n?.data?.output
-      if (!out) continue
+      if (!n) continue
+      const out = n.data?.output
+      const status = n.data?.status
       const type = n.data?.type
-      if (type === 'caption_gen' && Array.isArray(out.captions)) {
-        for (const c of out.captions) {
-          const s = result.get(c.idx)
-          if (s && (c.title || c.caption)) s.captioned = true
+
+      // Precise per-clip reading (fan-out partial progress).
+      if (out) {
+        if (type === 'caption_gen' && Array.isArray(out.captions)) {
+          for (const c of out.captions) {
+            const s = result.get(c.idx)
+            if (s && (c.title || c.caption)) s.captioned = true
+          }
         }
-      }
-      if (type === 'video_polish' && Array.isArray(out.videos)) {
-        for (const v of out.videos) {
-          const s = result.get(v.idx)
-          if (s && v.video_url) s.polished = true
+        if (type === 'video_polish' && Array.isArray(out.videos)) {
+          for (const v of out.videos) {
+            const s = result.get(v.idx)
+            if (s && v.video_url) s.polished = true
+          }
+          if (Array.isArray(out.polish_failures)) {
+            for (const f of out.polish_failures) {
+              const s = result.get(f.idx)
+              if (s) s.failed = true
+            }
+          }
         }
-        if (Array.isArray(out.polish_failures)) {
-          for (const f of out.polish_failures) {
-            const s = result.get(f.idx)
-            if (s) s.failed = true
+        if (type === 'schedule_post' && Array.isArray(out.clips)) {
+          for (const c of out.clips) {
+            const s = result.get(c.idx)
+            if (!s) continue
+            if (c.ok) s.scheduled = true
+            else s.failed = true
           }
         }
       }
-      if (type === 'schedule_post' && Array.isArray(out.clips)) {
-        for (const c of out.clips) {
-          const s = result.get(c.idx)
-          if (!s) continue
-          if (c.ok) s.scheduled = true
-          else s.failed = true
-        }
+
+      // Coarse status-based fallback. If the per-clip path didn't update
+      // anything (no output array yet) but the downstream node has clearly
+      // moved past that step, advance every clip's badge so users see
+      // progress instead of a stuck row.
+      if (status === 'done' || status === 'success') {
+        if (type === 'caption_gen')  markAll('captioned')
+        if (type === 'video_polish') { markAll('captioned'); markAll('polished') }
+        if (type === 'schedule_post'){ markAll('captioned'); markAll('polished'); markAll('scheduled') }
+      }
+      if (status === 'failed') {
+        // Don't blanket-mark failed — only flag clips that the precise
+        // path didn't already account for. Otherwise a one-clip failure
+        // in a five-clip batch would falsely mark all five red.
+        // (Per-clip failed flags above stay authoritative.)
       }
     }
     return result
