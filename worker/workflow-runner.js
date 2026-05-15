@@ -101,7 +101,22 @@ function pickAllVideoUrls(bag) {
     if (!v || typeof v !== 'object') continue
     if (v.video?.video_url) push(v.video.video_url)
     if (v.video_url) push(v.video_url)
-    if (Array.isArray(v.videos)) for (const c of v.videos) if (c?.video_url) push(c.video_url)
+    // image_upload emits videos: [{ url, name }] — NOT { video_url }.
+    // polish + combine_videos emit { video_url, idx }. Accept both shapes
+    // so caption_gen / polish / schedule_post detect fan-out correctly
+    // regardless of which upstream node sourced the clips. Without the
+    // .url fallback, a 5-video Upload media → caption_gen run only saw
+    // the first clip's URL (via v.video_url flat field) and single-clip
+    // path ran instead of fan-out — exactly the symptom users hit.
+    if (Array.isArray(v.videos)) {
+      for (const c of v.videos) {
+        if (c?.video_url) push(c.video_url)
+        else if (c?.url && /\.(mp4|mov|webm|m4v|mkv)(\?|#|$)/i.test(c.url)) push(c.url)
+      }
+    }
+    if (Array.isArray(v.items)) {
+      for (const it of v.items) if (it?.kind === 'video' && it.url) push(it.url)
+    }
   }
   return out
 }
