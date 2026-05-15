@@ -212,10 +212,21 @@ const NODE_RUNNERS = {
     // bag. The browser canvas runs a richer @mention resolution
     // step — server runs use the simpler "everything upstream is
     // a candidate ref" rule which covers 95% of real flows.
-    const refs = []
+    let refs = []
     for (const v of asArr(inputs)) {
       if (Array.isArray(v?.images)) for (const im of v.images) if (im?.url) refs.push(im.url)
       else if (v?.url && /\.(png|jpe?g|webp)(\?|$)/i.test(v.url)) refs.push(v.url)
+    }
+    // KIE caps reference_urls at 16 per request. Trim the tail (the
+    // earlier-pushed refs win — those come from upstream nodes in
+    // edge order, so the closest @-mentioned upstreams stay) instead
+    // of letting the call hard-fail with "image URLs must be <= 16".
+    // Surfaces as a warning in the run log so the user notices that
+    // their Upload Media node is over the limit.
+    if (refs.length > 16) {
+      const dropped = refs.length - 16
+      log?.(`[image_gen] Trimmed ${dropped} reference image(s) — KIE accepts max 16.`)
+      refs = refs.slice(0, 16)
     }
 
     const count = Math.max(1, Math.min(8, Number(props.count) || 1))

@@ -7733,11 +7733,11 @@ export const NODE_REGISTRY = {
       // win because they're in user-prompt order; the fallback "all
       // upstream images" path and the brand logo come last and are the
       // first to get dropped if we're over.
-      if (refs.length > 8) {
-        const dropped = refs.length - 8
+      if (refs.length > 16) {
+        const dropped = refs.length - 16
         // eslint-disable-next-line no-console
-        console.warn(`[image_gen] Trimmed ${dropped} reference image(s) — KIE accepts max 8.`, refs.slice(8))
-        refs = refs.slice(0, 8)
+        console.warn(`[image_gen] Trimmed ${dropped} reference image(s) — KIE accepts max 16.`, refs.slice(16))
+        refs = refs.slice(0, 16)
       }
 
       // Strip @-mentions from the prompt before sending to KIE — image
