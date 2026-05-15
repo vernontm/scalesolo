@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTD/PropertyList-1.0.dtd">
+<!--
+  Friday 5am launchd job: draft next week of VTM content.
+
+  Install:
+    cp scripts/com.vtm.draft-next-week.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.vtm.draft-next-week.plist
+
+  Trigger manually (to test):
+    launchctl start com.vtm.draft-next-week
+
+  Stop / unload:
+    launchctl unload ~/Library/LaunchAgents/com.vtm.draft-next-week.plist
+
+  IMPORTANT: replace <YOUR_USERNAME>, <NODE_PATH>, and the three env
+  values below before installing. Run `which node` to find NODE_PATH.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.vtm.draft-next-week</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string><NODE_PATH></string>
+        <string>/Users/<YOUR_USERNAME>/Desktop/Vernon Tech And Media/Client Projects/Scalesolo/scripts/draft-next-week.mjs</string>
+        <string>--brand</string>
+        <string>vtm</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>ANTHROPIC_API_KEY</key>
+        <string><PASTE_ANTHROPIC_KEY></string>
+        <key>SUPABASE_URL</key>
+        <string>https://vbvmfiepwyxlfafbwtkb.supabase.co</string>
+        <key>SUPABASE_SERVICE_KEY</key>
+        <string><PASTE_SUPABASE_SERVICE_KEY></string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>5</integer>
+        <key>Hour</key>
+        <integer>5</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/vtm-draft-next-week.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/vtm-draft-next-week.err</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
