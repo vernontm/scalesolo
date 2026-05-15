@@ -7809,40 +7809,78 @@ export const NODE_REGISTRY = {
         return taskId
       }
 
-      const pollOne = async (taskId) => {
-        const start = Date.now()
-        let consecutiveErrors = 0
-        while (Date.now() - start < 720_000) {
+      // Per-attempt + total wall-clock budgets matching the server runner.
+      // Most KIE renders finish in 20-60s. If a task hasn't reached a
+      // terminal state by 3 min OR KIE explicitly reports failed, we
+      // abandon and resubmit a fresh task with the same payload instead
+      // of waiting another N minutes for a probably-dropped job.
+      const POLL_INTERVAL_MS    = 4_000
+      const STUCK_THRESHOLD_MS  = 3 * 60_000
+      const MAX_ATTEMPTS        = 3
+      const TOTAL_DEADLINE_MS   = 9 * 60_000
+
+      const submitAndPollWithRetry = async () => {
+        const overallStart = Date.now()
+        let lastErr = null
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
           if (ctx.shouldAbort?.()) throw new Error('Stopped')
-          await new Promise((r) => setTimeout(r, 4000))
+          if (Date.now() - overallStart >= TOTAL_DEADLINE_MS) break
+          let taskId
           try {
-            const sR = await fetch(`/api/images/status?taskId=${encodeURIComponent(taskId)}&profile_id=${encodeURIComponent(profileForCall)}`, {
-              headers: { Authorization: `Bearer ${ctx.token}` },
-            })
-            const s = await sR.json()
-            if (!sR.ok) {
-              consecutiveErrors++
-              if (consecutiveErrors >= 3) throw new Error(s.error || `Status check failed (${sR.status})`)
-              continue
-            }
-            consecutiveErrors = 0
-            if (s.state === 'success') return s.images || []
-            if (s.state === 'failed') throw new Error(s.error || 'Generation failed')
+            taskId = await submitOne()
           } catch (e) {
-            consecutiveErrors++
-            if (consecutiveErrors >= 3) throw e
+            lastErr = e
+            console.warn(`[image_gen] attempt ${attempt}/${MAX_ATTEMPTS} submit failed: ${e.message} — retrying`)
+            continue
+          }
+          const attemptStart = Date.now()
+          let consecutiveErrors = 0
+          let resolved = null
+          let attemptFailed = false
+          while (Date.now() - attemptStart < STUCK_THRESHOLD_MS
+              && Date.now() - overallStart < TOTAL_DEADLINE_MS) {
+            if (ctx.shouldAbort?.()) throw new Error('Stopped')
+            await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
+            try {
+              const sR = await fetch(`/api/images/status?taskId=${encodeURIComponent(taskId)}&profile_id=${encodeURIComponent(profileForCall)}`, {
+                headers: { Authorization: `Bearer ${ctx.token}` },
+              })
+              const s = await sR.json()
+              if (!sR.ok) {
+                consecutiveErrors++
+                lastErr = new Error(s.error || `Status check failed (${sR.status})`)
+                if (consecutiveErrors >= 5) { attemptFailed = true; break }
+                continue
+              }
+              consecutiveErrors = 0
+              if (s.state === 'success') { resolved = s.images || []; break }
+              if (s.state === 'failed') {
+                lastErr = new Error(s.error || 'Generation failed')
+                console.warn(`[image_gen] attempt ${attempt}/${MAX_ATTEMPTS} KIE reported failed: ${lastErr.message} — restarting`)
+                attemptFailed = true
+                break
+              }
+            } catch (e) {
+              consecutiveErrors++
+              lastErr = e
+              if (consecutiveErrors >= 5) { attemptFailed = true; break }
+            }
+          }
+          if (resolved) return resolved
+          if (!attemptFailed && Date.now() - attemptStart >= STUCK_THRESHOLD_MS) {
+            lastErr = new Error(`stuck for ${STUCK_THRESHOLD_MS / 60_000} min on task ${taskId}`)
+            console.warn(`[image_gen] attempt ${attempt}/${MAX_ATTEMPTS} ${lastErr.message} — restarting`)
           }
         }
-        throw new Error('Image generation timed out after 12 minutes — KIE may still be processing; try again or check the dashboard.')
+        throw new Error(`Image gen failed after ${MAX_ATTEMPTS} attempts: ${lastErr?.message || 'unknown'}`)
       }
 
-      // Submit all N tasks in parallel and poll each for its result. If
-      // any task fails, surface its error but include images from the
-      // tasks that did succeed (better than dropping the whole batch).
-      const taskIds = await Promise.all(
-        Array.from({ length: requestedCount }, () => submitOne())
+      // Submit + auto-retry N tasks in parallel. Each task has its own
+      // independent retry budget so a stuck slot doesn't poison its
+      // siblings.
+      const results = await Promise.allSettled(
+        Array.from({ length: requestedCount }, () => submitAndPollWithRetry())
       )
-      const results = await Promise.allSettled(taskIds.map(pollOne))
       const collected = []
       const errors = []
       for (const r of results) {

@@ -216,38 +216,96 @@ const NODE_RUNNERS = {
     }
 
     const count = Math.max(1, Math.min(8, Number(props.count) || 1))
+
+    // Per-attempt + total-wall-clock budgets. Most KIE renders finish in
+    // 20-60s. Anything past 3 minutes is almost certainly a stuck task
+    // (KIE silently dropped it, queue stalled, etc) — cheaper to abandon
+    // and resubmit than to keep waiting. We give it 3 attempts and a
+    // 9-minute total ceiling so a genuinely slow render still has
+    // multiple shots before the node hard-fails.
+    const POLL_INTERVAL_MS    = 4_000
+    const STUCK_THRESHOLD_MS  = 3 * 60_000    // resubmit if no terminal state by 3 min
+    const MAX_ATTEMPTS        = 3              // attempts INCLUDING the first try
+    const TOTAL_DEADLINE_MS   = 9 * 60_000     // overall ceiling across all attempts
+
     // KIE returns 1 image per submit reliably regardless of
     // num_images flag, so we fan out N parallel count=1 tasks
     // and combine. Same pattern the browser uses.
+    //
+    // Each task auto-restarts up to MAX_ATTEMPTS times: when KIE
+    // reports `failed` OR the per-attempt timer fires (probable
+    // silent-drop), we resubmit a fresh task with the same payload.
     const submitOne = async () => {
-      const sub = await callApi('/api/images/generate', {
-        profile_id: profileId,
-        prompt,
-        model: props.model || 'nano-banana',
-        count: 1,
-        aspect: props.aspect || '1:1',
-        quality: props.quality || '2K',
-        reference_urls: refs.length ? refs : undefined,
-        enhance_prompt: props.enhance_prompt ?? true,
-      }, ctx.headers)
-      const taskId = sub.taskId
-      if (!taskId) throw new Error('image_gen submit returned no taskId')
-      // Poll. 12-min ceiling matches the browser canvas. Most KIE
-      // renders complete in 20-60s.
-      const POLL_INTERVAL_MS = 4_000
-      const DEADLINE_MS = 12 * 60_000
-      const start = Date.now()
-      while (Date.now() - start < DEADLINE_MS) {
-        await new Promise((res) => setTimeout(res, POLL_INTERVAL_MS))
-        const r = await fetch(`${PORTABLE_BASE}/api/images/status?taskId=${encodeURIComponent(taskId)}`, { headers: ctx.headers })
-        const s = await r.json().catch(() => ({}))
-        if (!r.ok) throw new Error(s?.error || `image-status ${r.status}`)
-        if (s.state === 'success' && Array.isArray(s.images) && s.images.length) {
-          return s.images.map((im) => ({ url: im.url || im, name: '' }))
+      const overallStart = Date.now()
+      let lastErr = null
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        if (Date.now() - overallStart >= TOTAL_DEADLINE_MS) break
+        let taskId = null
+        try {
+          const sub = await callApi('/api/images/generate', {
+            profile_id: profileId,
+            prompt,
+            model: props.model || 'nano-banana',
+            count: 1,
+            aspect: props.aspect || '1:1',
+            quality: props.quality || '2K',
+            reference_urls: refs.length ? refs : undefined,
+            enhance_prompt: props.enhance_prompt ?? true,
+          }, ctx.headers)
+          taskId = sub.taskId
+          if (!taskId) throw new Error('image_gen submit returned no taskId')
+        } catch (e) {
+          lastErr = e
+          log?.(`[image_gen] attempt ${attempt}/${MAX_ATTEMPTS} submit failed: ${e.message} — retrying`)
+          continue
         }
-        if (s.state === 'failed') throw new Error(s.error || 'Image gen failed')
+        const attemptStart = Date.now()
+        let resolved = null    // { images } on success, or null when we should retry
+        while (Date.now() - attemptStart < STUCK_THRESHOLD_MS
+            && Date.now() - overallStart < TOTAL_DEADLINE_MS) {
+          await new Promise((res) => setTimeout(res, POLL_INTERVAL_MS))
+          let r, s
+          try {
+            r = await fetch(`${PORTABLE_BASE}/api/images/status?taskId=${encodeURIComponent(taskId)}`, { headers: ctx.headers })
+            s = await r.json().catch(() => ({}))
+          } catch (e) {
+            // Transient network blip — keep polling, attempt timer
+            // will give up if it persists.
+            lastErr = e
+            continue
+          }
+          if (!r.ok) {
+            // 5xx on the status endpoint — treat as transient until
+            // the attempt window closes.
+            lastErr = new Error(s?.error || `image-status ${r.status}`)
+            continue
+          }
+          if (s.state === 'success' && Array.isArray(s.images) && s.images.length) {
+            resolved = { images: s.images.map((im) => ({ url: im.url || im, name: '' })) }
+            break
+          }
+          if (s.state === 'failed') {
+            // KIE explicitly failed this task — break out and resubmit
+            // a fresh one (vs throwing, which used to fail the whole
+            // sibling fan-out on a single bad task).
+            lastErr = new Error(s.error || 'Image gen failed')
+            log?.(`[image_gen] attempt ${attempt}/${MAX_ATTEMPTS} KIE reported failed: ${lastErr.message} — restarting`)
+            break
+          }
+        }
+        if (resolved) return resolved.images
+
+        // Per-attempt timer expired without success or explicit fail —
+        // task is stuck (silently dropped, queue stalled). Resubmit on
+        // the next attempt instead of waiting another N minutes for a
+        // task that's never going to land.
+        if (Date.now() - attemptStart >= STUCK_THRESHOLD_MS) {
+          lastErr = new Error(`stuck for ${STUCK_THRESHOLD_MS / 60_000} min on task ${taskId}`)
+          log?.(`[image_gen] attempt ${attempt}/${MAX_ATTEMPTS} ${lastErr.message} — restarting`)
+        }
+        // Overall ceiling check happens at the top of the next iteration.
       }
-      throw new Error(`image_gen poll timed out after ${DEADLINE_MS / 60_000} min`)
+      throw new Error(`image_gen failed after ${MAX_ATTEMPTS} attempts: ${lastErr?.message || 'unknown'}`)
     }
     const settled = await Promise.allSettled(Array.from({ length: count }, () => submitOne()))
     const images = []
