@@ -87,6 +87,11 @@ export default function Login() {
   // their Supabase account. We pre-fill + LOCK the email (it has to
   // match the Stripe customer) and link the customer after signup.
   const stripeSessionId = params.get('stripe_session')
+  // ?reason=session_expired is set by SessionExpiredBanner's "Sign in
+  // again" button when the auth-guard couldn't refresh the JWT. Surface
+  // a friendly subhead so the user knows WHY they're back on the login
+  // page instead of just dumping them here with no context.
+  const reasonSessionExpired = params.get('reason') === 'session_expired'
 
   // Mode resolution order:
   //   1. ?stripe_session present → signup (returning from Stripe, must
@@ -358,6 +363,22 @@ export default function Login() {
               ? <>You're starting <strong style={{ color: 'var(--text)' }}>{TIER_LABELS[tier] || tier}</strong>. No charge for 3 days, cancel anytime.</>
               : 'Free to start. Upgrade when you need more.'}
         </div>
+
+        {reasonSessionExpired && mode === 'signin' && (
+          <div style={{
+            padding: '10px 12px', marginBottom: 14, borderRadius: 10,
+            background: 'rgba(245,158,11,0.10)',
+            border: '1px solid rgba(245,158,11,0.35)',
+            fontSize: 12.5, color: 'var(--text-soft)', lineHeight: 1.5,
+            display: 'flex', alignItems: 'flex-start', gap: 8,
+          }}>
+            <span aria-hidden style={{ color: '#f59e0b', fontSize: 14, lineHeight: 1, marginTop: 1 }}>⚠</span>
+            <span>
+              <strong style={{ color: '#f59e0b', fontFamily: 'var(--font-display)' }}>Your session expired.</strong>{' '}
+              Sign back in to continue where you left off. Any in-progress workflows on the server keep running while you're signed out.
+            </span>
+          </div>
+        )}
 
         {stripeSessionId && (
           <div style={{
