@@ -16,7 +16,7 @@ import { createPortal } from 'react-dom'
 // Body can walk the graph to inspect siblings' outputs (used by
 // ImageUploadBody to render per-clip processing badges during a fan-out
 // run).
-import { useNodes as useReactFlowNodes, useEdges as useReactFlowEdges } from '@xyflow/react'
+import { useNodes as useReactFlowNodes, useEdges as useReactFlowEdges, useReactFlow, MarkerType } from '@xyflow/react'
 import {
   Type, Wand2, Captions, UserCircle2, Save, Image as ImageIcon,
   ListChecks, FileVideo, Upload, Loader2, Maximize2, ArrowUpRight,
@@ -2520,7 +2520,48 @@ function ImageUploadBody({ data, onPatch }) {
   // during a multi-video fan-out run.
   const allNodes = useReactFlowNodes()
   const allEdges = useReactFlowEdges()
+  const { setEdges } = useReactFlow()
   const myId = data?.__id
+
+  // "Hook to all generators" — one-click wires this Upload media node's
+  // output to every image / video generator + polisher on the canvas.
+  // Targets the node types that consume uploaded media as a reference
+  // input (image_gen) or as a source video (avatar_render, video_polish,
+  // combine_videos). Skips nodes already wired from this node so the
+  // button is idempotent — clicking twice doesn't duplicate edges.
+  const GENERATOR_TARGETS = ['image_gen', 'avatar_render', 'video_polish', 'combine_videos']
+  const unhookedTargets = useMemo(() => {
+    if (!myId) return []
+    const wired = new Set(
+      allEdges
+        .filter((e) => e.source === myId)
+        .map((e) => e.target),
+    )
+    return allNodes.filter((n) =>
+      GENERATOR_TARGETS.includes(n.data?.type) && !wired.has(n.id)
+    )
+  }, [allNodes, allEdges, myId])
+
+  const hookToAllGenerators = () => {
+    if (!myId || !unhookedTargets.length) return
+    const stamp = Date.now().toString(36)
+    const additions = unhookedTargets.map((t, i) => ({
+      id: `e_${stamp}_${i.toString(36)}_${myId}_${t.id}`,
+      source: myId, sourceHandle: 'out',
+      target: t.id, targetHandle: 'in',
+      type: 'scissor',
+      animated: true,
+      markerEnd: { type: MarkerType.ArrowClosed },
+      style: { stroke: 'var(--red)', strokeWidth: 1.5 },
+    }))
+    setEdges((prev) => {
+      // Defence-in-depth against races: dedupe by (source, target) in
+      // case an edge landed between unhookedTargets being computed and
+      // this click. Cheap, and the alternative is mystery dupes.
+      const haveKeys = new Set(prev.map((e) => `${e.source}|${e.target}`))
+      return [...prev, ...additions.filter((e) => !haveKeys.has(`${e.source}|${e.target}`))]
+    })
+  }
   const stageByIdx = useMemo(() => {
     const result = new Map()  // idx -> { captioned, polished, scheduled, failed }
     if (!myId || !items.length) return result
@@ -2902,6 +2943,29 @@ function ImageUploadBody({ data, onPatch }) {
           <LibraryIcon size={13} /> From library
         </button>
       </div>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); hookToAllGenerators() }}
+        disabled={!unhookedTargets.length}
+        title={
+          unhookedTargets.length
+            ? `Connect this node to ${unhookedTargets.length} generator${unhookedTargets.length === 1 ? '' : 's'} on the canvas (image gen, avatar, finish video, combine videos)`
+            : 'Already connected to every image / video generator on the canvas'
+        }
+        style={{
+          ...tinyInput,
+          marginTop: 6,
+          cursor: unhookedTargets.length ? 'pointer' : 'not-allowed',
+          opacity: unhookedTargets.length ? 1 : 0.5,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          gap: 6, padding: '8px 10px',
+          background: 'var(--surface-2)',
+        }}>
+        <Link2 size={12} />
+        {unhookedTargets.length
+          ? `Hook to all generators (${unhookedTargets.length})`
+          : 'Hooked to all generators'}
+      </button>
       <div style={{ marginTop: 4, fontSize: 10, color: 'var(--muted)', lineHeight: 1.4 }}>
         Each item gets an alt tag. Reference one in any generator prompt with @altTag (e.g. "she's holding @logo").
       </div>
