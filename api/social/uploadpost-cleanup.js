@@ -69,7 +69,23 @@ export default async function handler(req, res) {
     const username = await resolveUploadpostUser(profile_id)
     if (!username) return res.status(400).json({ error: 'No Upload-Post user resolved for this profile' })
 
-    const raw = await uploadpostListScheduled(username)
+    // Wrap the Upload-Post list call in a tolerant try. Upload-Post
+    // sometimes returns 5xx or auth errors during their own incidents,
+    // and this endpoint is hit silently on every Schedule page mount —
+    // a 500 here pollutes the user's console without any actionable
+    // outcome. Empty list is the safe default.
+    let raw = { posts: [] }
+    try {
+      raw = await uploadpostListScheduled(username)
+    } catch (e) {
+      console.warn('uploadpost-cleanup: list call failed, treating as empty:', e?.status || '', e?.message || e)
+      return res.status(200).json({
+        jobs: [],
+        counts: { total: 0, matched: 0, orphan: 0 },
+        username,
+        warning: `Upload-Post list call failed (${e?.status || 'network'}): ${e?.message || 'unknown'}`,
+      })
+    }
     // Upload-Post returns its list under a few different keys depending
     // on which endpoint family. Find the first array-shaped field.
     const rawJobs = Array.isArray(raw)
