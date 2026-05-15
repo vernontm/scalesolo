@@ -2600,10 +2600,18 @@ function SpaceBuilder({ space, onSave, onClose }) {
     }
   }
 
-  // Public Run wrapper. If uploads are in flight, queue the run instead
-  // of firing immediately — the effect above auto-fires once everything
-  // settles. Clicking Run a second time while queued cancels the queue.
-  const run = () => {
+  // Public Run wrapper. Handles three concerns before actually
+  // dispatching:
+  //   1. If a queued run is already pending and the user clicks again,
+  //      cancel the queue (intuitive toggle).
+  //   2. If uploads are still in flight, switch to "Queued" state and
+  //      let the auto-fire effect dispatch when they finish.
+  //   3. If the space hasn't saved yet (spaceIdRef.current is null) OR
+  //      there are pending edits the 1.2s autosave debounce hasn't
+  //      flushed, save first and wait — otherwise the first Run click
+  //      bombed with "Save the space first" and only the SECOND click
+  //      worked. Now one click "just runs."
+  const run = async () => {
     if (runQueued) {
       setRunQueued(false)
       toast({ kind: 'info', message: 'Queued run cancelled.' })
@@ -2616,6 +2624,15 @@ function SpaceBuilder({ space, onSave, onClose }) {
         message: `Run queued — will start when ${uploadSummary.active} more upload${uploadSummary.active === 1 ? '' : 's'} finish${uploadSummary.active === 1 ? 'es' : ''}. Click Run again to cancel.`,
       })
       return
+    }
+    // Force-save when we don't have an id yet OR the autosave debounce
+    // is still pending changes. save() is idempotent + fast (~200ms),
+    // sets spaceIdRef.current on its first POST so subsequent clicks
+    // (and runImmediate below) read a real id.
+    const needsSave = !spaceIdRef.current || autoStatus === 'saving' || autoStatus === 'error'
+    if (needsSave) {
+      try { await save({ silent: true }) }
+      catch (e) { /* save() already set the error toast in non-silent mode; silent mode swallows */ }
     }
     runImmediate()
   }
