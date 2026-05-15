@@ -39,6 +39,11 @@ function jobRequestId(j) {
 function summarizeJob(j) {
   return {
     request_id:     jobRequestId(j),
+    // Upload-Post's INTERNAL job_id — required by the DELETE endpoint.
+    // request_id is our public handle; cancelling needs job_id. Carry
+    // it through the summary so the cancel pass can DELETE without
+    // doing a second per-job lookup.
+    job_id:         j?.job_id || j?.jobId || null,
     scheduled_date: j?.scheduled_date || j?.scheduled_at || j?.scheduled_for || null,
     platforms:      Array.isArray(j?.platform) ? j.platform : Array.isArray(j?.platforms) ? j.platforms : [],
     title:          j?.title || j?.tiktok_title || j?.description?.slice?.(0, 80) || '',
@@ -144,7 +149,17 @@ export default async function handler(req, res) {
     const workers = Array.from({ length: Math.min(CONCURRENCY, targets.length) }, async () => {
       while (cursor < targets.length) {
         const j = targets[cursor++]
-        const r = await uploadpostCancelScheduled(j.request_id)
+        // DELETE keys off Upload-Post's internal job_id, NOT our request_id.
+        // We grabbed job_id during the list pass (see summarizeJob); if
+        // it's missing, the job is no longer in Upload-Post's scheduled
+        // queue (already fired / cancelled / expired) — record it as
+        // not_found rather than firing a guaranteed-404 DELETE.
+        if (!j.job_id) {
+          failed++
+          detail.push({ request_id: j.request_id, ok: false, reason: 'no_job_id_in_list', status: 404 })
+          continue
+        }
+        const r = await uploadpostCancelScheduled(j.job_id)
         if (r.ok) {
           canceled++
           cancelledRequestIds.push(j.request_id)

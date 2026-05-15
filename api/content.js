@@ -12,7 +12,7 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from './_lib/supabase.js'
 import { findNextOpenSlot, syncContentStatusInSpaces } from './_lib/scheduling.js'
-import { uploadpostCancelScheduled } from './_lib/uploadpost.js'
+import { uploadpostCancelByRequestId, resolveUploadpostUser } from './_lib/uploadpost.js'
 
 // Cancel an existing scheduled Upload-Post job and re-submit it with a
 // new time. Called from the PATCH + action=schedule paths whenever the
@@ -42,7 +42,11 @@ async function rescheduleUploadPostJob({ row, newScheduledIso, authToken, req })
   // / never existed) don't block the re-submit.
   if (row.uploadpost_request_id) {
     try {
-      const cancel = await uploadpostCancelScheduled(row.uploadpost_request_id)
+      // Upload-Post's DELETE endpoint keys off job_id, not request_id.
+      // uploadpostCancelByRequestId resolves the mapping via the list
+      // endpoint, then DELETEs.
+      const username = await resolveUploadpostUser(row.profile_id)
+      const cancel = await uploadpostCancelByRequestId(username, row.uploadpost_request_id)
       if (!cancel.ok && cancel.status !== 404) {
         console.warn('reschedule: cancel old job failed:', row.uploadpost_request_id, cancel.reason)
       }
@@ -399,7 +403,9 @@ export default async function handler(req, res) {
       // 404s (already fired / never existed) don't block the local delete.
       if (row.status === 'scheduled' && row.uploadpost_request_id) {
         try {
-          const result = await uploadpostCancelScheduled(row.uploadpost_request_id)
+          // DELETE requires job_id; resolve from request_id via list lookup.
+          const username = await resolveUploadpostUser(profileId)
+          const result = await uploadpostCancelByRequestId(username, row.uploadpost_request_id)
           if (!result.ok && result.status !== 404) {
             console.warn('upload-post cancel failed:', row.uploadpost_request_id, result.reason)
           }

@@ -2140,6 +2140,101 @@ function SpaceBuilder({ space, onSave, onClose }) {
     }
   }
 
+  // ── Copy / paste / duplicate selected nodes ─────────────────────────────
+  // Cmd/Ctrl+C : snapshot every currently-selected node (plus the edges
+  //              between them) into an in-memory clipboard.
+  // Cmd/Ctrl+V : drop the snapshot back onto the canvas with fresh ids,
+  //              an offset position so the copies don't sit on top of the
+  //              originals, and the copies pre-selected (originals deselect).
+  // Cmd/Ctrl+D : duplicate in place — copy + paste in one shortcut, useful
+  //              when you want to fork a node without moving your hand.
+  //
+  // Skipped when focus is in an input / textarea / contenteditable so the
+  // shortcuts don't steal Cmd+C from text fields.
+  const clipboardRef = useRef({ nodes: [], edges: [] })
+
+  const isEditableTarget = (el) => {
+    if (!el) return false
+    const tag = (el.tagName || '').toLowerCase()
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return true
+    if (el.isContentEditable) return true
+    return false
+  }
+
+  const copySelectedNodes = useCallback(() => {
+    const selected = nodesRef.current.filter((n) => n.selected)
+    if (!selected.length) return false
+    const ids = new Set(selected.map((n) => n.id))
+    // Only carry edges whose BOTH ends are in the selection — partial
+    // edges would dangle once the copies land.
+    const internalEdges = edgesRef.current.filter((e) => ids.has(e.source) && ids.has(e.target))
+    clipboardRef.current = {
+      nodes: safeClone(selected),
+      edges: safeClone(internalEdges),
+    }
+    return true
+  }, [])
+
+  const pasteClipboard = useCallback((opts = {}) => {
+    const { offset = 40 } = opts
+    const buf = clipboardRef.current
+    if (!buf?.nodes?.length) return false
+    pushHistory()
+    // Build a fresh id for each pasted node and a map old→new so we can
+    // rewrite the internal edges.
+    const idMap = new Map()
+    const stamp = Date.now().toString(36)
+    const newNodes = buf.nodes.map((n, i) => {
+      const newId = `n_${stamp}_${i.toString(36)}_${Math.random().toString(36).slice(2, 5)}`
+      idMap.set(n.id, newId)
+      return {
+        ...n,
+        id: newId,
+        position: { x: (n.position?.x || 0) + offset, y: (n.position?.y || 0) + offset },
+        // Pre-select the copies so the user can immediately drag the group.
+        selected: true,
+        // Reset run state so the paste doesn't inherit stale status/output.
+        data: { ...n.data, status: 'idle', output: null, error: null },
+      }
+    })
+    const newEdges = buf.edges.map((e, i) => ({
+      ...e,
+      id: `e_${stamp}_${i.toString(36)}_${Math.random().toString(36).slice(2, 5)}`,
+      source: idMap.get(e.source),
+      target: idMap.get(e.target),
+    }))
+    setNodes((arr) => [
+      // Deselect the originals so only the new copies are selected.
+      ...arr.map((n) => (n.selected ? { ...n, selected: false } : n)),
+      ...newNodes,
+    ])
+    if (newEdges.length) setEdges((arr) => [...arr, ...newEdges])
+    return true
+  }, [pushHistory])
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!(e.metaKey || e.ctrlKey)) return
+      if (e.shiftKey || e.altKey) return
+      if (isEditableTarget(e.target)) return
+      const k = e.key.toLowerCase()
+      if (k === 'c') {
+        if (copySelectedNodes()) e.preventDefault()
+      } else if (k === 'v') {
+        if (pasteClipboard()) e.preventDefault()
+      } else if (k === 'd') {
+        // Duplicate in place: snapshot whatever's selected, paste with
+        // an offset, in one keypress. No-op if nothing's selected.
+        if (copySelectedNodes()) {
+          pasteClipboard()
+          e.preventDefault()
+        }
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [copySelectedNodes, pasteClipboard])
+
   // Drag from palette → drop on canvas
   const onDragOver = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }
   const onDrop = (e) => {

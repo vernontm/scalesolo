@@ -111,9 +111,13 @@ export async function uploadpostListScheduled(username, opts = {}) {
   return data || { posts: [] }
 }
 
-// Cancel a scheduled Upload-Post job. Fails soft on 404 (already fired or
-// never existed) so callers can use this in cascade-delete paths without
-// blocking the local delete.
+// Cancel a scheduled Upload-Post job by its INTERNAL job_id (NOT request_id).
+// Upload-Post's DELETE endpoint keys off job_id; request_id is the public
+// handle we store in content_scripts. If you only have a request_id, use
+// uploadpostCancelByRequestId() — it does the request_id → job_id lookup
+// for you via the list endpoint.
+// Fails soft on 404 (already fired or never existed) so callers can use
+// this in cascade-delete paths without blocking the local delete.
 export async function uploadpostCancelScheduled(jobId) {
   if (!jobId) return { ok: false, reason: 'no_job_id' }
   try {
@@ -123,6 +127,42 @@ export async function uploadpostCancelScheduled(jobId) {
     if (e.status === 404) return { ok: false, reason: 'not_found', status: 404 }
     return { ok: false, reason: e.message, status: e.status }
   }
+}
+
+// Look up Upload-Post's internal job_id for a given request_id by scanning
+// the user's scheduled-jobs list. Upload-Post's list response includes both
+// `request_id` (our handle, returned at schedule time) and `job_id` (the
+// internal key DELETE wants). One list call per cancel — acceptable because
+// cancels are rare. Returns null if no match.
+export async function uploadpostJobIdForRequestId(username, requestId) {
+  if (!username || !requestId) return null
+  const raw = await uploadpostListScheduled(username).catch(() => ({ posts: [] }))
+  const jobs = Array.isArray(raw)
+    ? raw
+    : (Array.isArray(raw?.posts) ? raw.posts
+      : Array.isArray(raw?.results) ? raw.results
+      : Array.isArray(raw?.data) ? raw.data
+      : [])
+  for (const j of jobs) {
+    const rid = j?.request_id || j?.id || j?.requestId || j?.upload_id
+    if (rid && String(rid) === String(requestId)) {
+      return j?.job_id || j?.jobId || null
+    }
+  }
+  return null
+}
+
+// Cancel a scheduled Upload-Post job using our stored request_id. Resolves
+// job_id via list lookup, then DELETEs. Returns { ok: false, reason: 'not_found' }
+// when the request_id is no longer on Upload-Post's scheduled list (already
+// fired, already cancelled, or expired) — callers can treat this as a
+// successful "already gone" terminal state.
+export async function uploadpostCancelByRequestId(username, requestId) {
+  if (!username) return { ok: false, reason: 'no_username' }
+  if (!requestId) return { ok: false, reason: 'no_request_id' }
+  const jobId = await uploadpostJobIdForRequestId(username, requestId)
+  if (!jobId) return { ok: false, reason: 'not_found', status: 404 }
+  return uploadpostCancelScheduled(jobId)
 }
 
 // Idempotent: returns the profile (creates first if missing).

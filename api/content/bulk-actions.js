@@ -17,7 +17,7 @@ import { findNextOpenSlot } from '../_lib/scheduling.js'
 import { message } from '../_lib/anthropic.js'
 import { loadBrandContext, renderBrandContextMarkdown } from '../_lib/brand-context.js'
 import { transcribeFromUrl } from '../_lib/scribe.js'
-import { uploadpostCancelScheduled } from '../_lib/uploadpost.js'
+import { uploadpostCancelByRequestId } from '../_lib/uploadpost.js'
 import {
   resolveUploadpostUser, uploadpostEnsureUserProfile,
 } from '../_lib/uploadpost.js'
@@ -595,7 +595,9 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
       // pending job first so we don't double-post (once now, once at the
       // original scheduled time).
       if (r.uploadpost_request_id) {
-        try { await uploadpostCancelScheduled(r.uploadpost_request_id) } catch {}
+        // Cancel requires Upload-Post's internal job_id. uploadpostCancelByRequestId
+        // resolves request_id → job_id via the user's scheduled list, then DELETEs.
+        try { await uploadpostCancelByRequestId(username, r.uploadpost_request_id) } catch {}
       }
       const isVideo = r.media_type === 'video'
       const platforms = Array.isArray(r.platforms) && r.platforms.length ? r.platforms : ['tiktok']
@@ -760,6 +762,11 @@ async function resyncUploadPost({ req, res, profile_id, script_ids }) {
   let resynced = 0, skipped = 0, failed = 0
   const details = []
 
+  // Cancelling requires translating each row's stored request_id into
+  // Upload-Post's internal job_id via their scheduled-list endpoint.
+  // Resolve username once and reuse for every cancel in the loop.
+  const username = await resolveUploadpostUser(profile_id)
+
   // Sequential so a slow Upload-Post doesn't fan us into rate-limit
   // territory. 200 max scheduled rows in practice; 1-2s each → tops
   // out under the 120s function budget.
@@ -772,9 +779,11 @@ async function resyncUploadPost({ req, res, profile_id, script_ids }) {
       continue
     }
     // Cancel old job (best-effort). 404 = already gone, fine.
+    // DELETE keys off job_id; uploadpostCancelByRequestId does the
+    // request_id → job_id lookup against the user's scheduled list.
     if (row.uploadpost_request_id) {
       try {
-        const cancel = await uploadpostCancelScheduled(row.uploadpost_request_id)
+        const cancel = await uploadpostCancelByRequestId(username, row.uploadpost_request_id)
         if (!cancel.ok && cancel.status !== 404) {
           console.warn('[resync] cancel failed:', row.uploadpost_request_id, cancel.reason)
         }
