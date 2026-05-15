@@ -8341,12 +8341,21 @@ export const NODE_REGISTRY = {
       const total = urls.length
       let done = 0
       reportProgress?.({ message: `Polishing 0 of ${total} clips…`, done: 0, total })
-      // Concurrency = 3. We tried 4 briefly but it nudged Vercel's
-      // 300s gateway timeout for individual polishes — concurrent
-      // calls can compete for ffmpeg CPU on the same function pool.
-      // 3 fits cleanly within budget; the per-call speedups (script
-      // bypass + tighter ZapCap poll) more than make up the wall time.
-      const CONCURRENCY = 3
+      // Concurrency = 1 (serialized). The browser canvas path hits
+      // /api/videos/polish for each clip, which goes:
+      //   browser → Vercel function → Fly worker /jobs/polish-async
+      // Running 3 of those in parallel hammered Vercel's function
+      // resources AND the Fly worker's /tmp simultaneously — we hit
+      // both FUNCTION_INVOCATION_FAILED and ENOSPC on a 5-clip Mind
+      // Rescue run. Serial is slower (5 clips × ~60-90s ≈ 5-8 min) but
+      // reliable from the browser path.
+      //
+      // The top-level Run button avoids all this — it dispatches to the
+      // server (/api/spaces/run-now), which runs polish IN-PROCESS on
+      // the worker with no Vercel proxy hop and can safely do
+      // concurrency 2. Multi-clip workflows should use the top-level
+      // Run button for speed.
+      const CONCURRENCY = 1
       const results = new Array(total)
       const failures = []
       let cursor = 0
