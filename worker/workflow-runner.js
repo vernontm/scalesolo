@@ -148,6 +148,9 @@ const NODE_RUNNERS = {
       caption:       (p.caption || '').trim(),
       hashtags:      (p.hashtags || '').trim(),
       first_comment: (p.first_comment || '').trim(),
+      // Marks this as a pure-text source. Downstream save_library /
+      // schedule_post honor it only when no media arrives alongside.
+      is_text_post:  true,
     }
   },
 
@@ -1416,6 +1419,7 @@ ${String(script).slice(0, 2000)}
     // Bundler: collect everything upstream into one package.
     let title = '', script = '', caption = '', hashtags = '', firstComment = ''
     let videoUrl = null
+    let textPostFlag = false
     const images = []
     for (const v of asArr(inputs)) {
       if (!v || typeof v !== 'object') continue
@@ -1424,6 +1428,7 @@ ${String(script).slice(0, 2000)}
       if (!caption && v.caption) caption = v.caption
       if (!hashtags && v.hashtags) hashtags = v.hashtags
       if (!firstComment && v.first_comment) firstComment = v.first_comment
+      if (v.is_text_post) textPostFlag = true
       if (!videoUrl && (v.video?.video_url || v.video_url)) videoUrl = v.video?.video_url || v.video_url
       if (Array.isArray(v.images)) for (const im of v.images) if (im?.url) images.push({ url: im.url })
     }
@@ -1476,9 +1481,11 @@ ${String(script).slice(0, 2000)}
       }
     }
 
+    const isTextPost = textPostFlag && !videoUrl && !orderedImages.length
     return {
       bundle: true,
       title: finalTitle, script, full_script: script, caption, hashtags, first_comment: firstComment,
+      is_text_post: isTextPost || undefined,
       video_url: videoUrl,
       images: orderedImages.length ? orderedImages : undefined,
       media_urls: mediaUrls,

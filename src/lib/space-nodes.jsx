@@ -6896,6 +6896,10 @@ export const NODE_REGISTRY = {
         caption:       (p.caption || '').trim(),
         hashtags:      (p.hashtags || '').trim(),
         first_comment: (p.first_comment || '').trim(),
+        // Marks this as a pure-text source. Downstream save_library /
+        // schedule_post honor it only when no media is wired in (so a
+        // manual_caption wired alongside image_gens stays an image post).
+        is_text_post:  true,
       }
     },
   },
@@ -8896,6 +8900,7 @@ export const NODE_REGISTRY = {
       // forwarded to upload-post so each platform publishes its own
       // wording. No media required when this is present.
       let textPostBundle = null
+      let textPostFlag = false
       const photoUrls = []
       for (const v of arr) {
         if (!v) continue
@@ -8907,6 +8912,7 @@ export const NODE_REGISTRY = {
         if (!hashtags && v.hashtags) hashtags = v.hashtags
         if (!firstComment && v.first_comment) firstComment = v.first_comment
         if (!perPlatform && v.per_platform && typeof v.per_platform === 'object' && !v.is_text_post) perPlatform = v.per_platform
+        if (v.is_text_post) textPostFlag = true
         if (!textPostBundle && v.is_text_post && v.per_platform && typeof v.per_platform === 'object') {
           textPostBundle = v.per_platform
         }
@@ -8932,7 +8938,12 @@ export const NODE_REGISTRY = {
 
       const platforms = Array.isArray(data.props?.platforms) ? data.props.platforms : []
       if (!platforms.length) throw new Error('Pick at least one platform.')
-      const isTextPost = !!textPostBundle && !videoUrl && !photoUrls.length
+      // text_post_gen ships per-platform variants in textPostBundle.
+      // manual_caption ships a single shared caption with is_text_post:true
+      // but no variants — fall back to the canonical caption (default
+      // *_title fan-out in /api/social/upload-post handles per-platform
+      // limits without explicit per_platform_text).
+      const isTextPost = (textPostFlag || !!textPostBundle) && !videoUrl && !photoUrls.length
       if (!isTextPost && !videoUrl && !photoUrls.length) {
         throw new Error('Wire a video, images, or a Text post node into "in".')
       }
@@ -9266,6 +9277,7 @@ export const NODE_REGISTRY = {
     run: async ({ data, inputs, ctx }) => {
       const arr = asArr(inputs?.in)
       let script = '', caption = '', hashtags = '', firstComment = '', videoUrl = null, incomingTitle = '', perPlatform = null
+      let textPostFlag = false
       const imageUrls = []
       for (const v of arr) {
         if (!v) continue
@@ -9278,6 +9290,7 @@ export const NODE_REGISTRY = {
         if (v.hashtags) hashtags = hashtags || v.hashtags
         if (v.first_comment) firstComment = firstComment || v.first_comment
         if (!perPlatform && v.per_platform && typeof v.per_platform === 'object') perPlatform = v.per_platform
+        if (v.is_text_post) textPostFlag = true
         if (v.video?.video_url) videoUrl = videoUrl || v.video.video_url
         if (v.video_url) videoUrl = videoUrl || v.video_url
         if (Array.isArray(v.images)) for (const im of v.images) { if (im?.url) imageUrls.push(im.url) }
@@ -9306,6 +9319,10 @@ export const NODE_REGISTRY = {
 
       const mediaUrls = videoUrl ? [videoUrl] : (orderedImageUrls.length ? orderedImageUrls : null)
       const mediaType = videoUrl ? 'video' : (orderedImageUrls.length ? 'image' : 'text')
+      // Pure-text post: any upstream node flagged is_text_post AND no media
+      // arrived. Bundles propagate the flag to a downstream schedule_post
+      // and the API path drops media-only restrictions.
+      const isTextPost = textPostFlag && !videoUrl && !orderedImageUrls.length
       const platforms = Array.isArray(data.props?.platforms) && data.props.platforms.length
         ? data.props.platforms
         : null
@@ -9373,6 +9390,7 @@ export const NODE_REGISTRY = {
         hashtags,
         first_comment: firstComment,
         per_platform: perPlatform,
+        is_text_post: isTextPost || undefined,
         video_url: videoUrl,
         images: orderedImageUrls.length ? orderedImageUrls.map((url) => ({ url })) : undefined,
         media_urls: mediaUrls,

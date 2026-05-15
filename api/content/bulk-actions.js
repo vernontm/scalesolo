@@ -588,7 +588,8 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
   const results = []
   for (const r of rows) {
     try {
-      if (!Array.isArray(r.media_urls) || !r.media_urls.length) {
+      const isText = r.media_type === 'text'
+      if (!isText && (!Array.isArray(r.media_urls) || !r.media_urls.length)) {
         results.push({ id: r.id, ok: false, error: 'no media' }); continue
       }
       // If this row was previously scheduled at Upload-Post, cancel the
@@ -600,7 +601,9 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
         try { await uploadpostCancelByRequestId(username, r.uploadpost_request_id) } catch {}
       }
       const isVideo = r.media_type === 'video'
-      const platforms = Array.isArray(r.platforms) && r.platforms.length ? r.platforms : ['tiktok']
+      const platforms = Array.isArray(r.platforms) && r.platforms.length
+        ? r.platforms
+        : (isText ? ['threads'] : ['tiktok'])
       const desc = [r.caption, r.hashtags].filter(Boolean).join('\n\n').trim() || (r.full_script || '').slice(0, 500)
       const hasTikTok = platforms.includes('tiktok')
 
@@ -614,7 +617,33 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
       //     instead of failing under sync timeouts on strict platforms
       // Mirrors the working VTM uploadpost.js flow.
       let upRes
-      if (isVideo) {
+      if (isText) {
+        // ── TEXT: per-platform *_title fan-out ───────────────────────────
+        // /api/upload_text takes the same auth + form shape as video uploads
+        // but expects no media. Description is the catch-all caption; each
+        // platform also gets a <platform>_title override trimmed to that
+        // platform's hard limit. Char caps mirror /api/social/upload-post.
+        const form = new URLSearchParams()
+        form.append('user', username)
+        for (const p of platforms) form.append('platform[]', p)
+        if (desc) form.append('description', desc.slice(0, 5000))
+        if (platforms.includes('threads'))   form.append('threads_title',   desc.slice(0, 500))
+        if (platforms.includes('x') || platforms.includes('twitter')) form.append('x_title', desc.slice(0, 25000))
+        if (platforms.includes('linkedin'))  { form.append('linkedin_title',  desc.slice(0, 3000)); form.append('linkedin_description', desc.slice(0, 3000)) }
+        if (platforms.includes('facebook'))  {
+          const fbSrc = desc.replace(/\s*\n+\s*/g, ' ').trim()
+          form.append('facebook_title', fbSrc.slice(0, 240))
+          form.append('facebook_description', desc.slice(0, 5000))
+        }
+        if (platforms.includes('bluesky'))   form.append('bluesky_title',  desc.slice(0, 300))
+        if (r.first_comment) form.append('first_comment', String(r.first_comment).slice(0, 1000))
+
+        upRes = await fetch('https://api.upload-post.com/api/upload_text', {
+          method: 'POST',
+          headers: { Authorization: `Apikey ${apiKey}` },
+          body: form,
+        })
+      } else if (isVideo) {
         const form = new URLSearchParams()
         form.append('user', username)
         for (const p of platforms) form.append('platform[]', p)

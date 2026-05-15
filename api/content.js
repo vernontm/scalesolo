@@ -227,10 +227,12 @@ export default async function handler(req, res) {
           }
         } else if (action === 'schedule') {
           if (!req.body?.scheduled_datetime) return res.status(400).json({ error: 'scheduled_datetime required' })
-          // Block scheduling text-only rows. Caller has to attach a
-          // video or image upstream first — otherwise the post lands
-          // in the calendar with nothing to publish on the actual day.
-          if (!hasMedia(item)) {
+          // Block scheduling rows that have nothing to publish — no
+          // media AND not a text-only post. Text-only rows (media_type
+          // = 'text', set by save_library when manual_caption / text_post_gen
+          // produced the bundle) are valid: publishSelected / cron sweeps
+          // route them to Upload-Post's /upload_text endpoint.
+          if (!hasMedia(item) && item.media_type !== 'text') {
             return res.status(400).json({
               error: 'Cannot schedule a post without media. Attach an image or video first.',
               code: 'missing_media',
