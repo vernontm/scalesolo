@@ -76,6 +76,12 @@ app.use(express.json({ limit: '10mb' }))
 
 app.get('/healthz', (_req, res) => res.json({ ok: true, ffmpeg: !!ffmpegPath }))
 
+// Dedicated keepalive endpoint distinct from /healthz so Fly's idle
+// detector doesn't filter our pings as "system health-check traffic."
+// Hit by the worker's own setInterval (see startKeepAlive below)
+// during any active job to keep Fly from auto-suspending mid-encode.
+app.get('/__keepalive', (_req, res) => res.json({ ok: true, machine: process.env.FLY_MACHINE_ID || null, active_jobs: activeJobs }))
+
 // ── Keep-alive against Fly auto-suspend ────────────────────────────────
 // Fly's auto-suspend only counts INBOUND HTTP. Long-running background
 // jobs (run-workflow, polish-async) don't generate inbound traffic
@@ -98,11 +104,23 @@ function startKeepAlive() {
     console.warn('[keepalive] no public URL configured (set FLY_APP_NAME or WORKER_PUBLIC_URL); auto-suspend may interrupt long jobs')
     return
   }
-  console.log(`[keepalive] starting (pinging ${WORKER_PUBLIC_URL}/healthz every 30s)`)
+  // fly-prefer-instance: pins the keepalive ping to THIS specific
+  // machine via Fly's proxy. Without this, if Fly autoscaled a second
+  // machine to handle burst (or just for load-balancing), our pings
+  // would round-robin between machines and the one actually doing
+  // ffmpeg work would miss enough of them to get suspended mid-encode.
+  // We saw exactly this on a 17-video run that died at 06:43:21.
+  //
+  // Also use a dedicated /__keepalive endpoint instead of /healthz —
+  // Fly might exclude its own health-check path from the idle detector.
+  // Safer to use a distinct URL that's clearly user traffic.
+  const machineId = process.env.FLY_MACHINE_ID || process.env.FLY_ALLOC_ID || null
+  console.log(`[keepalive] starting (pinging ${WORKER_PUBLIC_URL}/__keepalive every 30s${machineId ? `, pinned to ${machineId}` : ''})`)
   keepAliveTimer = setInterval(async () => {
     try {
       const t0 = Date.now()
-      const r = await fetch(`${WORKER_PUBLIC_URL}/healthz`, { method: 'GET' })
+      const headers = machineId ? { 'fly-prefer-instance': machineId } : {}
+      const r = await fetch(`${WORKER_PUBLIC_URL}/__keepalive`, { method: 'GET', headers })
       const ms = Date.now() - t0
       if (!r.ok) console.warn(`[keepalive] ping returned ${r.status} after ${ms}ms`)
     } catch (e) {

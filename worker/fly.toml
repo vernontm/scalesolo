@@ -37,17 +37,17 @@ primary_region = 'iad'
     method = 'GET'
     path = '/healthz'
 
-  # Per-machine in-flight request caps so Fly autoscaler knows when
-  # to spin up another machine. soft_limit = "start booting a new
-  # machine once this one has N requests in flight"; hard_limit =
-  # "stop routing new requests to this machine once it has N." With
-  # performance-4x carrying ~2 ffmpeg jobs cleanly, soft=2 hard=4
-  # gives a buffer for short-lived API calls (script_gen,
-  # caption_gen) without queueing heavy work behind a saturated box.
+  # Concurrency limits bumped so Fly doesn't autoscale a second machine
+  # under normal load. We were hitting a multi-machine load-balancing
+  # bug where the keepalive ping landed on the wrong machine and the
+  # working machine got suspended mid-encode. One performance-4x can
+  # carry several concurrent workflows in-process (ffmpeg is the only
+  # heavy operation and we cap polish at concurrency 2 inside the
+  # workflow runner). Higher limits keep work on one machine.
   [http_service.concurrency]
     type = 'requests'
-    hard_limit = 4
-    soft_limit = 2
+    hard_limit = 50
+    soft_limit = 25
 
 [[vm]]
   # performance-4x: 4 dedicated vCPUs, 8GB RAM. Roughly 3-4x the
