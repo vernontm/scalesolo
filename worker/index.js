@@ -730,6 +730,12 @@ app.post('/jobs/run-workflow', requireSecret, async (req, res) => {
         // orchestrate polish and hit the FUNCTION_INVOCATION_FAILED /
         // ENOSPC pile-up we saw on Mind Rescue's 5-clip retry.
         runOnlyTargetId: body.run_only_target_id || null,
+        // rerun_from_node_id: re-run this node AND every descendant
+        // (use cached for ancestors). The browser sends this for
+        // per-node Run on multi-clip workflows so polish + schedule_post
+        // both re-run when polish is targeted, instead of schedule_post
+        // staying on a stale cached single-post output.
+        rerunFromNodeId: body.rerun_from_node_id || null,
       })
       const errCount = Object.keys(result.errors).length
       console.log(`[wf ${jobLabel}] done ok=${result.ok} errors=${errCount} duration_ms=${Date.now() - startedAt}`)

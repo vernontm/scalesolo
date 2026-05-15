@@ -39,7 +39,7 @@ export default async function handler(req, res) {
   if (!auth) return
 
   try {
-    const { space_id, profile_id, graph, run_only_target_id } = req.body || {}
+    const { space_id, profile_id, graph, run_only_target_id, rerun_from_node_id } = req.body || {}
     if (!space_id || !profile_id) {
       return res.status(400).json({ error: 'space_id + profile_id required' })
     }
@@ -85,6 +85,7 @@ export default async function handler(req, res) {
           // data, so we don't get FUNCTION_INVOCATION_FAILED on
           // browser-orchestrated parallel polish.
           run_only_target_id: run_only_target_id || null,
+          rerun_from_node_id: rerun_from_node_id || null,
         }),
         signal: controller.signal,
       })

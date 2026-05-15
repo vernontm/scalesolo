@@ -2696,12 +2696,16 @@ function SpaceBuilder({ space, onSave, onClose }) {
             space_id: spaceIdRef.current,
             profile_id: selectedProfileId,
             graph: { nodes: snapshot.nodes, edges: snapshot.edges },
-            // self_only: run just the target. 'up_to_here' and 'full'
-            // re-run more of the graph from the server too. The worker
-            // honors run_only_target_id and uses cached outputs for
-            // every other node, so a polish retry doesn't redo
-            // caption_gen and burn Claude tokens.
-            run_only_target_id: scope === 'self_only' ? targetId : null,
+            // self_only: re-run the target AND every descendant
+            // (rerun_from_node_id semantics). Cached ancestors don't
+            // re-execute (no token waste on caption_gen for a polish
+            // retry), but downstream nodes DO re-run so schedule_post
+            // sees the freshly polished URLs and submits new Upload-Post
+            // jobs. Earlier version used run_only_target_id which only
+            // re-ran the target — that left schedule_post stuck on a
+            // stale cached single-post output and the new clips never
+            // got submitted.
+            rerun_from_node_id: scope === 'self_only' ? targetId : null,
           }),
         })
         const body = await r.json().catch(() => ({}))

@@ -1372,7 +1372,7 @@ ${String(script).slice(0, 2000)}
 
 // Topological sort + execute. Inputs into each node come from the
 // outputs of every node with an edge pointing TO this node.
-export async function runWorkflow({ graph, userId, profileId, internalSecret, log, onProgress, shouldAbort, localFns, runOnlyTargetId }) {
+export async function runWorkflow({ graph, userId, profileId, internalSecret, log, onProgress, shouldAbort, localFns, runOnlyTargetId, rerunFromNodeId }) {
   const nodes = graph?.nodes || []
   const edges = graph?.edges || []
   const incoming = new Map()
@@ -1404,6 +1404,26 @@ export async function runWorkflow({ graph, userId, profileId, internalSecret, lo
   const headers = makeHeaders({ userId, internalSecret })
   const ctx = { userId, profileId, headers, internalSecret, localFns: localFns || null }
 
+  // ── rerunFromNodeId: re-run this node and every descendant ─────────
+  // Computes the set of node ids that MUST re-run fresh (target +
+  // everything reachable via outgoing edges). Every other node uses
+  // its cached data.output as a no-op. This is the right semantic for
+  // "Re-run this node" on a multi-clip workflow where the user wants
+  // polish to redo AND schedule_post to re-submit with the new
+  // polished URLs. run_only_target_id (target alone) was leaving
+  // schedule_post stuck on a stale single-post cache.
+  const freshSet = new Set()
+  if (rerunFromNodeId) {
+    const stack = [rerunFromNodeId]
+    while (stack.length) {
+      const cur = stack.pop()
+      if (freshSet.has(cur)) continue
+      freshSet.add(cur)
+      for (const e of edges) if (e.source === cur) stack.push(e.target)
+    }
+    log?.(`[rerun-from] ${rerunFromNodeId} → ${freshSet.size} node(s) will re-run fresh`)
+  }
+
   for (const id of order) {
     // Cancellation check at each node boundary. shouldAbort() polls the
     // space_runs row for status='cancelled' (the worker passes a polling
@@ -1424,12 +1444,21 @@ export async function runWorkflow({ graph, userId, profileId, internalSecret, lo
     const type = node.data?.type
     const runner = NODE_RUNNERS[type]
 
-    // runOnlyTargetId mode: when the browser dispatched a "Run this node
-    // only" with a multi-clip workflow (Spaces.jsx routes per-node Run
-    // for multi-clip graphs to the server), we re-run JUST the target.
-    // Every other node uses its previous data.output as a cache hit so
-    // we don't burn tokens redoing caption_gen for a polish retry.
-    if (runOnlyTargetId && id !== runOnlyTargetId) {
+    // rerunFromNodeId mode (PREFERRED): re-run the target AND every
+    // descendant; ancestors use cached output. This is what the browser
+    // sends when the user clicks per-node Run on a multi-clip workflow
+    // — they expect polish + schedule_post to both re-run, not just
+    // polish.
+    //
+    // runOnlyTargetId mode (legacy / strict): re-run JUST the target,
+    // everything else cached. Kept for callers that genuinely want
+    // single-node re-execution (e.g. a future "re-render this clip
+    // only" action without touching downstream).
+    const useFreshSet = freshSet.size > 0
+    const isFresh = useFreshSet
+      ? freshSet.has(id)
+      : (!runOnlyTargetId || id === runOnlyTargetId)
+    if (!isFresh) {
       const cached = node?.data?.output
       if (cached && typeof cached === 'object') {
         outputs.set(id, cached)
