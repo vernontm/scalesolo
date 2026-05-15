@@ -60,7 +60,14 @@ import { ProfileProvider } from './context/ProfileContext.jsx'
 import { CreditsProvider } from './context/CreditsContext.jsx'
 import { AgentProvider } from './context/AgentContext.jsx'
 import { SpacesRunProvider } from './context/SpacesRunContext.jsx'
+import { installAuthGuard } from './lib/auth-guard.js'
 import './styles/global.css'
+
+// Install the auth-guard ONCE at app boot. Intercepts every /api/* 401,
+// attempts a one-shot Supabase session refresh + retry, and fires the
+// 'scalesolo:session-expired' event when the session is truly dead.
+// SessionExpiredBanner (rendered inside App) listens for that event.
+installAuthGuard()
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

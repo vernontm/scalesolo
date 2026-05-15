@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { identifySentryUser } from '../lib/sentry.js'
+import { noteExplicitSignOut } from '../lib/auth-guard.js'
 
 const AuthContext = createContext(null)
 
@@ -132,7 +133,12 @@ export function AuthProvider({ children }) {
     })
   }
 
-  const signOut = () => supabase.auth.signOut()
+  const signOut = () => {
+    // Tell the auth-guard this sign-out is user-initiated so the
+    // "session expired" banner doesn't pop on the way out.
+    noteExplicitSignOut()
+    return supabase.auth.signOut()
+  }
 
   // Memoize the context value so consumers only re-render when one of
   // these specific fields actually changes. The signIn / signUp /

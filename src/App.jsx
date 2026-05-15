@@ -4,6 +4,7 @@ import { Zap } from 'lucide-react'
 import Sidebar from './components/Sidebar.jsx'
 import Header from './components/Header.jsx'
 import OutOfCreditsModal from './components/OutOfCreditsModal.jsx'
+import SessionExpiredBanner from './components/SessionExpiredBanner.jsx'
 // Eager: routes that the user is likely to land on immediately
 // (auth + dashboard) or that are tiny stand-alones. Everything else
 // loads on demand to keep the initial JS bundle lean.
@@ -204,6 +205,10 @@ function AppShell() {
           'scalesolo:out-of-credits' window event and pops a modal
           with the top-up / upgrade CTA. */}
       <OutOfCreditsModal />
+      {/* Session-death banner. Auth-guard fires the 'session-expired'
+          event when a 401 can't be recovered via Supabase token
+          refresh. Hidden until then. */}
+      <SessionExpiredBanner />
     </div>
   )
 }
