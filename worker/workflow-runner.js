@@ -660,48 +660,20 @@ const NODE_RUNNERS = {
         batches.push(valid.slice(i, i + BATCH_SIZE))
       }
 
-      const buildBatchPrompt = (batch) => `From the ${batch.length} short script segments below, write ${batch.length} INDEPENDENT caption sets — one per segment. Each segment becomes its own social post (different clip, different audience scroll), so each set must stand on its own.
-
-Per-set rules (apply to EVERY set):
-- title: ≤ 80 chars, click-worthy, no number prefix.
-- caption: ≤ 1500 chars. Strong hook in the first sentence. Reads naturally on every platform (TikTok / IG / YouTube / Facebook / X / LinkedIn / Threads).
-- hashtags: EXACTLY 5, space-separated, each starting with #. Lead with the brand's core hashtags.
-- first_comment: ≤ 220 chars. Engagement driver, not a duplicate of the caption, no hashtags.
-
-Across-the-batch rules:
-- Each set must be DIFFERENT — different hook, different angle, different vocabulary.
-- Match each segment's actual content. The hook of caption #3 should reflect segment #3, not segment #1.
-- Voice stays consistent (same brand bible) but the substance varies per segment.
-
-Voice: NEVER use em dashes. Use commas, periods, or colons.
-
-Return ONLY valid JSON, no preamble, no markdown fences. Use each segment's exact "idx" value as the set's idx (do NOT renumber from 0). Exact shape:
-{
-  "sets": [
-    { "idx": ${batch[0].idx}, "title": "", "caption": "", "hashtags": "#a #b #c #d #e", "first_comment": "" }
-  ]
-}
-
-Segments:
-${batch.map((c) => `--- segment ${c.idx} ---\n${c.text.slice(0, 800)}`).join('\n\n')}`
-
+      // Dedicated /api/content/caption-fanout endpoint — calls Claude
+      // with a caption-writer system prompt scoped just to "produce
+      // {sets:[...]} JSON". The older path went through
+      // /api/content/generate which loaded a heavy script-writing
+      // system prompt (hook archetype rotation, format hints, etc.)
+      // that confused Claude into writing a script instead of returning
+      // the sets[] array, causing "no sets across any batch" failures.
       const runBatch = async (batch) => {
         try {
-          const mcBody = await callApi('/api/content/generate', {
+          const body = await callApi('/api/content/caption-fanout', {
             profile_id: profileId,
-            format: 'ig-post',
-            topic: buildBatchPrompt(batch),
-            count: 1,
-            dry_run: true,
+            segments: batch.map((c) => ({ idx: c.idx, text: c.text })),
           }, ctx.headers)
-          const rawMc = mcBody.items?.[0]?.full_script || mcBody.items?.[0]?.caption || ''
-          let parsedMc = {}
-          try {
-            const cleaned = String(rawMc).replace(/```json\s*|```\s*/gi, '').trim()
-            const m = cleaned.match(/\{[\s\S]*\}/)
-            parsedMc = JSON.parse(m ? m[0] : cleaned)
-          } catch { parsedMc = {} }
-          return Array.isArray(parsedMc.sets) ? parsedMc.sets : []
+          return Array.isArray(body?.sets) ? body.sets : []
         } catch (e) {
           console.warn(`[caption_gen] batch failed: ${e?.message}`)
           return []

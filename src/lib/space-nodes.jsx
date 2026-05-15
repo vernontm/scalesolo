@@ -529,55 +529,24 @@ async function runMultiCaption({ ctx, profileId, chunkSentences, edits }) {
     batches.push(chunkSentences.slice(i, i + BATCH_SIZE))
   }
 
-  const buildBatchPrompt = (batch) => `From the ${batch.length} short script segments below, write ${batch.length} INDEPENDENT caption sets — one per segment. Each segment becomes its own social post (different clip, different audience scroll), so each set must stand on its own.
-
-Per-set rules (apply to EVERY set):
-- title: ≤ 80 chars, click-worthy, no number prefix.
-- caption: ≤ 1500 chars. Strong hook in the first sentence. Reads naturally on every platform (TikTok / IG / YouTube / Facebook / X / LinkedIn / Threads).
-- hashtags: EXACTLY 5, space-separated, each starting with #. Lead with the brand's core hashtags.
-- first_comment: ≤ 220 chars. Engagement driver, not a duplicate of the caption, no hashtags.
-
-Across-the-batch rules:
-- Each set must be DIFFERENT, different hook, different angle, different vocabulary. Don't write 6 captions about the same insight phrased 6 ways.
-- Match each segment's actual content. The hook of caption #3 should reflect what segment #3 says, not segment #1.
-- Voice stays consistent (same brand bible) but the substance varies per segment.
-
-Voice: NEVER use em dashes. Use commas, periods, or colons.
-
-Return ONLY valid JSON, no preamble, no markdown fences. Use each segment's EXACT "idx" value as the set's idx (do not renumber). Exact shape:
-{
-  "sets": [
-    { "idx": ${batch[0].idx}, "title": "", "caption": "", "hashtags": "#a #b #c #d #e", "first_comment": "" }
-  ]
-}
-
-Segments:
-${batch.map((c) => `--- segment ${c.idx} ---\n${c.text.slice(0, 800)}`).join('\n\n')}`
-
+  // Dedicated /api/content/caption-fanout endpoint — see worker
+  // workflow-runner.js for why we don't pipe this through
+  // /api/content/generate anymore. Script-writer system prompt was
+  // confusing Claude into writing a script instead of returning the
+  // sets[] JSON we asked for.
   const runBatch = async (batch) => {
     try {
-      const r = await fetch('/api/content/generate', {
+      const r = await fetch('/api/content/caption-fanout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
         body: JSON.stringify({
           profile_id: profileId,
-          format: 'ig-post',
-          topic: buildBatchPrompt(batch),
-          count: 1,
-          dry_run: true,
+          segments: batch.map((c) => ({ idx: c.idx, text: c.text })),
         }),
       })
       const body = await r.json()
       if (!r.ok) throw new Error(body.error || `Caption batch failed (${r.status})`)
-      const item = body.items?.[0] || {}
-      const raw = item.full_script || item.caption || ''
-      let parsed = {}
-      try {
-        const cleaned = String(raw).replace(/```json\s*|```\s*/gi, '').trim()
-        const m = cleaned.match(/\{[\s\S]*\}/)
-        parsed = JSON.parse(m ? m[0] : cleaned)
-      } catch { parsed = {} }
-      return Array.isArray(parsed.sets) ? parsed.sets : []
+      return Array.isArray(body.sets) ? body.sets : []
     } catch (e) {
       // eslint-disable-next-line no-console
       console.warn('[runMultiCaption] batch failed:', e?.message)
