@@ -87,7 +87,7 @@ export default async function handler(req, res) {
       if (e?.name === 'AbortError') {
         console.error(`run-now: worker timed out after ${ms}ms`, { WORKER_URL })
         return res.status(504).json({
-          error: `Worker timed out after ${(ms / 1000).toFixed(0)}s. The render worker is either cold-starting from sleep or unreachable. Check Railway dashboard or retry in a moment.`,
+          error: `Worker timed out after ${(ms / 1000).toFixed(0)}s. The render worker is either cold-starting from sleep or unreachable. Retry in a moment — once it warms up, subsequent runs are instant.`,
           worker_url: WORKER_URL,
           elapsed_ms: ms,
         })
