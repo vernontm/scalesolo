@@ -1053,11 +1053,17 @@ ${String(script).slice(0, 2000)}
     }
 
     // ── Per-clip polish helper ─────────────────────────────────────────
-    // Submits ONE polish job, handles the async polling path. Extracted
-    // so the multi-clip fan-out below can call it in a concurrency-
-    // capped loop without duplicating ~50 lines of polling boilerplate.
+    // PREFERRED: call polishCore directly (in-process). Same worker
+    // already runs this module — round-tripping through Vercel just to
+    // forward back to ourselves was the cause of FUNCTION_INVOCATION_
+    // FAILED on parallel polish fan-out. Direct call skips the proxy
+    // entirely.
+    //
+    // FALLBACK: when localFns isn't provided (older runner / manual
+    // dispatches), keep the legacy /api/videos/polish path so nothing
+    // regresses. The fallback retains its polling loop for long jobs.
     const polishOne = async (videoUrl, idx) => {
-      let body = await callApi('/api/videos/polish', {
+      const polishBody = {
         profile_id: ctx.profileId,
         video_url: videoUrl,
         logo_url: logoUrl || undefined,
@@ -1072,11 +1078,25 @@ ${String(script).slice(0, 2000)}
         watermark_size_pct: p.watermark_size_pct ?? 25,
         music_volume: p.music_volume ?? 0.15,
         music_fade_secs: p.music_fade_secs ?? 1.0,
-      }, ctx.headers)
+      }
 
-      // Long-running jobs return 202 { polling: true, worker_job_id }
-      // and we poll the worker until done. 18-min deadline stays well
-      // under the worker's 20-min ffmpeg cap.
+      if (ctx.localFns?.polishCore) {
+        // Direct in-process polish. polishCore writes the result mp4 to
+        // landing-media and returns { video_url, bytes, ... }. No HTTP,
+        // no Vercel hop, no polling. ZapCap captions happen INSIDE
+        // polishCore so the result is fully finished when this returns.
+        let result
+        try {
+          result = await ctx.localFns.polishCore(polishBody)
+        } catch (e) {
+          throw new Error(`polish (in-process) failed for clip ${idx}: ${e?.message || e}`)
+        }
+        if (!result?.video_url) throw new Error(`polish returned no video_url for clip ${idx}`)
+        return result.video_url
+      }
+
+      // ── Legacy fallback: HTTP via Vercel ──────────────────────────
+      let body = await callApi('/api/videos/polish', polishBody, ctx.headers)
       if (body?.polling && body.worker_job_id) {
         const POLL_DEADLINE_MS = 18 * 60_000
         const POLL_INTERVAL_MS = 5_000
@@ -1120,26 +1140,32 @@ ${String(script).slice(0, 2000)}
       }
     }
 
-    // ── Multi-clip fan-out (SERIAL) ─────────────────────────────────────
-    // Polish is serialized one clip at a time. We tried concurrency 2
-    // and hit FUNCTION_INVOCATION_FAILED on Vercel — running two polish
-    // chains in parallel doubles up the worker→Vercel→worker round-trip
-    // load AND fights for the same ffmpeg CPU on the Fly worker, which
-    // pushed Vercel functions past their resource budget. Serial is
-    // slower (5 clips × 60-90s ≈ 5-8 min total) but reliable. We can
-    // experiment with parallel again later once we move polish onto a
-    // direct worker job queue without the Vercel hop in between.
+    // ── Multi-clip fan-out ──────────────────────────────────────────────
+    // Concurrency 2 — ffmpeg uses ~2 cores per encode, and performance-4x
+    // has 4 cores, so two parallel polishes saturate cleanly without
+    // thrashing. We can run 2 because polishCore is now called in-process
+    // (no Vercel round-trip), so we don't double up routing / HTTP load
+    // the way we did when polishing through /api/videos/polish — that
+    // pattern blew up with FUNCTION_INVOCATION_FAILED at concurrency 2.
+    // For setups without localFns (legacy HTTP path), concurrency drops
+    // to 1 automatically.
+    const POLISH_CONCURRENCY = ctx.localFns?.polishCore ? 2 : 1
     const polished = new Array(videoUrls.length)
     const errors = []
-    for (let i = 0; i < videoUrls.length; i++) {
-      try {
-        polished[i] = { video_url: await polishOne(videoUrls[i], i), idx: i }
-      } catch (e) {
-        console.warn(`[video_polish] clip ${i} failed: ${e?.message}`)
-        errors.push({ idx: i, error: e?.message || String(e) })
-        polished[i] = null
+    let cursor = 0
+    const workers = Array.from({ length: Math.min(POLISH_CONCURRENCY, videoUrls.length) }, async () => {
+      while (cursor < videoUrls.length) {
+        const i = cursor++
+        try {
+          polished[i] = { video_url: await polishOne(videoUrls[i], i), idx: i }
+        } catch (e) {
+          console.warn(`[video_polish] clip ${i} failed: ${e?.message}`)
+          errors.push({ idx: i, error: e?.message || String(e) })
+          polished[i] = null
+        }
       }
-    }
+    })
+    await Promise.all(workers)
 
     const successful = polished.filter(Boolean)
     if (!successful.length) {
@@ -1346,7 +1372,7 @@ ${String(script).slice(0, 2000)}
 
 // Topological sort + execute. Inputs into each node come from the
 // outputs of every node with an edge pointing TO this node.
-export async function runWorkflow({ graph, userId, profileId, internalSecret, log, onProgress, shouldAbort }) {
+export async function runWorkflow({ graph, userId, profileId, internalSecret, log, onProgress, shouldAbort, localFns }) {
   const nodes = graph?.nodes || []
   const edges = graph?.edges || []
   const incoming = new Map()
@@ -1376,7 +1402,7 @@ export async function runWorkflow({ graph, userId, profileId, internalSecret, lo
   const outputs = new Map()
   const errors = {}
   const headers = makeHeaders({ userId, internalSecret })
-  const ctx = { userId, profileId, headers, internalSecret }
+  const ctx = { userId, profileId, headers, internalSecret, localFns: localFns || null }
 
   for (const id of order) {
     // Cancellation check at each node boundary. shouldAbort() polls the

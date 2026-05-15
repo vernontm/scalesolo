@@ -620,6 +620,18 @@ app.post('/jobs/run-workflow', requireSecret, async (req, res) => {
         log: (m) => console.log(`[wf ${jobLabel}] ${m}`),
         onProgress: writeProgress,
         shouldAbort,
+        // In-process worker helpers. workflow-runner uses these directly
+        // when present instead of calling back through Vercel /api/videos/*
+        // endpoints (worker → Vercel → worker round-trip was the source of
+        // FUNCTION_INVOCATION_FAILED on parallel polish fan-out). Passing
+        // them by reference avoids circular imports — workflow-runner is
+        // imported by this file, can't import from it.
+        localFns: {
+          polishCore,
+          combineAvCore,
+          extractAudioCore,
+          normalizeVideoCore,
+        },
       })
       const errCount = Object.keys(result.errors).length
       console.log(`[wf ${jobLabel}] done ok=${result.ok} errors=${errCount} duration_ms=${Date.now() - startedAt}`)
