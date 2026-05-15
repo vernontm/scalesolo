@@ -1375,7 +1375,7 @@ ${String(script).slice(0, 2000)}
 
 // Topological sort + execute. Inputs into each node come from the
 // outputs of every node with an edge pointing TO this node.
-export async function runWorkflow({ graph, userId, profileId, internalSecret, log, onProgress }) {
+export async function runWorkflow({ graph, userId, profileId, internalSecret, log, onProgress, shouldAbort }) {
   const nodes = graph?.nodes || []
   const edges = graph?.edges || []
   const incoming = new Map()
@@ -1408,6 +1408,20 @@ export async function runWorkflow({ graph, userId, profileId, internalSecret, lo
   const ctx = { userId, profileId, headers, internalSecret }
 
   for (const id of order) {
+    // Cancellation check at each node boundary. shouldAbort() polls the
+    // space_runs row for status='cancelled' (the worker passes a polling
+    // function from index.js). If the user clicked Stop, every remaining
+    // node short-circuits with the same "cancelled" message instead of
+    // chugging through the rest of the graph.
+    if (typeof shouldAbort === 'function') {
+      let aborted = false
+      try { aborted = !!(await shouldAbort()) } catch {}
+      if (aborted) {
+        errors[id] = 'Cancelled by user'
+        try { await onProgress?.(id, { status: 'failed', error: 'Cancelled by user', finished_at: new Date().toISOString() }) } catch {}
+        continue
+      }
+    }
     const node = nodes.find((n) => n.id === id)
     if (!node) continue
     const type = node.data?.type

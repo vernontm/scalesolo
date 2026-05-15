@@ -2929,7 +2929,30 @@ function SpaceBuilder({ space, onSave, onClose }) {
   useEffect(() => {
     if (typeof window === 'undefined') return
     window.__spaceRunFromNode = runFromNode
-    window.__spaceAbortRun = () => { runCtx.stopRun() }
+    // Stop button: aborts BOTH paths so it doesn't matter whether the
+    // active run is browser-side or worker-side.
+    //   1. runCtx.stopRun() flips the client-side abortRef so any in-
+    //      browser runSpace loop bails at its next node boundary.
+    //   2. POST /api/spaces/cancel-run flips space_runs.status to
+    //      'cancelled' so the Fly worker's shouldAbort() poll bails at
+    //      ITS next node boundary. Without this second call the Stop
+    //      button looked broken on server runs (worker can't see the
+    //      browser flag — they're different machines).
+    window.__spaceAbortRun = async () => {
+      runCtx.stopRun()
+      const sid = serverRun?.id
+      const tok = session?.access_token
+      if (!sid || !tok) return
+      try {
+        await fetch('/api/spaces/cancel-run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
+          body: JSON.stringify({ space_run_id: sid }),
+        })
+      } catch (e) {
+        console.warn('[stop] cancel-run failed:', e?.message)
+      }
+    }
     // Per-node play button uses this to ask the user which scope to run.
     // Returns one of 'self_only' | 'up_to_here' | null (cancelled).
     //
@@ -3059,7 +3082,9 @@ function SpaceBuilder({ space, onSave, onClose }) {
       window.__spaceStartServerSchedule = null
       window.__spaceStopServerSchedule = null
     }
-  }, [runFromNode])
+    // Re-bind on serverRun.id / session change so the Stop closure
+    // always has the freshest active run id + auth token.
+  }, [runFromNode, serverRun?.id, session?.access_token])
 
   // ── Auto-run drivers ──────────────────────────────────────────────────────
   // For every active auto_run node, schedule a setInterval that fires

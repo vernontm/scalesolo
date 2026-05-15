@@ -591,11 +591,35 @@ app.post('/jobs/run-workflow', requireSecret, async (req, res) => {
       }
     }
 
+    // shouldAbort: short-circuits the workflow at the next node boundary
+    // when /api/spaces/cancel-run flipped space_runs.status to 'cancelled'.
+    // Caches the answer for 2s so we don't hammer the DB on graphs with
+    // many fast nodes — 2s is plenty fast for user perception of a Stop
+    // click landing.
+    let abortCache = { at: 0, value: false }
+    const shouldAbort = async () => {
+      if (!supabase || !spaceRunId) return false
+      const now = Date.now()
+      if (now - abortCache.at < 2_000) return abortCache.value
+      try {
+        const { data } = await supabase.from('space_runs')
+          .select('status').eq('id', spaceRunId).single()
+        const v = data?.status === 'cancelled'
+        abortCache = { at: now, value: v }
+        return v
+      } catch (e) {
+        // Failing closed (don't abort) keeps a transient DB hiccup from
+        // killing a legitimate run. We re-check at the next node.
+        return false
+      }
+    }
+
     try {
       const result = await runWorkflow({
         graph, userId: user_id, profileId: profile_id, internalSecret: internal_secret,
         log: (m) => console.log(`[wf ${jobLabel}] ${m}`),
         onProgress: writeProgress,
+        shouldAbort,
       })
       const errCount = Object.keys(result.errors).length
       console.log(`[wf ${jobLabel}] done ok=${result.ok} errors=${errCount} duration_ms=${Date.now() - startedAt}`)
