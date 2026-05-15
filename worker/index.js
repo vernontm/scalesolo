@@ -46,6 +46,31 @@ if (!SECRET) {
   console.warn('[worker] WORKER_SHARED_SECRET not set — anyone can hit this worker (dev only)')
 }
 
+// Startup tmpdir sweep. Crashed jobs (OOM, fly machine kill, SIGKILL on
+// suspend) leave behind workdirs that never hit the `finally rm`. On a
+// machine that's been alive for many runs, those add up to GBs of /tmp
+// — and we just hit ENOSPC on a multi-polish run because of it. Sweep
+// any of our own well-known prefixes at boot.
+;(async () => {
+  try {
+    const { readdir, rm: rmAsync } = await import('node:fs/promises')
+    const tmp = tmpdir()
+    const entries = await readdir(tmp).catch(() => [])
+    const prefixes = ['polish-', 'av-', 'audio-', 'norm-']
+    let cleaned = 0
+    for (const name of entries) {
+      if (!prefixes.some((p) => name.startsWith(p))) continue
+      try {
+        await rmAsync(join(tmp, name), { recursive: true, force: true })
+        cleaned++
+      } catch {}
+    }
+    if (cleaned) console.log(`[worker] startup tmp sweep: removed ${cleaned} leftover workdir(s)`)
+  } catch (e) {
+    console.warn('[worker] startup tmp sweep failed:', e?.message)
+  }
+})()
+
 const app = express()
 app.use(express.json({ limit: '10mb' }))
 
