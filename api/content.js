@@ -164,10 +164,13 @@ export default async function handler(req, res) {
       if (filter === 'caption_ready') where += '&status=eq.caption_ready'
       if (filter === 'scheduled') where += '&status=eq.scheduled'
       if (filter === 'posted')    where += '&status=eq.posted'
-      // Calendar view: show both scheduled (queued) and posted (delivered)
-      // rows that have a scheduled_datetime, so users can see what shipped
-      // alongside what's still queued on the same calendar.
-      if (filter === 'calendar')  where += '&status=in.(scheduled,posted)&scheduled_datetime=not.is.null'
+      // Calendar view: show scheduled (queued), posted (delivered), AND
+      // pending-approval drafts that have a scheduled_datetime. The
+      // pending drafts are the new "intent" rows — they reserve a slot
+      // on the calendar but won't fire on Upload-Post until approved.
+      // The UI distinguishes them via approval_status='pending' vs the
+      // green-pill scheduled rows.
+      if (filter === 'calendar')  where += '&or=(and(status.in.(scheduled,posted),scheduled_datetime.not.is.null),and(status.eq.draft,approval_status.eq.pending,scheduled_datetime.not.is.null))'
       if (filter === 'approvals') where += '&approval_status=eq.pending'
       const order = (filter === 'scheduled' || filter === 'calendar') ? 'scheduled_datetime.asc' : 'updated_at.desc'
       const rows = await supaFetch(`content_scripts?${where}&order=${order}&limit=200&select=*`)
@@ -189,6 +192,7 @@ export default async function handler(req, res) {
         await assertProfileAccess(auth.user.id, item.profile_id)
 
         let updates = {}
+        let submittedRequestId = null
         if (action === 'approve') {
           updates = {
             approval_status: 'approved',
@@ -198,24 +202,55 @@ export default async function handler(req, res) {
             rejected_reason: null,
             status: item.status,
           }
-          // If approved-from-draft and the user didn't supply a time, find
-          // the next open slot from the profile's posting_schedule and
-          // promote to scheduled in one step. Gated on media: a row
-          // without media_urls stays as approved-draft until media is
-          // attached, otherwise it pollutes the calendar with text-only
-          // ghosts.
-          if (hasMedia(item)) {
+          // Use the slot save_library reserved when it wrote the draft.
+          // Only re-pick if the row never got a slot (legacy drafts that
+          // predate the approval flow).
+          let scheduleFor = item.scheduled_datetime
+          if (!scheduleFor && hasMedia(item)) {
             try {
               const pr = await supaFetch(`profiles?id=eq.${item.profile_id}&select=timezone,posting_schedule`)
               const taken = await supaFetch(
                 `content_scripts?profile_id=eq.${item.profile_id}&status=eq.scheduled&select=scheduled_datetime`
               )
-              const slot = findNextOpenSlot(pr?.[0], (taken || []).map((t) => t.scheduled_datetime))
-              if (slot) {
-                updates.scheduled_datetime = slot
-                updates.status = 'scheduled'
-              }
+              scheduleFor = findNextOpenSlot(pr?.[0], (taken || []).map((t) => t.scheduled_datetime))
             } catch (e) { console.warn('auto-schedule on approve failed:', e.message) }
+          }
+          if (scheduleFor && (hasMedia(item) || item.media_type === 'text')) {
+            updates.scheduled_datetime = scheduleFor
+            updates.status = 'scheduled'
+            // Submit to Upload-Post NOW so approval = live. The user
+            // explicitly chose Option A: approval immediately fires.
+            // Upload-Post stores future-dated jobs fine — it'll fire at
+            // scheduleFor regardless of when we submit.
+            // Skip submission if the row already has an uploadpost_request_id
+            // (re-approving something that was already submitted).
+            if (!item.uploadpost_request_id) {
+              try {
+                const authToken = req.headers.authorization?.replace(/^Bearer\s+/i, '') || ''
+                // rescheduleUploadPostJob is named for the reschedule case
+                // but its no-existing-request_id branch is exactly the
+                // first-time-submit path: it builds the payload from
+                // the row and POSTs to /api/social/upload-post.
+                const mergedRow = { ...item, ...updates }
+                const newReqId = await rescheduleUploadPostJob({
+                  row: mergedRow,
+                  newScheduledIso: scheduleFor,
+                  authToken, req,
+                })
+                if (newReqId) {
+                  submittedRequestId = newReqId
+                  updates.uploadpost_request_id = newReqId
+                }
+              } catch (e) {
+                // Surface the error so the toast says why it failed.
+                // The DB row stays untouched on this path because we
+                // return BEFORE running the PATCH below.
+                return res.status(502).json({
+                  error: `Approval failed at Upload-Post: ${e.message}`,
+                  code: 'upload_post_failed',
+                })
+              }
+            }
           }
         } else if (action === 'reject') {
           updates = {
@@ -271,7 +306,21 @@ export default async function handler(req, res) {
         if (updates.status) {
           syncContentStatusInSpaces(item.profile_id, id, updates.status).catch(() => {})
         }
-        return res.status(200).json({ item: Array.isArray(updated) ? updated[0] : updated })
+        const finalRow = Array.isArray(updated) ? updated[0] : updated
+        // For approve, also return the payload the UI needs to build a
+        // confirmation toast ("Scheduled to TikTok, Instagram for ...")
+        // without a second round trip.
+        if (action === 'approve' && updates.status === 'scheduled') {
+          return res.status(200).json({
+            item: finalRow,
+            scheduled: {
+              scheduled_datetime: updates.scheduled_datetime,
+              platforms: finalRow?.platforms || item.platforms || [],
+              uploadpost_request_id: submittedRequestId || item.uploadpost_request_id || null,
+            },
+          })
+        }
+        return res.status(200).json({ item: finalRow })
       }
 
       // ── Plain create ────────────────────────────────────────────────────
@@ -280,6 +329,35 @@ export default async function handler(req, res) {
       await assertProfileAccess(auth.user.id, body.profile_id)
       const row = pickAllowed(body)
       row.profile_id = body.profile_id
+
+      // ── Approval queue (status='draft' + request_slot=true) ─────────────
+      // save_library writes drafts with request_slot=true. We pick the next
+      // open slot, mark the row pending approval, and DO NOT submit to
+      // Upload-Post. Row appears on the Schedule calendar with a "pending
+      // approval" visual state; user clicks Approve to actually queue it.
+      // Status stays 'draft' so the existing filter logic stays sane —
+      // approval_status='pending' is the marker that puts it on the
+      // calendar.
+      if (row.status === 'draft' && body.request_slot === true && hasMedia(row)) {
+        try {
+          const profileRows = await supaFetch(`profiles?id=eq.${body.profile_id}&select=timezone,posting_schedule`)
+          const profile = profileRows?.[0]
+          // Skip slots already taken by ACTUAL scheduled posts AND by
+          // other pending-approval drafts so we don't double-book the
+          // same minute.
+          const taken = await supaFetch(
+            `content_scripts?profile_id=eq.${body.profile_id}&or=(status.eq.scheduled,and(status.eq.draft,approval_status.eq.pending))&scheduled_datetime=not.is.null&select=scheduled_datetime`
+          )
+          const slot = findNextOpenSlot(profile, (taken || []).map((t) => t.scheduled_datetime))
+          if (slot) {
+            row.scheduled_datetime = slot
+            row.needs_approval = true
+            row.approval_status = 'pending'
+          }
+        } catch (e) {
+          console.warn('auto-schedule (pending approval) failed:', e.message)
+        }
+      }
 
       // If the row arrives marked "Ready to schedule" (status=caption_ready),
       // pick the next open slot from the profile's posting_schedule and

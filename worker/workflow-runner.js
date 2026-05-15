@@ -1485,6 +1485,10 @@ ${String(script).slice(0, 2000)}
           media_type:    mediaType,
           platforms,
           status,
+          // request_slot tells /api/content to reserve the next open
+          // slot + flag the row pending approval. Approve from the
+          // Schedule calendar to actually fire on Upload-Post.
+          ...(status === 'draft' ? { request_slot: true } : {}),
         }, ctx.headers)
         savedContentId = created?.item?.id || null
       } catch (e) {

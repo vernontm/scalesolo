@@ -185,9 +185,13 @@ function ItemDetail({ item, onClose, onUpdate }) {
   const [scheduledAt, setScheduledAt] = useState(isoToLocalDatetimeInput(item.scheduled_datetime))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  // Inline success banner — shown briefly after approve so the user
+  // gets a clear "Scheduled to TikTok, Instagram for Wed May 21 at
+  // 9:00 AM" confirmation before the modal stays open or closes.
+  const [success, setSuccess] = useState(null)
 
   const action = async (verb, body = {}) => {
-    setBusy(true); setError(null)
+    setBusy(true); setError(null); setSuccess(null)
     try {
       const url = verb === 'delete'
         ? `/api/content?id=${item.id}`
@@ -201,6 +205,27 @@ function ItemDetail({ item, onClose, onUpdate }) {
       if (!r.ok && r.status !== 204) {
         const b = await r.json().catch(() => ({}))
         throw new Error(b.error || 'Action failed')
+      }
+      // Build a human-readable success line for approve so the user
+      // sees exactly what happened. /api/content returns a `scheduled`
+      // payload on approve: { scheduled_datetime, platforms, uploadpost_request_id }.
+      if (verb === 'approve') {
+        const respBody = await r.json().catch(() => ({}))
+        const sched = respBody?.scheduled
+        if (sched?.scheduled_datetime) {
+          const when = new Date(sched.scheduled_datetime).toLocaleString(undefined, {
+            weekday: 'short', month: 'short', day: 'numeric',
+            hour: 'numeric', minute: '2-digit',
+          })
+          const plats = Array.isArray(sched.platforms) && sched.platforms.length
+            ? sched.platforms.join(', ')
+            : 'your selected platforms'
+          setSuccess(`Scheduled to ${plats} for ${when}.`)
+        } else {
+          setSuccess('Approved.')
+        }
+      } else if (verb === 'reject') {
+        setSuccess('Rejected. The draft is back in your queue.')
       }
       onUpdate()
       if (verb === 'delete') onClose()
@@ -279,6 +304,20 @@ function ItemDetail({ item, onClose, onUpdate }) {
         </div>
 
         {error && <div style={{ marginTop: 14, background: 'var(--red-soft)', color: 'var(--red)', padding: '10px 14px', borderRadius: 10, fontSize: 13 }}>{error}</div>}
+        {success && (
+          <div style={{
+            marginTop: 14,
+            background: 'rgba(46,204,113,0.12)',
+            color: '#2ecc71',
+            padding: '10px 14px',
+            borderRadius: 10,
+            fontSize: 13,
+            border: '1px solid rgba(46,204,113,0.35)',
+            display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <Check size={14} /> {success}
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: 8, marginTop: 18, justifyContent: 'flex-end' }}>
           <button className="btn-ghost" onClick={() => action('delete')} disabled={busy}>
@@ -573,11 +612,19 @@ function CalendarView({ items, onOpen, token, onChange }) {
                     const isVideo = item.media_type === 'video'
                     const isText = item.media_type === 'text'
                     const isPosted = item.status === 'posted'
+                    // Pending-approval rows live on the calendar with a
+                    // reserved slot but are NOT submitted to Upload-Post.
+                    // The user has to click → Approve in the detail
+                    // drawer to actually fire them. Visual treatment:
+                    // amber dashed border + "PENDING" pill.
+                    const isPendingApproval = item.status === 'draft' && item.approval_status === 'pending'
                     // Posted (delivered) rows get a green left-border so they
                     // pop visually as "shipped" alongside still-queued items
                     // that show the post-kind color (video/text/image).
                     const kindBorder = isPosted
                       ? '#2ecc71'
+                      : isPendingApproval
+                      ? '#f59e0b'
                       : isVideo ? '#0ea5e9'
                       : isText ? '#f59e0b'
                       : '#a855f7'
@@ -592,8 +639,14 @@ function CalendarView({ items, onOpen, token, onChange }) {
                         style={{
                           background: isPosted
                             ? 'linear-gradient(135deg, rgba(46,204,113,0.10), rgba(46,204,113,0.04))'
+                            : isPendingApproval
+                            ? 'linear-gradient(135deg, rgba(245,158,11,0.10), rgba(245,158,11,0.04))'
                             : 'var(--surface-2)',
-                          border: isPosted ? '1px solid rgba(46,204,113,0.35)' : '1px solid var(--border)',
+                          border: isPosted
+                            ? '1px solid rgba(46,204,113,0.35)'
+                            : isPendingApproval
+                            ? '1px dashed rgba(245,158,11,0.55)'
+                            : '1px solid var(--border)',
                           borderLeft: `3px solid ${kindBorder}`,
                           borderRadius: 6, padding: 6,
                           cursor: isPosted ? 'pointer' : 'grab',
@@ -634,6 +687,16 @@ function CalendarView({ items, onOpen, token, onChange }) {
                                 fontWeight: 700, fontSize: 9,
                                 letterSpacing: '0.04em', textTransform: 'uppercase',
                               }}>✓ Posted</span>
+                            )}
+                            {isPendingApproval && (
+                              <span style={{
+                                display: 'inline-flex', alignItems: 'center', gap: 3,
+                                padding: '1px 5px', borderRadius: 999,
+                                background: 'rgba(245,158,11,0.18)',
+                                color: '#f59e0b',
+                                fontWeight: 700, fontSize: 9,
+                                letterSpacing: '0.04em', textTransform: 'uppercase',
+                              }}>Pending</span>
                             )}
                           </div>
                           {platforms.length > 0 && (

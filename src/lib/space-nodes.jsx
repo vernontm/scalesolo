@@ -9346,8 +9346,9 @@ export const NODE_REGISTRY = {
       let savedContentId = null
       if (!willSchedule && ctx?.profileId && ctx?.token && (mediaUrls?.length || script || caption)) {
         // Pull the status from the SaveBody dropdown — 'draft' (default,
-        // shows on Drafts tab) or 'caption_ready' (server auto-promotes
-        // to scheduled into the next open slot if media is present).
+        // lands on the Schedule calendar with a reserved slot + pending
+        // approval) or 'caption_ready' (server auto-promotes straight to
+        // scheduled, no approval step).
         const status = (data.props?.status === 'caption_ready') ? 'caption_ready' : 'draft'
         const body = {
           profile_id: ctx.profileId,
@@ -9360,6 +9361,14 @@ export const NODE_REGISTRY = {
           media_type: mediaType,
           platforms,
           status,
+          // request_slot=true tells /api/content to reserve the next
+          // open slot from the brand's posting_schedule AND flag the
+          // row as pending approval (needs_approval=true, approval_status=
+          // 'pending'). Row shows up on the Schedule calendar as a
+          // pending-approval pill, NOT submitted to Upload-Post until
+          // the user clicks Approve. Skipped for caption_ready, which
+          // wants the immediate-submit behavior.
+          ...(status === 'draft' ? { request_slot: true } : {}),
         }
         try {
           const r = await fetch('/api/content', {
