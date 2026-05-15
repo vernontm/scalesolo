@@ -3502,6 +3502,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
     // Used by SpaceNode to render a "1 / 7"-style numbered badge so the
     // user can see at a glance which gen feeds which slide.
     const carouselSlotByNodeId = new Map()
+    const nodesById = new Map(nodes.map((n) => [n.id, n]))
 
     for (const n of nodes) {
       const t = n.data?.type
