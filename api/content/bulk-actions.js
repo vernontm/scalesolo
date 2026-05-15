@@ -620,12 +620,16 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
       if (isText) {
         // ── TEXT: per-platform *_title fan-out ───────────────────────────
         // /api/upload_text takes the same auth + form shape as video uploads
-        // but expects no media. Description is the catch-all caption; each
-        // platform also gets a <platform>_title override trimmed to that
-        // platform's hard limit. Char caps mirror /api/social/upload-post.
+        // but expects no media. Upload-Post requires a top-level `title`
+        // field on text posts — it serves as the actual post body (NOT a
+        // headline). We send the full caption there so platforms without an
+        // explicit *_title override still publish the right text. Then each
+        // platform gets a <platform>_title override trimmed to that platform's
+        // hard limit. Char caps mirror /api/social/upload-post.
         const form = new URLSearchParams()
         form.append('user', username)
         for (const p of platforms) form.append('platform[]', p)
+        form.append('title', desc.slice(0, 5000))
         if (desc) form.append('description', desc.slice(0, 5000))
         if (platforms.includes('threads'))   form.append('threads_title',   desc.slice(0, 500))
         if (platforms.includes('x') || platforms.includes('twitter')) form.append('x_title', desc.slice(0, 25000))

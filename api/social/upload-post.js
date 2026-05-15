@@ -156,7 +156,17 @@ export default async function handler(req, res) {
     fd.append('user', effectiveUser)
     for (const p of platforms) fd.append('platform[]', p)
     if (fullCaption) fd.append('description', trim(fullCaption, 5000))
-    if (cleanTitle)  fd.append('title', trim(cleanTitle, 100))
+    // Upload-Post's /api/upload_text requires `title` and treats it as the
+    // actual POST BODY (not a 100-char headline like the video / photo
+    // endpoints do). Send the full caption there so long threads do not
+    // get sliced to 100 chars; fall back to the regular title when no
+    // caption is wired in.
+    if (isText) {
+      const textBody = fullCaption || cleanTitle
+      if (textBody) fd.append('title', trim(textBody, 5000))
+    } else if (cleanTitle) {
+      fd.append('title', trim(cleanTitle, 100))
+    }
 
     // Per-platform caption/title fan-out. Every selected platform gets
     // the SAME caption + hashtags via its <platform>_title field, trimmed
