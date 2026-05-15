@@ -16,18 +16,22 @@ primary_region = 'iad'
 [http_service]
   internal_port = 8080
   force_https = true
-  # auto_stop_machines = 'suspend' snapshots memory on idle instead of
-  # doing a full stop. Resume from suspend takes ~1-3 seconds vs the
-  # 30-60s a cold 'stop'-state machine needs to boot Node + ffmpeg +
-  # sharp + resvg + register routes. Vercel's 30s function timeout was
-  # busting on every cold start with 'stop'; with 'suspend' the worker
-  # acks Run dispatches in well under 5s even after hours of idle.
-  # Cost is ~the same as 'stop' — Fly only charges memory while
-  # suspended (cheap, ~$0.0026/GB-hour for the snapshot), CPU stops
-  # accruing.
-  auto_stop_machines = 'suspend'
+  # Why we DON'T auto-stop/suspend anymore:
+  # Suspend (and full stop) only consider inbound HTTP requests when
+  # deciding "idle." Long background ffmpeg jobs don't generate inbound
+  # traffic, so Fly happily suspended machines MID-ENCODE. ffmpeg got
+  # killed, the JS promise awaiting it never resolved, and the
+  # space_runs row stayed at "running" forever. We watched 5-clip
+  # polishes hang for 20+ minutes twice in a row before we caught this.
+  #
+  # min_machines_running = 1 keeps one performance-4x always alive
+  # (~$45/mo). For a single-user tool, that's the cost of reliable
+  # ffmpeg. We can revisit a smarter suspend strategy later (e.g.
+  # internal keep-alive ping while a job is in flight, or move ffmpeg
+  # to detached Fly Machines spawned per-job that can't be suspended).
+  auto_stop_machines = 'off'
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
   processes = ['app']
 
   [[http_service.checks]]
