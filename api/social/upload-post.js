@@ -21,7 +21,13 @@ import { isUserOnTrial } from '../_lib/billing.js'
 import { findNextOpenSlot } from '../_lib/scheduling.js'
 import { NotifyKind } from '../_lib/notify.js'
 
-export const config = { maxDuration: 60 }
+// 300s (was 60s). Even with async_upload=true, Upload-Post sometimes
+// needs 60-120s to ack on first ingest of a video URL — their server
+// fetches the file from our public bucket before returning the
+// request_id. A 17-clip schedule_post batch hit 5 timeouts at the 60s
+// cap. 300s gives plenty of headroom; if a real network issue happens
+// the function still bails before sitting forever.
+export const config = { maxDuration: 300 }
 
 async function fetchToBlob(url) {
   const r = await fetch(url)
