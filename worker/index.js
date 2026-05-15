@@ -657,6 +657,13 @@ app.post('/jobs/run-workflow', requireSecret, async (req, res) => {
           extractAudioCore,
           normalizeVideoCore,
         },
+        // run_only_target_id: when set, the worker re-runs ONLY that
+        // node and uses every other node's cached data.output as input.
+        // Set by Spaces.jsx when the user clicks per-node Run on a
+        // multi-clip workflow — without this, the browser would
+        // orchestrate polish and hit the FUNCTION_INVOCATION_FAILED /
+        // ENOSPC pile-up we saw on Mind Rescue's 5-clip retry.
+        runOnlyTargetId: body.run_only_target_id || null,
       })
       const errCount = Object.keys(result.errors).length
       console.log(`[wf ${jobLabel}] done ok=${result.ok} errors=${errCount} duration_ms=${Date.now() - startedAt}`)

@@ -1372,7 +1372,7 @@ ${String(script).slice(0, 2000)}
 
 // Topological sort + execute. Inputs into each node come from the
 // outputs of every node with an edge pointing TO this node.
-export async function runWorkflow({ graph, userId, profileId, internalSecret, log, onProgress, shouldAbort, localFns }) {
+export async function runWorkflow({ graph, userId, profileId, internalSecret, log, onProgress, shouldAbort, localFns, runOnlyTargetId }) {
   const nodes = graph?.nodes || []
   const edges = graph?.edges || []
   const incoming = new Map()
@@ -1423,6 +1423,26 @@ export async function runWorkflow({ graph, userId, profileId, internalSecret, lo
     if (!node) continue
     const type = node.data?.type
     const runner = NODE_RUNNERS[type]
+
+    // runOnlyTargetId mode: when the browser dispatched a "Run this node
+    // only" with a multi-clip workflow (Spaces.jsx routes per-node Run
+    // for multi-clip graphs to the server), we re-run JUST the target.
+    // Every other node uses its previous data.output as a cache hit so
+    // we don't burn tokens redoing caption_gen for a polish retry.
+    if (runOnlyTargetId && id !== runOnlyTargetId) {
+      const cached = node?.data?.output
+      if (cached && typeof cached === 'object') {
+        outputs.set(id, cached)
+        try { await onProgress?.(id, { status: 'success', output: cached, finished_at: new Date().toISOString() }) } catch {}
+      } else {
+        // No cached output for a required ancestor — same outcome as
+        // the browser's self_only mode hitting an uncached parent: the
+        // target's input will be missing, the runner will fail with a
+        // helpful "needs X upstream" error.
+        log?.(`[skip cached] ${id} (${type}): no cached output, target will see empty input`)
+      }
+      continue
+    }
 
     // Pull upstream outputs into an input bag.
     const inputBag = (incoming.get(id) || []).map((e) => outputs.get(e.source)).filter(Boolean)

@@ -2656,6 +2656,72 @@ function SpaceBuilder({ space, onSave, onClose }) {
       return
     }
     console.info('[runFromNode] start', { targetId, scope })
+
+    // ── Multi-clip auto-route ──────────────────────────────────────────
+    // Browser-orchestrated polish on multi-clip workflows hits Vercel
+    // /api/videos/polish for each clip — that pile-up caused
+    // FUNCTION_INVOCATION_FAILED + ENOSPC on Mind Rescue's 5-clip retry.
+    // The server runner has in-process polishCore and handles fan-out
+    // cleanly. Detect multi-clip up front and route there transparently.
+    //
+    // "Multi-clip" = any Upload media node with 2+ videos OR any node
+    // whose data.output already has a multi-clip array (videos[] or
+    // captions[] with length > 1).
+    const isMultiClipGraph = (() => {
+      for (const n of nodes) {
+        if (n.data?.type === 'image_upload') {
+          const urls = Array.isArray(n.data?.props?.urls) ? n.data.props.urls : []
+          const videoCount = urls.filter((u) => u?.kind === 'video').length
+          if (videoCount > 1) return true
+        }
+        const out = n.data?.output
+        if (Array.isArray(out?.videos) && out.videos.length > 1) return true
+        if (Array.isArray(out?.captions) && out.captions.length > 1) return true
+      }
+      return false
+    })()
+
+    if (isMultiClipGraph && spaceIdRef.current) {
+      // Make sure the latest graph state is on the server before
+      // dispatching. Silent save — Run button already gave visual
+      // feedback. ~200ms.
+      try { await save({ silent: true }) } catch {}
+      const snapshot = safeClone({ nodes, edges })
+      console.info('[runFromNode] multi-clip detected → dispatching to server', { targetId, scope })
+      try {
+        const r = await fetch('/api/spaces/run-now', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({
+            space_id: spaceIdRef.current,
+            profile_id: selectedProfileId,
+            graph: { nodes: snapshot.nodes, edges: snapshot.edges },
+            // self_only: run just the target. 'up_to_here' and 'full'
+            // re-run more of the graph from the server too. The worker
+            // honors run_only_target_id and uses cached outputs for
+            // every other node, so a polish retry doesn't redo
+            // caption_gen and burn Claude tokens.
+            run_only_target_id: scope === 'self_only' ? targetId : null,
+          }),
+        })
+        const body = await r.json().catch(() => ({}))
+        if (!r.ok) throw new Error(body?.error || `Run dispatch failed (${r.status})`)
+        toast({
+          kind: 'success',
+          message: scope === 'self_only'
+            ? 'Re-running this node on the server. Closing the tab is safe — the worker keeps going.'
+            : 'Running on server (multi-clip workflow). Closing the tab is safe — the worker keeps going.',
+        })
+        return
+      } catch (e) {
+        // Don't fall back to the browser path silently — that's the
+        // path we're TRYING to dodge. Surface the dispatch error so
+        // the user can retry / pick a different scope.
+        setError(e.message || 'Could not dispatch multi-clip run to server.')
+        toast({ kind: 'error', message: e.message || 'Could not dispatch multi-clip run to server.' })
+        return
+      }
+    }
     const want = new Set([targetId])
 
     // ALWAYS BFS up. Even in self_only mode the target needs its ancestors

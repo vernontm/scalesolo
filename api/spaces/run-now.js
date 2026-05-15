@@ -39,7 +39,7 @@ export default async function handler(req, res) {
   if (!auth) return
 
   try {
-    const { space_id, profile_id, graph } = req.body || {}
+    const { space_id, profile_id, graph, run_only_target_id } = req.body || {}
     if (!space_id || !profile_id) {
       return res.status(400).json({ error: 'space_id + profile_id required' })
     }
@@ -78,6 +78,13 @@ export default async function handler(req, res) {
           graph,
           internal_secret: INTERNAL_SECRET,
           triggered_by: 'manual_server',
+          // Multi-clip per-node Run support — when set, worker only
+          // re-runs this node and uses cached outputs for everything
+          // else. Spaces.jsx routes the Run-this-node button to the
+          // server with this id for any workflow that has multi-clip
+          // data, so we don't get FUNCTION_INVOCATION_FAILED on
+          // browser-orchestrated parallel polish.
+          run_only_target_id: run_only_target_id || null,
         }),
         signal: controller.signal,
       })
