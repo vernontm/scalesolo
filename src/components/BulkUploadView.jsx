@@ -389,7 +389,11 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   const [search, setSearch] = useState('')
   const [busyAction, setBusyAction] = useState(null) // 'captions' | 'schedule' | 'publish'
   const [uploads, setUploads] = useState([]) // {id, name, kind, progress, error?}
-  const [previewItem, setPreviewItem] = useState(null) // { url, type, title } for fullscreen media preview
+  const [previewItem, setPreviewItem] = useState(null) // { url, type, title, coverUrl?, videoUrl? } for fullscreen media preview
+  // When the preview row has BOTH a generated cover and a source video,
+  // this tracks which one the user is currently looking at. Defaults to
+  // whichever the thumbnail showed (the row's "primary" thumb).
+  const [previewView, setPreviewView] = useState('primary') // 'primary' | 'cover' | 'video'
   // When ON, every uploaded file fans out into:
   //   1. POST /api/content/bulk-actions?action=generate-captions  → fills title/caption/hashtags/first_comment
   //   2. POST /api/content/bulk-actions?action=auto-schedule       → assigns the next open slot from the profile's posting schedule
@@ -572,7 +576,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   // Esc closes the preview overlay.
   useEffect(() => {
     if (!previewItem) return
-    const onKey = (e) => { if (e.key === 'Escape') setPreviewItem(null) }
+    const onKey = (e) => { if (e.key === 'Escape') { setPreviewItem(null); setPreviewView('primary') } }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [previewItem])
@@ -1580,9 +1584,19 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                   {tab === 'delivered' && 'Nothing delivered yet.'}
                 </td></tr>
               ) : visible.map((r) => {
-                const thumb = Array.isArray(r.media_urls) && r.media_urls[0]
+                // Prefer the generated Instagram cover when one is set —
+                // that's what'll actually post as the Reel thumbnail, so
+                // showing the source video frame here was misleading on
+                // covered posts. Fall back to source media when no
+                // cover exists.
+                const hasCover = !!r.cover_image_url
+                const thumb = hasCover ? r.cover_image_url
+                  : (Array.isArray(r.media_urls) && r.media_urls[0])
                 const isVideo = r.media_type === 'video'
                 const isText = r.media_type === 'text'
+                // Cover thumbs are always static PNGs; only render the
+                // <video> element when we're showing the raw source.
+                const thumbIsVideo = isVideo && !hasCover
                 const hasPerPlatformText = isText && r.per_platform_text && typeof r.per_platform_text === 'object' && Object.keys(r.per_platform_text).length > 0
                 // Left-border color by post kind so the table stays
                 // scannable when mixing types: video=blue, image=purple,
@@ -1602,9 +1616,20 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                       {thumb ? (
                         <button
                           type="button"
-                          onClick={(e) => { e.stopPropagation(); setPreviewItem({ url: thumb, type: isVideo ? 'video' : 'image', title: r.title }) }}
+                          onClick={(e) => { e.stopPropagation(); setPreviewItem({
+                            // Click opens the preview overlay. If a cover is
+                            // staged we surface BOTH so the user can compare
+                            // (and confirm the cover looks right) without
+                            // leaving the table — videoUrl drives the source-
+                            // video clip, coverUrl drives the IG thumbnail.
+                            url: thumb,
+                            type: thumbIsVideo ? 'video' : 'image',
+                            title: r.title,
+                            coverUrl: hasCover ? r.cover_image_url : null,
+                            videoUrl: isVideo && Array.isArray(r.media_urls) ? r.media_urls[0] : null,
+                          }) }}
                           aria-label={`Preview ${r.title || 'media'}`}
-                          title="Click to preview"
+                          title={hasCover ? 'Click to preview cover + source video' : 'Click to preview'}
                           style={{
                             position: 'relative',
                             width: 48, height: 48, padding: 0, borderRadius: 6,
@@ -1612,10 +1637,25 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                             cursor: 'pointer', overflow: 'hidden', display: 'block',
                           }}
                         >
-                          {isVideo
+                          {thumbIsVideo
                             ? <video src={thumb} muted playsInline preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }} />
                             : <img src={thumb} alt={r.title || 'media'} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }} />}
-                          {isVideo && (
+                          {/* "IG" pill bottom-right when we're showing a
+                              cover — same affordance as the calendar view
+                              so users know which thumbs are covers vs raw
+                              video frames. */}
+                          {hasCover && (
+                            <span style={{
+                              position: 'absolute', bottom: 2, right: 2,
+                              fontSize: 8, fontWeight: 800, letterSpacing: '0.04em',
+                              padding: '1px 4px', borderRadius: 3,
+                              background: 'rgba(14,165,233,0.92)',
+                              color: '#fff',
+                              lineHeight: 1.1,
+                              pointerEvents: 'none',
+                            }}>IG</span>
+                          )}
+                          {thumbIsVideo && (
                             <span style={{
                               position: 'absolute', inset: 0,
                               display: 'grid', placeItems: 'center',
@@ -1741,7 +1781,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
       {previewItem && (
         <div
           role="dialog" aria-modal="true" aria-label="Media preview"
-          onClick={() => setPreviewItem(null)}
+          onClick={() => { setPreviewItem(null); setPreviewView('primary') }}
           style={{
             position: 'fixed', inset: 0, zIndex: 100,
             background: 'rgba(0,0,0,0.92)', backdropFilter: 'blur(6px)',
@@ -1752,7 +1792,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           {/* Close + download buttons (top corners). */}
           <button
             aria-label="Close preview"
-            onClick={(e) => { e.stopPropagation(); setPreviewItem(null) }}
+            onClick={(e) => { e.stopPropagation(); setPreviewItem(null); setPreviewView('primary') }}
             style={{
               position: 'absolute', top: 18, left: 18,
               width: 38, height: 38, borderRadius: 999,
@@ -1784,19 +1824,75 @@ export default function BulkUploadView({ profileId, token, onChange }) {
               textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}>{previewItem.title}</div>
           )}
-          {previewItem.type === 'video' ? (
-            <video
-              src={previewItem.url} controls autoPlay
-              onClick={(e) => e.stopPropagation()}
-              style={{ maxWidth: '92vw', maxHeight: '88vh', borderRadius: 8, background: '#000' }}
-            />
-          ) : (
-            <img
-              src={previewItem.url} alt={previewItem.title || ''}
-              onClick={(e) => e.stopPropagation()}
-              style={{ maxWidth: '92vw', maxHeight: '88vh', borderRadius: 8, objectFit: 'contain' }}
-            />
-          )}
+          {/* Pick which asset to display based on the user's tab choice.
+              Default ('primary') is whatever the clicked thumbnail showed.
+              When the row has BOTH a cover and a source video, we render
+              a small two-tab toggle so the user can flip between them
+              without leaving the overlay. */}
+          {(() => {
+            const hasBoth = !!previewItem.coverUrl && !!previewItem.videoUrl
+            const active =
+              previewView === 'cover' ? 'cover'
+              : previewView === 'video' ? 'video'
+              : (previewItem.coverUrl && previewItem.url === previewItem.coverUrl) ? 'cover'
+              : (previewItem.videoUrl && previewItem.url === previewItem.videoUrl) ? 'video'
+              : (previewItem.type === 'video' ? 'video' : 'cover')
+            const displayUrl =
+              active === 'cover' ? (previewItem.coverUrl || previewItem.url)
+              : active === 'video' ? (previewItem.videoUrl || previewItem.url)
+              : previewItem.url
+            const displayIsVideo = active === 'video'
+
+            return (
+              <>
+                {hasBoth && (
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    style={{
+                      position: 'absolute', top: 70, left: '50%', transform: 'translateX(-50%)',
+                      display: 'flex', gap: 4, padding: 4, borderRadius: 999,
+                      background: 'rgba(255,255,255,0.10)',
+                    }}
+                  >
+                    {[
+                      { id: 'cover', label: 'Instagram cover' },
+                      { id: 'video', label: 'Source video' },
+                    ].map((t) => {
+                      const on = active === t.id
+                      return (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => setPreviewView(t.id)}
+                          style={{
+                            padding: '6px 14px', borderRadius: 999, border: 'none',
+                            background: on ? 'rgba(255,255,255,0.95)' : 'transparent',
+                            color: on ? '#000' : '#fff',
+                            fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 11,
+                            letterSpacing: '0.04em', cursor: 'pointer',
+                          }}
+                        >{t.label}</button>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {displayIsVideo ? (
+                  <video
+                    src={displayUrl} controls autoPlay
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ maxWidth: '92vw', maxHeight: '88vh', borderRadius: 8, background: '#000' }}
+                  />
+                ) : (
+                  <img
+                    src={displayUrl} alt={previewItem.title || ''}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ maxWidth: '92vw', maxHeight: '88vh', borderRadius: 8, objectFit: 'contain' }}
+                  />
+                )}
+              </>
+            )
+          })()}
         </div>
       )}
 
