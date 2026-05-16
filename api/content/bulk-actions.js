@@ -483,12 +483,36 @@ async function autoSchedule({ res, profile_id, script_ids, user_id }) {
         || (row.full_script || '').slice(0, 500)
       const hasTikTok = platforms.includes('tiktok')
 
+      // Title fallback chain — row.title → first sentence of caption →
+      // first sentence of script → "Untitled". YouTube REQUIRES a title
+      // on every submission (it 400s with "Title is required for
+      // Youtube" otherwise), so we must always have something here.
+      const cleanTitle = String(row.title || '').trim()
+        || String(row.caption || '').split(/[.!?\n]/)[0].trim().slice(0, 90)
+        || String(row.full_script || '').split(/[.!?\n]/)[0].trim().slice(0, 90)
+        || 'Untitled'
+
       const form = new URLSearchParams()
       form.append('user', username)
       for (const p of platforms) form.append('platform[]', p)
       if (desc) form.append('description', desc)
+      // Generic title fallback — Upload-Post uses this when a platform-
+      // specific title override isn't set. Capped at 100 to match
+      // YouTube's hard limit.
+      form.append('title', cleanTitle.slice(0, 100))
+      // Per-platform title overrides. Matches the mapping in
+      // /api/social/upload-post.js so submissions through this path
+      // behave identically. YouTube's title cap is 100 chars.
+      if (platforms.includes('youtube')) form.append('youtube_title', cleanTitle.slice(0, 100))
       // TikTok's caption lives in tiktok_title (it ignores `description`).
       if (hasTikTok && desc) form.append('tiktok_title', desc.slice(0, 2200))
+      if (platforms.includes('instagram') && desc) form.append('instagram_title', desc.slice(0, 2200))
+      if (platforms.includes('facebook')) {
+        const fbSrc = (desc || cleanTitle).replace(/\s*\n+\s*/g, ' ').trim()
+        form.append('facebook_title', fbSrc.slice(0, 240))
+      }
+      if (platforms.includes('linkedin')) form.append('linkedin_title', (desc || cleanTitle).slice(0, 3000))
+      if (platforms.includes('threads')) form.append('threads_title', (desc || cleanTitle).slice(0, 500))
       if (row.first_comment) form.append('first_comment', String(row.first_comment).slice(0, 2200))
       form.append('async_upload', 'true')
       form.append('video', mediaUrl)
@@ -648,14 +672,35 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
           body: form,
         })
       } else if (isVideo) {
+        // Title fallback chain — same as auto-schedule's submitOne.
+        // YouTube REQUIRES a title or Upload-Post rejects with
+        // "Title is required for Youtube" before the job is queued.
+        const cleanTitle = String(r.title || '').trim()
+          || String(r.caption || '').split(/[.!?\n]/)[0].trim().slice(0, 90)
+          || String(r.full_script || '').split(/[.!?\n]/)[0].trim().slice(0, 90)
+          || 'Untitled'
+
         const form = new URLSearchParams()
         form.append('user', username)
         for (const p of platforms) form.append('platform[]', p)
         if (desc) form.append('description', desc)
+        // Generic title — Upload-Post's catch-all. Capped at 100 to
+        // match YouTube's hard limit (longest title that won't trip
+        // any platform).
+        form.append('title', cleanTitle.slice(0, 100))
+        // Per-platform title overrides (mirror /api/social/upload-post.js).
+        if (platforms.includes('youtube')) form.append('youtube_title', cleanTitle.slice(0, 100))
         // TikTok ignores `description` — it uses tiktok_title (up to 2200
         // chars) as the actual caption. Send the full caption there, not
         // just the title.
         if (hasTikTok && desc) form.append('tiktok_title', desc.slice(0, 2200))
+        if (platforms.includes('instagram') && desc) form.append('instagram_title', desc.slice(0, 2200))
+        if (platforms.includes('facebook')) {
+          const fbSrc = (desc || cleanTitle).replace(/\s*\n+\s*/g, ' ').trim()
+          form.append('facebook_title', fbSrc.slice(0, 240))
+        }
+        if (platforms.includes('linkedin')) form.append('linkedin_title', (desc || cleanTitle).slice(0, 3000))
+        if (platforms.includes('threads')) form.append('threads_title', (desc || cleanTitle).slice(0, 500))
         if (r.first_comment) form.append('first_comment', String(r.first_comment).slice(0, 2200))
         form.append('async_upload', 'true')
         // Sensible per-platform defaults. Brand-profile-level overrides can
@@ -675,16 +720,32 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
         // ── PHOTOS: still need real bytes ───────────────────────────────
         // Upload-Post's /api/upload_photos does NOT accept URL strings —
         // photos must be fetched and re-uploaded as multipart file parts.
+        const cleanTitle = String(r.title || '').trim()
+          || String(r.caption || '').split(/[.!?\n]/)[0].trim().slice(0, 90)
+          || String(r.full_script || '').split(/[.!?\n]/)[0].trim().slice(0, 90)
+          || 'Untitled'
+
         const fd = new FormData()
         fd.append('user', username)
         for (const p of platforms) fd.append('platform[]', p)
         if (desc) fd.append('description', desc)
+        // Title coverage matches the video branch — YouTube + every
+        // other platform that exposes a *_title override.
+        fd.append('title', cleanTitle.slice(0, 100))
+        if (platforms.includes('youtube')) fd.append('youtube_title', cleanTitle.slice(0, 100))
         if (hasTikTok && desc) {
           // TikTok photo posts use tiktok_title (≤90 chars). Trim to a
           // word boundary if the caption is longer.
           const src = desc.replace(/\s+/g, ' ').trim()
           fd.append('tiktok_title', src.length <= 90 ? src : src.slice(0, 90).replace(/\s+\S*$/, ''))
         }
+        if (platforms.includes('instagram') && desc) fd.append('instagram_title', desc.slice(0, 2200))
+        if (platforms.includes('facebook')) {
+          const fbSrc = (desc || cleanTitle).replace(/\s*\n+\s*/g, ' ').trim()
+          fd.append('facebook_title', fbSrc.slice(0, 240))
+        }
+        if (platforms.includes('linkedin')) fd.append('linkedin_title', (desc || cleanTitle).slice(0, 3000))
+        if (platforms.includes('threads')) fd.append('threads_title', (desc || cleanTitle).slice(0, 500))
         if (r.first_comment) fd.append('first_comment', String(r.first_comment).slice(0, 2200))
         fd.append('async_upload', 'true')
 
