@@ -53,12 +53,17 @@ function summarizeJob(j) {
 }
 
 export default async function handler(req, res) {
-  setCors(res)
+  // setCors expects (req, res) — the req-less call was throwing a
+  // TypeError on `req.headers.origin` and surfacing as a 500 to the
+  // client. Same for requireUser; (req) alone makes it crash on the
+  // 401 path because it tries to call res.status(401).json(...).
+  setCors(req, res)
   if (req.method === 'OPTIONS') return res.status(204).end()
   if (req.method !== 'POST')     return res.status(405).json({ error: 'Method not allowed' })
 
   try {
-    const auth = await requireUser(req)
+    const auth = await requireUser(req, res)
+    if (!auth) return
     const { profile_id, mode = 'list' } = req.body || {}
     if (!profile_id) return res.status(400).json({ error: 'profile_id required' })
     if (!['list', 'cancel_orphans', 'cancel_all'].includes(mode)) {
