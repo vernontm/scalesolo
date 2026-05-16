@@ -591,7 +591,24 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         // to use, so we keep the toggle disabled until the brand
         // uploads one on the Profile page.
         const tpl = p?.cover_template
-        setHasCoverTemplate(!!(tpl && typeof tpl === 'object' && typeof tpl.image_url === 'string' && tpl.image_url.trim()))
+        const hasIt = !!(tpl && typeof tpl === 'object' && typeof tpl.image_url === 'string' && tpl.image_url.trim())
+        setHasCoverTemplate(hasIt)
+        // Diagnostic — surface exactly what the server returned. The
+        // cover step was silently skipping in production with
+        // hasCoverTemplate=false even though the DB had the value;
+        // this log helps confirm whether the API response carries
+        // cover_template at all, what shape it is, and the computed
+        // boolean. Remove once the gate stops misfiring.
+        // eslint-disable-next-line no-console
+        console.log('[bulk-upload profile fetch]', {
+          profileId,
+          found_profile: !!p,
+          cover_template_present: tpl !== undefined && tpl !== null,
+          cover_template_type: typeof tpl,
+          cover_template_value: tpl,
+          computed_hasCoverTemplate: hasIt,
+          all_columns_on_profile: p ? Object.keys(p) : null,
+        })
       })
       .catch(() => {
         if (!cancelled) {
