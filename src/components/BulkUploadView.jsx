@@ -402,6 +402,23 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   const [polishSettingsOpen, setPolishSettingsOpen] = useState(false)
   // Brand logo URL — used as the watermark image when polish runs.
   const [brandLogoUrl, setBrandLogoUrl] = useState(null)
+
+  // Generate cover toggle — when ON, after captions land we generate a
+  // per-post Instagram cover by feeding the brand's cover_template
+  // through gpt-image-2-image-to-image with each row's fresh title.
+  // Sticky per browser like Autopilot / Polish. Requires the brand to
+  // have a cover_template set; otherwise the toggle stays inert with a
+  // hint pointing the user at the brand profile.
+  const [coverEnabled, setCoverEnabled] = useState(() => {
+    try { return localStorage.getItem('scalesolo:bulk:coverEnabled') === 'on' } catch { return false }
+  })
+  const setCoverEnabledSticky = (v) => {
+    setCoverEnabled(v)
+    try { localStorage.setItem('scalesolo:bulk:coverEnabled', v ? 'on' : 'off') } catch {}
+  }
+  // True once profile fetch lands AND brand.cover_template.image_url is
+  // a non-empty string. Drives the disabled state on the toggle.
+  const [hasCoverTemplate, setHasCoverTemplate] = useState(false)
   // Tracks "we're running the auto-pipeline right now" so the toolbar
   // shows the right status banner instead of a silent spinner.
   const [autoStage, setAutoStage] = useState(null) // null | 'captions' | 'schedule'
@@ -435,8 +452,18 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         // initialProps defaults when fields are missing.
         setPolishTemplate(p?.polish_template && typeof p.polish_template === 'object' ? p.polish_template : {})
         setBrandLogoUrl(p?.logo_url || null)
+        // Cover template presence drives the Generate cover toggle's
+        // enabled state. No template = nothing for the cover-gen API
+        // to use, so we keep the toggle disabled until the brand
+        // uploads one on the Profile page.
+        const tpl = p?.cover_template
+        setHasCoverTemplate(!!(tpl && typeof tpl === 'object' && typeof tpl.image_url === 'string' && tpl.image_url.trim()))
       })
-      .catch(() => { if (!cancelled) { setDefaultPlatforms([]); setPolishTemplate({}); setBrandLogoUrl(null) } })
+      .catch(() => {
+        if (!cancelled) {
+          setDefaultPlatforms([]); setPolishTemplate({}); setBrandLogoUrl(null); setHasCoverTemplate(false)
+        }
+      })
     return () => { cancelled = true }
   }, [profileId, token])
 
@@ -668,6 +695,81 @@ export default function BulkUploadView({ profileId, token, onChange }) {
       const failedIds = new Set((cb.transcript_failures || []).map((f) => f.id))
       const schedulableIds = ids.filter((id) => !failedIds.has(id))
 
+      // ── Cover generation step ────────────────────────────────────────
+      // Runs AFTER captions land (so titles are fresh) and BEFORE
+      // auto-schedule (so the Upload-Post submission carries
+      // instagram_cover_url). Only fires when:
+      //   • coverEnabled toggle is on
+      //   • brand has a cover_template set
+      //   • there's at least one schedulable row
+      // Failures degrade gracefully — the row goes to schedule WITHOUT
+      // a cover. We never block the autopilot pipeline on cover gen.
+      let coversGenerated = 0
+      let coversFailed = 0
+      if (coverEnabled && hasCoverTemplate && schedulableIds.length) {
+        setAutoStage('covers')
+        // Process serially. Each cover poll is 30-60s and consumes
+        // 4000 ai_tokens; parallel would slam KIE + Anthropic in a
+        // way that creates noise without much speedup on this volume.
+        for (const id of schedulableIds) {
+          try {
+            const startResp = await fetch('/api/content/generate-cover?action=start', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ script_id: id }),
+            })
+            const startBody = await startResp.json().catch(() => ({}))
+            if (!startResp.ok || !startBody.taskId) {
+              coversFailed += 1
+              console.warn(`[bulk cover] ${id} start failed:`, startBody?.error)
+              continue
+            }
+            // Poll up to ~3 min per row — same threshold as the
+            // workflow runner uses, since the underlying generation
+            // is the same gpt-image-2 call.
+            const taskId = startBody.taskId
+            const POLL_MS = 4000
+            const TIMEOUT_MS = 3 * 60_000
+            const started = Date.now()
+            let coverUrl = null
+            let coverError = null
+            while (Date.now() - started < TIMEOUT_MS) {
+              await new Promise((r) => setTimeout(r, POLL_MS))
+              const statusResp = await fetch(`/api/images/status?taskId=${encodeURIComponent(taskId)}`, {
+                headers: { Authorization: `Bearer ${token}` },
+              })
+              const statusBody = await statusResp.json().catch(() => ({}))
+              if (!statusResp.ok) { coverError = statusBody?.error || `status ${statusResp.status}`; break }
+              if (statusBody.state === 'success' && Array.isArray(statusBody.images) && statusBody.images.length) {
+                coverUrl = statusBody.images[0]?.url || statusBody.images[0]
+                break
+              }
+              if (statusBody.state === 'failed') { coverError = statusBody.error || 'generation failed'; break }
+            }
+            if (!coverUrl) {
+              coversFailed += 1
+              console.warn(`[bulk cover] ${id} ${coverError || 'timed out'}`)
+              continue
+            }
+            // Commit the chosen URL to the row.
+            const commitResp = await fetch('/api/content/generate-cover?action=commit', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ script_id: id, image_url: coverUrl }),
+            })
+            if (!commitResp.ok) {
+              coversFailed += 1
+              console.warn(`[bulk cover] ${id} commit failed`)
+              continue
+            }
+            coversGenerated += 1
+          } catch (e) {
+            coversFailed += 1
+            console.warn(`[bulk cover] ${id} threw:`, e?.message)
+          }
+        }
+      }
+
       let scheduled = 0
       let skipped = 0
       if (schedulableIds.length) {
@@ -688,7 +790,14 @@ export default function BulkUploadView({ profileId, token, onChange }) {
 
       const captioned = cb.updated ?? 0
       const heldBack = failedIds.size
-      const parts = [`${captioned} captioned`, `${scheduled} scheduled`]
+      const parts = [`${captioned} captioned`]
+      if (coverEnabled && hasCoverTemplate) {
+        const coverLine = coversFailed
+          ? `${coversGenerated} covers (${coversFailed} failed, posts still ship)`
+          : `${coversGenerated} covers`
+        parts.push(coverLine)
+      }
+      parts.push(`${scheduled} scheduled`)
       if (skipped)   parts.push(`${skipped} skipped (no open slots)`)
       if (heldBack)  parts.push(`${heldBack} held back (no transcript, write caption manually)`)
       toast({
@@ -1100,6 +1209,33 @@ export default function BulkUploadView({ profileId, token, onChange }) {
             aria-label="Open polish settings"
           ><SettingsIcon size={12} /></button>
         </label>
+
+        {/* Generate cover toggle — when on, after captions land we
+            generate a per-post IG cover via the brand's cover_template.
+            Disabled until the brand uploads a template on the Profile page. */}
+        <label
+          onClick={(e) => e.stopPropagation()}
+          title={hasCoverTemplate
+            ? 'When on, each video gets a custom Instagram Reel cover generated from your brand template'
+            : 'Upload an Instagram cover template on your brand profile first to enable this.'}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            fontSize: 11.5, color: hasCoverTemplate ? 'var(--text-soft)' : 'var(--muted)',
+            cursor: hasCoverTemplate ? 'pointer' : 'not-allowed', userSelect: 'none',
+            padding: '6px 10px', borderRadius: 8,
+            background: 'var(--surface-2)', border: '1px solid var(--border)',
+            opacity: hasCoverTemplate ? 1 : 0.6,
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={coverEnabled && hasCoverTemplate}
+            disabled={!hasCoverTemplate}
+            onChange={(e) => setCoverEnabledSticky(e.target.checked)}
+            style={{ accentColor: '#a855f7' }}
+          />
+          Generate cover
+        </label>
         <button
           className="btn-secondary"
           onClick={(e) => { e.stopPropagation(); fileRef.current?.click() }}
@@ -1128,6 +1264,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           <Loader2 size={14} className="spin" style={{ color: '#2ecc71' }} />
           <strong style={{ color: 'var(--text)' }}>Autopilot:</strong>
           {autoStage === 'captions' && 'writing captions, hashtags & first comments…'}
+          {autoStage === 'covers' && 'generating Instagram covers…'}
           {autoStage === 'schedule' && 'slotting posts into your schedule…'}
         </div>
       )}
