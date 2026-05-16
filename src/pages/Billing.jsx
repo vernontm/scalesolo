@@ -234,11 +234,17 @@ export default function Billing() {
       })
       const body = await r.json()
       if (!r.ok) throw new Error(body.error || 'Could not end the trial')
-      // If Stripe returned a hosted invoice URL (e.g. SCA needed), send
-      // them there to confirm payment. Otherwise just refetch.
-      if (body?.latest_invoice?.hosted_invoice_url) {
-        window.location.href = body.latest_invoice.hosted_invoice_url
+      // If Stripe returned a hosted invoice URL (no card on file, SCA
+      // needed, payment incomplete, etc), send them there to add their
+      // card / confirm. Falls back to nested latest_invoice for safety.
+      const invoiceUrl = body?.hosted_invoice_url || body?.latest_invoice?.hosted_invoice_url
+      if (body?.needs_payment && invoiceUrl) {
+        window.location.href = invoiceUrl
         return
+      }
+      if (invoiceUrl && !body?.needs_payment) {
+        // Even on success Stripe may return a hosted_invoice_url for a
+        // paid invoice — that's fine, just reload instead of redirecting.
       }
       // Soft delay so the webhook has a chance to land before we
       // refetch — Stripe's invoice.paid event usually arrives within

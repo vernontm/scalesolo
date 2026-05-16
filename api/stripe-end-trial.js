@@ -46,24 +46,39 @@ export default async function handler(req, res) {
     // trial_end='now' tells Stripe to terminate the trial this instant.
     // Stripe transitions the sub to active, generates an invoice for
     // the full first period, and (if a payment method is on file)
-    // charges it. payment_behavior='allow_incomplete' lets the API
-    // return successfully even if the charge needs SCA / 3DS — the
-    // user gets sent to portal-or-checkout to complete payment in
-    // that case (we surface latest_invoice in the response for the
-    // client to redirect with).
+    // charges it. payment_behavior='default_incomplete' returns the
+    // subscription in `incomplete` state with a payment intent that
+    // needs confirming — handles SCA / 3DS gracefully AND surfaces a
+    // hosted invoice URL we redirect the user to when there's no card
+    // on file yet (common when the trial signup skipped the card step).
+    // The earlier 'allow_incomplete' was invalid for subscription update
+    // (that's an invoice-only param) and made Stripe 400 silently.
     const updated = await stripe.updateSubscription(customer.stripe_subscription_id, {
       trial_end: 'now',
       proration_behavior: 'none',
-      payment_behavior: 'allow_incomplete',
+      payment_behavior: 'default_incomplete',
+      'expand[]': 'latest_invoice',
     }, { idempotencyKey: `end-trial-${customer.id}-${Date.now()}` })
+
+    // After expand[]=latest_invoice, updated.latest_invoice is the full
+    // invoice object (not just the id). Normalize the response so the
+    // client always gets a hosted_invoice_url it can redirect to when
+    // payment hasn't actually cleared yet (incomplete status, no card
+    // on file, SCA needed, etc).
+    const latestInvoice = updated?.latest_invoice
+    const hostedInvoiceUrl =
+      (typeof latestInvoice === 'object' && latestInvoice?.hosted_invoice_url) || null
+    const needsPayment = updated?.status === 'incomplete'
+      || updated?.status === 'past_due'
+      || (typeof latestInvoice === 'object' && latestInvoice?.status === 'open')
 
     return res.status(200).json({
       ok: true,
       subscription_status: updated?.status || null,
       current_period_end: updated?.current_period_end || null,
-      latest_invoice: updated?.latest_invoice || null,
-      // If Stripe needs SCA the latest_invoice will be 'open' with a
-      // hosted_invoice_url. Client should redirect there to confirm.
+      latest_invoice: latestInvoice,
+      hosted_invoice_url: hostedInvoiceUrl,
+      needs_payment: needsPayment,
     })
   } catch (err) {
     return res.status(err.status || 500).json({ error: err.message, data: err.data })
