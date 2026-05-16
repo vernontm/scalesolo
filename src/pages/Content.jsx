@@ -260,6 +260,8 @@ function ItemDetail({ item, onClose, onUpdate }) {
           </div>
         )}
 
+        <MediaPreviewBlock item={item} />
+
         {item.hook && (
           <div style={{ marginBottom: 14 }}>
             <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>Hook</div>
@@ -327,6 +329,108 @@ function ItemDetail({ item, onClose, onUpdate }) {
             <Trash2 size={13} /> Delete
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Media preview block ───────────────────────────────────────────────────
+// Shows what the post is going to ship with. For videos: a full
+// 9:16 playable preview so the user can scrub the actual upload
+// (not just the still-frame they see on the calendar). For images
+// / carousels: a strip of thumbs. If a custom IG cover is set, it
+// renders side-by-side with the source so the user can compare what
+// IG will show vs what the source video frames look like. Skipped
+// entirely for text-only posts (nothing to preview).
+function MediaPreviewBlock({ item }) {
+  const isVideo = item.media_type === 'video'
+  const isText  = item.media_type === 'text'
+  const urls = Array.isArray(item.media_urls) ? item.media_urls.filter(Boolean) : []
+  const cover = item.cover_image_url || null
+  if (isText) return null
+  if (!urls.length && !cover) return null
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <Eye size={11} /> Media preview
+      </div>
+
+      <div style={{
+        display: 'flex', gap: 10, flexWrap: 'wrap',
+        padding: 12, borderRadius: 10,
+        background: 'var(--surface-2)', border: '1px solid var(--border)',
+      }}>
+        {isVideo && urls[0] && (
+          <div style={{ flex: '1 1 220px', minWidth: 220 }}>
+            <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 4, fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+              Video
+            </div>
+            <video
+              src={urls[0]}
+              controls
+              playsInline
+              preload="metadata"
+              style={{
+                width: '100%', aspectRatio: '9 / 16',
+                borderRadius: 8, background: '#000',
+                border: '1px solid var(--border)',
+                objectFit: 'cover',
+              }}
+            />
+          </div>
+        )}
+
+        {cover && (
+          <div style={{ flex: '0 0 140px', width: 140 }}>
+            <div style={{ fontSize: 10, color: '#0ea5e9', marginBottom: 4, fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+              Instagram cover
+            </div>
+            <img
+              src={cover}
+              alt="Instagram cover"
+              style={{
+                width: '100%', aspectRatio: '4 / 5',
+                borderRadius: 8, objectFit: 'cover',
+                background: '#000', border: '1px solid var(--border)',
+              }}
+            />
+          </div>
+        )}
+
+        {!isVideo && !cover && urls.length > 0 && (
+          // Image / carousel — show a strip of thumbs.
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(80px, 1fr))', gap: 6, width: '100%' }}>
+            {urls.slice(0, 12).map((u, i) => (
+              <img
+                key={u + '@' + i}
+                src={u}
+                alt={`slide ${i + 1}`}
+                style={{ width: '100%', aspectRatio: '1 / 1', objectFit: 'cover', borderRadius: 6, background: '#000', border: '1px solid var(--border)' }}
+              />
+            ))}
+          </div>
+        )}
+
+        {!isVideo && cover && urls.length > 0 && (
+          // Image post WITH a custom cover — also show the source images
+          // so the user can compare cover vs slides at a glance.
+          <div style={{ flex: '1 1 220px', minWidth: 220 }}>
+            <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 4, fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+              {urls.length > 1 ? `Slides (${urls.length})` : 'Source image'}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(60px, 1fr))', gap: 4 }}>
+              {urls.slice(0, 8).map((u, i) => (
+                <img
+                  key={u + '@' + i}
+                  src={u}
+                  alt={`slide ${i + 1}`}
+                  style={{ width: '100%', aspectRatio: '1 / 1', objectFit: 'cover', borderRadius: 4, background: '#000', border: '1px solid var(--border)' }}
+                />
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -835,10 +939,20 @@ function CalendarView({ items, onOpen, token, onChange }) {
                   {dayItems.map((item) => {
                     const isDragging = item.id === dragId
                     const platforms = Array.isArray(item.platforms) ? item.platforms : []
-                    const thumb = Array.isArray(item.media_urls) && item.media_urls[0]
+                    // Prefer the generated Instagram cover when one is set —
+                    // that's what'll actually appear in the feed, so showing
+                    // the source video here was misleading on covered posts.
+                    // Fall back to the source media when no cover exists.
+                    const hasCover = !!item.cover_image_url
+                    const thumb = hasCover ? item.cover_image_url
+                      : (Array.isArray(item.media_urls) && item.media_urls[0])
                     const isVideo = item.media_type === 'video'
                     const isText = item.media_type === 'text'
                     const isPosted = item.status === 'posted'
+                    // Cover thumbs are always static images regardless of
+                    // the source media_type. Only render <video> if we're
+                    // showing the source video itself.
+                    const thumbIsVideo = isVideo && !hasCover
                     // Pending-approval rows live on the calendar with a
                     // reserved slot but are NOT submitted to Upload-Post.
                     // The user has to click → Approve in the detail
@@ -884,9 +998,25 @@ function CalendarView({ items, onOpen, token, onChange }) {
                         }}
                       >
                         {thumb ? (
-                          isVideo
-                            ? <video src={thumb} muted playsInline preload="metadata" style={{ width: 36, height: 36, borderRadius: 4, objectFit: 'cover', background: '#000', flexShrink: 0 }} />
-                            : <img src={thumb} alt="" style={{ width: 36, height: 36, borderRadius: 4, objectFit: 'cover', background: 'var(--surface)', flexShrink: 0 }} />
+                          <div style={{ position: 'relative', width: 36, height: 36, flexShrink: 0 }}>
+                            {thumbIsVideo
+                              ? <video src={thumb} muted playsInline preload="metadata" style={{ width: 36, height: 36, borderRadius: 4, objectFit: 'cover', background: '#000', display: 'block' }} />
+                              : <img src={thumb} alt="" style={{ width: 36, height: 36, borderRadius: 4, objectFit: 'cover', background: 'var(--surface)', display: 'block' }} />}
+                            {/* Small "COVER" pill when we're showing the
+                                generated thumbnail rather than the raw
+                                video frame. Helps the user tell at a
+                                glance which posts have a cover staged. */}
+                            {hasCover && (
+                              <div style={{
+                                position: 'absolute', bottom: -2, right: -3,
+                                fontSize: 7.5, fontWeight: 800, letterSpacing: '0.04em',
+                                padding: '1px 4px', borderRadius: 3,
+                                background: 'rgba(14,165,233,0.92)',
+                                color: '#fff',
+                                lineHeight: 1.1,
+                              }}>IG</div>
+                            )}
+                          </div>
                         ) : (
                           <div style={{
                             width: 36, height: 36, borderRadius: 4,
