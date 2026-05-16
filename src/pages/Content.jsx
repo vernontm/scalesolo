@@ -390,7 +390,7 @@ function MediaPreviewBlock({ item }) {
               src={cover}
               alt="Instagram cover"
               style={{
-                width: '100%', aspectRatio: '4 / 5',
+                width: '100%', aspectRatio: '9 / 16',
                 borderRadius: 8, objectFit: 'cover',
                 background: '#000', border: '1px solid var(--border)',
               }}
@@ -572,10 +572,10 @@ function CoverImageSection({ item, onUpdate }) {
         <ImageIcon size={11} /> Instagram cover
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: 14, alignItems: 'flex-start' }}>
-        {/* Preview tile */}
+      <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 14, alignItems: 'flex-start' }}>
+        {/* Preview tile — 9:16 to match the actual cover output */}
         <div style={{
-          width: 160, aspectRatio: '4 / 5',
+          width: 120, aspectRatio: '9 / 16',
           background: '#000', borderRadius: 8,
           border: '1px solid var(--border)',
           display: 'grid', placeItems: 'center', overflow: 'hidden',

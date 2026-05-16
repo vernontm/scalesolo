@@ -107,7 +107,7 @@ export default async function handler(req, res) {
         prompt,
         model: 'gpt-2',
         count: 1,
-        aspect: '4:5',                  // IG Reels cover default; future option could surface this
+        aspect: '9:16',                 // Vertical full-frame — matches Reels / Shorts / TikTok / Stories
         reference_urls: [templateUrl],
         enhance_prompt: false,          // we already gave it precise instructions, don't let the rewriter drift
       }),

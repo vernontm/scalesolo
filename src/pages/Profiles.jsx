@@ -628,7 +628,7 @@ function CoverTemplateUpload({ value, profileId, onChange }) {
         )}
         {err && <div style={{ fontSize: 11, color: 'var(--red)' }}>{err}</div>}
         <div style={{ fontSize: 10.5, color: 'var(--muted)', lineHeight: 1.4, maxWidth: 260 }}>
-          PNG or JPG. 4:5 portrait works best for IG Reels covers. The model swaps the title text and keeps everything else.
+          PNG or JPG. 9:16 portrait works best — matches Reels / Shorts / TikTok / Stories. The model swaps the title text and keeps everything else.
         </div>
       </div>
       <input ref={inpRef} type="file" accept="image/*" onChange={onPick} style={{ display: 'none' }} />
