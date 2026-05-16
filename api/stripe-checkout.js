@@ -54,20 +54,33 @@ export default async function handler(req, res) {
       customerRow.stripe_customer_id = stripeCust.id
     }
 
+    // Trial defaults to 3 days. `skip_trial=true` (or `trial_period_days=0`)
+    // in the body lets the client choose "start the subscription right
+    // now, charge me today" — used by the pricing-page "Start now"
+    // option and the in-app "Skip trial" CTA on the trial banner.
+    const requestedTrialDays =
+      body.skip_trial === true ? 0
+      : (typeof body.trial_period_days === 'number' && body.trial_period_days >= 0)
+        ? Math.floor(body.trial_period_days)
+        : 3
+    const subscriptionData = {
+      metadata: { tier, billing_cycle: cycle, scalesolo_customer_id: customerRow.id },
+    }
+    // Stripe REJECTS trial_period_days=0; the right way to skip the
+    // trial is to OMIT the field entirely. Only include it when > 0.
+    if (requestedTrialDays > 0) subscriptionData.trial_period_days = requestedTrialDays
+
     const session = await stripe.createCheckoutSession({
       mode: 'subscription',
       customer: customerRow.stripe_customer_id,
       line_items: [{ price: priceId, quantity: 1 }],
-      subscription_data: {
-        trial_period_days: 3,
-        metadata: { tier, billing_cycle: cycle, scalesolo_customer_id: customerRow.id },
-      },
+      subscription_data: subscriptionData,
       success_url: body.success_url || `${APP_URL}/dashboard?welcome=1`,
       cancel_url:  body.cancel_url  || `${APP_URL}/pricing`,
       allow_promotion_codes: true,
-      metadata: { tier, billing_cycle: cycle, scalesolo_customer_id: customerRow.id },
+      metadata: { tier, billing_cycle: cycle, scalesolo_customer_id: customerRow.id, skip_trial: requestedTrialDays === 0 ? '1' : '0' },
       payment_method_collection: 'always',
-    }, { idempotencyKey: `checkout-${customerRow.id}-${tier}-${cycle}-${Date.now()}` })
+    }, { idempotencyKey: `checkout-${customerRow.id}-${tier}-${cycle}-${requestedTrialDays}-${Date.now()}` })
 
     return res.status(200).json({ url: session.url, session_id: session.id, profile_limit: profileLimitForTier(tier) })
   } catch (err) {

@@ -214,6 +214,42 @@ export default function Billing() {
     }
   }
 
+  // End-trial flow. For users currently on the 3-day trial who want
+  // to start the paid subscription NOW (e.g. they want full credit
+  // grants, or they're about to run something past the trial limits).
+  // Confirms with the user, hits /api/stripe-end-trial, refetches.
+  const [endTrialBusy, setEndTrialBusy] = useState(false)
+  const endTrialNow = async () => {
+    const ok = window.confirm(
+      'Skip the rest of your trial and start your subscription now? Your card on file will be charged for the full billing period today.'
+    )
+    if (!ok) return
+    setEndTrialBusy(true)
+    setError(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const r = await fetch('/api/stripe-end-trial', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session?.access_token}` },
+      })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body.error || 'Could not end the trial')
+      // If Stripe returned a hosted invoice URL (e.g. SCA needed), send
+      // them there to confirm payment. Otherwise just refetch.
+      if (body?.latest_invoice?.hosted_invoice_url) {
+        window.location.href = body.latest_invoice.hosted_invoice_url
+        return
+      }
+      // Soft delay so the webhook has a chance to land before we
+      // refetch — Stripe's invoice.paid event usually arrives within
+      // 1-2 seconds of the API call returning.
+      setTimeout(() => { window.location.reload() }, 1500)
+    } catch (e) {
+      setError(e.message)
+      setEndTrialBusy(false)
+    }
+  }
+
   // Change-plan flow. Confirms with the user, hits /api/stripe-change-plan,
   // then refetches /api/billing so the "Current plan" tile reflects the
   // swap. Stripe handles proration on its end (always_invoice mode in the
@@ -288,10 +324,24 @@ export default function Billing() {
                 {sub.cancel_at_period_end ? ' · Cancels at period end' : ''}
               </div>
             </div>
-            <button className="btn-primary" onClick={openPortal} disabled={portalBusy}>
-              {portalBusy ? <span className="spinner" /> : <ExternalLink size={15} />}
-              Manage in Stripe
-            </button>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {sub.status === 'trialing' && (
+                <button
+                  className="btn-primary"
+                  onClick={endTrialNow}
+                  disabled={endTrialBusy}
+                  title="Skip the rest of the trial and start your subscription today"
+                  style={{ background: 'linear-gradient(135deg, #f59e0b, #f97316)' }}
+                >
+                  {endTrialBusy ? <span className="spinner" /> : <Sparkles size={15} />}
+                  Start subscription now
+                </button>
+              )}
+              <button className="btn-primary" onClick={openPortal} disabled={portalBusy}>
+                {portalBusy ? <span className="spinner" /> : <ExternalLink size={15} />}
+                Manage in Stripe
+              </button>
+            </div>
           </div>
         ) : (
           <div style={{ ...planCardStyle, background: 'var(--surface-2)', borderColor: 'var(--border)' }}>
