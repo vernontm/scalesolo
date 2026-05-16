@@ -844,6 +844,32 @@ export default function BulkUploadView({ profileId, token, onChange }) {
       // runs for these — there's nothing to embed if the cover step
       // skipped or failed for a row.
       const coveredIds = []
+      // Diagnostic — log the three gates so users can confirm in the
+      // browser console why the cover step did or didn't fire. Catches
+      // the "toggle looks checked but state says false" + "profile
+      // fetch hasn't landed" + "all rows failed transcription" cases
+      // each separately.
+      // eslint-disable-next-line no-console
+      console.log('[autopilot]', {
+        coverEnabled,
+        hasCoverTemplate,
+        schedulable_count: schedulableIds.length,
+        will_run_cover_step: !!(coverEnabled && hasCoverTemplate && schedulableIds.length),
+      })
+      if (!coverEnabled || !hasCoverTemplate || !schedulableIds.length) {
+        const reason = !coverEnabled ? 'toggle is off'
+          : !hasCoverTemplate ? 'brand has no cover_template set'
+          : 'no schedulable rows (transcription likely failed for everything)'
+        // Surface a visible info toast so the user knows WHY the cover
+        // step was skipped — much better than silently leaving rows
+        // without covers and making them check the DB.
+        if (coverEnabled || hasCoverTemplate) {  // skip the toast if neither was even intended
+          toast({
+            kind: 'warn',
+            message: `Cover generation skipped: ${reason}. Captions still ran; rows will schedule without covers.`,
+          })
+        }
+      }
       if (coverEnabled && hasCoverTemplate && schedulableIds.length) {
         setAutoStage('covers')
         // Process serially. Each cover poll is 30-60s and consumes
