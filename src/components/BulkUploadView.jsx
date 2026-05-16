@@ -553,6 +553,25 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   // True once profile fetch lands AND brand.cover_template.image_url is
   // a non-empty string. Drives the disabled state on the toggle.
   const [hasCoverTemplate, setHasCoverTemplate] = useState(false)
+  // Mirror state into refs so the async pipeline (runAutoPipeline) reads
+  // the LIVE values at gate-check time instead of whatever was captured
+  // in the closure when the function started. Without this, the cover
+  // gate silently skipped when the user uploaded before the profile
+  // fetch landed — the long awaits inside the pipeline give the fetch
+  // time to update state, but the captured `false` is what got checked
+  // (confirmed via console diagnostic: profile-fetch log said
+  // computed_hasCoverTemplate=true while autopilot log said
+  // hasCoverTemplate=false in the same browser session).
+  const hasCoverTemplateRef = useRef(false)
+  const coverEnabledRef = useRef(false)
+  useEffect(() => { hasCoverTemplateRef.current = hasCoverTemplate }, [hasCoverTemplate])
+  useEffect(() => { coverEnabledRef.current = coverEnabled }, [coverEnabled])
+  // Mount-time read from localStorage so the FIRST upload after a hard
+  // refresh sees the persisted value, not the React-state default.
+  useEffect(() => {
+    try { coverEnabledRef.current = localStorage.getItem('scalesolo:bulk:coverEnabled') === 'on' } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   // Tracks "we're running the auto-pipeline right now" so the toolbar
   // shows the right status banner instead of a silent spinner.
   const [autoStage, setAutoStage] = useState(null) // null | 'captions' | 'schedule'
@@ -861,33 +880,39 @@ export default function BulkUploadView({ profileId, token, onChange }) {
       // runs for these — there's nothing to embed if the cover step
       // skipped or failed for a row.
       const coveredIds = []
-      // Diagnostic — log the three gates so users can confirm in the
-      // browser console why the cover step did or didn't fire. Catches
-      // the "toggle looks checked but state says false" + "profile
-      // fetch hasn't landed" + "all rows failed transcription" cases
-      // each separately.
+      // Read the LIVE state values via refs (not closure-captured) so
+      // the gate uses whatever's true RIGHT NOW, not whatever was true
+      // when runAutoPipeline was created (which could have been before
+      // the profile fetch landed).
+      const liveCoverEnabled = coverEnabledRef.current
+      const liveHasCoverTemplate = hasCoverTemplateRef.current
+      // Diagnostic — log both the closure-captured values and the live
+      // ref values so we can keep an eye on whether the stale-closure
+      // fix is doing what we expect in production.
       // eslint-disable-next-line no-console
       console.log('[autopilot]', {
-        coverEnabled,
-        hasCoverTemplate,
+        closure_coverEnabled: coverEnabled,
+        closure_hasCoverTemplate: hasCoverTemplate,
+        live_coverEnabled: liveCoverEnabled,
+        live_hasCoverTemplate: liveHasCoverTemplate,
         schedulable_count: schedulableIds.length,
-        will_run_cover_step: !!(coverEnabled && hasCoverTemplate && schedulableIds.length),
+        will_run_cover_step: !!(liveCoverEnabled && liveHasCoverTemplate && schedulableIds.length),
       })
-      if (!coverEnabled || !hasCoverTemplate || !schedulableIds.length) {
-        const reason = !coverEnabled ? 'toggle is off'
-          : !hasCoverTemplate ? 'brand has no cover_template set'
+      if (!liveCoverEnabled || !liveHasCoverTemplate || !schedulableIds.length) {
+        const reason = !liveCoverEnabled ? 'toggle is off'
+          : !liveHasCoverTemplate ? 'brand has no cover_template set'
           : 'no schedulable rows (transcription likely failed for everything)'
         // Surface a visible info toast so the user knows WHY the cover
         // step was skipped — much better than silently leaving rows
         // without covers and making them check the DB.
-        if (coverEnabled || hasCoverTemplate) {  // skip the toast if neither was even intended
+        if (liveCoverEnabled || liveHasCoverTemplate) {  // skip the toast if neither was even intended
           toast({
             kind: 'warn',
             message: `Cover generation skipped: ${reason}. Captions still ran; rows will schedule without covers.`,
           })
         }
       }
-      if (coverEnabled && hasCoverTemplate && schedulableIds.length) {
+      if (liveCoverEnabled && liveHasCoverTemplate && schedulableIds.length) {
         setAutoStage('covers')
         // Process serially. Each cover poll is 30-60s and consumes
         // 4000 ai_tokens; parallel would slam KIE + Anthropic in a
