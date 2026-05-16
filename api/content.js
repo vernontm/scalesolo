@@ -61,11 +61,16 @@ async function rescheduleUploadPostJob({ row, newScheduledIso, authToken, req })
   // the merged caption + hashtags string each platform expects.
   const isVideo = row.media_type === 'video' || /\.(mp4|mov|webm|m4v)(\?|#|$)/i.test(mediaUrls[0] || '')
   const fullCaption = [row.caption, row.hashtags].filter(Boolean).join('\n\n').trim()
+  // Prefer the cover-embedded video when the toggle is on and the
+  // embedded URL has been generated. Falls back to the raw source.
+  const videoToSend = isVideo
+    ? ((row.embed_cover_intro !== false && row.media_url_with_cover) ? row.media_url_with_cover : mediaUrls[0])
+    : undefined
 
   const body = {
     profile_id: row.profile_id,
     platforms,
-    video_url: isVideo ? mediaUrls[0] : undefined,
+    video_url: videoToSend,
     photo_urls: !isVideo ? mediaUrls : undefined,
     description: fullCaption || row.full_script || row.title || '',
     title: row.title || undefined,
@@ -123,6 +128,12 @@ const ALLOWED = new Set([
   // Set by /api/content/generate-cover; passed to Upload-Post as
   // instagram_cover_url on submit.
   'cover_image_url',
+  // Source video with the cover prepended as a 1s intro card. Built by
+  // /api/videos/prepend-cover. Used for TikTok / YouTube / FB / Threads
+  // so the cover survives platforms that auto-thumbnail from frame 0.
+  'media_url_with_cover',
+  // Per-row toggle for the prepend behavior.
+  'embed_cover_intro',
 ])
 
 function pickAllowed(obj) {

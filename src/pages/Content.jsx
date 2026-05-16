@@ -656,6 +656,112 @@ function CoverImageSection({ item, onUpdate }) {
           )}
         </div>
       </div>
+
+      {/* Cover-as-intro embed — only visible for video posts that have
+          a saved cover. ffmpeg work on the Fly worker prepends the
+          cover as a 1s still segment at the start of the video so
+          TikTok / YouTube Shorts / FB Reels / Threads pick it up as
+          the start-frame thumbnail. IG keeps using its native cover. */}
+      {item.media_type === 'video' && savedCover && (
+        <EmbedCoverIntroBlock item={item} onUpdate={onUpdate} />
+      )}
+    </div>
+  )
+}
+
+// ── Cover-as-intro embed block ────────────────────────────────────────────
+// Shows the toggle (embed_cover_intro on/off) + Embed button + status.
+// Lives inside the CoverImageSection card so users see it as a related
+// next step after generating a cover.
+function EmbedCoverIntroBlock({ item, onUpdate }) {
+  const { session } = useAuth()
+  const [enabled, setEnabled] = useState(item.embed_cover_intro !== false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  const hasEmbedded = !!item.media_url_with_cover
+
+  const toggle = async (next) => {
+    setEnabled(next)
+    setError(null)
+    // Persist the toggle independently — the cover-embedded URL is
+    // generated on demand, but the toggle dictates whether to USE it
+    // at submission time. PATCH is cheap.
+    try {
+      await fetch(`/api/content?id=${item.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ embed_cover_intro: next }),
+      })
+      onUpdate?.()
+    } catch {}
+  }
+
+  const runEmbed = async () => {
+    setBusy(true); setError(null)
+    try {
+      const r = await fetch('/api/videos/prepend-cover', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ script_id: item.id }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(body?.error || 'Embed failed')
+      onUpdate?.()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div style={{
+      marginTop: 12, padding: 10, borderRadius: 8,
+      background: 'var(--surface-2)', border: '1px solid var(--border)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer', userSelect: 'none' }}>
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => toggle(e.target.checked)}
+            style={{ accentColor: '#0ea5e9' }}
+          />
+          <span style={{ color: 'var(--text)' }}>Embed cover as 1s intro for TikTok / YouTube / FB / Threads</span>
+        </label>
+        <div style={{ flex: 1 }} />
+        {hasEmbedded ? (
+          <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+            fontSize: 10, fontWeight: 800, padding: '2px 7px', borderRadius: 999,
+            background: 'rgba(46,204,113,0.16)', color: '#2ecc71',
+            letterSpacing: '0.04em', textTransform: 'uppercase',
+          }}><Check size={10} /> Embedded</span>
+        ) : null}
+        <button
+          className="btn-primary"
+          onClick={runEmbed}
+          disabled={busy}
+          style={{ fontSize: 11.5, padding: '5px 10px' }}
+          title="Re-encode the video with the cover prepended as a 1s intro card"
+        >
+          {busy ? <Loader2 size={11} className="spin" /> : <RotateCcw size={11} />}
+          {hasEmbedded ? 'Re-embed' : 'Embed now'}
+        </button>
+      </div>
+      <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 6, lineHeight: 1.4 }}>
+        Re-encodes the video on the Fly worker (~10–30s, free — no AI tokens). The original video is preserved; the embedded version is stored separately and only used for non-Instagram platforms at submit time.
+      </div>
+      {busy && (
+        <div style={{ fontSize: 11, color: 'var(--amber)', marginTop: 4 }}>
+          Building intro card… typically 10–30 seconds.
+        </div>
+      )}
+      {error && (
+        <div style={{ fontSize: 11.5, color: 'var(--red)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+          <AlertCircle size={11} /> {error}
+        </div>
+      )}
     </div>
   )
 }

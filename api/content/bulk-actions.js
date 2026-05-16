@@ -468,7 +468,7 @@ async function autoSchedule({ res, profile_id, script_ids, user_id }) {
 
     const rowIds = assignments.map((a) => a.id)
     const fullRows = await supaFetch(
-      `content_scripts?id=in.(${rowIds.map((id) => encodeURIComponent(id)).join(',')})&select=id,media_urls,media_type,platforms,caption,hashtags,full_script,title,first_comment,cover_image_url`
+      `content_scripts?id=in.(${rowIds.map((id) => encodeURIComponent(id)).join(',')})&select=id,media_urls,media_type,platforms,caption,hashtags,full_script,title,first_comment,cover_image_url,media_url_with_cover,embed_cover_intro`
     ).catch(() => [])
     const rowById = new Map((fullRows || []).map((r) => [r.id, r]))
 
@@ -479,7 +479,14 @@ async function autoSchedule({ res, profile_id, script_ids, user_id }) {
       // expensive to do 200x in one Vercel function. They keep working
       // via Publish Selected / Resync.
       if (row.media_type !== 'video') return
-      const mediaUrl = row.media_urls?.[0]
+      // Pick the cover-embedded URL when the user opted in and we
+      // already generated it. Everything-everywhere — IG still gets
+      // its native instagram_cover_url for the Reel thumbnail, so
+      // even though IG viewers see the same 1s intro, the feed cover
+      // is the native one. One submission, no per-platform routing.
+      const mediaUrl = (row.embed_cover_intro !== false && row.media_url_with_cover)
+        ? row.media_url_with_cover
+        : row.media_urls?.[0]
       if (!mediaUrl) return
 
       const platforms = Array.isArray(row.platforms) && row.platforms.length ? row.platforms : ['tiktok']
@@ -721,7 +728,14 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
         if (platforms.includes('instagram')) form.append('instagram_media_type', 'REELS')
         if (platforms.includes('youtube'))   form.append('youtube_privacy', 'PUBLIC')
         if (hasTikTok)                       form.append('privacy_level', 'PUBLIC_TO_EVERYONE')
-        form.append('video', r.media_urls[0])
+        // Prefer the cover-embedded video when set + opt-in is on, so
+        // platforms that auto-thumbnail from frame 0 (TikTok / YouTube
+        // / FB / Threads) see the cover as the start frame. IG still
+        // gets instagram_cover_url separately for its native cover.
+        const submitVideoUrl = (r.embed_cover_intro !== false && r.media_url_with_cover)
+          ? r.media_url_with_cover
+          : r.media_urls[0]
+        form.append('video', submitVideoUrl)
 
         upRes = await fetch('https://api.upload-post.com/api/upload', {
           method: 'POST',
@@ -856,7 +870,7 @@ async function resyncUploadPost({ req, res, profile_id, script_ids }) {
   if (Array.isArray(script_ids) && script_ids.length) {
     q += `&id=in.(${script_ids.map((id) => encodeURIComponent(id)).join(',')})`
   }
-  q += '&select=id,title,full_script,caption,hashtags,first_comment,media_urls,media_type,platforms,scheduled_datetime,uploadpost_request_id'
+  q += '&select=id,title,full_script,caption,hashtags,first_comment,media_urls,media_type,platforms,scheduled_datetime,uploadpost_request_id,cover_image_url,media_url_with_cover,embed_cover_intro'
   const rows = await supaFetch(q)
   if (!rows?.length) return res.status(200).json({ resynced: 0, skipped: 0, failed: 0, details: [] })
 
@@ -900,10 +914,14 @@ async function resyncUploadPost({ req, res, profile_id, script_ids }) {
     // Re-submit with current payload.
     const isVideo = row.media_type === 'video' || /\.(mp4|mov|webm|m4v)(\?|#|$)/i.test(mediaUrls[0] || '')
     const fullCaption = [row.caption, row.hashtags].filter(Boolean).join('\n\n').trim()
+    // Cover-embedded video preferred when toggled + available.
+    const videoToSend = isVideo
+      ? ((row.embed_cover_intro !== false && row.media_url_with_cover) ? row.media_url_with_cover : mediaUrls[0])
+      : undefined
     const body = {
       profile_id,
       platforms,
-      video_url: isVideo ? mediaUrls[0] : undefined,
+      video_url: videoToSend,
       photo_urls: !isVideo ? mediaUrls : undefined,
       description: fullCaption || row.full_script || row.title || '',
       title: row.title || undefined,

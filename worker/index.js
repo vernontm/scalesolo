@@ -1336,6 +1336,152 @@ app.post('/jobs/combine-av', requireSecret, async (req, res) => {
   }
 })
 
+// ── Prepend cover intro to a video ───────────────────────────────────────
+// Body: { profile_id, video_url, cover_image_url, duration_secs? }
+// Returns: { video_url, bytes }
+//
+// Builds a short still segment from the cover image (default 1.0s),
+// concatenates it before the source video, and re-encodes the whole
+// thing to H.264 / AAC MP4 at the source's native resolution + 30fps.
+// Used by the Schedule page's "Embed cover into video" toggle so the
+// generated IG cover survives on platforms that auto-thumbnail from
+// frame 0 (TikTok, YouTube Shorts, FB Reels).
+//
+// Yes, this re-encodes the source. We considered concat-demuxer to
+// stream-copy the source (cheaper) but it requires the cover segment
+// to match codec / SAR / fps / sample rate exactly, and we get
+// arbitrary source files — re-encode is the more robust correct
+// approach. performance-4x box handles a 30-second 1080p re-encode
+// in ~10-15s.
+async function prependCoverCore(body) {
+  const {
+    profile_id, video_url, cover_image_url,
+    duration_secs = 1.0,
+  } = body || {}
+  if (!profile_id || !video_url || !cover_image_url) {
+    throw new Error('profile_id + video_url + cover_image_url required')
+  }
+  if (!SUPABASE_URL || !SERVICE_KEY) throw new Error('Storage not configured on worker')
+  const dur = Math.max(0.1, Math.min(5.0, Number(duration_secs) || 1.0))
+
+  let workdir = null
+  try {
+    workdir = await mkdtemp(join(tmpdir(), 'cover-intro-'))
+    const inVideoPath  = join(workdir, 'src.mp4')
+    const coverPath    = join(workdir, 'cover.png')
+    const outPath      = join(workdir, 'out.mp4')
+
+    // Fetch source + cover in parallel.
+    const [vBuf, cBuf] = await Promise.all([
+      fetchToBuffer(video_url),
+      fetchToBuffer(cover_image_url),
+    ])
+    await Promise.all([writeFile(inVideoPath, vBuf), writeFile(coverPath, cBuf)])
+
+    // Probe source for dimensions so the cover segment matches and the
+    // concat filter doesn't have to upscale/downscale on the join.
+    // probeVideo returns { width, height, fps, has_audio, ... }.
+    const probe = await probeVideo(inVideoPath)
+    const W = probe.width || 1080
+    const H = probe.height || 1920
+    const FPS = probe.fps && probe.fps > 0 ? Math.min(60, Math.round(probe.fps)) : 30
+    const hasAudio = !!probe.has_audio
+
+    // Build the filter graph. The cover image gets looped to `dur`
+    // seconds, scaled to the source's WxH with cover-fit + center-crop
+    // so a 1:1 or 4:5 template fills a 9:16 source cleanly. Source
+    // video is normalized to the same pixel format/SAR so concat
+    // doesn't reject the join. Audio: if source has audio, we pad
+    // `dur` seconds of silence at the front; if not, the whole
+    // output is silent.
+    const filterParts = [
+      `[0:v]loop=loop=-1:size=1,scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1,fps=${FPS},format=yuv420p,trim=duration=${dur},setpts=PTS-STARTPTS[cv]`,
+      `[1:v]scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${FPS},format=yuv420p[sv]`,
+    ]
+    let mapVideo, mapAudio
+    if (hasAudio) {
+      // Pad source's audio with `dur` seconds of leading silence so
+      // the audio timeline matches the video timeline post-concat.
+      filterParts.push(`[2:a]atrim=duration=${dur},asetpts=PTS-STARTPTS[ca]`)
+      filterParts.push(`[cv][ca][sv][1:a]concat=n=2:v=1:a=1[outv][outa]`)
+      mapVideo = '[outv]'
+      mapAudio = '[outa]'
+    } else {
+      filterParts.push(`[cv][sv]concat=n=2:v=1:a=0[outv]`)
+      mapVideo = '[outv]'
+      mapAudio = null
+    }
+
+    const args = [
+      '-y',
+      '-loop', '1', '-t', String(dur), '-i', coverPath,
+      '-i', inVideoPath,
+    ]
+    if (hasAudio) {
+      // anullsrc generates silence that we trim and prepend to the
+      // source audio via atrim/asetpts above.
+      args.push('-f', 'lavfi', '-t', String(dur + 0.5), '-i', `anullsrc=channel_layout=stereo:sample_rate=44100`)
+    }
+    args.push(
+      '-filter_complex', filterParts.join(';'),
+      '-map', mapVideo,
+    )
+    if (mapAudio) args.push('-map', mapAudio)
+    args.push(
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21',
+      '-pix_fmt', 'yuv420p',
+    )
+    if (hasAudio) args.push('-c:a', 'aac', '-b:a', '128k')
+    args.push('-movflags', '+faststart', outPath)
+
+    await runFFmpeg(args, 5 * 60_000)  // 5min ceiling — generous for big sources
+
+    const outBuf = await readFile(outPath)
+    const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
+    const path = `${profile_id}/spaces/cover-intro/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`
+    const { error: upErr } = await supabase.storage.from('landing-media').upload(path, outBuf, {
+      contentType: 'video/mp4', upsert: false,
+    })
+    if (upErr) throw new Error(`Upload failed: ${upErr.message}`)
+    const { data: pub } = supabase.storage.from('landing-media').getPublicUrl(path)
+    return { video_url: pub.publicUrl, bytes: outBuf.byteLength, duration_secs: dur }
+  } finally {
+    if (workdir) await rm(workdir, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
+// Async submit — same pattern as polish-async. Returns job_id; caller
+// polls GET /jobs/:id until status=done.
+app.post('/jobs/prepend-cover-async', requireSecret, async (req, res) => {
+  const body = req.body || {}
+  if (!body.profile_id || !body.video_url || !body.cover_image_url) {
+    return res.status(400).json({ error: 'profile_id + video_url + cover_image_url required' })
+  }
+  const jobId = newJobId()
+  jobs.set(jobId, { status: 'queued', queued_at: new Date().toISOString() })
+  ;(async () => {
+    jobStart()
+    const job = jobs.get(jobId)
+    job.status = 'running'
+    job.started_at = new Date().toISOString()
+    try {
+      const result = await prependCoverCore(body)
+      job.status = 'done'
+      job.result = result
+      job.finished_at = new Date().toISOString()
+    } catch (err) {
+      job.status = 'failed'
+      job.error = String(err?.message || err)
+      job.finished_at = new Date().toISOString()
+      console.error(`prepend-cover job ${jobId} failed:`, err?.stack || err)
+    } finally {
+      jobEnd()
+      setTimeout(() => jobs.delete(jobId), 10 * 60 * 1000)
+    }
+  })()
+  return res.status(202).json({ job_id: jobId, status: 'queued' })
+})
+
 // ── Extract audio for transcription ──────────────────────────────────────
 // Body: { profile_id, video_url }
 // Returns: { audio_url, bytes, duration_secs? }
