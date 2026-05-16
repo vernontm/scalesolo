@@ -498,7 +498,7 @@ function CoverImageSection({ item, onUpdate }) {
             className="input"
             value={editInstructions}
             onChange={(e) => setEditInstructions(e.target.value)}
-            placeholder='Optional edits for this render (e.g. "make the headline bigger" or "swap the orange for green"). Empty = just swap the title to this post\'s title.'
+            placeholder={`Optional edits for this render (e.g. "make the headline bigger" or "swap the orange for green"). Empty = just swap the title to this post's title.`}
             rows={2}
             style={{ resize: 'vertical', fontFamily: 'inherit', fontSize: 12 }}
           />
