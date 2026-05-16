@@ -840,6 +840,10 @@ export default function BulkUploadView({ profileId, token, onChange }) {
       // a cover. We never block the autopilot pipeline on cover gen.
       let coversGenerated = 0
       let coversFailed = 0
+      // IDs whose cover landed in step 4. The embed step (step 4.5) only
+      // runs for these — there's nothing to embed if the cover step
+      // skipped or failed for a row.
+      const coveredIds = []
       if (coverEnabled && hasCoverTemplate && schedulableIds.length) {
         setAutoStage('covers')
         // Process serially. Each cover poll is 30-60s and consumes
@@ -897,9 +901,49 @@ export default function BulkUploadView({ profileId, token, onChange }) {
               continue
             }
             coversGenerated += 1
+            coveredIds.push(id)
           } catch (e) {
             coversFailed += 1
             console.warn(`[bulk cover] ${id} threw:`, e?.message)
+          }
+        }
+      }
+
+      // ── Embed cover as 1s intro step ─────────────────────────────────
+      // Runs AFTER covers land and BEFORE schedule, so the cover-
+      // embedded media_url_with_cover is on the row by the time
+      // auto-schedule submits to Upload-Post. ffmpeg work on the Fly
+      // worker — no AI tokens, ~10-30s per video. Failures degrade
+      // gracefully: the row still ships (raw video + cover_image_url
+      // for IG), only TikTok / YT / FB will see the raw first frame.
+      let embedsBuilt = 0
+      let embedsFailed = 0
+      if (coveredIds.length) {
+        setAutoStage('embed')
+        for (const id of coveredIds) {
+          try {
+            const r = await fetch('/api/videos/prepend-cover', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ script_id: id }),
+            })
+            const body = await r.json().catch(() => ({}))
+            // /api/videos/prepend-cover already long-polls the worker
+            // up to 250s and returns 200 with media_url_with_cover on
+            // success, or 202 with job_id if the job ran past the
+            // gateway timeout. Both are fine for our purposes — the
+            // 202 case means the worker is still working and will
+            // PATCH the row when done, so the next submission picks
+            // it up. We only count it as failed on actual 4xx/5xx.
+            if (!r.ok && r.status !== 202) {
+              embedsFailed += 1
+              console.warn(`[bulk embed] ${id} failed:`, body?.error)
+              continue
+            }
+            embedsBuilt += 1
+          } catch (e) {
+            embedsFailed += 1
+            console.warn(`[bulk embed] ${id} threw:`, e?.message)
           }
         }
       }
@@ -930,6 +974,12 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           ? `${coversGenerated} covers (${coversFailed} failed, posts still ship)`
           : `${coversGenerated} covers`
         parts.push(coverLine)
+        if (coveredIds.length) {
+          const embedLine = embedsFailed
+            ? `${embedsBuilt} cover-intros embedded (${embedsFailed} failed, posts still ship)`
+            : `${embedsBuilt} cover-intros embedded`
+          parts.push(embedLine)
+        }
       }
       parts.push(`${scheduled} scheduled`)
       if (skipped)   parts.push(`${skipped} skipped (no open slots)`)
@@ -1399,6 +1449,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           <strong style={{ color: 'var(--text)' }}>Autopilot:</strong>
           {autoStage === 'captions' && 'writing captions, hashtags & first comments…'}
           {autoStage === 'covers' && 'generating Instagram covers…'}
+          {autoStage === 'embed' && 'embedding covers as intro card on each video (Fly worker, ffmpeg)…'}
           {autoStage === 'schedule' && 'slotting posts into your schedule…'}
         </div>
       )}
