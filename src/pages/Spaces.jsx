@@ -2027,18 +2027,47 @@ function SpaceBuilder({ space, onSave, onClose }) {
       const hasRealPropChange = Object.keys(patch).some((k) =>
         k !== '__name' && !k.startsWith('_ctx') && !k.startsWith('edited_')
       )
+      // Track the affected node's type so we can mirror video_polish
+      // patches into profiles.polish_template (the bulk-upload Polish
+      // settings modal reads the same column). One source of truth so
+      // edits on either surface keep both in sync.
+      let touchedVideoPolishProps = null
       setNodes((arr) => arr.map((n) => {
         if (n.id !== id) return n
         if (Object.prototype.hasOwnProperty.call(patch, '__name')) {
           const { __name, ...rest } = patch
           const nextData = { ...n.data, name: __name, props: { ...(n.data?.props || {}), ...rest } }
           if (hasRealPropChange) { nextData.status = 'idle'; nextData.output = null; nextData.error = null }
+          if (n.data?.type === 'video_polish' && Object.keys(rest).length) touchedVideoPolishProps = rest
           return { ...n, data: nextData }
         }
         const nextData = { ...n.data, props: { ...(n.data?.props || {}), ...patch } }
         if (hasRealPropChange) { nextData.status = 'idle'; nextData.output = null; nextData.error = null }
+        if (n.data?.type === 'video_polish') {
+          // Drop transient/internal keys before persisting to the
+          // brand template — _ctx* and edited_* shouldn't pollute it.
+          const propsToMirror = Object.fromEntries(
+            Object.entries(patch).filter(([k]) => !k.startsWith('_ctx') && !k.startsWith('edited_') && k !== '__name')
+          )
+          if (Object.keys(propsToMirror).length) touchedVideoPolishProps = propsToMirror
+        }
         return { ...n, data: nextData }
       }))
+      // Mirror to profiles.polish_template — fire-and-forget so the UI
+      // stays snappy. Failure surfaces via console (not a toast, because
+      // the canvas patch already succeeded locally and we don't want to
+      // confuse the user about what saved).
+      if (touchedVideoPolishProps && selectedProfileId && session?.access_token) {
+        fetch(`/api/profiles?id=${encodeURIComponent(selectedProfileId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({
+            // Server-side jsonb merge: send only the changed keys, the
+            // existing template stays intact for everything else.
+            polish_template: { __merge: true, ...touchedVideoPolishProps },
+          }),
+        }).catch((e) => console.warn('polish_template canvas-sync failed:', e?.message))
+      }
     }
     // Replace data.output (used by hover-action delete buttons on MediaItem).
     window.__spacePatchOutput = (id, output) => {
@@ -2143,13 +2172,24 @@ function SpaceBuilder({ space, onSave, onClose }) {
     if (!def) return
     pushHistory()
     const id = `n_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
+    // Seed video_polish nodes from the brand's saved polish template
+    // (shared with the bulk-upload Polish settings modal). Falls
+    // through to def.initialProps for any keys not in the template.
+    let seededProps = { ...(def.initialProps || {}) }
+    if (type === 'video_polish') {
+      const activeProfile = (profiles || []).find((p) => p.id === selectedProfileId)
+      const tpl = activeProfile?.polish_template
+      if (tpl && typeof tpl === 'object' && Object.keys(tpl).length) {
+        seededProps = { ...seededProps, ...tpl }
+      }
+    }
     setNodes((arr) => [
       ...arr,
       {
         id,
         type: 'space',
         position: position || { x: 120 + arr.length * 40, y: 80 + arr.length * 60 },
-        data: { type, props: { ...(def.initialProps || {}) }, status: 'idle', output: null, error: null },
+        data: { type, props: seededProps, status: 'idle', output: null, error: null },
       },
     ])
 

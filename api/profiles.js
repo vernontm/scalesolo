@@ -145,11 +145,35 @@ export default async function handler(req, res) {
         'uploadpost_user','uploadpost_platforms','autodm_reply_message',
         'carousel_templates','threads_style','enabled_pages',
         'agent_aggressiveness','is_active',
+        // Per-brand polish settings — shared between the Spaces video_polish
+        // node and the bulk-upload Polish toggle so both stay in sync.
+        'polish_template',
       ])
       const updates = {}
       for (const [k, v] of Object.entries(req.body || {})) {
         if (k === 'id') continue
         if (ALLOWED.has(k)) updates[k] = v
+      }
+      // polish_template merge mode — when the client sends
+      // { polish_template: { __merge: true, ...partial } } we merge the
+      // partial into the existing jsonb instead of overwriting it.
+      // Used by the Spaces canvas to mirror per-field video_polish
+      // edits without losing template keys it doesn't know about.
+      // Full-replace (no __merge sentinel) is still supported for
+      // the bulk-upload settings modal which sends the whole template.
+      if (updates.polish_template && typeof updates.polish_template === 'object' && updates.polish_template.__merge === true) {
+        try {
+          const existing = await supaFetch(`profiles?id=eq.${id}&select=polish_template`)
+          const cur = (existing?.[0]?.polish_template && typeof existing[0].polish_template === 'object')
+            ? existing[0].polish_template
+            : {}
+          const { __merge, ...partial } = updates.polish_template
+          updates.polish_template = { ...cur, ...partial }
+        } catch (e) {
+          console.warn('[profiles] polish_template merge fetch failed, falling back to full replace:', e.message)
+          const { __merge, ...partial } = updates.polish_template
+          updates.polish_template = partial
+        }
       }
       const brandBibleChanged = Object.prototype.hasOwnProperty.call(updates, 'brand_bible')
       const updated = await supaFetch(`profiles?id=eq.${id}`, {

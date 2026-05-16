@@ -22,11 +22,12 @@ import { createPortal } from 'react-dom'
 import {
   Upload, Loader2, Sparkles, CalendarClock, Send, Download, Trash2,
   Check, X, AlertCircle, Image as ImageIcon, Video as VideoIcon, ChevronDown, Zap,
-  RefreshCw, Type, Wand2,
+  RefreshCw, Type, Wand2, Settings as SettingsIcon,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase.js'
 import { toast, confirmDialog } from './Toast.jsx'
 import { PlatformBadge, PLATFORMS as PB_PLATFORMS } from './PlatformBadge.jsx'
+import { VideoPolishEditor } from '../lib/space-nodes.jsx'
 
 // ── styles ──────────────────────────────────────────────────────────────────
 const cellInput = {
@@ -381,6 +382,26 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     setAutoProcess(v)
     try { localStorage.setItem('scalesolo:bulk:autoProcess', v ? 'on' : 'off') } catch {}
   }
+
+  // Polish toggle — when ON, every uploaded video is polished (title
+  // overlay, watermark, captions, music) BEFORE captions/scheduling
+  // kick in. Sticky per browser like Autopilot. The polish settings
+  // template ITSELF lives on profiles.polish_template (per-brand, shared
+  // with the Spaces video_polish node so editing on either surface
+  // keeps both in sync).
+  const [polishEnabled, setPolishEnabled] = useState(() => {
+    try { return localStorage.getItem('scalesolo:bulk:polishEnabled') === 'on' } catch { return false }
+  })
+  const setPolishEnabledSticky = (v) => {
+    setPolishEnabled(v)
+    try { localStorage.setItem('scalesolo:bulk:polishEnabled', v ? 'on' : 'off') } catch {}
+  }
+  // The polish template object loaded from the brand profile. Null until
+  // the profile fetch lands. Modal opens on the gear click.
+  const [polishTemplate, setPolishTemplate] = useState(null)
+  const [polishSettingsOpen, setPolishSettingsOpen] = useState(false)
+  // Brand logo URL — used as the watermark image when polish runs.
+  const [brandLogoUrl, setBrandLogoUrl] = useState(null)
   // Tracks "we're running the auto-pipeline right now" so the toolbar
   // shows the right status banner instead of a silent spinner.
   const [autoStage, setAutoStage] = useState(null) // null | 'captions' | 'schedule'
@@ -409,10 +430,97 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         const p = (b?.profiles || []).find((x) => x.id === profileId)
         const arr = Array.isArray(p?.uploadpost_platforms) ? p.uploadpost_platforms : []
         setDefaultPlatforms(arr)
+        // Pull the brand's polish template alongside platforms. Empty
+        // object is fine — the video_polish node falls through to its
+        // initialProps defaults when fields are missing.
+        setPolishTemplate(p?.polish_template && typeof p.polish_template === 'object' ? p.polish_template : {})
+        setBrandLogoUrl(p?.logo_url || null)
       })
-      .catch(() => { if (!cancelled) setDefaultPlatforms([]) })
+      .catch(() => { if (!cancelled) { setDefaultPlatforms([]); setPolishTemplate({}); setBrandLogoUrl(null) } })
     return () => { cancelled = true }
   }, [profileId, token])
+
+  // Polish one uploaded video using the brand's saved polish template.
+  // Mirrors the per-prop spec the video_polish node sends to
+  // /api/videos/polish — but skipping all the upstream-wiring logic
+  // (multi-clip, voice_gen, etc.) since bulk upload is always
+  // single-video-per-file. Returns the polished URL on success, or
+  // the original URL on failure (with a console warn) so the row
+  // still lands on the calendar instead of being lost.
+  const polishOneVideo = async (videoUrl, jobId) => {
+    const tpl = polishTemplate || {}
+    // Build title_style from the loose props the template stores —
+    // same shape the canvas builds.
+    const titleStyle = {
+      font:        tpl.title_font || 'Montserrat ExtraBold',
+      color:       tpl.title_color || '#ffffff',
+      bg_color:    tpl.title_bg_color || '#e0467a',
+      size:        tpl.title_size || 72,
+      bg_padding:  tpl.title_bg_padding || 28,
+      y_pos:       tpl.title_y_pos || 15,
+      uppercase:   !!tpl.title_uppercase,
+      mode:        tpl.title_mode || 'auto',
+      topic:       tpl.title_topic || '',
+    }
+    // Captions ON by default if the template has a template id
+    // chosen. If not, we run polish WITHOUT captions instead of
+    // failing loudly — the bulk-upload flow shouldn't block on a
+    // missing caption template (different from the canvas where
+    // missing it is a hard error).
+    const captionsEnabled = !!(tpl.captions_enabled !== false && tpl.caption_template_id)
+    const body = {
+      profile_id: profileId,
+      video_url: videoUrl,
+      title: tpl.title_enabled !== false ? (tpl.title_mode === 'manual' ? (tpl.title || '') : '') : '',
+      title_style: titleStyle,
+      logo_url: brandLogoUrl || undefined,
+      watermark_image_url: brandLogoUrl || undefined,
+      watermark_position: tpl.watermark_position || 'br',
+      watermark_size_pct: typeof tpl.watermark_size_pct === 'number' ? tpl.watermark_size_pct : 25,
+      music_url: tpl.music_url || undefined,
+      music_volume: typeof tpl.music_volume === 'number' ? tpl.music_volume : 0.15,
+      music_fade_secs: typeof tpl.music_fade_secs === 'number' ? tpl.music_fade_secs : 1.0,
+      captions_enabled: captionsEnabled,
+      caption_template_id: captionsEnabled ? tpl.caption_template_id : undefined,
+    }
+    setUploads((u) => u.map((x) => x.id === jobId ? { ...x, polishing: true } : x))
+    try {
+      const r = await fetch('/api/videos/polish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      })
+      const resp = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(resp?.error || `Polish failed (${r.status})`)
+      if (!resp?.video_url) throw new Error('Polish returned no video_url')
+      return resp.video_url
+    } catch (e) {
+      console.warn(`[bulk polish] ${jobId} failed, falling back to original:`, e?.message)
+      toast({ kind: 'warn', message: `Couldn't polish that video — saved the original instead. (${e?.message || 'unknown'})` })
+      return videoUrl
+    } finally {
+      setUploads((u) => u.map((x) => x.id === jobId ? { ...x, polishing: false } : x))
+    }
+  }
+
+  // Patch a slice of the polish template and persist to the brand
+  // profile. Used both by the modal editor (every keystroke) and by
+  // future code paths that need to update it. Optimistic local update
+  // first so the modal stays responsive while the PATCH is in flight.
+  const patchPolishTemplate = async (patch) => {
+    const next = { ...(polishTemplate || {}), ...patch }
+    setPolishTemplate(next)
+    try {
+      await fetch(`/api/profiles?id=${encodeURIComponent(profileId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ polish_template: next }),
+      })
+    } catch (e) {
+      console.warn('polish_template save failed:', e?.message)
+      toast({ kind: 'warn', message: 'Polish settings didn\'t save. Check your connection and retry.' })
+    }
+  }
 
   // Esc closes the preview overlay.
   useEffect(() => {
@@ -474,7 +582,16 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     for (const job of queue) {
       try {
         setUploads((u) => u.map((x) => x.id === job.id ? { ...x, progress: 30 } : x))
-        const url = await uploadFileToBucket(job.file, profileId, job.kind)
+        let url = await uploadFileToBucket(job.file, profileId, job.kind)
+        setUploads((u) => u.map((x) => x.id === job.id ? { ...x, progress: 50 } : x))
+        // Polish step — only for videos, only when the toggle is on.
+        // Replaces the raw upload URL with the polished one so the
+        // row's media_urls reflects the final asset. Falls back to the
+        // raw URL on polish failure (logged + toast warn) instead of
+        // killing the whole upload.
+        if (polishEnabled && job.kind === 'video') {
+          url = await polishOneVideo(url, job.id)
+        }
         setUploads((u) => u.map((x) => x.id === job.id ? { ...x, progress: 70 } : x))
         // Pre-select the profile's preferred platforms, filtered to ones
         // that actually accept this media kind (TikTok/YouTube reject
@@ -948,6 +1065,41 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           />
           Autopilot
         </label>
+
+        {/* Polish video toggle — same look as Autopilot, with a gear that
+            opens the brand-level polish settings modal. The settings are
+            shared with the Spaces "Finish video" node (both surfaces
+            read / write profiles.polish_template). */}
+        <label
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            fontSize: 11.5, color: 'var(--text-soft)',
+            cursor: 'pointer', userSelect: 'none',
+            padding: '6px 10px', borderRadius: 8,
+            background: 'var(--surface-2)', border: '1px solid var(--border)',
+          }}
+          title="When on, each uploaded video is polished (title, logo, captions, music) before captions + scheduling"
+        >
+          <input
+            type="checkbox"
+            checked={polishEnabled}
+            onChange={(e) => setPolishEnabledSticky(e.target.checked)}
+            style={{ accentColor: '#0ea5e9' }}
+          />
+          Polish video
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setPolishSettingsOpen(true) }}
+            title="Edit polish settings (shared with your Spaces canvas)"
+            style={{
+              marginLeft: 2, padding: 2, borderRadius: 4,
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              color: 'var(--muted)', display: 'inline-flex', alignItems: 'center',
+            }}
+            aria-label="Open polish settings"
+          ><SettingsIcon size={12} /></button>
+        </label>
         <button
           className="btn-secondary"
           onClick={(e) => { e.stopPropagation(); fileRef.current?.click() }}
@@ -993,12 +1145,18 @@ export default function BulkUploadView({ profileId, token, onChange }) {
             }}>
               {u.error ? <AlertCircle size={14} style={{ color: 'var(--red)' }} />
                 : u.progress >= 100 ? <Check size={14} style={{ color: '#2ecc71' }} />
+                : u.polishing ? <Sparkles size={14} className="spin" style={{ color: '#0ea5e9' }} />
                 : <Loader2 size={14} className="spin" />}
-              <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.name}</div>
+              <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {u.name}
+                {u.polishing && (
+                  <span style={{ marginLeft: 8, fontSize: 10.5, color: '#0ea5e9', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }}>polishing…</span>
+                )}
+              </div>
               {u.error
                 ? <span style={{ color: 'var(--red)' }}>{u.error}</span>
                 : <div style={{ width: 80, height: 6, background: 'var(--surface)', borderRadius: 999, overflow: 'hidden' }}>
-                    <div style={{ width: `${u.progress}%`, height: '100%', background: '#f59e0b', transition: 'width 0.2s' }} />
+                    <div style={{ width: `${u.progress}%`, height: '100%', background: u.polishing ? '#0ea5e9' : '#f59e0b', transition: 'width 0.2s' }} />
                   </div>
               }
             </div>
@@ -1483,6 +1641,47 @@ export default function BulkUploadView({ profileId, token, onChange }) {
             />
           )}
         </div>
+      )}
+
+      {/* Polish settings modal — mounts the SAME VideoPolishEditor the
+          Spaces canvas uses. Reads/writes profiles.polish_template so
+          edits on either surface immediately persist for both. */}
+      {polishSettingsOpen && createPortal(
+        <div
+          className="modal-overlay"
+          onClick={() => setPolishSettingsOpen(false)}
+        >
+          <div
+            className="modal-card modal-card-lg"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxHeight: '90vh', overflow: 'auto' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
+              <Sparkles size={18} style={{ color: '#0ea5e9', marginRight: 10 }} />
+              <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, flex: 1 }}>
+                Polish settings
+              </h3>
+              <button
+                aria-label="Close"
+                onClick={() => setPolishSettingsOpen(false)}
+                style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6, borderRadius: 6 }}
+              ><X size={20} /></button>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 14, lineHeight: 1.45 }}>
+              These settings save to your brand profile and are shared with the <strong>Finish video</strong> node on your Spaces canvas. Edit in either place; both stay in sync.
+            </div>
+            {polishTemplate !== null && (
+              <VideoPolishEditor
+                nodeId="__bulk_polish__"
+                data={{ props: polishTemplate, output: null, _ctxProfileId: profileId, _ctxToken: token }}
+                onPatch={patchPolishTemplate}
+                allNodes={[]}
+                allEdges={[]}
+              />
+            )}
+          </div>
+        </div>,
+        document.body,
       )}
     </div>
   )
