@@ -56,6 +56,26 @@ const headerCell = {
 // Local alias so existing references (kinds, label, etc) keep working.
 const ROW_PLATFORMS = PB_PLATFORMS
 
+// Safely turn an error of any shape into a human string. Server error
+// payloads sometimes come back as nested objects (`{ error: { code, msg } }`)
+// and template-literal interpolation on a plain object renders as the
+// notorious "[object Object]". This helper takes whatever the response
+// gave us and produces something readable, falling back to JSON when
+// it can't find a string.
+function fmtErr(e) {
+  if (e == null) return ''
+  if (typeof e === 'string') return e
+  if (typeof e === 'number' || typeof e === 'boolean') return String(e)
+  if (typeof e === 'object') {
+    if (typeof e.message === 'string') return e.message
+    if (typeof e.error === 'string') return e.error
+    if (typeof e.detail === 'string') return e.detail
+    if (typeof e.code === 'string')   return e.code
+    try { return JSON.stringify(e).slice(0, 280) } catch { return '(unreadable error)' }
+  }
+  return String(e)
+}
+
 function PlatformsCell({ value, mediaType, onSave }) {
   const cur = Array.isArray(value) ? value : []
   const [open, setOpen] = useState(false)
@@ -523,7 +543,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
       return resp.video_url
     } catch (e) {
       console.warn(`[bulk polish] ${jobId} failed, falling back to original:`, e?.message)
-      toast({ kind: 'warn', message: `Couldn't polish that video — saved the original instead. (${e?.message || 'unknown'})` })
+      toast({ kind: 'warn', message: `Couldn't polish that video — saved the original instead. (${fmtErr(e) || 'unknown'})` })
       return videoUrl
     } finally {
       setUploads((u) => u.map((x) => x.id === jobId ? { ...x, polishing: false } : x))
@@ -683,7 +703,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         if (c.status === 402) {
           toast({ kind: 'error', message: 'Auto-caption skipped: not enough AI credits. Add credits, then click Generate Captions.' })
         } else {
-          toast({ kind: 'error', message: `Auto-caption failed: ${cb?.error || c.status}. Rows are saved as drafts.` })
+          toast({ kind: 'error', message: `Auto-caption failed: ${fmtErr(cb?.error) || c.status}. Rows are saved as drafts.` })
         }
         return
       }
@@ -781,7 +801,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         })
         const sb = await s.json().catch(() => ({}))
         if (!s.ok) {
-          toast({ kind: 'error', message: `Auto-schedule failed: ${sb?.error || s.status}. Rows are caption-ready; click Auto Schedule to retry.` })
+          toast({ kind: 'error', message: `Auto-schedule failed: ${fmtErr(sb?.error) || s.status}. Rows are caption-ready; click Auto Schedule to retry.` })
           return
         }
         scheduled = sb.scheduled ?? 0
@@ -805,7 +825,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         message: `Auto-processed ${ids.length}: ${parts.join(', ')}.`,
       })
     } catch (e) {
-      toast({ kind: 'error', message: `Auto-process failed: ${e.message}` })
+      toast({ kind: 'error', message: `Auto-process failed: ${fmtErr(e)}` })
     } finally {
       setAutoStage(null)
       refresh()

@@ -12,7 +12,7 @@
 //     Submit each script to upload-post.com via the existing helper.
 //     Returns per-script success/failure summary.
 
-import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { setCors, requireUser, supaFetch, assertProfileAccess, fmtErr } from '../_lib/supabase.js'
 import { findNextOpenSlot } from '../_lib/scheduling.js'
 import { message } from '../_lib/anthropic.js'
 import { loadBrandContext, renderBrandContextMarkdown } from '../_lib/brand-context.js'
@@ -40,9 +40,13 @@ export default async function handler(req, res) {
   const action = String(req.query.action || '')
   const { profile_id, script_ids } = req.body || {}
   if (!profile_id) return res.status(400).json({ error: 'profile_id required' })
-  await assertProfileAccess(auth.user.id, profile_id)
 
   try {
+    // assertProfileAccess was being called OUTSIDE the try/catch, so a
+    // throw there (e.g. profile not in the user's allowed set, malformed
+    // uuid) bypassed the dispatcher's catch and surfaced as a generic
+    // 500 with no useful payload. Moved inside.
+    await assertProfileAccess(auth.user.id, profile_id)
     if (action === 'generate-captions') return generateCaptions({ res, profile_id, script_ids, user_id: auth.user.id })
     if (action === 'auto-schedule')     return autoSchedule({ res, profile_id, script_ids, user_id: auth.user.id })
     if (action === 'publish-selected')  return publishSelected({ req, res, profile_id, script_ids, user_id: auth.user.id })
@@ -50,7 +54,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: `Unknown action: ${action}` })
   } catch (err) {
     console.error('bulk-actions error:', err?.stack || err)
-    return res.status(err.status || 500).json({ error: String(err?.message || err) })
+    return res.status(err.status || 500).json({ error: fmtErr(err) })
   }
 }
 

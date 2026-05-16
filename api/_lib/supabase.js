@@ -221,6 +221,25 @@ export function isUuid(s) {
   return typeof s === 'string' && UUID_RE.test(s)
 }
 
+// Turn whatever was thrown into a readable string. `String(err)` on a
+// non-Error object returns "[object Object]" which has been leaking
+// into client toasts as "[object Object][object Object]" when nested.
+// Order of preference: Error.message → err.error (nested) → err.code →
+// JSON.stringify. Always returns a non-empty string.
+export function fmtErr(err) {
+  if (err == null) return 'unknown error'
+  if (typeof err === 'string') return err
+  if (typeof err === 'number' || typeof err === 'boolean') return String(err)
+  if (typeof err === 'object') {
+    if (typeof err.message === 'string' && err.message.trim()) return err.message
+    if (typeof err.error === 'string' && err.error.trim()) return err.error
+    if (typeof err.detail === 'string' && err.detail.trim()) return err.detail
+    if (typeof err.code === 'string' && err.code.trim()) return err.code
+    try { return JSON.stringify(err).slice(0, 500) } catch { return '(unreadable error)' }
+  }
+  return String(err)
+}
+
 export async function assertProfileAccess(userId, profileId) {
   // Validate both ids — auth.user.id is always a UUID; profileId comes
   // from req.body / req.query and could be anything if a caller forgot

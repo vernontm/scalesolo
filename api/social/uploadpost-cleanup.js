@@ -17,7 +17,7 @@
 //     prompted this endpoint). Matched jobs are NEVER cancelled — those
 //     are real, currently-queued posts.
 
-import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { setCors, requireUser, supaFetch, assertProfileAccess, fmtErr } from '../_lib/supabase.js'
 import {
   resolveUploadpostUser,
   uploadpostListScheduled,
@@ -206,6 +206,6 @@ export default async function handler(req, res) {
     })
   } catch (err) {
     console.error('uploadpost-cleanup error:', err?.stack || err)
-    return res.status(err.status || 500).json({ error: String(err?.message || err) })
+    return res.status(err.status || 500).json({ error: fmtErr(err) })
   }
 }
