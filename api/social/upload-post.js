@@ -84,6 +84,11 @@ export default async function handler(req, res) {
       // row and use the first variant as the canonical description.
       is_text_post,
       per_platform_text,
+      // Optional per-post Instagram cover (generated via /api/content/
+      // generate-cover from the brand's cover_template). When set + IG
+      // is in platforms, we pass it as instagram_cover_url so the Reel
+      // posts with a custom thumbnail. Other platforms ignore it.
+      cover_image_url,
     } = req.body || {}
 
     if (!profile_id || !Array.isArray(platforms) || !platforms.length) {
@@ -179,6 +184,10 @@ export default async function handler(req, res) {
     }
     if (platforms.includes('instagram')) {
       fd.append('instagram_title', trim(fullCaption || cleanTitle, 2200))
+      // Custom Reel cover, if the user generated one for this post on
+      // the Schedule page. Upload-Post accepts an absolute URL via
+      // `instagram_cover_url` and fetches the bytes itself.
+      if (cover_image_url) fd.append('instagram_cover_url', String(cover_image_url))
     }
     if (platforms.includes('facebook')) {
       // FB's "title" is post caption; "description" is the long body.

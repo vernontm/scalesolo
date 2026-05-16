@@ -502,6 +502,12 @@ function IdentitySection({ form, set }) {
 }
 
 function BrandSection({ form, set, profile }) {
+  // Cover template lives on profiles.cover_template ({ image_url, base_prompt }).
+  // Both halves of the helper update via the same `set` mechanism by
+  // merging into a fresh object — the API allows the full nested
+  // jsonb so we never partial-patch from this side.
+  const cover = (form.cover_template && typeof form.cover_template === 'object') ? form.cover_template : {}
+  const setCover = (patch) => set('cover_template', { ...cover, ...patch })
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       <Field label="Brand logo">
@@ -525,6 +531,107 @@ function BrandSection({ form, set, profile }) {
           </div>
         </Field>
       </div>
+
+      {/* Cover image template — used on the Schedule page to auto-generate
+          per-post Instagram covers by swapping the title text on this
+          template via gpt-image-2-image-to-image. */}
+      <div style={{
+        padding: 14, borderRadius: 12,
+        background: 'var(--surface-2)', border: '1px solid var(--border)',
+        display: 'flex', flexDirection: 'column', gap: 12,
+      }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13.5, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Sparkles size={14} style={{ color: '#0ea5e9' }} /> Instagram cover template
+        </div>
+        <div style={{ fontSize: 11.5, color: 'var(--muted)', lineHeight: 1.5 }}>
+          On the Schedule page, posts get a per-title cover generated from this template by swapping the title text. Sets the Instagram thumbnail at upload time. ~4,000 ai tokens per generation.
+        </div>
+        <Field label="Template image">
+          <CoverTemplateUpload
+            value={cover.image_url || ''}
+            profileId={profile?.id}
+            onChange={(url) => setCover({ image_url: url || undefined })}
+          />
+        </Field>
+        <Field label="Standing edit instruction (optional)">
+          <textarea
+            className="input"
+            value={cover.base_prompt || ''}
+            onChange={(e) => setCover({ base_prompt: e.target.value })}
+            placeholder='Defaults to: "Keep the layout, fonts, colors, and branding exactly the same. Only change the title text."'
+            rows={3}
+            style={{ resize: 'vertical', fontFamily: 'inherit' }}
+          />
+        </Field>
+      </div>
+    </div>
+  )
+}
+
+// Reuses the LogoUpload upload pattern but with a wide preview tile
+// instead of a 64px square — cover templates are full-frame images.
+function CoverTemplateUpload({ value, profileId, onChange }) {
+  const inpRef = useRef(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+
+  async function onPick(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setBusy(true); setErr(null)
+    try {
+      const { blob, ext, mime } = await rasterizeIfSvg(file)
+      const path = `${profileId || 'shared'}/cover-template/${Date.now()}.${ext}`
+      const { error } = await supabase.storage.from('landing-media').upload(path, blob, {
+        contentType: mime, upsert: false,
+      })
+      if (error) throw new Error(error.message)
+      const { data } = supabase.storage.from('landing-media').getPublicUrl(path)
+      onChange(data.publicUrl)
+    } catch (e) {
+      setErr(e.message)
+    } finally {
+      setBusy(false)
+      if (inpRef.current) inpRef.current.value = ''
+    }
+  }
+  return (
+    <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+      <div style={{
+        width: 144, height: 180,
+        borderRadius: 10,
+        background: 'var(--surface)',
+        border: '1px dashed var(--border)',
+        overflow: 'hidden', display: 'grid', placeItems: 'center',
+      }}>
+        {value
+          ? <img src={value} alt="cover template" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          : <span style={{ fontSize: 11, color: 'var(--muted)' }}>none</span>}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <button
+          type="button"
+          className="btn-ghost"
+          onClick={() => inpRef.current?.click()}
+          disabled={busy}
+          style={{ fontSize: 12 }}
+        >
+          {busy ? <span className="spinner" /> : <Upload size={12} />} {value ? 'Replace template' : 'Upload template'}
+        </button>
+        {value && (
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={() => onChange('')}
+            style={{ fontSize: 11.5, color: 'var(--muted)' }}
+          >Remove</button>
+        )}
+        {err && <div style={{ fontSize: 11, color: 'var(--red)' }}>{err}</div>}
+        <div style={{ fontSize: 10.5, color: 'var(--muted)', lineHeight: 1.4, maxWidth: 260 }}>
+          PNG or JPG. 4:5 portrait works best for IG Reels covers. The model swaps the title text and keeps everything else.
+        </div>
+      </div>
+      <input ref={inpRef} type="file" accept="image/*" onChange={onPick} style={{ display: 'none' }} />
     </div>
   )
 }

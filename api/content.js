@@ -73,6 +73,8 @@ async function rescheduleUploadPostJob({ row, newScheduledIso, authToken, req })
     hashtags: row.hashtags || undefined,
     script: row.full_script || undefined,
     first_comment: row.first_comment || undefined,
+    // Custom Instagram Reel cover when one is set on the row.
+    cover_image_url: row.cover_image_url || undefined,
     scheduling_mode: 'fixed',
     scheduled_iso: newScheduledIso,
     // Force the upload-post endpoint to PATCH this row, not insert a
@@ -117,6 +119,10 @@ const ALLOWED = new Set([
   // Per-platform text variants for text-only posts (text_post_gen
   // output). Editable inline on the Schedule page.
   'per_platform_text',
+  // Generated Instagram cover image (gpt-image-2-image-to-image output).
+  // Set by /api/content/generate-cover; passed to Upload-Post as
+  // instagram_cover_url on submit.
+  'cover_image_url',
 ])
 
 function pickAllowed(obj) {

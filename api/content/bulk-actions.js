@@ -464,7 +464,7 @@ async function autoSchedule({ res, profile_id, script_ids, user_id }) {
 
     const rowIds = assignments.map((a) => a.id)
     const fullRows = await supaFetch(
-      `content_scripts?id=in.(${rowIds.map((id) => encodeURIComponent(id)).join(',')})&select=id,media_urls,media_type,platforms,caption,hashtags,full_script,title,first_comment`
+      `content_scripts?id=in.(${rowIds.map((id) => encodeURIComponent(id)).join(',')})&select=id,media_urls,media_type,platforms,caption,hashtags,full_script,title,first_comment,cover_image_url`
     ).catch(() => [])
     const rowById = new Map((fullRows || []).map((r) => [r.id, r]))
 
@@ -506,7 +506,11 @@ async function autoSchedule({ res, profile_id, script_ids, user_id }) {
       if (platforms.includes('youtube')) form.append('youtube_title', cleanTitle.slice(0, 100))
       // TikTok's caption lives in tiktok_title (it ignores `description`).
       if (hasTikTok && desc) form.append('tiktok_title', desc.slice(0, 2200))
-      if (platforms.includes('instagram') && desc) form.append('instagram_title', desc.slice(0, 2200))
+      if (platforms.includes('instagram')) {
+        if (desc) form.append('instagram_title', desc.slice(0, 2200))
+        // Per-post Instagram Reel cover, set on the Schedule page.
+        if (row.cover_image_url) form.append('instagram_cover_url', String(row.cover_image_url))
+      }
       if (platforms.includes('facebook')) {
         const fbSrc = (desc || cleanTitle).replace(/\s*\n+\s*/g, ' ').trim()
         form.append('facebook_title', fbSrc.slice(0, 240))
@@ -694,7 +698,11 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
         // chars) as the actual caption. Send the full caption there, not
         // just the title.
         if (hasTikTok && desc) form.append('tiktok_title', desc.slice(0, 2200))
-        if (platforms.includes('instagram') && desc) form.append('instagram_title', desc.slice(0, 2200))
+        if (platforms.includes('instagram')) {
+          if (desc) form.append('instagram_title', desc.slice(0, 2200))
+          // Generated Instagram Reel cover (Schedule page → Generate cover).
+          if (r.cover_image_url) form.append('instagram_cover_url', String(r.cover_image_url))
+        }
         if (platforms.includes('facebook')) {
           const fbSrc = (desc || cleanTitle).replace(/\s*\n+\s*/g, ' ').trim()
           form.append('facebook_title', fbSrc.slice(0, 240))
@@ -899,6 +907,8 @@ async function resyncUploadPost({ req, res, profile_id, script_ids }) {
       hashtags: row.hashtags || undefined,
       script: row.full_script || undefined,
       first_comment: row.first_comment || undefined,
+      // Forward custom Instagram cover when set on the row.
+      cover_image_url: row.cover_image_url || undefined,
       scheduling_mode: 'fixed',
       scheduled_iso: row.scheduled_datetime,
       // Force /api/social/upload-post to PATCH this specific row instead

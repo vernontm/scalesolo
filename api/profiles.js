@@ -148,6 +148,8 @@ export default async function handler(req, res) {
         // Per-brand polish settings — shared between the Spaces video_polish
         // node and the bulk-upload Polish toggle so both stay in sync.
         'polish_template',
+        // Per-brand Instagram cover template. Shape: { image_url, base_prompt }.
+        'cover_template',
       ])
       const updates = {}
       for (const [k, v] of Object.entries(req.body || {})) {

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Sparkles, Library, Calendar, FileEdit, ClipboardCheck, X, Wand2,
   Check, Trash2, Edit3, Send, Eye, AlertCircle, Link2, Plus, ExternalLink,
+  Image as ImageIcon, RotateCcw, Loader2,
 } from 'lucide-react'
 import { PlatformBadge } from '../components/PlatformBadge.jsx'
 import BulkUploadView from '../components/BulkUploadView.jsx'
@@ -303,6 +304,8 @@ function ItemDetail({ item, onClose, onUpdate }) {
           </div>
         </div>
 
+        <CoverImageSection item={item} onUpdate={onUpdate} />
+
         {error && <div style={{ marginTop: 14, background: 'var(--red-soft)', color: 'var(--red)', padding: '10px 14px', borderRadius: 10, fontSize: 13 }}>{error}</div>}
         {success && (
           <div style={{
@@ -323,6 +326,230 @@ function ItemDetail({ item, onClose, onUpdate }) {
           <button className="btn-ghost" onClick={() => action('delete')} disabled={busy}>
             <Trash2 size={13} /> Delete
           </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Cover image section ───────────────────────────────────────────────────
+// Lets the user generate an Instagram cover for this post by feeding
+// the brand's saved cover template through gpt-image-2-image-to-image
+// with a "swap the title for X" prompt. Preview before commit, regenerate
+// with the same prompt, or add per-render edits ("make the headline 20%
+// bigger", "swap the orange for red", etc.) and regenerate. Each
+// generation burns ~4,000 ai tokens via withCreditReservation.
+function CoverImageSection({ item, onUpdate }) {
+  const { session } = useAuth()
+  // Current persisted cover on the row — what's saved + sent to Upload-Post.
+  const savedCover = item.cover_image_url || null
+  // Preview state — what's been generated this session but not yet
+  // committed. Distinguished from savedCover so the user can iterate
+  // freely; only "Use this cover" persists.
+  const [previewUrl, setPreviewUrl] = useState(null)
+  const [taskId, setTaskId] = useState(null)
+  const [status, setStatus] = useState('idle')  // idle | submitting | polling | done | failed
+  const [error, setError] = useState(null)
+  const [editInstructions, setEditInstructions] = useState('')
+  const [committing, setCommitting] = useState(false)
+  // Holds the polling timer so we can cancel cleanly on unmount /
+  // re-generate.
+  const pollRef = useRef(null)
+
+  // Stop polling when this drawer closes or the user fires a fresh
+  // generation (replaces the previous taskId).
+  useEffect(() => {
+    return () => { if (pollRef.current) clearTimeout(pollRef.current) }
+  }, [])
+
+  const start = async () => {
+    setError(null)
+    setStatus('submitting')
+    setPreviewUrl(null)
+    try {
+      const r = await fetch('/api/content/generate-cover?action=start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({
+          script_id: item.id,
+          edit_instructions: editInstructions.trim() || undefined,
+        }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(body?.error || 'Cover generation failed')
+      setTaskId(body.taskId)
+      setStatus('polling')
+      pollOnce(body.taskId)
+    } catch (e) {
+      setStatus('failed')
+      setError(e.message)
+    }
+  }
+
+  const pollOnce = (tid) => {
+    if (!tid) return
+    if (pollRef.current) clearTimeout(pollRef.current)
+    pollRef.current = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/images/status?taskId=${encodeURIComponent(tid)}`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        })
+        const body = await r.json().catch(() => ({}))
+        if (!r.ok) throw new Error(body?.error || `Status check failed (${r.status})`)
+        if (body.state === 'success' && Array.isArray(body.images) && body.images.length) {
+          const url = body.images[0]?.url || body.images[0]
+          setPreviewUrl(url)
+          setStatus('done')
+          return
+        }
+        if (body.state === 'failed') {
+          setError(body.error || 'Generation failed')
+          setStatus('failed')
+          return
+        }
+        // Still pending — keep polling.
+        pollOnce(tid)
+      } catch (e) {
+        setError(e.message)
+        setStatus('failed')
+      }
+    }, 4000)
+  }
+
+  const commit = async (url) => {
+    setCommitting(true)
+    setError(null)
+    try {
+      const r = await fetch('/api/content/generate-cover?action=commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ script_id: item.id, image_url: url }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(body?.error || 'Save failed')
+      setPreviewUrl(null)
+      setTaskId(null)
+      setStatus('idle')
+      onUpdate?.()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setCommitting(false)
+    }
+  }
+
+  const clearSaved = async () => {
+    setCommitting(true)
+    setError(null)
+    try {
+      const r = await fetch(`/api/content?id=${item.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ cover_image_url: null }),
+      })
+      if (!r.ok) {
+        const b = await r.json().catch(() => ({}))
+        throw new Error(b?.error || 'Clear failed')
+      }
+      onUpdate?.()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setCommitting(false)
+    }
+  }
+
+  const busy = status === 'submitting' || status === 'polling'
+  const showLabel = previewUrl ? 'Preview' : (savedCover ? 'Current cover' : 'No cover yet')
+
+  return (
+    <div style={{ marginTop: 18, padding: 14, background: 'var(--surface-2)', borderRadius: 10, border: '1px solid var(--border)' }}>
+      <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <ImageIcon size={11} /> Instagram cover
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: 14, alignItems: 'flex-start' }}>
+        {/* Preview tile */}
+        <div style={{
+          width: 160, aspectRatio: '4 / 5',
+          background: '#000', borderRadius: 8,
+          border: '1px solid var(--border)',
+          display: 'grid', placeItems: 'center', overflow: 'hidden',
+          position: 'relative',
+        }}>
+          {(previewUrl || savedCover) ? (
+            <img src={previewUrl || savedCover} alt="cover" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          ) : busy ? (
+            <Loader2 size={20} className="spin" style={{ color: 'var(--amber)' }} />
+          ) : (
+            <ImageIcon size={26} style={{ color: 'var(--muted)' }} />
+          )}
+          <div style={{
+            position: 'absolute', top: 6, left: 6,
+            fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 999,
+            background: 'rgba(0,0,0,0.6)', color: '#fff',
+            letterSpacing: '0.04em', textTransform: 'uppercase',
+          }}>{showLabel}</div>
+        </div>
+
+        {/* Controls */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <textarea
+            className="input"
+            value={editInstructions}
+            onChange={(e) => setEditInstructions(e.target.value)}
+            placeholder='Optional edits for this render (e.g. "make the headline bigger" or "swap the orange for green"). Empty = just swap the title to this post\'s title.'
+            rows={2}
+            style={{ resize: 'vertical', fontFamily: 'inherit', fontSize: 12 }}
+          />
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <button
+              className="btn-primary"
+              onClick={start}
+              disabled={busy || committing}
+              style={{ fontSize: 12, padding: '6px 12px' }}
+            >
+              {busy ? <Loader2 size={12} className="spin" /> : <Sparkles size={12} />}
+              {previewUrl || savedCover ? 'Regenerate' : 'Generate cover'}
+            </button>
+            {previewUrl && (
+              <button
+                className="btn-primary"
+                onClick={() => commit(previewUrl)}
+                disabled={committing}
+                style={{ fontSize: 12, padding: '6px 12px', background: 'linear-gradient(135deg, #2ecc71, #16a34a)' }}
+              >
+                {committing ? <Loader2 size={12} className="spin" /> : <Check size={12} />} Use this cover
+              </button>
+            )}
+            {previewUrl && (
+              <button
+                className="btn-ghost"
+                onClick={() => { setPreviewUrl(null); setStatus('idle') }}
+                disabled={committing}
+                style={{ fontSize: 12, padding: '6px 12px' }}
+              ><RotateCcw size={12} /> Discard</button>
+            )}
+            {savedCover && !previewUrl && (
+              <button
+                className="btn-ghost"
+                onClick={clearSaved}
+                disabled={committing}
+                style={{ fontSize: 12, padding: '6px 12px', color: 'var(--muted)' }}
+              ><Trash2 size={12} /> Remove cover</button>
+            )}
+          </div>
+          <div style={{ fontSize: 10.5, color: 'var(--muted)', lineHeight: 1.4 }}>
+            Uses your brand's saved cover template. ~4,000 ai tokens per generation. Cover only applies to Instagram on submit.
+          </div>
+          {status === 'polling' && (
+            <div style={{ fontSize: 11, color: 'var(--amber)' }}>Generating cover… typically 20–60 seconds.</div>
+          )}
+          {error && (
+            <div style={{ fontSize: 11.5, color: 'var(--red)', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <AlertCircle size={11} /> {error}
+            </div>
+          )}
         </div>
       </div>
     </div>
