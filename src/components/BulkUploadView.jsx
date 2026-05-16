@@ -76,6 +76,116 @@ function fmtErr(e) {
   return String(e)
 }
 
+// TYPE column icon — interactive handle for previewing the source media
+// straight from the table. The MEDIA column already shows a thumbnail
+// (the cover when one is set), and clicking it defaults the overlay to
+// the cover tab. This second handle is dedicated to the SOURCE video,
+// because covered videos can otherwise hide the playable file under
+// the "Source video" tab inside the overlay. Hover → mini popover
+// preview that auto-plays muted. Click → opens the full overlay
+// already focused on the video tab.
+function TypeCell({ row, kindBorder, isVideo, isText, onPreview, onSelectView }) {
+  const [hover, setHover] = useState(false)
+  const wrapRef = useRef(null)
+  const sourceVideo = isVideo && Array.isArray(row.media_urls) ? row.media_urls[0] : null
+  const sourceImage = !isVideo && !isText && Array.isArray(row.media_urls) ? row.media_urls[0] : null
+  const previewable = !!sourceVideo || !!sourceImage
+  const Icon = isVideo ? VideoIcon : isText ? Type : ImageIcon
+
+  // Anchor rect for the floating mini-preview. Recomputed on hover so
+  // the popover sits next to the cell regardless of table scroll.
+  const [rect, setRect] = useState(null)
+  useEffect(() => {
+    if (!hover || !wrapRef.current) { setRect(null); return }
+    setRect(wrapRef.current.getBoundingClientRect())
+  }, [hover])
+
+  const openVideoPreview = (e) => {
+    e.stopPropagation()
+    if (!previewable) return
+    // Tell the overlay to land on the video tab specifically, so users
+    // get straight to the playable source instead of the cover.
+    if (sourceVideo) onSelectView?.('video')
+    onPreview?.(sourceVideo ? 'video' : 'image')
+  }
+
+  return (
+    <span
+      ref={wrapRef}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onFocus={() => setHover(true)}
+      onBlur={() => setHover(false)}
+      style={{ display: 'inline-flex', position: 'relative' }}
+    >
+      <button
+        type="button"
+        onClick={openVideoPreview}
+        disabled={!previewable}
+        title={
+          isText ? 'Text post'
+          : !previewable ? 'No source media yet'
+          : sourceVideo ? 'Click to play the source video (hover to peek)'
+          : 'Click to view image'
+        }
+        aria-label={sourceVideo ? 'Preview source video' : 'Preview media'}
+        style={{
+          color: kindBorder,
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          padding: 4, borderRadius: 6,
+          background: previewable ? 'rgba(14,165,233,0.10)' : 'transparent',
+          border: previewable ? '1px solid rgba(14,165,233,0.32)' : '1px solid transparent',
+          cursor: previewable ? 'pointer' : 'default',
+        }}
+      >
+        <Icon size={16} />
+      </button>
+      {/* Floating mini preview — portaled so it can escape the table's
+          overflow/clip context. Position is computed from the cell's
+          bounding rect on hover. Auto-plays muted so the user sees
+          motion immediately without sound bleed. */}
+      {hover && previewable && rect && createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            top: Math.max(8, rect.top - 8),
+            left: Math.min(window.innerWidth - 220, rect.right + 10),
+            zIndex: 99,
+            width: 200,
+            background: '#000', borderRadius: 8,
+            border: '1px solid rgba(255,255,255,0.18)',
+            boxShadow: '0 12px 28px rgba(0,0,0,0.45)',
+            overflow: 'hidden',
+            pointerEvents: 'none',  // hover stays attached to the trigger, not the preview
+          }}
+        >
+          {sourceVideo ? (
+            <video
+              src={sourceVideo}
+              autoPlay muted loop playsInline preload="metadata"
+              style={{ width: '100%', aspectRatio: '9 / 16', objectFit: 'cover', display: 'block' }}
+            />
+          ) : (
+            <img
+              src={sourceImage}
+              alt={row.title || 'preview'}
+              style={{ width: '100%', aspectRatio: '1 / 1', objectFit: 'cover', display: 'block' }}
+            />
+          )}
+          <div style={{
+            position: 'absolute', bottom: 0, left: 0, right: 0,
+            fontSize: 9.5, fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase',
+            padding: '5px 8px',
+            background: 'linear-gradient(0deg, rgba(0,0,0,0.85), rgba(0,0,0,0))',
+            color: '#fff', textAlign: 'center',
+          }}>Source · click to play</div>
+        </div>,
+        document.body,
+      )}
+    </span>
+  )
+}
+
 function PlatformsCell({ value, mediaType, onSave }) {
   const cur = Array.isArray(value) ? value : []
   const [open, setOpen] = useState(false)
@@ -1680,12 +1790,21 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                       )}
                     </td>
                     <td style={{ padding: 6, verticalAlign: 'top', textAlign: 'center' }}>
-                      <span
-                        title={isVideo ? 'Video post' : isText ? 'Text post' : 'Image post'}
-                        style={{ color: kindBorder, display: 'inline-flex' }}
-                      >
-                        {isVideo ? <VideoIcon size={16} /> : isText ? <Type size={16} /> : <ImageIcon size={16} />}
-                      </span>
+                      <TypeCell
+                        row={r}
+                        kindBorder={kindBorder}
+                        isVideo={isVideo}
+                        isText={isText}
+                        onPreview={(viewMode) => setPreviewItem({
+                          url: viewMode === 'video' && Array.isArray(r.media_urls) ? r.media_urls[0] : (r.cover_image_url || r.media_urls?.[0]),
+                          type: viewMode === 'video' ? 'video' : (isVideo ? 'video' : 'image'),
+                          title: r.title,
+                          coverUrl: r.cover_image_url || null,
+                          videoUrl: isVideo && Array.isArray(r.media_urls) ? r.media_urls[0] : null,
+                        })}
+                        // Force preview to open on the requested tab.
+                        onSelectView={setPreviewView}
+                      />
                     </td>
                     <td style={{ padding: 4, verticalAlign: 'top' }}>
                       <EditableCell value={r.title} multiline placeholder="Title" onSave={(v) => patchScript(r.id, { title: v })} />
