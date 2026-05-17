@@ -35,26 +35,59 @@ async function fetchStatus(requestId) {
 // or top-level success/error markers. We're conservative: only flip to
 // 'posted' when at least one platform clearly succeeded; only 'failed'
 // when every platform clearly failed.
+// Classify Upload-Post's status response into our row status.
+//
+// Upload-Post's actual response shape (confirmed live via debug probe):
+//   {
+//     status: "completed" | "in_progress" | "failed",
+//     completed: <int>,
+//     total: <int>,
+//     results: [
+//       { platform, success: true|false, post_url, error_message, ... },
+//       ...
+//     ],
+//   }
+//
+// 'posted' when ANY platform succeeded; 'failed' when EVERY platform
+// failed; null (leave scheduled) when still in progress.
 function classify(body) {
   if (!body || typeof body !== 'object') return null
-  const platforms = body.platforms || body.results || body.data?.platforms || null
-  if (!platforms || typeof platforms !== 'object') {
-    // Fallback heuristics on top-level fields.
-    if (body.status === 'posted' || body.state === 'posted') return 'posted'
-    if (body.status === 'failed' || body.state === 'failed') return 'failed'
+
+  // Per-platform results array — the canonical shape today.
+  const resultsArr = Array.isArray(body.results)
+    ? body.results
+    : Array.isArray(body.data?.results)
+      ? body.data.results
+      : null
+  if (Array.isArray(resultsArr) && resultsArr.length) {
+    const anySuccess = resultsArr.some((r) => r?.success === true || r?.success === 'true')
+    const allFailed  = resultsArr.every((r) => r?.success === false || r?.success === 'false')
+    if (anySuccess) return 'posted'
+    if (allFailed)  return 'failed'
+    return null  // partial / still progressing
+  }
+
+  // Legacy object-shaped variant: { platforms: { tiktok: 'posted', ... } }
+  const platforms = body.platforms || body.data?.platforms || null
+  if (platforms && typeof platforms === 'object' && !Array.isArray(platforms)) {
+    const states = Object.values(platforms).map((v) => {
+      if (typeof v === 'string') return v.toLowerCase()
+      if (v?.status) return String(v.status).toLowerCase()
+      if (v?.state)  return String(v.state).toLowerCase()
+      if (v?.success === true)  return 'success'
+      if (v?.success === false) return 'failed'
+      return ''
+    })
+    if (states.some((s) => /post|deliver|success/.test(s))) return 'posted'
+    if (states.length && states.every((s) => /fail|error/.test(s))) return 'failed'
     return null
   }
-  const states = Object.values(platforms).map((v) => {
-    if (typeof v === 'string') return v.toLowerCase()
-    if (v?.status) return String(v.status).toLowerCase()
-    if (v?.state) return String(v.state).toLowerCase()
-    return ''
-  })
-  if (!states.length) return null
-  const anyPosted = states.some((s) => /post|deliver|success/.test(s))
-  const allFailed = states.every((s) => /fail|error/.test(s))
-  if (anyPosted) return 'posted'
-  if (allFailed) return 'failed'
+
+  // Last-ditch: top-level only. Recognize "completed" since that's
+  // what the documented endpoint returns when all platforms have fired.
+  const topStatus = String(body.status || body.state || '').toLowerCase()
+  if (topStatus === 'completed' || topStatus === 'posted' || topStatus === 'delivered') return 'posted'
+  if (topStatus === 'failed' || topStatus === 'error') return 'failed'
   return null
 }
 
