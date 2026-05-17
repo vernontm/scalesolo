@@ -1427,10 +1427,13 @@ export default function BulkUploadView({ profileId, token, onChange }) {
       return
     }
     setPolishingRowId(row.id)
+    const rowLabel = (row.title || '').slice(0, 40) || 'this row'
+    toast({ kind: 'info', message: `Starting repair for "${rowLabel}"…`, ttl: 2500 })
     try {
       let coverUrl = row.cover_image_url
       // Step 1 — generate a cover image if none exists yet.
       if (!coverUrl) {
+        toast({ kind: 'info', message: 'Step 1/3: Generating cover image…', ttl: 4000 })
         const startResp = await fetch('/api/content/generate-cover?action=start', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -1465,6 +1468,9 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           body: JSON.stringify({ script_id: row.id, image_url: coverUrl }),
         })
         if (!commitResp.ok) throw new Error('Cover commit failed')
+        toast({ kind: 'info', message: 'Cover ready. Step 2/3: Polishing video + embedding cover intro…', ttl: 4000 })
+      } else {
+        toast({ kind: 'info', message: 'Cover already set. Step 1/2: Polishing video + embedding cover intro…', ttl: 4000 })
       }
       // Step 2 — polish with embedded cover intro.
       const polished = await polishOneVideoWithCover(sourceUrl, {
@@ -1474,10 +1480,11 @@ export default function BulkUploadView({ profileId, token, onChange }) {
       if (!polished?.video_url) throw new Error('Polish returned no video_url')
       // Step 3 — PATCH the row. patchScript handles optimistic UI +
       // Upload-Post resync when the row is already scheduled.
+      toast({ kind: 'info', message: 'Finishing up: saving + resyncing Upload-Post…', ttl: 3000 })
       await patchScript(row.id, { media_url_with_cover: polished.video_url, embed_cover_intro: true })
-      toast({ kind: 'success', message: 'Polished + cover-intro embedded. Upload-Post is now serving the new video.' })
+      toast({ kind: 'success', message: `"${rowLabel}" repaired. Music mixed, cover intro embedded, Upload-Post resynced.`, ttl: 6000 })
     } catch (e) {
-      toast({ kind: 'error', message: `Repair failed: ${fmtErr(e) || e.message}` })
+      toast({ kind: 'error', message: `Repair failed on "${rowLabel}": ${fmtErr(e) || e.message}`, ttl: 7000 })
     } finally {
       setPolishingRowId(null)
     }
@@ -2010,7 +2017,6 @@ export default function BulkUploadView({ profileId, token, onChange }) {
               <tr>
                 <th style={{ ...headerCell, width: 30 }} aria-label="Select">{' '}</th>
                 <th style={{ ...headerCell, width: 64 }}>Media</th>
-                <th style={{ ...headerCell, width: 36 }} aria-label="Type" title="Post type">Type</th>
                 <th style={{ ...headerCell }}>Title</th>
                 {/* Width tuning: Scheduled needs ~175px for the
                     datetime-local input to render "MM/DD/YYYY HH:MM AM"
@@ -2029,9 +2035,9 @@ export default function BulkUploadView({ profileId, token, onChange }) {
             </thead>
             <tbody>
               {scripts === null ? (
-                <tr><td colSpan={11} style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}><Loader2 size={18} className="spin" /></td></tr>
+                <tr><td colSpan={10} style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}><Loader2 size={18} className="spin" /></td></tr>
               ) : visible.length === 0 ? (
-                <tr><td colSpan={11} style={{ padding: 60, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
+                <tr><td colSpan={10} style={{ padding: 60, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
                   {tab === 'queued' && 'No queued posts. Drop media above to start.'}
                   {tab === 'error' && 'No failed posts.'}
                   {tab === 'delivered' && 'Nothing delivered yet.'}
@@ -2137,33 +2143,6 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                         </div>
                       )}
                     </td>
-                    <td style={{ padding: 6, verticalAlign: 'top', textAlign: 'center' }}>
-                      <TypeCell
-                        row={r}
-                        kindBorder={kindBorder}
-                        isVideo={isVideo}
-                        isText={isText}
-                        onPreview={(viewMode) => {
-                          // Prefer the cover-embedded video for any
-                          // "play the video" intent — that's what actually
-                          // posts on non-IG platforms, and it INCLUDES
-                          // the source content (just with the 1s intro
-                          // up front). Falls back to the raw upload
-                          // when no embed has been built yet.
-                          const playable = r.media_url_with_cover
-                            || (Array.isArray(r.media_urls) ? r.media_urls[0] : null)
-                          return setPreviewItem({
-                            url: viewMode === 'video' ? playable : (r.cover_image_url || r.media_urls?.[0]),
-                            type: viewMode === 'video' ? 'video' : (isVideo ? 'video' : 'image'),
-                            title: r.title,
-                            coverUrl: r.cover_image_url || null,
-                            videoUrl: isVideo ? playable : null,
-                          })
-                        }}
-                        // Force preview to open on the requested tab.
-                        onSelectView={setPreviewView}
-                      />
-                    </td>
                     <td style={{ padding: 4, verticalAlign: 'top' }}>
                       <EditableCell value={r.title} multiline placeholder="Title" onSave={(v) => patchScript(r.id, { title: v })} />
                     </td>
@@ -2211,8 +2190,8 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                     <td style={{ padding: 8, verticalAlign: 'top' }}>
                       <StatusPill status={r.status} error={r.last_error} />
                     </td>
-                    <td style={{ padding: 8, verticalAlign: 'top' }}>
-                      <div style={{ display: 'flex', gap: 4 }}>
+                    <td style={{ padding: 8, verticalAlign: 'middle' }}>
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center', justifyContent: 'center' }}>
                         {/* Compress / normalize the source video — runs the
                             ffmpeg worker pass that fixes HEVC, HDR, 4K,
                             sideways, and 60fps quirks in one go. Only shown
@@ -2240,7 +2219,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                             the autopilot polish+cover pipeline. */}
                         {r.media_type === 'video' && Array.isArray(r.media_urls) && r.media_urls[0] && (
                           <button
-                            aria-label="Polish + embed cover intro"
+                            aria-label="Repair (polish + cover intro)"
                             disabled={polishingRowId === r.id || !hasCoverTemplate}
                             onClick={() => polishAndEmbedRow(r)}
                             style={{
@@ -2252,12 +2231,10 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                             }}
                             title={
                               !hasCoverTemplate
-                                ? 'Set a cover template on this brand first'
+                                ? 'Repair (cover template not set on brand)'
                                 : polishingRowId === r.id
-                                  ? 'Polishing + embedding cover…'
-                                  : r.media_url_with_cover
-                                    ? 'Re-run polish + embed cover'
-                                    : 'Polish video + embed cover as 0.5s intro'
+                                  ? 'Repair running…'
+                                  : 'Repair: polish video + cover intro'
                             }
                           >
                             {polishingRowId === r.id ? <Loader2 size={14} className="spin" /> : <Film size={14} />}
