@@ -650,6 +650,64 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   // single-video-per-file. Returns the polished URL on success, or
   // the original URL on failure (with a console warn) so the row
   // still lands on the calendar instead of being lost.
+  // polishOneVideoWithCover: same as polishOneVideo but for the
+  // autopilot stage that runs AFTER cover-gen. Accepts cover_image_url
+  // + embed_cover_intro and returns the full response (so the caller
+  // can decide which DB field to write the URL to). polishOneVideo is
+  // the legacy per-upload wrapper kept around for one-off polish runs.
+  const polishOneVideoWithCover = async (videoUrl, { cover_image_url, embed_cover_intro }) => {
+    const body = buildPolishBody(videoUrl, { cover_image_url, embed_cover_intro })
+    const r = await fetch('/api/videos/polish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    })
+    const resp = await r.json().catch(() => ({}))
+    if (!r.ok) throw new Error(resp?.error || `Polish failed (${r.status})`)
+    if (!resp?.video_url) throw new Error('Polish returned no video_url')
+    return resp
+  }
+
+  // Single source of truth for the polish request body, used by both
+  // the legacy per-upload polishOneVideo wrapper and the autopilot
+  // polishOneVideoWithCover stage. Centralises the template → request
+  // mapping so both paths produce identical results.
+  const buildPolishBody = (videoUrl, extras = {}) => {
+    const tpl = polishTemplate || {}
+    const titleStyle = {
+      font:        tpl.title_font || 'Montserrat ExtraBold',
+      color:       tpl.title_color || '#ffffff',
+      bg_color:    tpl.title_bg_color || '#e0467a',
+      size:        tpl.title_size || 72,
+      bg_padding:  tpl.title_bg_padding || 28,
+      bg_mode:     tpl.title_bg_mode || 'block',
+      y_pos:       tpl.title_y_pos || 15,
+      uppercase:   !!tpl.title_uppercase,
+      mode:        tpl.title_mode || 'auto',
+      topic:       tpl.title_topic || '',
+    }
+    const captionsEnabled = !!(tpl.captions_enabled !== false && tpl.caption_template_id)
+    return {
+      profile_id: profileId,
+      video_url: videoUrl,
+      title: tpl.title_enabled !== false ? (tpl.title_mode === 'manual' ? (tpl.title || '') : '') : '',
+      title_style: titleStyle,
+      logo_url: brandLogoUrl || undefined,
+      watermark_image_url: brandLogoUrl || undefined,
+      watermark_position: tpl.watermark_position || 'br',
+      watermark_size_pct: typeof tpl.watermark_size_pct === 'number' ? tpl.watermark_size_pct : 25,
+      music_url: tpl.music_url || undefined,
+      music_volume: typeof tpl.music_volume === 'number' ? tpl.music_volume : 0.15,
+      music_fade_secs: typeof tpl.music_fade_secs === 'number' ? tpl.music_fade_secs : 1.0,
+      captions_enabled: captionsEnabled,
+      caption_template_id: captionsEnabled ? tpl.caption_template_id : undefined,
+      // Cover-intro params — worker prepends the cover image as a
+      // 0.5s static intro to the final polish output when set.
+      cover_image_url: extras.cover_image_url || undefined,
+      embed_cover_intro: !!extras.embed_cover_intro,
+    }
+  }
+
   const polishOneVideo = async (videoUrl, jobId) => {
     const tpl = polishTemplate || {}
     // Build title_style from the loose props the template stores —
@@ -786,16 +844,14 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     for (const job of queue) {
       try {
         setUploads((u) => u.map((x) => x.id === job.id ? { ...x, progress: 30 } : x))
-        let url = await uploadFileToBucket(job.file, profileId, job.kind)
-        setUploads((u) => u.map((x) => x.id === job.id ? { ...x, progress: 50 } : x))
-        // Polish step — only for videos, only when the toggle is on.
-        // Replaces the raw upload URL with the polished one so the
-        // row's media_urls reflects the final asset. Falls back to the
-        // raw URL on polish failure (logged + toast warn) instead of
-        // killing the whole upload.
-        if (polishEnabled && job.kind === 'video') {
-          url = await polishOneVideo(url, job.id)
-        }
+        const url = await uploadFileToBucket(job.file, profileId, job.kind)
+        // Polish moved out of the per-upload loop. It now runs as a
+        // dedicated autopilot stage AFTER cover generation, so when
+        // both toggles are on the polish job can prepend the freshly
+        // generated cover as a 0.5s intro in the same worker call.
+        // Single ffmpeg pass instead of polish + separate prepend, and
+        // — critically — never falls back to the raw video before the
+        // user notices because polish has actually run.
         setUploads((u) => u.map((x) => x.id === job.id ? { ...x, progress: 70 } : x))
         // Pre-select the profile's preferred platforms, filtered to ones
         // that actually accept this media kind (TikTok/YouTube reject
@@ -984,16 +1040,80 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         }
       }
 
-      // ── Embed cover as 1s intro step ─────────────────────────────────
-      // Runs AFTER covers land and BEFORE schedule, so the cover-
-      // embedded media_url_with_cover is on the row by the time
-      // auto-schedule submits to Upload-Post. ffmpeg work on the Fly
-      // worker — no AI tokens, ~10-30s per video. Failures degrade
-      // gracefully: the row still ships (raw video + cover_image_url
-      // for IG), only TikTok / YT / FB will see the raw first frame.
+      // ── Polish step (and cover-intro embed) ─────────────────────────
+      // Runs AFTER covers land + BEFORE schedule, so when both polish
+      // and cover are enabled the worker prepends the freshly
+      // generated cover image as a 0.5s intro inside the same job.
+      // Single worker call instead of polish-then-prepend, single
+      // returned URL, no race between the two ffmpeg passes.
+      //
+      // When polishEnabled is OFF but cover IS enabled, we still call
+      // the prepend-cover endpoint as a fallback so non-IG platforms
+      // see the cover as the start-frame thumbnail. The two-step path
+      // only kicks in for that minority case.
+      let polishedCount = 0
+      let polishFailed = 0
       let embedsBuilt = 0
       let embedsFailed = 0
-      if (coveredIds.length) {
+      const livePolishEnabled = polishEnabled
+      if (livePolishEnabled && schedulableIds.length) {
+        setAutoStage('polish')
+        // Pull each row's current media_urls + cover_image_url so we
+        // can hand the polish call the right inputs and pick up the
+        // cover URL we just committed in step 4.
+        try {
+          const rRows = await fetch(
+            `/api/content?profile_id=${encodeURIComponent(profileId)}&filter=library`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          )
+          const rb = await rRows.json().catch(() => ({}))
+          const lookup = new Map((rb?.items || []).map((it) => [it.id, it]))
+          for (const id of schedulableIds) {
+            const row = lookup.get(id)
+            if (!row || row.media_type !== 'video') continue
+            const sourceUrl = Array.isArray(row.media_urls) ? row.media_urls[0] : null
+            if (!sourceUrl) continue
+            // Build polish body from the brand-level polish template
+            // PLUS row-level cover. polishOneVideo already builds the
+            // template body; we just need to pass cover params and
+            // capture the result URL.
+            try {
+              const polished = await polishOneVideoWithCover(sourceUrl, {
+                cover_image_url: row.cover_image_url || null,
+                embed_cover_intro: !!row.cover_image_url && row.embed_cover_intro !== false,
+              })
+              if (polished?.video_url) {
+                // Persist the polished output. When cover-intro was
+                // embedded, write to media_url_with_cover so non-IG
+                // platforms get the cover-baked-in version + IG keeps
+                // its native cover_image_url path. Otherwise update
+                // media_urls[0] so the polish is the canonical asset.
+                const wantsCover = !!row.cover_image_url && row.embed_cover_intro !== false
+                const patchBody = wantsCover
+                  ? { media_url_with_cover: polished.video_url }
+                  : { media_urls: [polished.video_url] }
+                await fetch(`/api/content?id=${id}`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                  body: JSON.stringify(patchBody),
+                }).catch(() => {})
+                polishedCount += 1
+                if (wantsCover) embedsBuilt += 1
+              } else {
+                polishFailed += 1
+              }
+            } catch (e) {
+              polishFailed += 1
+              console.warn(`[bulk polish] ${id} failed:`, e?.message)
+            }
+          }
+        } catch (e) {
+          console.warn('[bulk polish] row fetch failed:', e?.message)
+        }
+      } else if (coveredIds.length) {
+        // Polish toggle off but covers landed. Run the lightweight
+        // prepend-cover endpoint so non-IG platforms still see the
+        // cover as the start-frame thumbnail.
         setAutoStage('embed')
         for (const id of coveredIds) {
           try {
@@ -1003,13 +1123,6 @@ export default function BulkUploadView({ profileId, token, onChange }) {
               body: JSON.stringify({ script_id: id }),
             })
             const body = await r.json().catch(() => ({}))
-            // /api/videos/prepend-cover already long-polls the worker
-            // up to 250s and returns 200 with media_url_with_cover on
-            // success, or 202 with job_id if the job ran past the
-            // gateway timeout. Both are fine for our purposes — the
-            // 202 case means the worker is still working and will
-            // PATCH the row when done, so the next submission picks
-            // it up. We only count it as failed on actual 4xx/5xx.
             if (!r.ok && r.status !== 202) {
               embedsFailed += 1
               console.warn(`[bulk embed] ${id} failed:`, body?.error)
@@ -1049,12 +1162,18 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           ? `${coversGenerated} covers (${coversFailed} failed, posts still ship)`
           : `${coversGenerated} covers`
         parts.push(coverLine)
-        if (coveredIds.length) {
-          const embedLine = embedsFailed
-            ? `${embedsBuilt} cover-intros embedded (${embedsFailed} failed, posts still ship)`
-            : `${embedsBuilt} cover-intros embedded`
-          parts.push(embedLine)
-        }
+      }
+      if (livePolishEnabled && polishedCount + polishFailed > 0) {
+        const polishLine = polishFailed
+          ? `${polishedCount} polished (${polishFailed} failed, raw video still ships)`
+          : `${polishedCount} polished`
+        parts.push(polishLine)
+      }
+      if ((embedsBuilt + embedsFailed) > 0) {
+        const embedLine = embedsFailed
+          ? `${embedsBuilt} cover-intros embedded (${embedsFailed} failed, posts still ship)`
+          : `${embedsBuilt} cover-intros embedded`
+        parts.push(embedLine)
       }
       parts.push(`${scheduled} scheduled`)
       if (skipped)   parts.push(`${skipped} skipped (no open slots)`)
@@ -1524,6 +1643,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           <strong style={{ color: 'var(--text)' }}>Autopilot:</strong>
           {autoStage === 'captions' && 'writing captions, hashtags & first comments…'}
           {autoStage === 'covers' && 'generating Instagram covers…'}
+          {autoStage === 'polish' && 'polishing videos (music, captions, cover intro)…'}
           {autoStage === 'embed' && 'embedding covers as intro card on each video…'}
           {autoStage === 'schedule' && 'slotting posts into your schedule…'}
         </div>

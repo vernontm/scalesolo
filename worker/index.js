@@ -958,6 +958,17 @@ async function polishCore(body) {
     voiceover_url,
     loop_video = false,
     mute_video_audio = false,
+    // Cover-intro prepend. When `embed_cover_intro` is truthy AND a
+    // `cover_image_url` is provided, polishCore prepends the cover
+    // image as a static intro (default 0.5s) to the final polish
+    // output via prependCoverCore. Single worker job — replaces the
+    // old "run polish then call /jobs/prepend-cover separately"
+    // dance. Caller stores the resulting URL on media_url_with_cover
+    // so non-IG platforms (TikTok / YT / FB) see the cover as the
+    // start-frame thumbnail.
+    cover_image_url,
+    embed_cover_intro = false,
+    cover_intro_secs = 0.5,
   } = body || {}
   if (!profile_id || !video_url) throw new Error('profile_id + video_url required')
   if (!SUPABASE_URL || !SERVICE_KEY) throw new Error('Storage not configured on worker')
@@ -1286,7 +1297,43 @@ async function polishCore(body) {
       }
     }
 
-    return { video_url: finalUrl, bytes: finalBuf.byteLength, zapcap: zapcapMeta }
+    // ── Optional cover-intro prepend ──────────────────────────────────
+    // When the caller asked for an embedded cover frame, chain the
+    // existing prependCoverCore on top of the polished+captioned
+    // output. This replaces the previous two-step autopilot flow
+    // (polish → separate /jobs/prepend-cover call) with a single
+    // worker invocation. ffmpeg still runs twice internally, but
+    // the user sees one job, one returned URL.
+    let coverIntroMeta = null
+    if (embed_cover_intro && cover_image_url) {
+      try {
+        const coverResult = await prependCoverCore({
+          profile_id,
+          video_url: finalUrl,
+          cover_image_url,
+          duration_secs: cover_intro_secs,
+        })
+        if (coverResult?.video_url) {
+          finalUrl = coverResult.video_url
+          coverIntroMeta = {
+            duration_secs: coverResult.duration_secs,
+            bytes: coverResult.bytes,
+          }
+        } else {
+          coverIntroMeta = { failed: true, reason: 'no_video_url_returned' }
+        }
+      } catch (e) {
+        console.warn('[worker] cover-intro prepend failed, returning uncovered polish:', e?.message)
+        coverIntroMeta = { failed: true, reason: e?.message || String(e) }
+      }
+    }
+
+    return {
+      video_url: finalUrl,
+      bytes: finalBuf.byteLength,
+      zapcap: zapcapMeta,
+      cover_intro: coverIntroMeta,
+    }
   } finally {
     if (workdir) { try { await rm(workdir, { recursive: true, force: true }) } catch {} }
   }

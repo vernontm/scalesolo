@@ -38,20 +38,48 @@ async function rescheduleUploadPostJob({ row, newScheduledIso, authToken, req })
   if (!platforms || !platforms.length) return null
   if (!mediaUrls.length) return null
 
-  // Cancel old job if there is one. Best-effort — 404s (already fired
-  // / never existed) don't block the re-submit.
+  // Cancel old job if there is one. Previously this was best-effort —
+  // we logged warnings on non-404 failures and continued to submit a
+  // fresh job anyway, which produced duplicate scheduled posts on
+  // Upload-Post whenever cancel hit a transient error (5xx, network
+  // blip, list-endpoint pagination miss). Now we retry the cancel
+  // 3x with backoff, and if it STILL hasn't succeeded (or returned
+  // 404 / not_found, which means the job is already gone), we throw
+  // so the caller surfaces a 502 instead of silently double-booking.
   if (row.uploadpost_request_id) {
-    try {
-      // Upload-Post's DELETE endpoint keys off job_id, not request_id.
-      // uploadpostCancelByRequestId resolves the mapping via the list
-      // endpoint, then DELETEs.
-      const username = await resolveUploadpostUser(row.profile_id)
-      const cancel = await uploadpostCancelByRequestId(username, row.uploadpost_request_id)
-      if (!cancel.ok && cancel.status !== 404) {
-        console.warn('reschedule: cancel old job failed:', row.uploadpost_request_id, cancel.reason)
+    const username = await resolveUploadpostUser(row.profile_id)
+    const MAX_ATTEMPTS = 3
+    const BACKOFF_MS = [0, 1000, 2000]
+    let cancelled = false
+    let lastError = null
+    for (let attempt = 0; attempt < MAX_ATTEMPTS && !cancelled; attempt++) {
+      if (BACKOFF_MS[attempt]) await new Promise((r) => setTimeout(r, BACKOFF_MS[attempt]))
+      try {
+        const cancel = await uploadpostCancelByRequestId(username, row.uploadpost_request_id)
+        if (cancel.ok) {
+          cancelled = true
+          break
+        }
+        // 'not_found' / 404 means the job is already off Upload-Post's
+        // schedule (already fired, already cancelled, expired). That's
+        // a terminal success state for our purposes — nothing to
+        // duplicate, safe to submit the new one.
+        if (cancel.status === 404 || cancel.reason === 'not_found') {
+          cancelled = true
+          break
+        }
+        lastError = cancel.reason || `status ${cancel.status}`
+      } catch (e) {
+        lastError = e?.message || String(e)
       }
-    } catch (e) {
-      console.warn('reschedule: cancel threw:', e.message)
+    }
+    if (!cancelled) {
+      const err = new Error(
+        `Couldn't cancel the previous Upload-Post job (request_id=${row.uploadpost_request_id}): ` +
+        `${lastError || 'unknown'}. Aborted to avoid duplicates. Try again in a moment.`
+      )
+      err.status = 502
+      throw err
     }
   }
 

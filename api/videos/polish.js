@@ -318,6 +318,14 @@ export default async function handler(req, res) {
       voiceover_url,
       loop_video = false,
       mute_video_audio = false,
+      // Cover-intro embed. When `embed_cover_intro` is true AND
+      // `cover_image_url` is set, the worker prepends the cover image
+      // as a static intro (0.5s default) to the final polish output —
+      // single worker call instead of the old polish-then-prepend
+      // two-step. Caller persists the result on media_url_with_cover.
+      cover_image_url,
+      embed_cover_intro = false,
+      cover_intro_secs,
     } = req.body || {}
     let watermark_image_url = req.body?.watermark_image_url
     let watermark_position  = req.body?.watermark_position ?? 'br'
@@ -555,6 +563,13 @@ export default async function handler(req, res) {
             captions_enabled: wantsCaptionsEarly,
             caption_template_id: caption_template_id || undefined,
             caption_language:    req.body?.caption_language || undefined,
+            // Forward cover-intro params. Worker prepends the cover
+            // image to the final polish output when both are present;
+            // ignored otherwise so existing single-step polish calls
+            // keep their behavior.
+            cover_image_url: cover_image_url || undefined,
+            embed_cover_intro: !!embed_cover_intro,
+            cover_intro_secs: typeof cover_intro_secs === 'number' ? cover_intro_secs : undefined,
           }),
         })
         const submitBody = await submitRes.json().catch(() => ({}))
