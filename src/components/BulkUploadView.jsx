@@ -87,7 +87,13 @@ function fmtErr(e) {
 function TypeCell({ row, kindBorder, isVideo, isText, onPreview, onSelectView }) {
   const [hover, setHover] = useState(false)
   const wrapRef = useRef(null)
-  const sourceVideo = isVideo && Array.isArray(row.media_urls) ? row.media_urls[0] : null
+  // Prefer the cover-embedded video for previews — that's the asset
+  // that actually publishes on non-IG platforms, so it's what the user
+  // wants to see when they click play. Falls back to the raw upload
+  // when no embed exists yet.
+  const sourceVideo = isVideo
+    ? (row.media_url_with_cover || (Array.isArray(row.media_urls) ? row.media_urls[0] : null))
+    : null
   const sourceImage = !isVideo && !isText && Array.isArray(row.media_urls) ? row.media_urls[0] : null
   const previewable = !!sourceVideo || !!sourceImage
   const Icon = isVideo ? VideoIcon : isText ? Type : ImageIcon
@@ -1517,7 +1523,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           <strong style={{ color: 'var(--text)' }}>Autopilot:</strong>
           {autoStage === 'captions' && 'writing captions, hashtags & first comments…'}
           {autoStage === 'covers' && 'generating Instagram covers…'}
-          {autoStage === 'embed' && 'embedding covers as intro card on each video (Fly worker, ffmpeg)…'}
+          {autoStage === 'embed' && 'embedding covers as intro card on each video…'}
           {autoStage === 'schedule' && 'slotting posts into your schedule…'}
         </div>
       )}
@@ -1846,16 +1852,21 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                         <button
                           type="button"
                           onClick={(e) => { e.stopPropagation(); setPreviewItem({
-                            // Click opens the preview overlay. If a cover is
-                            // staged we surface BOTH so the user can compare
-                            // (and confirm the cover looks right) without
-                            // leaving the table — videoUrl drives the source-
-                            // video clip, coverUrl drives the IG thumbnail.
+                            // Click opens the preview overlay. If a cover
+                            // is staged we surface BOTH so the user can
+                            // compare. videoUrl prefers the cover-
+                            // embedded version (media_url_with_cover) when
+                            // present — that's the actual asset that posts
+                            // to TikTok / YouTube / FB / Threads, so it's
+                            // what the user wants to see, not the raw
+                            // source they uploaded.
                             url: thumb,
                             type: thumbIsVideo ? 'video' : 'image',
                             title: r.title,
                             coverUrl: hasCover ? r.cover_image_url : null,
-                            videoUrl: isVideo && Array.isArray(r.media_urls) ? r.media_urls[0] : null,
+                            videoUrl: isVideo
+                              ? (r.media_url_with_cover || (Array.isArray(r.media_urls) ? r.media_urls[0] : null))
+                              : null,
                           }) }}
                           aria-label={`Preview ${r.title || 'media'}`}
                           title={hasCover ? 'Click to preview cover + source video' : 'Click to preview'}
@@ -1914,13 +1925,23 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                         kindBorder={kindBorder}
                         isVideo={isVideo}
                         isText={isText}
-                        onPreview={(viewMode) => setPreviewItem({
-                          url: viewMode === 'video' && Array.isArray(r.media_urls) ? r.media_urls[0] : (r.cover_image_url || r.media_urls?.[0]),
-                          type: viewMode === 'video' ? 'video' : (isVideo ? 'video' : 'image'),
-                          title: r.title,
-                          coverUrl: r.cover_image_url || null,
-                          videoUrl: isVideo && Array.isArray(r.media_urls) ? r.media_urls[0] : null,
-                        })}
+                        onPreview={(viewMode) => {
+                          // Prefer the cover-embedded video for any
+                          // "play the video" intent — that's what actually
+                          // posts on non-IG platforms, and it INCLUDES
+                          // the source content (just with the 1s intro
+                          // up front). Falls back to the raw upload
+                          // when no embed has been built yet.
+                          const playable = r.media_url_with_cover
+                            || (Array.isArray(r.media_urls) ? r.media_urls[0] : null)
+                          return setPreviewItem({
+                            url: viewMode === 'video' ? playable : (r.cover_image_url || r.media_urls?.[0]),
+                            type: viewMode === 'video' ? 'video' : (isVideo ? 'video' : 'image'),
+                            title: r.title,
+                            coverUrl: r.cover_image_url || null,
+                            videoUrl: isVideo ? playable : null,
+                          })
+                        }}
                         // Force preview to open on the requested tab.
                         onSelectView={setPreviewView}
                       />

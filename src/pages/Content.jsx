@@ -361,25 +361,34 @@ function MediaPreviewBlock({ item }) {
         padding: 12, borderRadius: 10,
         background: 'var(--surface-2)', border: '1px solid var(--border)',
       }}>
-        {isVideo && urls[0] && (
-          <div style={{ flex: '1 1 220px', minWidth: 220 }}>
-            <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 4, fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-              Video
+        {/* Prefer the cover-embedded version of the video for the
+            preview — that's the actual asset published on non-IG
+            platforms (cover intro + source content) and the one the
+            user wants to confirm before approving the post. Falls
+            back to the raw upload when no embed has been built yet. */}
+        {isVideo && (urls[0] || item.media_url_with_cover) && (() => {
+          const playable = item.media_url_with_cover || urls[0]
+          const isEmbedded = !!item.media_url_with_cover
+          return (
+            <div style={{ flex: '1 1 220px', minWidth: 220 }}>
+              <div style={{ fontSize: 10, color: isEmbedded ? '#0ea5e9' : 'var(--muted)', marginBottom: 4, fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                {isEmbedded ? 'Video (with cover intro)' : 'Video'}
+              </div>
+              <video
+                src={playable}
+                controls
+                playsInline
+                preload="metadata"
+                style={{
+                  width: '100%', aspectRatio: '9 / 16',
+                  borderRadius: 8, background: '#000',
+                  border: '1px solid var(--border)',
+                  objectFit: 'cover',
+                }}
+              />
             </div>
-            <video
-              src={urls[0]}
-              controls
-              playsInline
-              preload="metadata"
-              style={{
-                width: '100%', aspectRatio: '9 / 16',
-                borderRadius: 8, background: '#000',
-                border: '1px solid var(--border)',
-                objectFit: 'cover',
-              }}
-            />
-          </div>
-        )}
+          )
+        })()}
 
         {cover && (
           <div style={{ flex: '0 0 140px', width: 140 }}>
@@ -750,7 +759,7 @@ function EmbedCoverIntroBlock({ item, onUpdate }) {
         </button>
       </div>
       <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 6, lineHeight: 1.4 }}>
-        Re-encodes the video on the Fly worker (~10–30s, free — no AI tokens). The original video is preserved; the embedded version is stored separately and only used for non-Instagram platforms at submit time.
+        Builds a new version of the video with the cover as a 1-second intro card (~10–30 seconds, no AI tokens). The original video stays untouched; the new one is used automatically for non-Instagram platforms at scheduling time.
       </div>
       {busy && (
         <div style={{ fontSize: 11, color: 'var(--amber)', marginTop: 4 }}>
