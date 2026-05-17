@@ -191,7 +191,7 @@ export default async function handler(req, res) {
         // back stop appearing as 'failed'.
         const wasRefunded = refundedRenderIds.has(r.id)
         const inferredStatus = r.final_video_url
-          ? 'completed'
+          ? 'done'
           : (wasRefunded ? 'failed' : r.status)
         return {
           render_id: r.id,

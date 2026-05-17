@@ -42,7 +42,7 @@ export default async function handler(req, res) {
       const url = data?.video_url || data?.video_url_caption || data?.url
       if (!url) return res.status(200).json({ state: 'failed', error: 'No video URL on completed render' })
       // Persist so the sweeper doesn't flip this to failed later.
-      await persistTerminalStatus(videoId, { status: 'completed', final_video_url: url })
+      await persistTerminalStatus(videoId, { status: 'done', final_video_url: url })
       return res.status(200).json({ state: 'success', video_url: url })
     }
     if (status === 'failed' || status === 'error') {

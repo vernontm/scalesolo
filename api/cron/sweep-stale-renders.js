@@ -60,7 +60,7 @@ export default async function handler(req, res) {
             if ((hgStatus === 'completed' || hgStatus === 'success' || hgStatus === 'done') && url) {
               await supaFetch(`avatar_renders?id=eq.${row.id}`, {
                 method: 'PATCH',
-                body: { status: 'completed', final_video_url: url },
+                body: { status: 'done', final_video_url: url },
                 prefer: 'return=minimal',
               })
               rescued += 1
