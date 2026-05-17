@@ -2093,9 +2093,8 @@ export default function BulkUploadView({ profileId, token, onChange }) {
             const active =
               previewView === 'cover' ? 'cover'
               : previewView === 'video' ? 'video'
-              : (previewItem.coverUrl && previewItem.url === previewItem.coverUrl) ? 'cover'
-              : (previewItem.videoUrl && previewItem.url === previewItem.videoUrl) ? 'video'
-              : (previewItem.type === 'video' ? 'video' : 'cover')
+              : previewItem.videoUrl ? 'video'
+              : 'cover'
             const displayUrl =
               active === 'cover' ? (previewItem.coverUrl || previewItem.url)
               : active === 'video' ? (previewItem.videoUrl || previewItem.url)
