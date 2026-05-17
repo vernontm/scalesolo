@@ -91,44 +91,67 @@ export async function uploadpostGenerateJwt(username, opts = {}) {
   })
 }
 
-// List scheduled jobs for the Upload-Post account associated with the
-// current API key. Per the documented endpoint
-// (https://docs.upload-post.com/api/schedule-posts):
+// List scheduled jobs for an Upload-Post sub-user (whitelabel
+// sub-account). We tried the documented account-wide endpoint
+// (GET /api/uploadposts/schedule) but that one returns ONLY jobs the
+// API-key holder scheduled directly — it does NOT surface jobs
+// scheduled under whitelabel sub-users like `rayvaughnceo`. The
+// per-username endpoint below is what we actually need for cancel /
+// orphan-cleanup flows.
 //
-//   GET /api/uploadposts/schedule
-//   Authorization: Apikey <token>
-//
-// Returns an array of { job_id, scheduled_date, post_type, title,
-// preview_url, profile_username }. NOTE the response does NOT include
-// `request_id` — that field is only returned by the submission endpoint
-// at schedule time. Callers that need to cancel a job MUST persist the
-// job_id at submission and look up by that, not by request_id.
-//
-// The `username` argument is kept for backward compatibility with older
-// call sites that scope by username — we filter the documented endpoint's
-// global response by profile_username in JS so existing usage continues
-// to work. Pass `''` / null to get every job on the account.
+// We also probe the account-wide endpoint as a secondary in case
+// some sub-accounts have migrated or the per-username endpoint
+// returns nothing. Anything matching `profile_username` is merged
+// into the result.
 export async function uploadpostListScheduled(username, opts = {}) {
-  const data = await uploadpost(`/api/uploadposts/schedule`).catch((e) => {
-    if (e.status === 404) return []
-    throw e
+  if (!username) return { posts: [] }
+  const limit = String(opts.limit || 200)
+
+  // Primary: the per-username endpoint. Empirically returns posts
+  // with request_id, job_id, scheduled_date, title — everything we
+  // need to match for cancellation.
+  const qs = new URLSearchParams({ status: 'scheduled', limit })
+  const primary = await uploadpost(
+    `/api/uploadposts/posts/${encodeURIComponent(username)}?${qs}`
+  ).catch((e) => {
+    if (e.status === 404) return { posts: [] }
+    return { posts: [], _primary_error: e?.message || String(e), _primary_status: e?.status }
   })
-  // Documented response is a bare JSON array. Be liberal in case
-  // Upload-Post wraps it in {jobs: [...]} or {results: [...]} on
-  // some accounts / API versions.
-  const arr = Array.isArray(data)
-    ? data
-    : (Array.isArray(data?.jobs) ? data.jobs
-      : Array.isArray(data?.posts) ? data.posts
-      : Array.isArray(data?.results) ? data.results
-      : Array.isArray(data?.data) ? data.data
+
+  // Secondary: account-wide list, filtered to this profile_username.
+  // Belt-and-suspenders for any sub-account whose jobs only show up
+  // on the documented endpoint.
+  let secondaryArr = []
+  try {
+    const data = await uploadpost(`/api/uploadposts/schedule`).catch(() => null)
+    const arr = Array.isArray(data)
+      ? data
+      : (Array.isArray(data?.jobs) ? data.jobs
+        : Array.isArray(data?.posts) ? data.posts
+        : Array.isArray(data?.results) ? data.results
+        : Array.isArray(data?.data) ? data.data
+        : [])
+    secondaryArr = arr.filter((j) => !j?.profile_username || String(j.profile_username) === String(username))
+  } catch {}
+
+  const primaryArr = Array.isArray(primary)
+    ? primary
+    : (Array.isArray(primary?.posts) ? primary.posts
+      : Array.isArray(primary?.results) ? primary.results
+      : Array.isArray(primary?.data) ? primary.data
       : [])
-  const filtered = username
-    ? arr.filter((j) => !j?.profile_username || String(j.profile_username) === String(username))
-    : arr
-  // Wrap in { posts } so existing callers that destructure raw.posts /
-  // Array.isArray(raw) checks both keep working without edits.
-  return { posts: filtered }
+
+  // Merge + dedupe by request_id or job_id (whichever each row has).
+  const seen = new Set()
+  const merged = []
+  for (const j of [...primaryArr, ...secondaryArr]) {
+    const key = j?.request_id || j?.id || j?.requestId || j?.upload_id || j?.job_id || j?.jobId
+    if (!key) continue
+    if (seen.has(key)) continue
+    seen.add(key)
+    merged.push(j)
+  }
+  return { posts: merged }
 }
 
 // Cancel a scheduled Upload-Post job by its INTERNAL job_id (NOT request_id).
