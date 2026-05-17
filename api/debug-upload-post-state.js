@@ -17,8 +17,8 @@
 //     orphan_candidates: [...]
 //   }
 
-import { setCors, supaFetch } from '../_lib/supabase.js'
-import { resolveUploadpostUser, uploadpostListScheduled } from '../_lib/uploadpost.js'
+import { setCors, supaFetch } from './_lib/supabase.js'
+import { resolveUploadpostUser, uploadpostListScheduled } from './_lib/uploadpost.js'
 
 export default async function handler(req, res) {
   setCors(req, res)
