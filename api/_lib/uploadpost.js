@@ -91,24 +91,44 @@ export async function uploadpostGenerateJwt(username, opts = {}) {
   })
 }
 
-// List scheduled jobs for an Upload-Post user. Used by the cleanup
-// endpoint to reconcile what's actually queued on Upload-Post against
-// what our content_scripts table thinks should be there. Returns the
-// raw response; callers normalize the shape (Upload-Post historically
-// returns either { posts: [...] } or { results: [...] } depending on
-// the endpoint family).
+// List scheduled jobs for the Upload-Post account associated with the
+// current API key. Per the documented endpoint
+// (https://docs.upload-post.com/api/schedule-posts):
+//
+//   GET /api/uploadposts/schedule
+//   Authorization: Apikey <token>
+//
+// Returns an array of { job_id, scheduled_date, post_type, title,
+// preview_url, profile_username }. NOTE the response does NOT include
+// `request_id` — that field is only returned by the submission endpoint
+// at schedule time. Callers that need to cancel a job MUST persist the
+// job_id at submission and look up by that, not by request_id.
+//
+// The `username` argument is kept for backward compatibility with older
+// call sites that scope by username — we filter the documented endpoint's
+// global response by profile_username in JS so existing usage continues
+// to work. Pass `''` / null to get every job on the account.
 export async function uploadpostListScheduled(username, opts = {}) {
-  if (!username) return { posts: [] }
-  // Default: scheduled-status posts. limit=200 covers any reasonable
-  // brand's pending queue without paging.
-  const qs = new URLSearchParams({ status: 'scheduled', limit: String(opts.limit || 200) })
-  const data = await uploadpost(`/api/uploadposts/posts/${encodeURIComponent(username)}?${qs}`).catch((e) => {
-    // Upload-Post sometimes 404s when there are no scheduled jobs on a
-    // user; treat that as an empty list, not a hard failure.
-    if (e.status === 404) return { posts: [] }
+  const data = await uploadpost(`/api/uploadposts/schedule`).catch((e) => {
+    if (e.status === 404) return []
     throw e
   })
-  return data || { posts: [] }
+  // Documented response is a bare JSON array. Be liberal in case
+  // Upload-Post wraps it in {jobs: [...]} or {results: [...]} on
+  // some accounts / API versions.
+  const arr = Array.isArray(data)
+    ? data
+    : (Array.isArray(data?.jobs) ? data.jobs
+      : Array.isArray(data?.posts) ? data.posts
+      : Array.isArray(data?.results) ? data.results
+      : Array.isArray(data?.data) ? data.data
+      : [])
+  const filtered = username
+    ? arr.filter((j) => !j?.profile_username || String(j.profile_username) === String(username))
+    : arr
+  // Wrap in { posts } so existing callers that destructure raw.posts /
+  // Array.isArray(raw) checks both keep working without edits.
+  return { posts: filtered }
 }
 
 // Cancel a scheduled Upload-Post job by its INTERNAL job_id (NOT request_id).
@@ -129,11 +149,13 @@ export async function uploadpostCancelScheduled(jobId) {
   }
 }
 
-// Look up Upload-Post's internal job_id for a given request_id by scanning
-// the user's scheduled-jobs list. Upload-Post's list response includes both
-// `request_id` (our handle, returned at schedule time) and `job_id` (the
-// internal key DELETE wants). One list call per cancel — acceptable because
-// cancels are rare. Returns null if no match.
+// LEGACY — kept for rows submitted before content_scripts.uploadpost_job_id
+// existed. The documented list endpoint
+// (https://docs.upload-post.com/api/schedule-posts) does NOT return
+// `request_id`, only `job_id`. So this lookup is best-effort against
+// non-documented fields some Upload-Post API versions historically
+// included. New rows save job_id at submission time and skip this
+// path entirely — see uploadpostCancelScheduled.
 export async function uploadpostJobIdForRequestId(username, requestId) {
   if (!username || !requestId) return null
   const raw = await uploadpostListScheduled(username).catch(() => ({ posts: [] }))
@@ -152,11 +174,13 @@ export async function uploadpostJobIdForRequestId(username, requestId) {
   return null
 }
 
-// Cancel a scheduled Upload-Post job using our stored request_id. Resolves
-// job_id via list lookup, then DELETEs. Returns { ok: false, reason: 'not_found' }
-// when the request_id is no longer on Upload-Post's scheduled list (already
-// fired, already cancelled, or expired) — callers can treat this as a
-// successful "already gone" terminal state.
+// LEGACY cancel-by-request_id. New rows persist uploadpost_job_id at
+// submission and cancel directly via uploadpostCancelScheduled(jobId).
+// This path remains only for rows scheduled before that column existed
+// — and it's structurally limited because the documented list endpoint
+// no longer exposes request_id, so most lookups will fall through to
+// not_found. Callers should prefer uploadpostCancelScheduled(job_id)
+// whenever the row has a stored job_id.
 export async function uploadpostCancelByRequestId(username, requestId) {
   if (!username) return { ok: false, reason: 'no_username' }
   if (!requestId) return { ok: false, reason: 'no_request_id' }

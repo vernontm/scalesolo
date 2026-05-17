@@ -12,7 +12,7 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from './_lib/supabase.js'
 import { findNextOpenSlot, syncContentStatusInSpaces } from './_lib/scheduling.js'
-import { uploadpostCancelByRequestId, resolveUploadpostUser } from './_lib/uploadpost.js'
+import { uploadpostCancelByRequestId, uploadpostCancelScheduled, resolveUploadpostUser } from './_lib/uploadpost.js'
 
 // Cancel an existing scheduled Upload-Post job and re-submit it with a
 // new time. Called from the PATCH + action=schedule paths whenever the
@@ -38,15 +38,14 @@ async function rescheduleUploadPostJob({ row, newScheduledIso, authToken, req })
   if (!platforms || !platforms.length) return null
   if (!mediaUrls.length) return null
 
-  // Cancel old job if there is one. Previously this was best-effort —
-  // we logged warnings on non-404 failures and continued to submit a
-  // fresh job anyway, which produced duplicate scheduled posts on
-  // Upload-Post whenever cancel hit a transient error (5xx, network
-  // blip, list-endpoint pagination miss). Now we retry the cancel
-  // 3x with backoff, and if it STILL hasn't succeeded (or returned
-  // 404 / not_found, which means the job is already gone), we throw
-  // so the caller surfaces a 502 instead of silently double-booking.
-  if (row.uploadpost_request_id) {
+  // Cancel old job if there is one. Prefer the stored uploadpost_job_id
+  // (direct DELETE — single API call, no list lookup) over the legacy
+  // request_id flow (which scans the documented list endpoint that
+  // doesn't return request_id). Retries 3x with backoff. If the cancel
+  // doesn't succeed or 404 within those attempts we throw so the
+  // caller surfaces a 502 instead of silently double-booking on
+  // Upload-Post.
+  if (row.uploadpost_job_id || row.uploadpost_request_id) {
     const username = await resolveUploadpostUser(row.profile_id)
     const MAX_ATTEMPTS = 3
     const BACKOFF_MS = [0, 1000, 2000]
@@ -55,15 +54,13 @@ async function rescheduleUploadPostJob({ row, newScheduledIso, authToken, req })
     for (let attempt = 0; attempt < MAX_ATTEMPTS && !cancelled; attempt++) {
       if (BACKOFF_MS[attempt]) await new Promise((r) => setTimeout(r, BACKOFF_MS[attempt]))
       try {
-        const cancel = await uploadpostCancelByRequestId(username, row.uploadpost_request_id)
+        const cancel = row.uploadpost_job_id
+          ? await uploadpostCancelScheduled(row.uploadpost_job_id)
+          : await uploadpostCancelByRequestId(username, row.uploadpost_request_id)
         if (cancel.ok) {
           cancelled = true
           break
         }
-        // 'not_found' / 404 means the job is already off Upload-Post's
-        // schedule (already fired, already cancelled, expired). That's
-        // a terminal success state for our purposes — nothing to
-        // duplicate, safe to submit the new one.
         if (cancel.status === 404 || cancel.reason === 'not_found') {
           cancelled = true
           break
@@ -74,8 +71,11 @@ async function rescheduleUploadPostJob({ row, newScheduledIso, authToken, req })
       }
     }
     if (!cancelled) {
+      const handle = row.uploadpost_job_id
+        ? `job_id=${row.uploadpost_job_id}`
+        : `request_id=${row.uploadpost_request_id}`
       const err = new Error(
-        `Couldn't cancel the previous Upload-Post job (request_id=${row.uploadpost_request_id}): ` +
+        `Couldn't cancel the previous Upload-Post job (${handle}): ` +
         `${lastError || 'unknown'}. Aborted to avoid duplicates. Try again in a moment.`
       )
       err.status = 502
@@ -135,7 +135,7 @@ async function rescheduleUploadPostJob({ row, newScheduledIso, authToken, req })
     err.status = r.status
     throw err
   }
-  return resp.request_id || null
+  return { request_id: resp.request_id || null, job_id: resp.job_id || null }
 }
 
 const ALLOWED = new Set([
@@ -149,6 +149,7 @@ const ALLOWED = new Set([
   // ALLOWED so the reschedule handler can include it in the updates
   // payload alongside scheduled_datetime in one PATCH.
   'uploadpost_request_id',
+  'uploadpost_job_id',
   // Per-platform text variants for text-only posts (text_post_gen
   // output). Editable inline on the Schedule page.
   'per_platform_text',
@@ -277,15 +278,16 @@ export default async function handler(req, res) {
                 // first-time-submit path: it builds the payload from
                 // the row and POSTs to /api/social/upload-post.
                 const mergedRow = { ...item, ...updates }
-                const newReqId = await rescheduleUploadPostJob({
+                const submitResult = await rescheduleUploadPostJob({
                   row: mergedRow,
                   newScheduledIso: scheduleFor,
                   authToken, req,
                 })
-                if (newReqId) {
-                  submittedRequestId = newReqId
-                  updates.uploadpost_request_id = newReqId
+                if (submitResult?.request_id) {
+                  submittedRequestId = submitResult.request_id
+                  updates.uploadpost_request_id = submitResult.request_id
                 }
+                if (submitResult?.job_id) updates.uploadpost_job_id = submitResult.job_id
               } catch (e) {
                 // Surface the error so the toast says why it failed.
                 // The DB row stays untouched on this path because we
@@ -332,13 +334,14 @@ export default async function handler(req, res) {
           const timeChanged = item.scheduled_datetime !== req.body.scheduled_datetime
           if (wasScheduled && timeChanged) {
             try {
-              const newReqId = await rescheduleUploadPostJob({
+              const submitResult = await rescheduleUploadPostJob({
                 row: item,
                 newScheduledIso: req.body.scheduled_datetime,
                 authToken: req.headers.authorization?.replace(/^Bearer\s+/i, '') || '',
                 req,
               })
-              if (newReqId) updates.uploadpost_request_id = newReqId
+              if (submitResult?.request_id) updates.uploadpost_request_id = submitResult.request_id
+              if (submitResult?.job_id) updates.uploadpost_job_id = submitResult.job_id
             } catch (e) {
               return res.status(502).json({ error: `Reschedule failed on Upload-Post: ${e.message}` })
             }
@@ -481,13 +484,14 @@ export default async function handler(req, res) {
           // what the user sees in the Schedule UI.
           const mergedRow = { ...item, ...updates }
           const newIso = updates.scheduled_datetime || item.scheduled_datetime
-          const newReqId = await rescheduleUploadPostJob({
+          const submitResult = await rescheduleUploadPostJob({
             row: mergedRow,
             newScheduledIso: newIso,
             authToken: req.headers.authorization?.replace(/^Bearer\s+/i, '') || '',
             req,
           })
-          if (newReqId) updates.uploadpost_request_id = newReqId
+          if (submitResult?.request_id) updates.uploadpost_request_id = submitResult.request_id
+          if (submitResult?.job_id) updates.uploadpost_job_id = submitResult.job_id
           resynced = true
           // List which fields actually moved so the toast on the
           // client can name what got pushed to Upload-Post.
@@ -518,7 +522,7 @@ export default async function handler(req, res) {
     if (req.method === 'DELETE') {
       const id = req.query.id
       if (!id) return res.status(400).json({ error: 'id required' })
-      const rows = await supaFetch(`content_scripts?id=eq.${id}&select=profile_id,status,uploadpost_request_id`)
+      const rows = await supaFetch(`content_scripts?id=eq.${id}&select=profile_id,status,uploadpost_request_id,uploadpost_job_id`)
       const row = rows?.[0]
       const profileId = row?.profile_id
       if (!profileId) return res.status(404).json({ error: 'Not found' })
@@ -531,13 +535,16 @@ export default async function handler(req, res) {
       // on status==='scheduled', which silently leaked orphans for rows
       // in draft/pending/posting/etc. that had nonetheless been submitted
       // to Upload-Post (common after autopilot + resync flows).
-      if (row.uploadpost_request_id && !['posted', 'failed'].includes(row.status)) {
+      if ((row.uploadpost_job_id || row.uploadpost_request_id) && !['posted', 'failed'].includes(row.status)) {
         try {
-          // DELETE requires job_id; resolve from request_id via list lookup.
-          const username = await resolveUploadpostUser(profileId)
-          const result = await uploadpostCancelByRequestId(username, row.uploadpost_request_id)
+          // Prefer the stored job_id (direct DELETE). Fall back to the
+          // legacy request_id list-scan for rows submitted before
+          // uploadpost_job_id was persisted.
+          const result = row.uploadpost_job_id
+            ? await uploadpostCancelScheduled(row.uploadpost_job_id)
+            : await uploadpostCancelByRequestId(await resolveUploadpostUser(profileId), row.uploadpost_request_id)
           if (!result.ok && result.status !== 404) {
-            console.warn('upload-post cancel failed:', row.uploadpost_request_id, result.reason)
+            console.warn('upload-post cancel failed:', row.uploadpost_job_id || row.uploadpost_request_id, result.reason)
           }
         } catch (e) {
           console.warn('upload-post cancel threw:', e.message)

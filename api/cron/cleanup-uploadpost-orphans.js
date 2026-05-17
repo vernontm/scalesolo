@@ -28,17 +28,6 @@ export const config = { maxDuration: 300 }
 
 const CONCURRENCY_PER_BRAND = 5
 
-function jobRequestId(j) {
-  return j?.request_id || j?.id || j?.requestId || j?.upload_id || null
-}
-
-function summarizeJob(j) {
-  return {
-    request_id: jobRequestId(j),
-    job_id: j?.job_id || j?.jobId || null,
-  }
-}
-
 async function cleanupBrand(profileId) {
   const username = await resolveUploadpostUser(profileId)
   if (!username) return { profile_id: profileId, skipped: 'no_username', canceled: 0, failed: 0 }
@@ -56,16 +45,53 @@ async function cleanupBrand(profileId) {
       : Array.isArray(raw?.results) ? raw.results
       : Array.isArray(raw?.data) ? raw.data
       : [])
-  const jobs = rawJobs.map(summarizeJob).filter((j) => j.request_id)
+  // Per the documented Upload-Post list endpoint, each job carries a
+  // job_id, scheduled_date, post_type, title, and profile_username.
+  // It does NOT carry a request_id. Match exclusively on job_id; fall
+  // back to title + scheduled_date for legacy rows that don't yet
+  // have uploadpost_job_id persisted.
+  const jobs = rawJobs
+    .map((j) => ({
+      job_id: j?.job_id || j?.jobId || null,
+      scheduled_date: j?.scheduled_date || j?.scheduled_at || null,
+      title: (j?.title || '').trim(),
+    }))
+    .filter((j) => j.job_id)
   if (!jobs.length) return { profile_id: profileId, username, total: 0, orphan: 0, canceled: 0, failed: 0 }
 
-  // Tag matched vs orphan via one IN query.
-  const idList = jobs.map((j) => encodeURIComponent(j.request_id)).join(',')
-  const matchedRows = await supaFetch(
-    `content_scripts?profile_id=eq.${profileId}&uploadpost_request_id=in.(${idList})&select=uploadpost_request_id`
+  // Pull every currently-tracked row for this profile so we can match
+  // both by job_id (the future-proof path) and by title+date (legacy
+  // rows submitted before uploadpost_job_id existed). Keeps the cron
+  // conservative — never DELETEs a job that any local row appears to
+  // claim.
+  const rows = await supaFetch(
+    `content_scripts?profile_id=eq.${profileId}&or=(uploadpost_job_id.not.is.null,uploadpost_request_id.not.is.null)` +
+    `&select=id,uploadpost_job_id,uploadpost_request_id,scheduled_datetime,title&limit=2000`
   ).catch(() => [])
-  const matched = new Set((matchedRows || []).map((r) => r.uploadpost_request_id).filter(Boolean))
-  const orphans = jobs.filter((j) => !matched.has(j.request_id))
+
+  const matchedJobIds = new Set((rows || []).map((r) => r.uploadpost_job_id).filter(Boolean))
+  const legacyRows = (rows || []).filter((r) => !r.uploadpost_job_id && r.uploadpost_request_id)
+
+  // ± 90 seconds tolerance on the scheduled timestamp to absorb minor
+  // clock drift / formatting differences between our DB and
+  // Upload-Post's stored time.
+  const fuzzyMatchesLegacy = (job) => {
+    if (!legacyRows.length) return false
+    const jobMs = job.scheduled_date ? Date.parse(job.scheduled_date) : NaN
+    return legacyRows.some((r) => {
+      const rMs = r.scheduled_datetime ? Date.parse(r.scheduled_datetime) : NaN
+      if (Number.isFinite(jobMs) && Number.isFinite(rMs) && Math.abs(jobMs - rMs) <= 90_000) {
+        // Title or date alone is enough — date is the strong signal,
+        // title is a tie-breaker for the rare same-minute case.
+        const rTitle = (r.title || '').trim()
+        if (!job.title || !rTitle) return true
+        return job.title.toLowerCase().slice(0, 40) === rTitle.toLowerCase().slice(0, 40)
+      }
+      return false
+    })
+  }
+
+  const orphans = jobs.filter((j) => !matchedJobIds.has(j.job_id) && !fuzzyMatchesLegacy(j))
 
   let canceled = 0, failed = 0
   let cursor = 0
@@ -104,7 +130,7 @@ export default async function handler(req, res) {
     // Scanning every profile would burn the 300s budget on brands that
     // can't possibly have orphans (never touched Upload-Post).
     const rows = await supaFetch(
-      `content_scripts?uploadpost_request_id=not.is.null&select=profile_id&limit=10000`
+      `content_scripts?or=(uploadpost_job_id.not.is.null,uploadpost_request_id.not.is.null)&select=profile_id&limit=10000`
     ).catch(() => [])
     const profileIds = [...new Set((rows || []).map((r) => r.profile_id).filter(Boolean))]
 

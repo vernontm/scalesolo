@@ -403,6 +403,18 @@ export default async function handler(req, res) {
       // look up their delivery status (the status endpoint is keyed
       // entirely on request_id).
       const uploadpostRequestId = body?.request_id || body?.id || null
+      // Also capture the INTERNAL job_id. Per the documented schedule-
+      // posts API, cancellations key on job_id (DELETE /api/uploadposts
+      // /schedule/<job_id>) and the list endpoint only exposes job_id,
+      // not request_id. Without persisting this here, every later
+      // cancel had to scan a list looking for request_id — which the
+      // current API doesn't return, so cancels silently failed.
+      const uploadpostJobId =
+        body?.job_id ||
+        body?.jobId ||
+        body?.schedule?.job_id ||
+        body?.scheduled?.job_id ||
+        null
 
       const payload = {
         profile_id,
@@ -418,6 +430,7 @@ export default async function handler(req, res) {
         status,
         scheduled_datetime: resolvedScheduledIso || null,
         uploadpost_request_id: uploadpostRequestId,
+        uploadpost_job_id: uploadpostJobId,
         generated_by: 'schedule_post',
         // Per-platform text variants for text-only posts. Stored as
         // jsonb so the Schedule page can paginate through them like
