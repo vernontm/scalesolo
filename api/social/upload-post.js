@@ -453,6 +453,56 @@ export default async function handler(req, res) {
       console.warn('schedule_post → content_scripts persist failed:', e.message)
     }
 
+    // Backfill uploadpost_job_id from the Upload-Post schedule list.
+    // Upload-Post doesn't return job_id in the submission response —
+    // only request_id — so the only way to capture job_id (which is
+    // what their cancel/PATCH endpoints key on) is to fetch the list
+    // right after the job is indexed. Indexing takes a second or two,
+    // so we try a couple times with a short backoff. Best-effort: if
+    // we can't find it, the row's saved request_id + scheduled_datetime
+    // is enough for the cascade-cancel flow to recover via title+date
+    // match. Fire-and-forget so it doesn't slow down the response.
+    if (savedItem?.id && resolvedScheduledIso && uploadpostRequestId) {
+      ;(async () => {
+        try {
+          const { resolveUploadpostUser, uploadpostListScheduled } = await import('../_lib/uploadpost.js')
+          const usernameForList = await resolveUploadpostUser(profile_id).catch(() => null)
+          if (!usernameForList) return
+          const targetMs = Date.parse(resolvedScheduledIso)
+          const titleKey = (titleStr || '').trim().toLowerCase().slice(0, 40)
+          // Three tries: 1s, 3s, 6s after submit — Upload-Post indexes
+          // new jobs into the schedule list within a few seconds in
+          // our testing.
+          for (const wait of [1000, 2000, 3000]) {
+            await new Promise((r) => setTimeout(r, wait))
+            const raw = await uploadpostListScheduled(usernameForList).catch(() => ({ posts: [] }))
+            const jobs = Array.isArray(raw?.posts) ? raw.posts : []
+            const match = jobs.find((j) => {
+              if (!j?.job_id) return false
+              const jobMs = Date.parse(j.scheduled_date || j.scheduled_at || '')
+              if (!Number.isFinite(targetMs) || !Number.isFinite(jobMs)) return false
+              if (Math.abs(jobMs - targetMs) > 60_000) return false
+              if (titleKey && j.title) {
+                const jt = String(j.title).trim().toLowerCase().slice(0, 40)
+                if (jt !== titleKey) return false
+              }
+              return true
+            })
+            if (match?.job_id) {
+              await supaFetch(`content_scripts?id=eq.${savedItem.id}`, {
+                method: 'PATCH',
+                body: { uploadpost_job_id: match.job_id },
+                prefer: 'return=minimal',
+              }).catch(() => {})
+              break
+            }
+          }
+        } catch (e) {
+          console.warn('post-submit job_id backfill failed:', e?.message)
+        }
+      })().catch(() => {})
+    }
+
     // Best-effort notification — bell pings instantly via Realtime.
     // Distinguish scheduled-for-later vs published-now so the user gets
     // a "queued" ping when they actually queue, and a separate "live"
