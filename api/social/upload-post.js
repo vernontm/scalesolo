@@ -457,25 +457,29 @@ export default async function handler(req, res) {
     // Upload-Post doesn't return job_id in the submission response —
     // only request_id — so the only way to capture job_id (which is
     // what their cancel/PATCH endpoints key on) is to fetch the list
-    // right after the job is indexed. Indexing takes a second or two,
-    // so we try a couple times with a short backoff. Best-effort: if
-    // we can't find it, the row's saved request_id + scheduled_datetime
-    // is enough for the cascade-cancel flow to recover via title+date
-    // match. Fire-and-forget so it doesn't slow down the response.
+    // right after the job is indexed.
+    //
+    // AWAITED inline (not fire-and-forget) because Vercel serverless
+    // functions freeze the moment the response is sent — background
+    // promises never complete. Tight retry budget so we don't push
+    // submission latency past ~3s in the typical case. If the lookup
+    // exhausts its tries the row still has request_id + scheduled_
+    // datetime, and the schedule-match fallback on the delete path
+    // recovers job_id at cancel time.
     if (savedItem?.id && resolvedScheduledIso && uploadpostRequestId) {
-      ;(async () => {
-        try {
-          const { resolveUploadpostUser, uploadpostListScheduled } = await import('../_lib/uploadpost.js')
-          const usernameForList = await resolveUploadpostUser(profile_id).catch(() => null)
-          if (!usernameForList) return
+      try {
+        const { resolveUploadpostUser: rUser, uploadpostListScheduled: lScheduled } = await import('../_lib/uploadpost.js')
+        const usernameForList = await rUser(profile_id).catch(() => null)
+        if (usernameForList) {
           const targetMs = Date.parse(resolvedScheduledIso)
           const titleKey = (titleStr || '').trim().toLowerCase().slice(0, 40)
-          // Three tries: 1s, 3s, 6s after submit — Upload-Post indexes
-          // new jobs into the schedule list within a few seconds in
-          // our testing.
-          for (const wait of [1000, 2000, 3000]) {
+          // Two tries with short waits — most jobs index within 1-2s.
+          // 700ms + 1500ms keeps total backfill cost under 2.5s.
+          let backfilled = false
+          for (const wait of [700, 1500]) {
+            if (backfilled) break
             await new Promise((r) => setTimeout(r, wait))
-            const raw = await uploadpostListScheduled(usernameForList).catch(() => ({ posts: [] }))
+            const raw = await lScheduled(usernameForList).catch(() => ({ posts: [] }))
             const jobs = Array.isArray(raw?.posts) ? raw.posts : []
             const match = jobs.find((j) => {
               if (!j?.job_id) return false
@@ -494,13 +498,18 @@ export default async function handler(req, res) {
                 body: { uploadpost_job_id: match.job_id },
                 prefer: 'return=minimal',
               }).catch(() => {})
-              break
+              savedItem.uploadpost_job_id = match.job_id
+              backfilled = true
+              console.log('[schedule_post] uploadpost_job_id captured:', match.job_id)
             }
           }
-        } catch (e) {
-          console.warn('post-submit job_id backfill failed:', e?.message)
+          if (!backfilled) {
+            console.log('[schedule_post] uploadpost_job_id NOT captured in 2 tries — will rely on schedule-match at cancel time')
+          }
         }
-      })().catch(() => {})
+      } catch (e) {
+        console.warn('post-submit job_id backfill failed:', e?.message)
+      }
     }
 
     // Best-effort notification — bell pings instantly via Realtime.
