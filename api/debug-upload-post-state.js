@@ -1,24 +1,12 @@
-// GET /api/_debug/upload-post-state?profile_id=...&token=...
+// GET /api/debug-upload-post-state?profile_id=...&token=...
 //
-// TEMPORARY read-only diagnostic. Returns the RAW Upload-Post
-// scheduled-jobs list for a brand alongside the local content_scripts
-// state, so we can see exactly why the delete cascade isn't finding
-// matches.
-//
-// Gated on a per-request DEBUG_TOKEN env var (set on Vercel separately
-// from any user-facing secret) so it's not callable by anyone who
-// guesses the URL. Delete this file once the cascade bug is closed.
-//
-// Returns:
-//   {
-//     username:          <resolved Upload-Post username>,
-//     upload_post_jobs:  [{ job_id, scheduled_date, title, ... }],
-//     local_rows:        [{ id, title, scheduled_datetime, ... }],
-//     orphan_candidates: [...]
-//   }
+// TEMPORARY read-only diagnostic. Hits multiple Upload-Post listing
+// endpoints with the same auth and reports what each one returns so
+// we can see exactly which (if any) surfaces the brand's scheduled
+// jobs.
 
 import { setCors, supaFetch } from './_lib/supabase.js'
-import { resolveUploadpostUser, uploadpostListScheduled } from './_lib/uploadpost.js'
+import { resolveUploadpostUser, uploadpost } from './_lib/uploadpost.js'
 
 export default async function handler(req, res) {
   setCors(req, res)
@@ -36,12 +24,27 @@ export default async function handler(req, res) {
 
   try {
     const username = await resolveUploadpostUser(profileId)
-    let rawList = null
-    try {
-      rawList = await uploadpostListScheduled(username)
-    } catch (e) {
-      rawList = { error: e?.message, status: e?.status }
+    const probe = async (path) => {
+      try {
+        const data = await uploadpost(path)
+        return { ok: true, path, sample: data }
+      } catch (e) {
+        return { ok: false, path, status: e?.status || null, error: e?.message || String(e) }
+      }
     }
+
+    const u = encodeURIComponent(username)
+    // Try every URL pattern Upload-Post has historically used. Some
+    // of these are guesses — that's the point of the probe.
+    const probes = await Promise.all([
+      probe(`/api/uploadposts/schedule`),
+      probe(`/api/uploadposts/scheduled`),
+      probe(`/api/uploadposts/posts/${u}?status=scheduled&limit=200`),
+      probe(`/api/uploadposts/posts/${u}?status=pending&limit=200`),
+      probe(`/api/uploadposts/posts/${u}?limit=200`),
+      probe(`/api/uploadposts/users/${u}/scheduled`),
+      probe(`/api/uploadposts/users/${u}/posts?status=scheduled`),
+    ])
 
     const localRows = await supaFetch(
       `content_scripts?profile_id=eq.${profileId}&status=eq.scheduled&select=id,title,scheduled_datetime,uploadpost_request_id,uploadpost_job_id&order=scheduled_datetime.asc`
@@ -50,7 +53,7 @@ export default async function handler(req, res) {
     return res.status(200).json({
       profile_id: profileId,
       username,
-      upload_post_jobs_raw: rawList,
+      probes,
       local_rows: localRows,
       now: new Date().toISOString(),
     })
