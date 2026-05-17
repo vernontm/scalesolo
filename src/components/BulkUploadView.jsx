@@ -22,7 +22,7 @@ import { createPortal } from 'react-dom'
 import {
   Upload, Loader2, Sparkles, CalendarClock, Send, Download, Trash2,
   Check, X, AlertCircle, Image as ImageIcon, Video as VideoIcon, ChevronDown, Zap,
-  RefreshCw, Type, Wand2, Settings as SettingsIcon,
+  RefreshCw, Type, Wand2, Settings as SettingsIcon, Eraser,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase.js'
 import { toast, confirmDialog } from './Toast.jsx'
@@ -1737,6 +1737,61 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           style={{ padding: '8px 12px' }}
           title="Cancel + re-submit every scheduled row with its current payload"
         >{busyAction === 'resync-upload-post' ? <Loader2 size={13} className="spin" /> : <RefreshCw size={13} />} Resync Scheduled</button>
+        {/* Clean up orphans — DELETEs every scheduled job on Upload-Post
+            that no longer has a content_scripts row pointing at it.
+            Use after bulk-deletes that didn't cascade (legacy rows
+            without uploadpost_request_id, or rows deleted before the
+            cascade-on-delete guard was widened). Never touches matched
+            (currently-queued) posts. */}
+        <button
+          className="btn-ghost" disabled={busyAction !== null}
+          onClick={async () => {
+            if (!profileId) { toast({ kind: 'warn', message: 'Pick a brand profile first.' }); return }
+            // First call list mode to count orphans so we can show an
+            // accurate confirmation rather than asking blind.
+            try {
+              setBusyAction('cleanup-orphans')
+              const listRes = await fetch('/api/social/uploadpost-cleanup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({ profile_id: profileId, mode: 'list' }),
+              })
+              const listBody = await listRes.json().catch(() => ({}))
+              if (!listRes.ok) throw new Error(listBody?.error || `List failed (${listRes.status})`)
+              const orphanCount = listBody?.counts?.orphan || 0
+              if (orphanCount === 0) {
+                toast({ kind: 'success', message: 'No orphans found on Upload-Post. Schedule is clean.' })
+                setBusyAction(null)
+                return
+              }
+              const ok = await confirmDialog({
+                title: `Cancel ${orphanCount} orphan job${orphanCount === 1 ? '' : 's'} on Upload-Post?`,
+                message: 'These are scheduled jobs on Upload-Post that no longer match any post in this app (left behind by past deletes). Currently-queued posts are NOT touched.',
+                confirmText: `Cancel ${orphanCount} orphan${orphanCount === 1 ? '' : 's'}`,
+                destructive: true,
+              })
+              if (!ok) { setBusyAction(null); return }
+              const cancelRes = await fetch('/api/social/uploadpost-cleanup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({ profile_id: profileId, mode: 'cancel_orphans' }),
+              })
+              const cancelBody = await cancelRes.json().catch(() => ({}))
+              if (!cancelRes.ok) throw new Error(cancelBody?.error || `Cleanup failed (${cancelRes.status})`)
+              const c = cancelBody?.counts || {}
+              toast({
+                kind: c.failed ? 'warn' : 'success',
+                message: `Cancelled ${c.canceled || 0} orphan${(c.canceled || 0) === 1 ? '' : 's'}` + (c.failed ? `; ${c.failed} failed` : '') + '.',
+              })
+            } catch (e) {
+              toast({ kind: 'error', message: e.message || 'Cleanup failed' })
+            } finally {
+              setBusyAction(null)
+            }
+          }}
+          style={{ padding: '8px 12px' }}
+          title="Cancel scheduled jobs on Upload-Post that have no matching post in this app"
+        >{busyAction === 'cleanup-orphans' ? <Loader2 size={13} className="spin" /> : <Eraser size={13} />} Clean up orphans</button>
         {/* Bulk delete — only renders once at least one row is checked so
            the toolbar isn't cluttered when nothing's selected. */}
         {selected.size > 0 && (

@@ -498,7 +498,12 @@ export default async function handler(req, res) {
       // Cascade-cancel the Upload-Post job before dropping the local row, so a
       // deleted-in-app post doesn't keep firing on the schedule. Best-effort:
       // 404s (already fired / never existed) don't block the local delete.
-      if (row.status === 'scheduled' && row.uploadpost_request_id) {
+      // Cancel on Upload-Post whenever we have a request_id and the row
+      // hasn't already fired or hard-failed. Previously we only cancelled
+      // on status==='scheduled', which silently leaked orphans for rows
+      // in draft/pending/posting/etc. that had nonetheless been submitted
+      // to Upload-Post (common after autopilot + resync flows).
+      if (row.uploadpost_request_id && !['posted', 'failed'].includes(row.status)) {
         try {
           // DELETE requires job_id; resolve from request_id via list lookup.
           const username = await resolveUploadpostUser(profileId)
