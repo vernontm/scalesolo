@@ -388,6 +388,7 @@ export default async function handler(req, res) {
               font: ts.font, size: Number(ts.size ?? 72),
               color: ts.color || '#ffffff', bg_color: ts.bg_color || '#e0467a',
               bg_padding: Math.max(0, Number(ts.bg_padding ?? 28)),
+              bg_mode: ts.bg_mode || 'block',
               uppercase: !!ts.uppercase, max_width: 1080,
             })
             if (png) {
@@ -765,6 +766,7 @@ export default async function handler(req, res) {
             color: ts.color || '#ffffff',
             bg_color: ts.bg_color || '#e0467a',
             bg_padding: Math.max(0, Number(ts.bg_padding ?? 28)),
+            bg_mode: ts.bg_mode || 'block',
             uppercase: !!ts.uppercase,
             max_width: 1080,
           })

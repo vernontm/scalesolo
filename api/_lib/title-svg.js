@@ -67,6 +67,20 @@ function escapeXml(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&apos;')
 }
 
+// Measure a single line's rendered width via a one-line probe SVG.
+// Returns the text bbox width in px so per-line pill backgrounds can
+// hug each line individually (Hormozi-style) instead of one big rect.
+function measureLineWidth(line, { fontOpts, family, weight, size, blockWidth }) {
+  try {
+    const probe = `<svg xmlns="http://www.w3.org/2000/svg" width="${blockWidth}" height="${Math.round(size * 1.6)}"><text x="${blockWidth / 2}" y="${size}" font-family="${family}" font-size="${size}" font-weight="${weight}" fill="#000" text-anchor="middle" dominant-baseline="alphabetic">${escapeXml(line)}</text></svg>`
+    const bb = new Resvg(Buffer.from(probe), { font: fontOpts, background: 'rgba(0,0,0,0)' }).getBBox()
+    if (bb && bb.width) return bb.width
+  } catch {}
+  // Fallback estimate when resvg's bbox probe fails on a glyph it
+  // doesn't have in its registered font db.
+  return Math.min(blockWidth, line.length * size * 0.58)
+}
+
 export async function renderTitlePng({
   title,
   font = 'Poppins ExtraBold',
@@ -74,6 +88,9 @@ export async function renderTitlePng({
   color = '#ffffff',
   bg_color = '#e0467a',
   bg_padding = 28,
+  bg_mode = 'block',        // 'block' = one rounded rect around all lines (legacy)
+                            // 'per_line' = one pill per line that hugs each line's text width
+  bg_line_gap = 8,          // px gap between per-line pills when bg_mode='per_line'
   uppercase = false,
   max_width = 1080,
 } = {}) {
@@ -83,8 +100,6 @@ export async function renderTitlePng({
 
   const cfg = fontConfig(font)
   const lineHeight  = Math.round(size * 1.18)
-  const totalText   = lines.length * lineHeight
-  const blockHeight = totalText + bg_padding * 2
   const blockWidth  = max_width
 
   const fontOpts = {
@@ -94,9 +109,37 @@ export async function renderTitlePng({
     loadSystemFonts: false,
   }
 
-  // Probe render: text only, no background. resvg measures glyph runs
-  // through its registered fonts and gives us a real bounding box, so
-  // the bg pill can hug the text instead of being max-width.
+  // ── Per-line "pill" mode: each line gets its own rounded rect that
+  //    hugs just that line's text width. Pills stack vertically with
+  //    bg_line_gap between them. This is the TikTok-style title look
+  //    where each line is its own highlighted chip.
+  if (bg_mode === 'per_line') {
+    const pillVPad = Math.round(bg_padding * 0.45)   // vertical padding INSIDE each pill
+    const pillHPad = Math.round(bg_padding * 0.75)   // horizontal padding INSIDE each pill
+    const pillHeight = lineHeight + pillVPad * 2
+    const blockHeight = pillHeight * lines.length + bg_line_gap * (lines.length - 1)
+    const radius = Math.round(pillHeight * 0.22)
+
+    const linesSvg = lines.map((line, i) => {
+      const w = measureLineWidth(line, { fontOpts, family: cfg.family, weight: cfg.weight, size, blockWidth })
+      const rectWidth = Math.min(blockWidth, Math.round(w + pillHPad * 2))
+      const rectX = Math.round((blockWidth - rectWidth) / 2)
+      const rectY = i * (pillHeight + bg_line_gap)
+      const textY = rectY + pillVPad + lineHeight - Math.round(size * 0.2)
+      return `
+        <rect x="${rectX}" y="${rectY}" width="${rectWidth}" height="${pillHeight}" rx="${radius}" ry="${radius}" fill="${bg_color}" />
+        <text x="${blockWidth / 2}" y="${textY}" font-family="${cfg.family}" font-size="${size}" font-weight="${cfg.weight}" fill="${color}" text-anchor="middle" dominant-baseline="alphabetic">${escapeXml(line)}</text>`
+    }).join('\n    ')
+
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${blockWidth}" height="${blockHeight}">${linesSvg}</svg>`
+    return new Resvg(Buffer.from(svg), { background: 'rgba(0,0,0,0)', font: fontOpts }).render().asPng()
+  }
+
+  // ── Block mode (default): one rounded rect around the entire text
+  //    block, sized to hug the widest line. Existing behavior.
+  const totalText   = lines.length * lineHeight
+  const blockHeight = totalText + bg_padding * 2
+
   const probeLines = lines.map((l, i) => {
     const y = bg_padding + (i + 1) * lineHeight - Math.round(size * 0.2)
     return `<text x="${blockWidth / 2}" y="${y}" font-family="${cfg.family}" font-size="${size}" font-weight="${cfg.weight}" fill="${color}" text-anchor="middle" dominant-baseline="alphabetic">${escapeXml(l)}</text>`
@@ -116,9 +159,5 @@ export async function renderTitlePng({
     ${probeLines}
   </svg>`
 
-  const resvg = new Resvg(Buffer.from(svg), {
-    background: 'rgba(0,0,0,0)',
-    font: fontOpts,
-  })
-  return resvg.render().asPng()
+  return new Resvg(Buffer.from(svg), { background: 'rgba(0,0,0,0)', font: fontOpts }).render().asPng()
 }

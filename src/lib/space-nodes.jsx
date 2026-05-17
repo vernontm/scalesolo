@@ -5877,6 +5877,19 @@ export function VideoPolishEditor({ nodeId, data, onPatch, allNodes, allEdges })
               Tip: keep the title in the top third (~10–25%) so it doesn't fight the burned captions which sit center / bottom.
             </div>
 
+            {/* Background style: single block (legacy, default) vs per-line
+                pills (TikTok-style: each line gets its own rounded chip that
+                hugs the line's text width). */}
+            <NodeField label="Background style">
+              <select className="nodrag" style={tinyInput}
+                value={props.title_bg_mode || 'block'}
+                onChange={(e) => setP({ title_bg_mode: e.target.value })}
+              >
+                <option value="block">Single block (one rectangle)</option>
+                <option value="per_line">Per-line pills (TikTok / Hormozi style)</option>
+              </select>
+            </NodeField>
+
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, cursor: 'pointer' }}>
               <input className="nodrag"
                 type="checkbox"
@@ -8478,6 +8491,7 @@ export const NODE_REGISTRY = {
       title_bg_color: '#e0467a',
       title_size: 72,
       title_bg_padding: 28,
+      title_bg_mode: 'block',   // 'block' | 'per_line' (Hormozi-style pills)
       title_y_pos: 15,
       title_uppercase: false,
       // Logo / watermark
@@ -8703,6 +8717,7 @@ export const NODE_REGISTRY = {
               font: p.title_font, color: p.title_color, bg_color: p.title_bg_color,
               size: p.title_size, bg_padding: p.title_bg_padding, y_pos: p.title_y_pos,
               uppercase: p.title_uppercase,
+              bg_mode: p.title_bg_mode || 'block',
             } : undefined,
             captions_enabled: p.captions_enabled !== false,
             caption_template_id: p.caption_template_id || undefined,

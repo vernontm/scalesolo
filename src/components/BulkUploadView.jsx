@@ -660,6 +660,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
       bg_color:    tpl.title_bg_color || '#e0467a',
       size:        tpl.title_size || 72,
       bg_padding:  tpl.title_bg_padding || 28,
+      bg_mode:     tpl.title_bg_mode || 'block',
       y_pos:       tpl.title_y_pos || 15,
       uppercase:   !!tpl.title_uppercase,
       mode:        tpl.title_mode || 'auto',
