@@ -189,6 +189,44 @@ export async function uploadpostCancelByRequestId(username, requestId) {
   return uploadpostCancelScheduled(jobId)
 }
 
+// Find Upload-Post's internal job_id by matching the row's scheduled
+// time + title against the documented list endpoint. Used as a
+// fallback for legacy rows that have a uploadpost_request_id but no
+// uploadpost_job_id stored. The documented list endpoint returns
+// only job_id / scheduled_date / title — no request_id — so matching
+// by time + title is the only way to recover the right job for
+// cancellation on those rows.
+//
+// Tolerance: ±90 seconds on scheduled_date (Upload-Post and our DB
+// can drift by a few seconds on round-trip); exact-prefix on title
+// (40-char case-insensitive) when both sides have a title. Returns
+// null when no job matches.
+export async function uploadpostJobIdViaScheduleMatch(username, { scheduled_iso, title }) {
+  if (!username || !scheduled_iso) return null
+  const targetMs = Date.parse(scheduled_iso)
+  if (!Number.isFinite(targetMs)) return null
+  const targetTitle = (title || '').trim().toLowerCase().slice(0, 40)
+  const raw = await uploadpostListScheduled(username).catch(() => ({ posts: [] }))
+  const jobs = Array.isArray(raw)
+    ? raw
+    : (Array.isArray(raw?.posts) ? raw.posts
+      : Array.isArray(raw?.results) ? raw.results
+      : Array.isArray(raw?.data) ? raw.data
+      : [])
+  for (const j of jobs) {
+    if (!j?.job_id) continue
+    const jobMs = Date.parse(j.scheduled_date || j.scheduled_at || '')
+    if (!Number.isFinite(jobMs)) continue
+    if (Math.abs(jobMs - targetMs) > 90_000) continue
+    if (targetTitle && j.title) {
+      const jt = String(j.title).trim().toLowerCase().slice(0, 40)
+      if (jt !== targetTitle) continue
+    }
+    return j.job_id
+  }
+  return null
+}
+
 // Idempotent: returns the profile (creates first if missing).
 export async function uploadpostEnsureUserProfile(username) {
   try {

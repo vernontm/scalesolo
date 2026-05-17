@@ -12,7 +12,7 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from './_lib/supabase.js'
 import { findNextOpenSlot, syncContentStatusInSpaces } from './_lib/scheduling.js'
-import { uploadpostCancelByRequestId, uploadpostCancelScheduled, resolveUploadpostUser } from './_lib/uploadpost.js'
+import { uploadpostCancelByRequestId, uploadpostCancelScheduled, uploadpostJobIdViaScheduleMatch, resolveUploadpostUser } from './_lib/uploadpost.js'
 
 // Cancel an existing scheduled Upload-Post job and re-submit it with a
 // new time. Called from the PATCH + action=schedule paths whenever the
@@ -54,9 +54,22 @@ async function rescheduleUploadPostJob({ row, newScheduledIso, authToken, req })
     for (let attempt = 0; attempt < MAX_ATTEMPTS && !cancelled; attempt++) {
       if (BACKOFF_MS[attempt]) await new Promise((r) => setTimeout(r, BACKOFF_MS[attempt]))
       try {
-        const cancel = row.uploadpost_job_id
-          ? await uploadpostCancelScheduled(row.uploadpost_job_id)
-          : await uploadpostCancelByRequestId(username, row.uploadpost_request_id)
+        let cancel
+        if (row.uploadpost_job_id) {
+          cancel = await uploadpostCancelScheduled(row.uploadpost_job_id)
+        } else {
+          cancel = await uploadpostCancelByRequestId(username, row.uploadpost_request_id)
+          // Fallback for legacy rows: if request_id lookup returns
+          // not_found, match by scheduled_datetime + title against
+          // the documented list endpoint.
+          if (!cancel.ok && (cancel.reason === 'not_found' || cancel.status === 404) && row.scheduled_datetime) {
+            const matchedJobId = await uploadpostJobIdViaScheduleMatch(username, {
+              scheduled_iso: row.scheduled_datetime,
+              title: row.title,
+            })
+            if (matchedJobId) cancel = await uploadpostCancelScheduled(matchedJobId)
+          }
+        }
         if (cancel.ok) {
           cancelled = true
           break
@@ -522,27 +535,41 @@ export default async function handler(req, res) {
     if (req.method === 'DELETE') {
       const id = req.query.id
       if (!id) return res.status(400).json({ error: 'id required' })
-      const rows = await supaFetch(`content_scripts?id=eq.${id}&select=profile_id,status,uploadpost_request_id,uploadpost_job_id`)
+      const rows = await supaFetch(`content_scripts?id=eq.${id}&select=profile_id,status,uploadpost_request_id,uploadpost_job_id,scheduled_datetime,title`)
       const row = rows?.[0]
       const profileId = row?.profile_id
       if (!profileId) return res.status(404).json({ error: 'Not found' })
       await assertProfileAccess(auth.user.id, profileId)
-      // Cascade-cancel the Upload-Post job before dropping the local row, so a
-      // deleted-in-app post doesn't keep firing on the schedule. Best-effort:
-      // 404s (already fired / never existed) don't block the local delete.
-      // Cancel on Upload-Post whenever we have a request_id and the row
-      // hasn't already fired or hard-failed. Previously we only cancelled
-      // on status==='scheduled', which silently leaked orphans for rows
-      // in draft/pending/posting/etc. that had nonetheless been submitted
-      // to Upload-Post (common after autopilot + resync flows).
+      // Cascade-cancel the Upload-Post job before dropping the local row.
+      // Cancellation strategy (in order of preference):
+      //   1. Stored uploadpost_job_id    → direct DELETE
+      //   2. Stored uploadpost_request_id → list-scan lookup (works on
+      //      Upload-Post API versions that still expose request_id)
+      //   3. scheduled_datetime + title  → list-scan match (works on the
+      //      newer documented API which only returns job_id/date/title).
+      //      Critical for "legacy" rows submitted before uploadpost_job_id
+      //      was persisted — without this fallback the cancel silently
+      //      returns not_found and Upload-Post keeps the orphan queued.
       if ((row.uploadpost_job_id || row.uploadpost_request_id) && !['posted', 'failed'].includes(row.status)) {
         try {
-          // Prefer the stored job_id (direct DELETE). Fall back to the
-          // legacy request_id list-scan for rows submitted before
-          // uploadpost_job_id was persisted.
-          const result = row.uploadpost_job_id
-            ? await uploadpostCancelScheduled(row.uploadpost_job_id)
-            : await uploadpostCancelByRequestId(await resolveUploadpostUser(profileId), row.uploadpost_request_id)
+          let result
+          if (row.uploadpost_job_id) {
+            result = await uploadpostCancelScheduled(row.uploadpost_job_id)
+          } else {
+            const username = await resolveUploadpostUser(profileId)
+            // Try the legacy request_id resolution first.
+            result = await uploadpostCancelByRequestId(username, row.uploadpost_request_id)
+            // If that returned not_found, fall through to date+title matching
+            // against the documented list endpoint. Legacy rows usually
+            // recover here.
+            if (!result.ok && (result.reason === 'not_found' || result.status === 404) && row.scheduled_datetime) {
+              const matchedJobId = await uploadpostJobIdViaScheduleMatch(username, {
+                scheduled_iso: row.scheduled_datetime,
+                title: row.title,
+              })
+              if (matchedJobId) result = await uploadpostCancelScheduled(matchedJobId)
+            }
+          }
           if (!result.ok && result.status !== 404) {
             console.warn('upload-post cancel failed:', row.uploadpost_job_id || row.uploadpost_request_id, result.reason)
           }
