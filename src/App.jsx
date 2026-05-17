@@ -120,13 +120,6 @@ function LoadingScreen() {
 function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const { pathname } = useLocation()
-  const { session } = useAuth()
-  // Mount-once: GA4 loader + route-change page_view tracker.
-  // No-op when VITE_GA_MEASUREMENT_ID is unset.
-  useGoogleAnalytics(pathname)
-  // Mount-while-signed-in: post /api/heartbeat every 30s. Powers the
-  // admin Dashboard's Active-now + Today counters.
-  useHeartbeat(session)
   // Spaces gets a collapsed sidebar so the canvas has more room.
   const compact = pathname.startsWith('/spaces')
   // Profile-switch full remount. When the active brand profile
@@ -221,6 +214,16 @@ function AppShell() {
   )
 }
 
+// Mounts the global analytics hooks (GA4 page_view + heartbeat) at
+// the very top of the tree so they fire for EVERY route — signed in,
+// signed out, public landing pages, all of it. Renders nothing.
+function GlobalAnalytics({ session }) {
+  const { pathname } = useLocation()
+  useGoogleAnalytics(pathname)
+  useHeartbeat(session)
+  return null
+}
+
 export default function App() {
   const { session, loading } = useAuth()
 
@@ -228,6 +231,7 @@ export default function App() {
   if (!session) {
     return (
       <ErrorBoundary>
+        <GlobalAnalytics session={null} />
         <Routes>
           <Route path="/" element={<Landing />} />
           <Route path="/pricing" element={<Pricing />} />
@@ -244,6 +248,7 @@ export default function App() {
 
   return (
     <ErrorBoundary>
+      <GlobalAnalytics session={session} />
       <Routes>
         <Route path="/pricing" element={<Pricing />} />
         <Route path="/f/:slug" element={<FormPublic />} />

@@ -677,14 +677,20 @@ export default function Dashboard() {
           <PresenceCard
             label="Active right now"
             value={presence?.active_now}
-            hint="Signed-in users in the last 5 min"
+            sub={presence?.active_signedin != null
+              ? `${presence.active_signedin} signed in`
+              : undefined}
+            hint="Total visitors in the last 5 min"
             dotColor="#22c55e"
             pulse
           />
           <PresenceCard
-            label="Users today"
+            label="Traffic today"
             value={presence?.today}
-            hint="Distinct users since UTC midnight"
+            sub={presence?.today_signedin != null
+              ? `${presence.today_signedin} signed in`
+              : undefined}
+            hint="Distinct visitors since UTC midnight"
             dotColor="#0ea5e9"
           />
           <PresenceCard
@@ -846,7 +852,7 @@ export default function Dashboard() {
 // above (Active right now / Users today / Total users). The pulse
 // dot on "Active right now" makes the live-ness visually obvious —
 // other cards get a static dot in their own color.
-function PresenceCard({ label, value, hint, dotColor, pulse }) {
+function PresenceCard({ label, value, sub, hint, dotColor, pulse }) {
   const display = (value == null) ? '—' : Number(value).toLocaleString()
   return (
     <div style={{
@@ -879,13 +885,24 @@ function PresenceCard({ label, value, hint, dotColor, pulse }) {
         {label}
       </div>
       <div style={{
-        fontFamily: 'var(--font-display)',
-        fontWeight: 800,
-        fontSize: 28,
-        color: 'var(--text)',
-        lineHeight: 1.1,
+        display: 'flex',
+        alignItems: 'baseline',
+        gap: 8,
       }}>
-        {display}
+        <div style={{
+          fontFamily: 'var(--font-display)',
+          fontWeight: 800,
+          fontSize: 28,
+          color: 'var(--text)',
+          lineHeight: 1.1,
+        }}>
+          {display}
+        </div>
+        {sub && (
+          <div style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 600 }}>
+            {sub}
+          </div>
+        )}
       </div>
       <div style={{ fontSize: 11, color: 'var(--muted)' }}>{hint}</div>
       <style>{`

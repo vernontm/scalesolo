@@ -63,17 +63,45 @@ export function useGoogleAnalytics(pathname) {
   }, [pathname])
 }
 
-// Hook: keep posting heartbeats while the user is signed in. Skips
-// when there's no session (so the public landing page doesn't hit
-// the endpoint). Resets the 30s timer on visibility change so a tab
-// that's been backgrounded fires a fresh ping the moment it returns
-// to focus — the admin "Active now" counter should reflect "I'm
-// looking at this RIGHT now" rather than "I had this tab open 4
-// minutes ago and walked away".
+// Per-browser session id. Generated once on first visit and persisted
+// in localStorage so a single visitor's heartbeats roll up against
+// the same row no matter how many tabs they open or how often they
+// navigate. Stays anonymous unless the user signs in — at which
+// point the heartbeat endpoint binds the session to their user_id
+// automatically.
+const SESSION_KEY = 'scalesolo:visitor_session_id'
+function getOrCreateSessionId() {
+  if (typeof window === 'undefined') return ''
+  try {
+    const existing = window.localStorage.getItem(SESSION_KEY)
+    if (existing) return existing
+    // Prefer crypto.randomUUID when available — every browser since
+    // Safari 15.4 / Chrome 92. Fallback for ancient browsers uses
+    // Math.random + timestamp (good enough for traffic counting).
+    let id = ''
+    try { id = window.crypto?.randomUUID?.() || '' } catch {}
+    if (!id) id = `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
+    window.localStorage.setItem(SESSION_KEY, id)
+    return id
+  } catch {
+    // Private-mode / localStorage disabled: generate a per-tab id.
+    // Each tab will be counted separately which is acceptable.
+    return `mem_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
+  }
+}
+
+// Hook: post a heartbeat every 30s + on visibility regain. Fires for
+// EVERY visitor (anonymous landing-page traffic + signed-in users)
+// so the admin presence widget reflects total traffic, not just
+// authenticated sessions. When `session` is present its bearer
+// token is included; the server binds the user_id onto the session
+// row so signed-in users are also countable separately.
 export function useHeartbeat(session) {
   const lastPostRef = useRef(0)
   useEffect(() => {
-    if (!session?.access_token) return
+    if (typeof window === 'undefined') return
+    const sessionId = getOrCreateSessionId()
+    if (!sessionId) return
     const post = async () => {
       // Throttle: never fire two heartbeats in under 10s, even if
       // visibility changes rapidly.
@@ -84,9 +112,9 @@ export function useHeartbeat(session) {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${session.access_token}`,
+            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
           },
-          body: '{}',
+          body: JSON.stringify({ session_id: sessionId }),
           // keepalive lets the ping fly even mid-tab-close so the
           // last "still here" beat lands before the user navigates
           // away.
@@ -97,7 +125,7 @@ export function useHeartbeat(session) {
         // they're not user-facing.
       }
     }
-    post()  // initial beat on session attach
+    post()  // initial beat on mount / token change
     const interval = setInterval(post, HEARTBEAT_INTERVAL_MS)
     const onVis = () => { if (!document.hidden) post() }
     document.addEventListener('visibilitychange', onVis)

@@ -2,14 +2,18 @@
 //
 // Returns:
 //   {
-//     active_now:  <int>,   distinct users with last_seen_at > now - 5 min
-//     today:       <int>,   distinct users with last_seen_at >= today (UTC)
-//     total_users: <int>,   all-time signed-up users (auth.users count)
+//     active_now:      <int>,   distinct sessions w/ heartbeat in last 5 min
+//     active_signedin: <int>,   subset of active_now that's authenticated
+//     today:           <int>,   distinct sessions w/ heartbeat since UTC midnight
+//     today_signedin:  <int>,   subset of today that's authenticated
+//     total_users:     <int>,   lifetime signups (billing_customers count)
+//     as_of:           ISO ts
 //   }
 //
-// Drives the Admin-only widget on the Dashboard. Cheap — two count
-// queries against user_heartbeats, plus one against auth.users for
-// the lifetime total.
+// Counts cover TOTAL traffic: anonymous landing-page visitors + signed-
+// in users together. The signed-in subsets are extra columns so the
+// admin can see both "how big is the funnel right now" and "how many
+// of those are paying users."
 
 import { setCors, requireAdmin, supaFetch } from '../_lib/supabase.js'
 
@@ -22,37 +26,30 @@ export default async function handler(req, res) {
   if (!auth) return
 
   try {
-    // Active-now: last_seen_at within the past 5 minutes. Anything
-    // older almost certainly means the user closed the tab — we'd
-    // rather under-count than show stale presence.
     const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
-    // Today: last_seen_at since UTC midnight. Using UTC so the count
-    // is consistent regardless of where the dashboard is rendered.
     const utcMidnight = new Date()
     utcMidnight.setUTCHours(0, 0, 0, 0)
     const todayStart = utcMidnight.toISOString()
 
-    // PostgREST count via Prefer: count=exact + the Content-Range
-    // header. We're abusing supaFetch's existing return shape by
-    // asking for select=user_id&limit=1 — the count is returned
-    // alongside, exposed via the `_count` field that supaFetch
-    // surfaces when prefer includes count=*.
-    const fetchCount = async (whereClause) => {
-      const url = `user_heartbeats?${whereClause}&select=user_id`
-      const rows = await supaFetch(url, { prefer: 'count=exact' }).catch(() => [])
-      // supaFetch returns the array of rows. Use length as the
-      // canonical count — heartbeats table is one-row-per-user, so
-      // length === distinct user count.
-      return Array.isArray(rows) ? rows.length : 0
+    // Each fetch is "give me the rows matching this filter" then
+    // .length. PostgREST count headers are finicky over our supaFetch
+    // wrapper; using length keeps it simple and the row volume is
+    // small enough (one row per session). Limit caps the response
+    // at 5000 to keep payload bounded — the counter says "5000+" if
+    // we ever cross that.
+    const fetchRows = async (where) => {
+      const url = `user_heartbeats?${where}&select=user_id&limit=5000`
+      const rows = await supaFetch(url).catch(() => [])
+      return Array.isArray(rows) ? rows : []
     }
 
-    const [activeNow, today] = await Promise.all([
-      fetchCount(`last_seen_at=gte.${encodeURIComponent(fiveMinAgo)}`),
-      fetchCount(`last_seen_at=gte.${encodeURIComponent(todayStart)}`),
+    const [activeRows, todayRows] = await Promise.all([
+      fetchRows(`last_seen_at=gte.${encodeURIComponent(fiveMinAgo)}`),
+      fetchRows(`last_seen_at=gte.${encodeURIComponent(todayStart)}`),
     ])
 
-    // All-time total: scan billing_customers (one row per user) which
-    // is cheaper than the auth.users mirror and indexed.
+    const countSignedIn = (rows) => rows.filter((r) => !!r.user_id).length
+
     let totalUsers = 0
     try {
       const rows = await supaFetch(`billing_customers?select=user_id&limit=10000`)
@@ -60,8 +57,10 @@ export default async function handler(req, res) {
     } catch {}
 
     return res.status(200).json({
-      active_now: activeNow,
-      today,
+      active_now: activeRows.length,
+      active_signedin: countSignedIn(activeRows),
+      today: todayRows.length,
+      today_signedin: countSignedIn(todayRows),
       total_users: totalUsers,
       as_of: new Date().toISOString(),
     })
