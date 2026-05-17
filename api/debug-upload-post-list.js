@@ -24,6 +24,30 @@ export default async function handler(req, res) {
   if (!key) return res.status(500).json({ error: 'UPLOADPOST_API_KEY env var missing' })
 
   try {
+    // Optional: ?request_id=... probes the per-request status endpoint
+    // (the one our sync-scheduled-posts cron calls to flip rows from
+    // scheduled → posted/failed). Useful for diagnosing rows stuck in
+    // scheduled even after their scheduled_datetime has passed.
+    const requestId = (req.query.request_id || '').toString().trim()
+    if (requestId) {
+      const r = await fetch(
+        `${BASE}/api/uploadposts/status?request_id=${encodeURIComponent(requestId)}`,
+        { headers: { Authorization: `Apikey ${key}`, Accept: 'application/json' } }
+      )
+      const text = await r.text()
+      const headersOut = {}
+      r.headers.forEach((v, k) => { headersOut[k] = v })
+      let parsed = null
+      try { parsed = JSON.parse(text) } catch {}
+      return res.status(200).json({
+        url: `${BASE}/api/uploadposts/status?request_id=${requestId}`,
+        http_status: r.status,
+        response_headers: headersOut,
+        response_body_raw: text,
+        response_body_parsed: parsed,
+      })
+    }
+
     const r = await fetch(`${BASE}/api/uploadposts/schedule`, {
       method: 'GET',
       headers: { Authorization: `Apikey ${key}`, Accept: 'application/json' },
