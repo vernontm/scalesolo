@@ -550,37 +550,46 @@ export default async function handler(req, res) {
       //      Critical for "legacy" rows submitted before uploadpost_job_id
       //      was persisted — without this fallback the cancel silently
       //      returns not_found and Upload-Post keeps the orphan queued.
+      let cancelDiag = { attempted: false, strategy: null, ok: null, reason: null, status: null, matched_job_id: null }
       if ((row.uploadpost_job_id || row.uploadpost_request_id) && !['posted', 'failed'].includes(row.status)) {
+        cancelDiag.attempted = true
         try {
           let result
           if (row.uploadpost_job_id) {
+            cancelDiag.strategy = 'by_job_id'
             result = await uploadpostCancelScheduled(row.uploadpost_job_id)
           } else {
             const username = await resolveUploadpostUser(profileId)
-            // Try the legacy request_id resolution first.
+            cancelDiag.strategy = 'by_request_id'
             result = await uploadpostCancelByRequestId(username, row.uploadpost_request_id)
-            // If that returned not_found, fall through to date+title matching
-            // against the documented list endpoint. Legacy rows usually
-            // recover here.
             if (!result.ok && (result.reason === 'not_found' || result.status === 404) && row.scheduled_datetime) {
+              cancelDiag.strategy = 'by_schedule_match'
               const matchedJobId = await uploadpostJobIdViaScheduleMatch(username, {
                 scheduled_iso: row.scheduled_datetime,
                 title: row.title,
               })
+              cancelDiag.matched_job_id = matchedJobId
               if (matchedJobId) result = await uploadpostCancelScheduled(matchedJobId)
             }
           }
+          cancelDiag.ok = !!result.ok
+          cancelDiag.reason = result.reason || null
+          cancelDiag.status = result.status || null
           if (!result.ok && result.status !== 404) {
             console.warn('upload-post cancel failed:', row.uploadpost_job_id || row.uploadpost_request_id, result.reason)
           }
         } catch (e) {
+          cancelDiag.reason = e?.message || String(e)
           console.warn('upload-post cancel threw:', e.message)
         }
       }
       await supaFetch(`content_scripts?id=eq.${id}`, { method: 'DELETE', prefer: 'return=minimal' })
       // Mark collection items as deleted so they reflect in the canvas.
       syncContentStatusInSpaces(profileId, id, 'deleted').catch(() => {})
-      return res.status(204).end()
+      // Return the diagnostic so the frontend can show / log why the
+      // Upload-Post cascade did or didn't happen. 200 instead of 204
+      // so the body is honored.
+      return res.status(200).json({ deleted: true, upload_post_cancel: cancelDiag })
     }
 
     return res.status(405).json({ error: 'Method not allowed' })

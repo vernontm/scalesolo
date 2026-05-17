@@ -1576,9 +1576,28 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     const ok = await confirmDialog({ title: 'Delete this row?', confirmText: 'Delete', destructive: true })
     if (!ok) return
     try {
-      await fetch(`/api/content?id=${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
+      const r = await fetch(`/api/content?id=${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
+      const body = await r.json().catch(() => ({}))
       setScripts((arr) => arr.filter((r) => r.id !== id))
       setSelected((s) => { const n = new Set(s); n.delete(id); return n })
+      // Surface what happened on the Upload-Post side so the user can
+      // see if the cascade succeeded, was skipped, or 404'd.
+      const cancel = body?.upload_post_cancel
+      // eslint-disable-next-line no-console
+      console.log('[delete-cascade]', { id, cancel })
+      if (cancel?.attempted) {
+        if (cancel.ok) {
+          toast({ kind: 'success', message: `Deleted + cancelled on Upload-Post (${cancel.strategy}).` })
+        } else if (cancel.status === 404 || cancel.reason === 'not_found') {
+          toast({ kind: 'info', message: `Deleted. Upload-Post had no matching job (already fired or never queued).` })
+        } else {
+          toast({
+            kind: 'warn',
+            message: `Deleted locally, but Upload-Post cancel failed (${cancel.strategy}: ${cancel.reason || 'unknown'}). The orphan-cleanup cron will catch it within 30 min.`,
+            ttl: 9000,
+          })
+        }
+      }
     } catch (e) { toast({ kind: 'error', message: e.message }) }
   }
 
