@@ -1158,18 +1158,26 @@ async function polishCore(body) {
     let aLabel = mute_video_audio && voiceoverPath ? null : '[0:a]'
 
     // Audio cleanup pass — applied to the source audio BEFORE the
-    // voiceover / music mix branches below.
-    //   highpass=f=80       kills mic rumble + AC hum below 80 Hz
+    // voiceover / music mix branches below. Three-stage chain
+    // optimized for spoken voice on phone recordings:
+    //
+    //   highpass=f=80        kills mic rumble + AC hum below 80 Hz
+    //   acompressor          gentle 4:1 compression starting at ~-26 dB
+    //                        with +6 dB makeup gain so quiet voice
+    //                        gets brought up to a present level
+    //                        BEFORE we sit it next to a music bed
     //   dynaudnorm=g=5:p=0.95
-    //                       single-pass dynamic loudness normalizer.
-    //                       Pulls quiet phone recordings up to a
-    //                       consistent perceived level WITHOUT the
-    //                       pump/breathe artifacts that single-pass
-    //                       loudnorm produces on speech. g=5 is a
-    //                       conservative 5-second window; p=0.95
-    //                       keeps peaks just under clipping.
+    //                        single-pass dynamic loudness normalizer.
+    //                        Final pass that levels out any remaining
+    //                        dynamic range without the pump/breathe
+    //                        artifacts loudnorm produces on speech.
+    //
+    // Net effect: a quiet handheld recording lands at roughly the
+    // same perceived loudness as a properly-miked one, so the user's
+    // music_volume setting (e.g. 0.15 = 15%) is the LITERAL ratio
+    // between music and voice in the final mix.
     if (aLabel && audio_cleanup !== false) {
-      filters.push(`${aLabel}highpass=f=80,dynaudnorm=g=5:p=0.95[aclean]`)
+      filters.push(`${aLabel}highpass=f=80,acompressor=threshold=0.05:ratio=4:attack=20:release=200:makeup=2,dynaudnorm=g=5:p=0.95[aclean]`)
       aLabel = '[aclean]'
     }
 
@@ -1206,14 +1214,15 @@ async function polishCore(body) {
       filters.push(`[${musicIdx}:a]${audioChain.join(',')}[mus]`)
       const primary = aLabel || '[0:a]'
       // amix with normalize=0 keeps the user's music_volume setting as
-      // the literal mix ratio (default normalize=1 scales every input
-      // by 1/N which makes voice end up quieter than expected and the
-      // music feel comparatively dominant). weights=2 1 biases the
-      // mix toward voice so spoken audio always wins over the bed
-      // even when the source recording is soft. The final volume=0.7
-      // is headroom to prevent peak clipping on the sum.
-      filters.push(`${primary}[mus]amix=inputs=2:duration=first:dropout_transition=0:normalize=0:weights=2 1[premix]`)
-      filters.push(`[premix]volume=0.7[aout]`)
+      // the literal mix ratio. With voice cleanup pushing the voice
+      // track to near full scale via the compressor+makeup chain
+      // above, music at the user's 0.15 (=15%) lands at 15% of voice
+      // in the final mix exactly as the Polish modal preset implies.
+      // alimiter clamps any rare peak coincidence at -1 dBFS so the
+      // mix never hard-clips without compressing the rest of the
+      // audio away from its set levels.
+      filters.push(`${primary}[mus]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[premix]`)
+      filters.push(`[premix]alimiter=limit=0.95:attack=5:release=50[aout]`)
       aLabel = '[aout]'
     }
     if (vLabel === '[0:v]') { filters.push(`[0:v]null[vfin]`); vLabel = '[vfin]' }
