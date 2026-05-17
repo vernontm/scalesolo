@@ -1160,9 +1160,10 @@ export default function BulkUploadView({ profileId, token, onChange }) {
             // template body; we just need to pass cover params and
             // capture the result URL.
             try {
+              const wantsCover = !!row.cover_image_url && row.embed_cover_intro !== false
               const polished = await polishOneVideoWithCover(sourceUrl, {
                 cover_image_url: row.cover_image_url || null,
-                embed_cover_intro: !!row.cover_image_url && row.embed_cover_intro !== false,
+                embed_cover_intro: wantsCover,
               })
               if (polished?.video_url) {
                 // Persist the polished output. When cover-intro was
@@ -1170,7 +1171,6 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                 // platforms get the cover-baked-in version + IG keeps
                 // its native cover_image_url path. Otherwise update
                 // media_urls[0] so the polish is the canonical asset.
-                const wantsCover = !!row.cover_image_url && row.embed_cover_intro !== false
                 const patchBody = wantsCover
                   ? { media_url_with_cover: polished.video_url }
                   : { media_urls: [polished.video_url] }
@@ -1180,7 +1180,22 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                   body: JSON.stringify(patchBody),
                 }).catch(() => {})
                 polishedCount += 1
-                if (wantsCover) embedsBuilt += 1
+                // Cover-intro accounting + diagnostic. The polish
+                // response carries `cover_intro` metadata; if we asked
+                // for cover-intro but the field is null/failed, log
+                // it so we can detect when worker is on old code
+                // (cover_intro: null) vs when the prepend chain ran
+                // but errored (cover_intro: { failed: true, reason }).
+                if (wantsCover) {
+                  const ci = polished.cover_intro
+                  // eslint-disable-next-line no-console
+                  console.log('[bulk polish:cover_intro]', id, ci)
+                  if (ci && !ci.failed) {
+                    embedsBuilt += 1
+                  } else {
+                    embedsFailed += 1
+                  }
+                }
               } else {
                 polishFailed += 1
               }

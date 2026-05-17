@@ -632,8 +632,56 @@ export default async function handler(req, res) {
         // side pass needed. This is critical for the async (>250s) path
         // — without worker-side captions, big clips that timeout
         // Vercel's outer loop would skip captions entirely.
-        const finalUrl = wBody.video_url
+        let finalUrl = wBody.video_url
         const zapcapMeta = wBody.zapcap || null
+        let coverIntroMeta = wBody.cover_intro || null
+
+        // ── Cover-intro fallback ──────────────────────────────────────
+        // If the caller asked for a cover-intro embed AND the worker
+        // didn't return cover_intro metadata, the worker is on an
+        // older build that doesn't know how to chain prependCoverCore.
+        // Don't fail silently — instead, chain prepend-cover-async
+        // ourselves from the API layer using the polished URL. This
+        // guarantees the cover gets stitched on regardless of which
+        // worker build is deployed. The output replaces finalUrl so
+        // the caller persists the cover-prepended URL.
+        if (embed_cover_intro && cover_image_url && coverIntroMeta == null) {
+          try {
+            const subRes = await fetch(`${workerBase}/jobs/prepend-cover-async`, {
+              method: 'POST', headers,
+              body: JSON.stringify({
+                profile_id, video_url: finalUrl,
+                cover_image_url,
+                duration_secs: typeof cover_intro_secs === 'number' ? cover_intro_secs : 0.5,
+              }),
+            })
+            const subBody = await subRes.json().catch(() => ({}))
+            if (subRes.ok && subBody?.job_id) {
+              const subId = subBody.job_id
+              const subStart = Date.now()
+              while (Date.now() - subStart < 200_000) {
+                await new Promise((r) => setTimeout(r, 4000))
+                const sRes = await fetch(`${workerBase}/jobs/${encodeURIComponent(subId)}`, { headers })
+                const sBody = await sRes.json().catch(() => ({}))
+                if (!sRes.ok) break
+                if (sBody.status === 'done' && sBody.result?.video_url) {
+                  finalUrl = sBody.result.video_url
+                  coverIntroMeta = { duration_secs: sBody.result.duration_secs, bytes: sBody.result.bytes, via: 'fallback' }
+                  break
+                }
+                if (sBody.status === 'failed') {
+                  coverIntroMeta = { failed: true, reason: sBody.error || 'fallback prepend failed' }
+                  break
+                }
+              }
+            } else {
+              coverIntroMeta = { failed: true, reason: subBody?.error || `prepend submit ${subRes.status}` }
+            }
+          } catch (e) {
+            console.warn('[polish] cover-intro fallback failed:', e?.message)
+            coverIntroMeta = { failed: true, reason: e?.message || 'fallback exception' }
+          }
+        }
 
         // Debit credits after the worker confirms success. Atomic on
         // the DB side; we still surface failures so a tight race that
@@ -680,15 +728,18 @@ export default async function handler(req, res) {
           profile_id,
           video_url: finalUrl,
         }).catch(() => {})
-        // Surface the worker's cover_intro_meta so the caller knows if
-        // the cover-intro chain ran cleanly. wBody.cover_intro shape
-        // is { duration_secs, bytes } on success or { failed: true,
-        // reason: '...' } when prependCoverCore threw inside polishCore.
+        // Surface the cover_intro metadata so the caller knows if the
+        // cover-intro chain ran cleanly. Shape is { duration_secs,
+        // bytes } on success, { failed: true, reason } when the
+        // prepend ran but errored, or null when the caller didn't
+        // ask for one. The `via: fallback` flag inside cover_intro
+        // tells the client we had to chain it from the API layer
+        // (worker is on a pre-cover-intro build).
         return res.status(200).json({
           video_url: finalUrl,
           bytes: wBody.bytes,
           zapcap: zapcapMeta,
-          cover_intro: wBody.cover_intro || null,
+          cover_intro: coverIntroMeta,
           via: 'worker',
         })
       } catch (e) {

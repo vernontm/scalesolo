@@ -1211,17 +1211,31 @@ async function polishCore(body) {
       if (videoDur > 0 && fadeSecs > 0 && videoDur > fadeSecs) {
         audioChain.push(`afade=t=out:st=${(videoDur - fadeSecs).toFixed(3)}:d=${fadeSecs.toFixed(3)}`)
       }
-      filters.push(`[${musicIdx}:a]${audioChain.join(',')}[mus]`)
+      filters.push(`[${musicIdx}:a]${audioChain.join(',')}[mus_raw]`)
       const primary = aLabel || '[0:a]'
-      // amix with normalize=0 keeps the user's music_volume setting as
-      // the literal mix ratio. With voice cleanup pushing the voice
-      // track to near full scale via the compressor+makeup chain
-      // above, music at the user's 0.15 (=15%) lands at 15% of voice
-      // in the final mix exactly as the Polish modal preset implies.
-      // alimiter clamps any rare peak coincidence at -1 dBFS so the
-      // mix never hard-clips without compressing the rest of the
-      // audio away from its set levels.
-      filters.push(`${primary}[mus]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[premix]`)
+      // ── Sidechain ducking ─────────────────────────────────────────
+      // The music_volume setting (e.g. 0.15) sets the music's BASE
+      // level. On top of that, the voice track triggers a sidechain
+      // compressor on the music so whenever voice is speaking the
+      // music ducks ~12 dB further under it. When voice is silent,
+      // the music rises back to its base level. This is the standard
+      // voiceover/podcast pattern and is the only way to guarantee
+      // "voice is always louder than music" regardless of how loud
+      // or quiet the source recording is.
+      //
+      // Params:
+      //   threshold=0.03   even quiet voice triggers ducking
+      //   ratio=8          heavy ducking ratio
+      //   attack=5         instant duck the moment voice starts
+      //   release=400      smooth recovery so music doesn't pump
+      //   level_sc=4       4x sidechain gain so a phone-mic voice
+      //                    that comes through quiet still triggers
+      //                    the ducker confidently
+      // The voice track itself is split so we can use one copy as
+      // the sidechain trigger and the other as the actual mix input.
+      filters.push(`${primary}asplit=2[vox_mix][vox_sc]`)
+      filters.push(`[mus_raw][vox_sc]sidechaincompress=threshold=0.03:ratio=8:attack=5:release=400:level_sc=4[mus_ducked]`)
+      filters.push(`[vox_mix][mus_ducked]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[premix]`)
       filters.push(`[premix]alimiter=limit=0.95:attack=5:release=50[aout]`)
       aLabel = '[aout]'
     }
