@@ -11,6 +11,7 @@
 
 import { setCors, supaFetch } from '../_lib/supabase.js'
 import { refundConsumeByMetadata } from '../_lib/credits.js'
+import { getVideoStatusV3Direct } from '../_lib/heygen.js'
 
 const STUCK_AFTER_MINUTES = 30
 const TRANSIENT_STATES = ['generating_clips', 'pending', 'processing', 'queued', 'submitted']
@@ -40,8 +41,35 @@ export default async function handler(req, res) {
 
     let swept = 0
     let refunded = 0
+    let rescued = 0
     for (const row of stuck || []) {
       try {
+        // Poll HeyGen first. If the render actually completed and we
+        // just never persisted the status (e.g. user closed the tab
+        // mid-poll, photo-render-status never got called), promote
+        // the row to 'completed' instead of marking it failed +
+        // refunding a charge the user got real value for. This was
+        // the bug behind admin Usage showing 'failed' rows with full
+        // cost on renders the user actually received.
+        if (row.heygen_video_id) {
+          try {
+            const r = await getVideoStatusV3Direct(row.heygen_video_id)
+            const data = r?.data || r
+            const hgStatus = String(data?.status || '').toLowerCase()
+            const url = data?.video_url || data?.video_url_caption || data?.url
+            if ((hgStatus === 'completed' || hgStatus === 'success' || hgStatus === 'done') && url) {
+              await supaFetch(`avatar_renders?id=eq.${row.id}`, {
+                method: 'PATCH',
+                body: { status: 'completed', final_video_url: url },
+                prefer: 'return=minimal',
+              })
+              rescued += 1
+              continue
+            }
+          } catch (e) {
+            console.warn('sweep-stale-renders: heygen poll failed, falling through to mark failed', row.id, e?.message)
+          }
+        }
         await supaFetch(`avatar_renders?id=eq.${row.id}`, {
           method: 'PATCH',
           body: { status: 'failed', error: 'Sweeper: render did not complete within timeout' },
@@ -64,6 +92,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       swept,
+      rescued,
       refunded,
       cutoff,
       examined: (stuck || []).length,

@@ -46,8 +46,15 @@ export default async function handler(req, res) {
     // the consumption events (positive deltas are grants / topups). We
     // need `metadata` so the per-action COGS calculator can read
     // model_version / duration_secs / quality / count.
+    //
+    // NOTE: rollback:* actions are admin-driven credit clawbacks (e.g.
+    // we accidentally over-granted credits and reversed them). They
+    // carry negative deltas but they are NOT consumption — counting
+    // them as cost inflates the dashboard and double-displays a
+    // refund as a $100 video-unit "charge". Exclude with a NOT-LIKE
+    // filter directly on PostgREST.
     const rows = await supaFetch(
-      `credit_transactions?delta=lt.0&created_at=gte.${encodeURIComponent(since)}&select=action,pool_type,delta,customer_id,profile_id,created_at,metadata&order=created_at.desc&limit=5000`
+      `credit_transactions?delta=lt.0&created_at=gte.${encodeURIComponent(since)}&action=not.like.rollback:*&select=action,pool_type,delta,customer_id,profile_id,created_at,metadata&order=created_at.desc&limit=5000`
     )
 
     // Aggregate by action. `est_usd` reflects our actual upstream COGS

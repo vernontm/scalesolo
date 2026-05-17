@@ -357,11 +357,12 @@ function UserVideoDetail({ user, windowId, onClose }) {
                       { key: 'avatar_name',    label: 'Avatar', render: (r) => r.avatar_name || <span style={{ color: 'var(--muted)' }}>—</span> },
                       { key: 'model_version',  label: 'Model', render: (r) => r.model_version || <span style={{ color: 'var(--muted)' }}>—</span> },
                       { key: 'duration_secs',  label: 'Duration', align: 'right', render: (r) => r.duration_secs ? `${r.duration_secs}s` : '—' },
-                      { key: 'status',         label: 'Status', render: (r) => <StatusPill status={r.status} /> },
+                      { key: 'status',         label: 'Status', render: (r) => <StatusPill status={r.status} refunded={r.refunded} /> },
                       { key: 'video_url',      label: 'Video', render: (r) => r.video_url
                           ? <a href={r.video_url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--red)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 12 }} onClick={(e) => e.stopPropagation()}>open <ExternalLink size={11} /></a>
                           : <span style={{ color: 'var(--muted)' }}>—</span>
                       },
+                      { key: 'render_units',    label: 'Units', align: 'right', render: (r) => r.render_units ? `${fmtNum(r.render_units)} video` : <span style={{ color: 'var(--muted)' }}>—</span> },
                       { key: 'render_cost_usd', label: 'Cost', align: 'right', render: (r) => <strong>{fmtUsd(r.render_cost_usd)}</strong> },
                     ]}
                   />
@@ -384,8 +385,10 @@ function UserVideoDetail({ user, windowId, onClose }) {
                       { key: 'created_at',  label: 'Date',   render: (r) => fmtDate(r.created_at) },
                       { key: 'action',      label: 'Action', render: (r) => <code style={{ fontSize: 11.5, color: 'var(--text-soft)' }}>{r.action.replace(/^consume:/, '')}</code> },
                       { key: 'inputs',      label: 'Inputs', render: (r) => <PostProcessingInputs row={r} /> },
-                      { key: 'units',       label: 'Tokens', align: 'right', render: (r) => fmtNum(r.units) },
-                      { key: 'est_usd',     label: 'Cost',   align: 'right', render: (r) => fmtUsd(r.est_usd) },
+                      { key: 'units',       label: 'Units',  align: 'right', render: (r) => `${fmtNum(r.units)} tokens` },
+                      { key: 'est_usd',     label: 'Cost',   align: 'right', render: (r) => r.refunded
+                          ? <span style={{ color: 'var(--muted)' }}>refunded</span>
+                          : fmtUsd(r.est_usd) },
                     ]}
                   />
                 )}
@@ -398,12 +401,13 @@ function UserVideoDetail({ user, windowId, onClose }) {
   ), document.body)
 }
 
-function StatusPill({ status }) {
+function StatusPill({ status, refunded }) {
   const map = {
     completed: { bg: 'rgba(46,204,113,0.16)', fg: '#2ecc71', label: 'completed' },
+    done:      { bg: 'rgba(46,204,113,0.16)', fg: '#2ecc71', label: 'completed' },
     processing: { bg: 'rgba(96,165,250,0.16)', fg: '#60a5fa', label: 'processing' },
     queued:    { bg: 'rgba(245,158,11,0.16)', fg: '#f59e0b', label: 'queued' },
-    failed:    { bg: 'rgba(239,68,68,0.16)',  fg: 'var(--red)', label: 'failed' },
+    failed:    { bg: 'rgba(239,68,68,0.16)',  fg: 'var(--red)', label: refunded ? 'failed (refunded)' : 'failed' },
   }
   const m = map[status] || { bg: 'var(--surface-2)', fg: 'var(--muted)', label: status || '—' }
   return (

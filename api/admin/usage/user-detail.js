@@ -76,33 +76,65 @@ export default async function handler(req, res) {
 
     // 1. Video-pipeline credit transactions for this customer in the window.
     //    A single PostgREST call grabs everything; we partition in JS.
+    //    We pull BOTH consumes (delta<0) and refunds (delta>0 with action
+    //    like 'refund:consume:...') so we can net them out. Showing a
+    //    $0.50 charge for a render that was already auto-refunded by
+    //    the sweeper is misleading.
+    const refundActions = [...RENDER_ACTIONS, ...POST_PROCESSING_ACTIONS].map((a) => `refund:${a}`)
+    const allActions = [...RENDER_ACTIONS, ...POST_PROCESSING_ACTIONS, ...refundActions]
     const tsFilter = since ? `&created_at=gte.${encodeURIComponent(since)}` : ''
     const txns = await supaFetch(
-      `credit_transactions?customer_id=eq.${customerId}&delta=lt.0${tsFilter}` +
-      `&action=in.(${[...RENDER_ACTIONS, ...POST_PROCESSING_ACTIONS].map((a) => encodeURIComponent(a)).join(',')})` +
+      `credit_transactions?customer_id=eq.${customerId}${tsFilter}` +
+      `&action=in.(${allActions.map((a) => encodeURIComponent(a)).join(',')})` +
       `&select=id,action,pool_type,delta,profile_id,ref_table,ref_id,metadata,created_at` +
       `&order=created_at.desc&limit=2000`
     )
 
     // Index render charges by ref_id so we can stitch onto avatar_renders.
+    // A refund:consume:X row points at the same ref_id as the original
+    // consume:X — so summing signed deltas (negative consume + positive
+    // refund) produces the net cost the user actually paid.
     const renderCostByRefId = new Map()
+    const refundedRenderIds = new Set()
     const postProcessing = []
+    const postProcessingRefundIds = new Set()
     for (const t of (txns || [])) {
-      const units = Math.abs(Number(t.delta) || 0)
-      const cost = estimateCogsUsd(t)
-      if (RENDER_ACTIONS.has(t.action) && t.ref_id) {
+      const isRefund = String(t.action || '').startsWith('refund:')
+      const originalAction = isRefund ? t.action.slice('refund:'.length) : t.action
+      const signed = Number(t.delta) || 0
+      // Cost contribution: consumes add, refunds subtract.
+      const costSigned = isRefund ? -estimateCogsUsd({ ...t, action: originalAction }) : estimateCogsUsd(t)
+      const unitsSigned = isRefund ? -Math.abs(signed) : Math.abs(signed)
+
+      if (RENDER_ACTIONS.has(originalAction) && t.ref_id) {
         const cur = renderCostByRefId.get(t.ref_id) || { units: 0, est_usd: 0 }
-        cur.units += units; cur.est_usd += cost
+        cur.units += unitsSigned; cur.est_usd += costSigned
         renderCostByRefId.set(t.ref_id, cur)
-      } else if (POST_PROCESSING_ACTIONS.has(t.action)) {
-        postProcessing.push({
-          id: t.id,
-          action: t.action,
-          created_at: t.created_at,
-          units, est_usd: cost,
-          profile_id: t.profile_id,
-          metadata: t.metadata,
-        })
+        if (isRefund) refundedRenderIds.add(t.ref_id)
+      } else if (POST_PROCESSING_ACTIONS.has(originalAction)) {
+        if (isRefund) {
+          // Mark the original event refunded; we'll zero its cost below.
+          // ref_id on post-processing isn't always set, so fall back to
+          // matching by metadata signature when needed.
+          if (t.ref_id) postProcessingRefundIds.add(t.ref_id)
+        } else {
+          postProcessing.push({
+            id: t.id,
+            action: t.action,
+            created_at: t.created_at,
+            units: Math.abs(signed), est_usd: estimateCogsUsd(t),
+            profile_id: t.profile_id,
+            metadata: t.metadata,
+            ref_id: t.ref_id,
+          })
+        }
+      }
+    }
+    // Zero out refunded post-processing rows so the table reflects net cost.
+    for (const p of postProcessing) {
+      if (p.ref_id && postProcessingRefundIds.has(p.ref_id)) {
+        p.est_usd = 0
+        p.refunded = true
       }
     }
 
@@ -153,9 +185,19 @@ export default async function handler(req, res) {
           })
           if (fallback > 0) cost.est_usd = fallback
         }
+        // A row with a final_video_url is definitively done, regardless
+        // of whether the sweeper later flipped status='failed' on us.
+        // Surface that to the admin UI so renders the user actually got
+        // back stop appearing as 'failed'.
+        const wasRefunded = refundedRenderIds.has(r.id)
+        const inferredStatus = r.final_video_url
+          ? 'completed'
+          : (wasRefunded ? 'failed' : r.status)
         return {
           render_id: r.id,
-          status: r.status,
+          status: inferredStatus,
+          db_status: r.status,
+          refunded: wasRefunded,
           created_at: r.created_at,
           model_version: r.model_version,
           duration_secs: r.duration_secs,
@@ -164,8 +206,8 @@ export default async function handler(req, res) {
           avatar_id: r.avatar_id,
           avatar_name: avatarById.get(r.avatar_id)?.name || null,
           profile_id: r.profile_id,
-          render_units: cost.units,
-          render_cost_usd: cost.est_usd,
+          render_units: Math.max(0, cost.units),
+          render_cost_usd: Math.max(0, cost.est_usd),
         }
       })
     }
