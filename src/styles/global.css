@@ -400,6 +400,9 @@ a:focus-visible {
 @media (max-width: 700px) {
   .hide-on-narrow   { display: none !important; }
 }
+@media (max-width: 1024px) {
+  .hide-on-tablet   { display: none !important; }
+}
 
 /* ProfileSwitcher dropdown: on mobile, the switcher lives inside the
    sidebar drawer where `right: 0` (anchored to the trigger) can push the

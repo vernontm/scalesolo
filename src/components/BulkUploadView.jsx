@@ -477,7 +477,33 @@ function StatusPill({ status, error }) {
 }
 
 // ── main component ──────────────────────────────────────────────────────────
+// Track a viewport-width threshold reactively. Returns true while the
+// window is at or below `maxWidth`. Used to swap the wide schedule
+// table for a stacked card list on phones, drop non-essential columns
+// on iPad, and tighten paddings throughout the upload header.
+function useIsNarrow(maxWidth) {
+  const [isNarrow, setIsNarrow] = useState(() =>
+    typeof window !== 'undefined' && window.innerWidth <= maxWidth
+  )
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const onResize = () => setIsNarrow(window.innerWidth <= maxWidth)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [maxWidth])
+  return isNarrow
+}
+
 export default function BulkUploadView({ profileId, token, onChange }) {
+  // Two breakpoints:
+  //   isPhone  (<= 700px)  → card layout for posts, single-column header,
+  //                          icon-only secondary actions
+  //   isTablet (<= 1024px) → keep the table but drop hashtags + 1st comment,
+  //                          stack autopilot toggles in 2 columns
+  // Both check against the live window width so a portrait/landscape
+  // flip on iPad reflows immediately.
+  const isPhone = useIsNarrow(700)
+  const isTablet = useIsNarrow(1024)
   const [scripts, setScripts] = useState(null) // null = loading, [] = empty
   const [error, setError] = useState(null)
   const [tab, setTab] = useState('queued')
@@ -1599,15 +1625,23 @@ export default function BulkUploadView({ profileId, token, onChange }) {
       {/* Drag/drop area */}
       <div
         ref={dropRef}
+        className="bulk-upload-card"
         style={{
           background: 'var(--surface)',
           border: '2px dashed var(--border)',
-          borderRadius: 14, padding: 20, marginBottom: 18,
-          display: 'flex', alignItems: 'center', gap: 16,
+          borderRadius: 14, padding: isPhone ? 14 : 20, marginBottom: 18,
+          display: 'flex',
+          flexDirection: isPhone ? 'column' : 'row',
+          alignItems: isPhone ? 'stretch' : 'center',
+          gap: isPhone ? 12 : 16,
           transition: 'border-color 0.15s, background 0.15s',
         }}
         onClick={() => fileRef.current?.click()}
       >
+        {/* Title row: icon + heading + description. Stays horizontal on
+            every breakpoint so the icon never floats orphaned above
+            the title on a phone column-stack. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: isPhone ? 'unset' : 1, minWidth: 0 }}>
         <div style={{
           width: 48, height: 48, borderRadius: 10,
           background: 'linear-gradient(135deg, #f59e0b, #f97316)',
@@ -1631,12 +1665,26 @@ export default function BulkUploadView({ profileId, token, onChange }) {
             )}
           </div>
           <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.45 }}>
-            {autoProcess
-              ? <>Drag &amp; drop videos or images. Captions, hashtags, titles &amp; first comments are written automatically from your brand bible, then each post is slotted into the next open time on your <strong>posting schedule</strong>.</>
-              : <>Drag &amp; drop videos or images. Rows save as drafts — click <strong>Generate Captions</strong> and <strong>Auto Schedule</strong> when ready.</>
+            {isPhone
+              ? (autoProcess
+                  ? <>Drop or pick a video. Autopilot handles the rest.</>
+                  : <>Drop or pick a video. Saves as a draft.</>)
+              : (autoProcess
+                  ? <>Drag &amp; drop videos or images. Captions, hashtags, titles &amp; first comments are written automatically from your brand bible, then each post is slotted into the next open time on your <strong>posting schedule</strong>.</>
+                  : <>Drag &amp; drop videos or images. Rows save as drafts — click <strong>Generate Captions</strong> and <strong>Auto Schedule</strong> when ready.</>)
             }
           </div>
         </div>
+        </div> {/* /title row */}
+        {/* Actions row: toggles + Choose files. Wraps to multiple lines
+            on narrow widths so each chip stays finger-tappable. */}
+        <div style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: isPhone ? 6 : 8,
+          alignItems: 'center',
+          justifyContent: isPhone ? 'flex-start' : 'flex-end',
+        }}>
         <label
           onClick={(e) => e.stopPropagation()}
           style={{
@@ -1721,7 +1769,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         <button
           className="btn-secondary"
           onClick={(e) => { e.stopPropagation(); fileRef.current?.click() }}
-          style={{ padding: '8px 12px' }}
+          style={{ padding: '8px 12px', flex: isPhone ? '1 1 100%' : undefined }}
           aria-label="Choose files to upload"
         ><Upload size={14} /> Choose files</button>
         <input
@@ -1731,6 +1779,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           style={{ display: 'none' }}
           onChange={(e) => { onFiles(e.target.files); e.target.value = '' }}
         />
+        </div> {/* /actions row */}
       </div>
 
       {/* Autopilot status — fires while the bulk-actions endpoints run
@@ -2006,11 +2055,152 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12,
         overflow: 'hidden',
       }}>
-        {/* No horizontal scroll wrapper. Column widths below are tuned
-            so the row fits on a typical 1440-px laptop minus the side
-            nav. Script column dropped — captions / hashtags / first
-            comment are the actually-edited fields here; the full
-            script lives on the Content modal if anyone needs it. */}
+        {/* Phone: stacked card layout instead of the wide table.
+            Each card carries the same data (media thumb, title, caption
+            preview, platforms, scheduled time, status, action buttons)
+            but reorganized for a vertical single-column scroll. The
+            full table renders on tablet + desktop. */}
+        {isPhone ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 8 }}>
+            {scripts === null ? (
+              <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>
+                <Loader2 size={18} className="spin" />
+              </div>
+            ) : visible.length === 0 ? (
+              <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
+                {tab === 'queued' && 'No queued posts. Drop media above to start.'}
+                {tab === 'error' && 'No failed posts.'}
+                {tab === 'delivered' && 'Nothing delivered yet.'}
+              </div>
+            ) : visible.map((r) => {
+              const isVideo = r.media_type === 'video'
+              const isText = r.media_type === 'text'
+              const kindBorder = isVideo ? '#0ea5e9' : isText ? '#f59e0b' : '#a855f7'
+              const hasCover = !!r.cover_image_url
+              const thumb = hasCover ? r.cover_image_url : (Array.isArray(r.media_urls) ? r.media_urls[0] : null)
+              const isSelected = selected.has(r.id)
+              return (
+                <div
+                  key={r.id}
+                  style={{
+                    background: 'var(--surface)',
+                    border: `1px solid ${isSelected ? 'var(--red)' : 'var(--border)'}`,
+                    borderLeft: `3px solid ${kindBorder}`,
+                    borderRadius: 10, padding: 10,
+                    display: 'flex', flexDirection: 'column', gap: 8,
+                  }}
+                >
+                  {/* Row 1: thumb + title + checkbox + status */}
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleOne(r.id)}
+                      aria-label={`Select ${r.title || 'row'}`}
+                      style={{ marginTop: 6, flexShrink: 0 }}
+                    />
+                    <div style={{
+                      width: 56, height: 56, borderRadius: 8, overflow: 'hidden',
+                      background: 'var(--surface-2)', flexShrink: 0,
+                      display: 'grid', placeItems: 'center', color: 'var(--muted)',
+                    }}>
+                      {thumb && isVideo ? (
+                        <video src={thumb} muted playsInline preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : thumb ? (
+                        <img src={thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : isText ? <Type size={20} /> : <ImageIcon size={20} />}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{
+                        fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13,
+                        color: 'var(--text)', lineHeight: 1.3,
+                        display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                        overflow: 'hidden',
+                      }}>
+                        {r.title || 'Untitled'}
+                      </div>
+                      <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <StatusPill status={r.status} error={r.last_error} />
+                        {r.scheduled_datetime && (
+                          <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+                            {new Date(r.scheduled_datetime).toLocaleString(undefined, {
+                              month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+                            })}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  {/* Row 2: caption preview */}
+                  {(r.caption || r.full_script) && (
+                    <div style={{
+                      fontSize: 11.5, color: 'var(--text-soft)', lineHeight: 1.4,
+                      display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                      overflow: 'hidden',
+                    }}>
+                      {r.caption || r.full_script}
+                    </div>
+                  )}
+                  {/* Row 3: platforms */}
+                  {Array.isArray(r.platforms) && r.platforms.length > 0 && (
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      {r.platforms.map((p) => <PlatformBadge key={p} id={p} size={16} />)}
+                    </div>
+                  )}
+                  {/* Row 4: action buttons centered */}
+                  <div style={{
+                    display: 'flex', justifyContent: 'center', gap: 8,
+                    paddingTop: 6, borderTop: '1px solid var(--border)', marginTop: 2,
+                  }}>
+                    {isVideo && Array.isArray(r.media_urls) && r.media_urls[0] && (
+                      <button
+                        aria-label="Compress / optimize source video"
+                        disabled={compressingId === r.id}
+                        onClick={() => compressRow(r)}
+                        style={{
+                          background: 'transparent', border: 'none',
+                          color: 'var(--muted)', cursor: 'pointer',
+                          padding: 10, borderRadius: 8,
+                          opacity: compressingId === r.id ? 0.5 : 1,
+                        }}
+                        title="Compress / optimize video"
+                      >
+                        {compressingId === r.id ? <Loader2 size={16} className="spin" /> : <Wand2 size={16} />}
+                      </button>
+                    )}
+                    {isVideo && Array.isArray(r.media_urls) && r.media_urls[0] && (
+                      <button
+                        aria-label="Repair (polish + cover intro)"
+                        disabled={polishingRowId === r.id || !hasCoverTemplate}
+                        onClick={() => polishAndEmbedRow(r)}
+                        style={{
+                          background: 'transparent', border: 'none',
+                          color: r.media_url_with_cover ? 'var(--green)' : 'var(--muted)',
+                          cursor: (polishingRowId === r.id || !hasCoverTemplate) ? 'not-allowed' : 'pointer',
+                          padding: 10, borderRadius: 8,
+                          opacity: polishingRowId === r.id ? 0.5 : 1,
+                        }}
+                        title="Repair: polish video + cover intro"
+                      >
+                        {polishingRowId === r.id ? <Loader2 size={16} className="spin" /> : <Film size={16} />}
+                      </button>
+                    )}
+                    <button
+                      aria-label="Delete row"
+                      onClick={() => deleteScript(r.id)}
+                      style={{
+                        background: 'transparent', border: 'none',
+                        color: 'var(--muted)', cursor: 'pointer',
+                        padding: 10, borderRadius: 8,
+                      }}
+                      title="Delete"
+                    ><Trash2 size={16} /></button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        ) : (
         <div>
           <table style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
@@ -2025,8 +2215,8 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                     column is auto-width so it claims whatever's left
                     after the fixed columns. */}
                 <th style={{ ...headerCell, width: '20%' }}>Caption</th>
-                <th style={{ ...headerCell, width: '13%' }}>Hashtags</th>
-                <th style={{ ...headerCell, width: '13%' }}>1st comment</th>
+                <th className="hide-on-tablet" style={{ ...headerCell, width: '13%' }}>Hashtags</th>
+                <th className="hide-on-tablet" style={{ ...headerCell, width: '13%' }}>1st comment</th>
                 <th style={{ ...headerCell, width: 100 }}>Platforms</th>
                 <th style={{ ...headerCell, width: 175 }}>Scheduled</th>
                 <th style={{ ...headerCell, width: 90 }}>Status</th>
@@ -2156,10 +2346,10 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                         <EditableCell value={r.caption} placeholder="Caption" onSave={(v) => patchScript(r.id, { caption: v })} />
                       )}
                     </td>
-                    <td style={{ padding: 4, verticalAlign: 'top' }}>
+                    <td className="hide-on-tablet" style={{ padding: 4, verticalAlign: 'top' }}>
                       <EditableCell value={r.hashtags} placeholder="#hashtags" onSave={(v) => patchScript(r.id, { hashtags: v })} />
                     </td>
-                    <td style={{ padding: 4, verticalAlign: 'top' }}>
+                    <td className="hide-on-tablet" style={{ padding: 4, verticalAlign: 'top' }}>
                       <EditableCell value={r.first_comment} placeholder="First comment" onSave={(v) => patchScript(r.id, { first_comment: v })} />
                     </td>
                     <td style={{ padding: 4, verticalAlign: 'top' }}>
@@ -2258,6 +2448,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
             </tbody>
           </table>
         </div>
+        )}
       </div>
 
       {/* Fullscreen media preview overlay — clicking the thumbnail in the
