@@ -43,6 +43,7 @@ import ErrorBoundary from './components/ErrorBoundary.jsx'
 import ToastHost from './components/Toast.jsx'
 import { useAuth } from './context/AuthContext.jsx'
 import { useProfile } from './context/ProfileContext.jsx'
+import { useGoogleAnalytics, useHeartbeat } from './lib/analytics.js'
 
 // Tiny fallback shown while a lazy route's chunk is fetching. Subtle
 // enough that users don't notice on warm caches; visible enough on a
@@ -119,6 +120,13 @@ function LoadingScreen() {
 function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const { pathname } = useLocation()
+  const { session } = useAuth()
+  // Mount-once: GA4 loader + route-change page_view tracker.
+  // No-op when VITE_GA_MEASUREMENT_ID is unset.
+  useGoogleAnalytics(pathname)
+  // Mount-while-signed-in: post /api/heartbeat every 30s. Powers the
+  // admin Dashboard's Active-now + Today counters.
+  useHeartbeat(session)
   // Spaces gets a collapsed sidebar so the canvas has more room.
   const compact = pathname.startsWith('/spaces')
   // Profile-switch full remount. When the active brand profile

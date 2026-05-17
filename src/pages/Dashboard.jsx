@@ -428,7 +428,28 @@ function QuickAction({ icon: Icon, label, hint, to, color }) {
 }
 
 export default function Dashboard() {
-  const { user, session } = useAuth()
+  const { user, session, isAdmin } = useAuth()
+  // Admin presence widget — live "who's using ScaleSolo right now"
+  // counters. Polled every 20s while the dashboard is open. Drives
+  // only the admin-only widget below; null for non-admins.
+  const [presence, setPresence] = useState(null)
+  useEffect(() => {
+    if (!isAdmin || !session?.access_token) return
+    let cancelled = false
+    const fetchPresence = async () => {
+      try {
+        const r = await fetch('/api/admin/presence', {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        })
+        if (!r.ok) return
+        const body = await r.json()
+        if (!cancelled) setPresence(body)
+      } catch {}
+    }
+    fetchPresence()
+    const interval = setInterval(fetchPresence, 20_000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [isAdmin, session?.access_token])
   const { selectedProfile, selectedProfileId, profiles, refresh: refreshProfiles } = useProfile()
   const { pools: creditPools } = useCredits()
   const navigate = useNavigate()
@@ -641,6 +662,40 @@ export default function Dashboard() {
         </button>
       </section>
 
+      {/* Admin-only presence widget — live counts of how many users are
+          currently using ScaleSolo, how many touched the app today, and
+          all-time signups. Hidden from non-admins entirely. */}
+      {isAdmin && (
+        <div
+          style={{
+            marginTop: 18,
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gap: 12,
+          }}
+        >
+          <PresenceCard
+            label="Active right now"
+            value={presence?.active_now}
+            hint="Signed-in users in the last 5 min"
+            dotColor="#22c55e"
+            pulse
+          />
+          <PresenceCard
+            label="Users today"
+            value={presence?.today}
+            hint="Distinct users since UTC midnight"
+            dotColor="#0ea5e9"
+          />
+          <PresenceCard
+            label="Total users"
+            value={presence?.total_users}
+            hint="All-time signups"
+            dotColor="#a855f7"
+          />
+        </div>
+      )}
+
       {pendingApprovals > 0 && (
         <div
           onClick={() => navigate('/schedule')}
@@ -783,6 +838,63 @@ export default function Dashboard() {
         <a href="/billing" style={{ color: 'var(--muted)', fontSize: 11, fontWeight: 600 }}>View all →</a>
       </div>
       <CreditsPanel />
+    </div>
+  )
+}
+
+// Admin-only presence card. Three cards stack into the auto-fit grid
+// above (Active right now / Users today / Total users). The pulse
+// dot on "Active right now" makes the live-ness visually obvious —
+// other cards get a static dot in their own color.
+function PresenceCard({ label, value, hint, dotColor, pulse }) {
+  const display = (value == null) ? '—' : Number(value).toLocaleString()
+  return (
+    <div style={{
+      background: 'var(--surface)',
+      border: '1px solid var(--border)',
+      borderRadius: 14,
+      padding: '14px 16px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 4,
+    }}>
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        fontSize: 11,
+        color: 'var(--muted)',
+        fontFamily: 'var(--font-display)',
+        fontWeight: 700,
+        letterSpacing: '0.06em',
+        textTransform: 'uppercase',
+      }}>
+        <span style={{
+          width: 7, height: 7, borderRadius: 999,
+          background: dotColor,
+          boxShadow: pulse ? `0 0 0 0 ${dotColor}` : 'none',
+          animation: pulse ? 'presence-pulse 1.6s infinite' : 'none',
+          flexShrink: 0,
+        }} />
+        {label}
+      </div>
+      <div style={{
+        fontFamily: 'var(--font-display)',
+        fontWeight: 800,
+        fontSize: 28,
+        color: 'var(--text)',
+        lineHeight: 1.1,
+      }}>
+        {display}
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--muted)' }}>{hint}</div>
+      <style>{`
+        @keyframes presence-pulse {
+          0%   { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.55); }
+          70%  { box-shadow: 0 0 0 7px rgba(34, 197, 94, 0); }
+          100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+        }
+      `}</style>
     </div>
   )
 }
