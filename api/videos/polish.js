@@ -368,7 +368,21 @@ export default async function handler(req, res) {
       : null
     const effectiveLogoUrlEarly = watermark_image_url || logo_url
     const wantsCaptionsEarly = !!(captions_enabled && caption_template_id)
-    const wantsFfmpegEarly = !!(title || (effectiveLogoUrlEarly && watermark_position !== 'none') || music_url)
+    // wantsFfmpegEarly decides whether to invoke the worker / ffmpeg
+    // chain at all. Previously it only checked title + watermark + music.
+    // That missed cover-intro + captions + voiceover-only polish jobs:
+    // a row with embed_cover_intro=true but no music was short-circuiting
+    // to the no_op return below, which left media_url_with_cover identical
+    // to the source URL. Include every flag that actually triggers a
+    // distinct ffmpeg pass.
+    const wantsFfmpegEarly = !!(
+      title
+      || (effectiveLogoUrlEarly && watermark_position !== 'none')
+      || music_url
+      || wantsCaptionsEarly
+      || (req.body?.embed_cover_intro && req.body?.cover_image_url)
+      || req.body?.voiceover_url
+    )
 
     // ─── Shotstack passthrough ─────────────────────────────────────────────
     // Only used when WORKER_URL is NOT set. The Shotstack block sits

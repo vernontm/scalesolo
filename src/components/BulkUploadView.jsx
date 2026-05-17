@@ -605,9 +605,18 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   // media_url_with_cover landed under /spaces/cover-intro/ instead of
   // /spaces/polished/ — i.e. cover prepended but music never mixed.
   const polishEnabledRef = useRef(false)
+  // polishTemplateRef mirrors the fetched brand polish template the
+  // same way coverEnabledRef does for the cover toggle. Without it,
+  // if the user drops files before /api/profiles resolves, runAutoPipeline
+  // captures polishTemplate=null in its closure, buildPolishBody emits
+  // an empty body, polish.js's wantsFfmpegEarly returns false, and
+  // polish silently no-ops returning the source URL — which is exactly
+  // the symptom Ray hit: media_url_with_cover identical to the source.
+  const polishTemplateRef = useRef(null)
   useEffect(() => { hasCoverTemplateRef.current = hasCoverTemplate }, [hasCoverTemplate])
   useEffect(() => { coverEnabledRef.current = coverEnabled }, [coverEnabled])
   useEffect(() => { polishEnabledRef.current = polishEnabled }, [polishEnabled])
+  useEffect(() => { polishTemplateRef.current = polishTemplate }, [polishTemplate])
   // Mount-time read from localStorage so the FIRST upload after a hard
   // refresh sees the persisted value, not the React-state default.
   useEffect(() => {
@@ -709,8 +718,17 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   // the legacy per-upload polishOneVideo wrapper and the autopilot
   // polishOneVideoWithCover stage. Centralises the template → request
   // mapping so both paths produce identical results.
+  //
+  // Reads from polishTemplateRef.current (live) instead of the
+  // closure-captured polishTemplate state. Critical for the autopilot
+  // path: runAutoPipeline is defined per render and captures whatever
+  // polishTemplate was at that render. If the user drops files before
+  // /api/profiles resolves, the captured template is null/empty, the
+  // body emits no music/title/watermark, polish.js short-circuits to
+  // no_op, and media_url_with_cover ends up identical to the source.
+  // The ref dodges that staleness.
   const buildPolishBody = (videoUrl, extras = {}) => {
-    const tpl = polishTemplate || {}
+    const tpl = polishTemplateRef.current || polishTemplate || {}
     const titleStyle = {
       font:        tpl.title_font || 'Montserrat ExtraBold',
       color:       tpl.title_color || '#ffffff',
@@ -1101,6 +1119,27 @@ export default function BulkUploadView({ profileId, token, onChange }) {
       })
       if (livePolishEnabled && schedulableIds.length) {
         setAutoStage('polish')
+        // Belt-and-suspenders: if the brand profile fetch hasn't
+        // resolved yet (e.g. user dropped files immediately on page
+        // load), refetch the polish template synchronously so we
+        // never call /api/videos/polish with an empty body. Without
+        // this, polish.js's wantsFfmpegEarly returns false and the
+        // endpoint no-ops, returning the source URL unchanged.
+        if (!polishTemplateRef.current || Object.keys(polishTemplateRef.current).length === 0) {
+          try {
+            const profR = await fetch('/api/profiles', { headers: { Authorization: `Bearer ${token}` } })
+            const profBody = await profR.json().catch(() => ({}))
+            const p = (profBody?.profiles || []).find((x) => x.id === profileId)
+            if (p?.polish_template && typeof p.polish_template === 'object') {
+              polishTemplateRef.current = p.polish_template
+              setPolishTemplate(p.polish_template)
+              // eslint-disable-next-line no-console
+              console.log('[autopilot:polish] refetched template inline', Object.keys(p.polish_template))
+            }
+          } catch (e) {
+            console.warn('[autopilot:polish] inline template refetch failed', e?.message)
+          }
+        }
         // Pull each row's current media_urls + cover_image_url so we
         // can hand the polish call the right inputs and pick up the
         // cover URL we just committed in step 4.
