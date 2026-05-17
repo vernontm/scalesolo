@@ -969,6 +969,14 @@ async function polishCore(body) {
     cover_image_url,
     embed_cover_intro = false,
     cover_intro_secs = 0.5,
+    // Audio cleanup. Default-on. Applies a light highpass + EBU R128
+    // loudness normalization to the source video's audio track before
+    // mixing it with music / voiceover, so quiet phone recordings get
+    // pulled up to a consistent broadcast-loud target instead of being
+    // drowned out by the music bed. Skipped automatically when the
+    // source audio is being fully replaced (mute_video_audio +
+    // voiceover) since there's nothing to clean.
+    audio_cleanup = true,
   } = body || {}
   if (!profile_id || !video_url) throw new Error('profile_id + video_url required')
   if (!SUPABASE_URL || !SERVICE_KEY) throw new Error('Storage not configured on worker')
@@ -1148,6 +1156,17 @@ async function polishCore(body) {
     //   - voiceover gets mixed/used directly as primary.
     //   - music, if present, ducks under everything via amix.
     let aLabel = mute_video_audio && voiceoverPath ? null : '[0:a]'
+
+    // Audio cleanup pass — applied to the source audio BEFORE the
+    // voiceover / music mix branches below. highpass kills mic rumble
+    // and AC hum (everything below 80Hz); loudnorm pulls the track to
+    // EBU R128 -16 LUFS (TikTok's recommended target) so quiet phone
+    // recordings don't get buried under the music bed. Skipped when
+    // there's no source audio to clean.
+    if (aLabel && audio_cleanup !== false) {
+      filters.push(`${aLabel}highpass=f=80,loudnorm=I=-16:TP=-1.5:LRA=11[aclean]`)
+      aLabel = '[aclean]'
+    }
 
     if (voiceoverPath) {
       // Voiceover at full volume. The 1.0 anull pass through gives us

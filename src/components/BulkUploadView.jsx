@@ -570,12 +570,23 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   // hasCoverTemplate=false in the same browser session).
   const hasCoverTemplateRef = useRef(false)
   const coverEnabledRef = useRef(false)
+  // polishEnabledRef mirrors the same stale-closure fix we already apply
+  // to coverEnabled. runAutoPipeline is created at mount time, so if the
+  // user uploaded files before React state hydrated from localStorage,
+  // the captured `polishEnabled=false` would beat the live toggle. That
+  // produced the symptom Ray hit: Polish video shown ON in the UI, the
+  // pipeline still took the embed-only branch, and the row's
+  // media_url_with_cover landed under /spaces/cover-intro/ instead of
+  // /spaces/polished/ — i.e. cover prepended but music never mixed.
+  const polishEnabledRef = useRef(false)
   useEffect(() => { hasCoverTemplateRef.current = hasCoverTemplate }, [hasCoverTemplate])
   useEffect(() => { coverEnabledRef.current = coverEnabled }, [coverEnabled])
+  useEffect(() => { polishEnabledRef.current = polishEnabled }, [polishEnabled])
   // Mount-time read from localStorage so the FIRST upload after a hard
   // refresh sees the persisted value, not the React-state default.
   useEffect(() => {
     try { coverEnabledRef.current = localStorage.getItem('scalesolo:bulk:coverEnabled') === 'on' } catch {}
+    try { polishEnabledRef.current = localStorage.getItem('scalesolo:bulk:polishEnabled') === 'on' } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   // Tracks "we're running the auto-pipeline right now" so the toolbar
@@ -1055,7 +1066,13 @@ export default function BulkUploadView({ profileId, token, onChange }) {
       let polishFailed = 0
       let embedsBuilt = 0
       let embedsFailed = 0
-      const livePolishEnabled = polishEnabled
+      const livePolishEnabled = polishEnabledRef.current
+      // eslint-disable-next-line no-console
+      console.log('[autopilot:polish-gate]', {
+        closure_polishEnabled: polishEnabled,
+        live_polishEnabled: livePolishEnabled,
+        schedulable: schedulableIds.length,
+      })
       if (livePolishEnabled && schedulableIds.length) {
         setAutoStage('polish')
         // Pull each row's current media_urls + cover_image_url so we

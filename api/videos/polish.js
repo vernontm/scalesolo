@@ -326,6 +326,9 @@ export default async function handler(req, res) {
       cover_image_url,
       embed_cover_intro = false,
       cover_intro_secs,
+      // Audio cleanup (highpass + EBU R128 loudness normalize on the
+      // source track). Default-on; pass false to disable per-call.
+      audio_cleanup = true,
     } = req.body || {}
     let watermark_image_url = req.body?.watermark_image_url
     let watermark_position  = req.body?.watermark_position ?? 'br'
@@ -570,6 +573,7 @@ export default async function handler(req, res) {
             cover_image_url: cover_image_url || undefined,
             embed_cover_intro: !!embed_cover_intro,
             cover_intro_secs: typeof cover_intro_secs === 'number' ? cover_intro_secs : undefined,
+            audio_cleanup: audio_cleanup !== false,
           }),
         })
         const submitBody = await submitRes.json().catch(() => ({}))
