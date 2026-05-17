@@ -91,67 +91,35 @@ export async function uploadpostGenerateJwt(username, opts = {}) {
   })
 }
 
-// List scheduled jobs for an Upload-Post sub-user (whitelabel
-// sub-account). We tried the documented account-wide endpoint
-// (GET /api/uploadposts/schedule) but that one returns ONLY jobs the
-// API-key holder scheduled directly — it does NOT surface jobs
-// scheduled under whitelabel sub-users like `rayvaughnceo`. The
-// per-username endpoint below is what we actually need for cancel /
-// orphan-cleanup flows.
+// List scheduled jobs for an Upload-Post sub-user.
 //
-// We also probe the account-wide endpoint as a secondary in case
-// some sub-accounts have migrated or the per-username endpoint
-// returns nothing. Anything matching `profile_username` is merged
-// into the result.
+// Empirically confirmed via the master Apikey: Upload-Post's documented
+// endpoint (GET /api/uploadposts/schedule) returns ALL jobs the API-key
+// holder has visibility into — including whitelabel sub-users — under
+// the key `scheduled_posts`. Not `posts`, not a bare array as the docs
+// suggest. We filter to the requested username in JS.
+//
+// The previously-tried per-username endpoint (/api/uploadposts/posts/
+// <username>) 404s and is not a real route anymore.
 export async function uploadpostListScheduled(username, opts = {}) {
   if (!username) return { posts: [] }
-  const limit = String(opts.limit || 200)
-
-  // Primary: the per-username endpoint. Empirically returns posts
-  // with request_id, job_id, scheduled_date, title — everything we
-  // need to match for cancellation.
-  const qs = new URLSearchParams({ status: 'scheduled', limit })
-  const primary = await uploadpost(
-    `/api/uploadposts/posts/${encodeURIComponent(username)}?${qs}`
-  ).catch((e) => {
-    if (e.status === 404) return { posts: [] }
-    return { posts: [], _primary_error: e?.message || String(e), _primary_status: e?.status }
+  const raw = await uploadpost(`/api/uploadposts/schedule`).catch((e) => {
+    if (e.status === 404) return null
+    throw e
   })
-
-  // Secondary: account-wide list, filtered to this profile_username.
-  // Belt-and-suspenders for any sub-account whose jobs only show up
-  // on the documented endpoint.
-  let secondaryArr = []
-  try {
-    const data = await uploadpost(`/api/uploadposts/schedule`).catch(() => null)
-    const arr = Array.isArray(data)
-      ? data
-      : (Array.isArray(data?.jobs) ? data.jobs
-        : Array.isArray(data?.posts) ? data.posts
-        : Array.isArray(data?.results) ? data.results
-        : Array.isArray(data?.data) ? data.data
-        : [])
-    secondaryArr = arr.filter((j) => !j?.profile_username || String(j.profile_username) === String(username))
-  } catch {}
-
-  const primaryArr = Array.isArray(primary)
-    ? primary
-    : (Array.isArray(primary?.posts) ? primary.posts
-      : Array.isArray(primary?.results) ? primary.results
-      : Array.isArray(primary?.data) ? primary.data
+  // Be liberal in case Upload-Post changes the wrapper key. Try every
+  // shape we've ever seen them ship, including the actual one
+  // (scheduled_posts) that the master Apikey returns today.
+  const arr = Array.isArray(raw)
+    ? raw
+    : (Array.isArray(raw?.scheduled_posts) ? raw.scheduled_posts
+      : Array.isArray(raw?.posts) ? raw.posts
+      : Array.isArray(raw?.jobs) ? raw.jobs
+      : Array.isArray(raw?.results) ? raw.results
+      : Array.isArray(raw?.data) ? raw.data
       : [])
-
-  // Merge + dedupe by request_id or job_id (whichever each row has).
-  const seen = new Set()
-  const merged = []
-  for (const j of [...primaryArr, ...secondaryArr]) {
-    const key = j?.request_id || j?.id || j?.requestId || j?.upload_id || j?.job_id || j?.jobId
-    if (!key) continue
-    if (seen.has(key)) continue
-    seen.add(key)
-    merged.push(j)
-  }
-  return { posts: merged }
+  const filtered = arr.filter((j) => !j?.profile_username || String(j.profile_username) === String(username))
+  return { posts: filtered }
 }
 
 // Cancel a scheduled Upload-Post job by its INTERNAL job_id (NOT request_id).
