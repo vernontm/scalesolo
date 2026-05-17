@@ -1356,7 +1356,7 @@ app.post('/jobs/combine-av', requireSecret, async (req, res) => {
 async function prependCoverCore(body) {
   const {
     profile_id, video_url, cover_image_url,
-    duration_secs = 1.0,
+    duration_secs = 0.5,
   } = body || {}
   if (!profile_id || !video_url || !cover_image_url) {
     throw new Error('profile_id + video_url + cover_image_url required')

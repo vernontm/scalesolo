@@ -72,7 +72,7 @@ export default async function handler(req, res) {
         cover_image_url: row.cover_image_url,
         duration_secs: typeof body.duration_secs === 'number' && body.duration_secs > 0
           ? Math.min(5, body.duration_secs)
-          : 1.0,
+          : 0.5,
       }),
     })
     const submitBody = await submitRes.json().catch(() => ({}))
@@ -103,7 +103,7 @@ export default async function handler(req, res) {
         return res.status(200).json({
           ok: true,
           media_url_with_cover: newUrl,
-          duration_secs: stBody.result.duration_secs || 1.0,
+          duration_secs: stBody.result.duration_secs || 0.5,
         })
       }
       if (stBody.status === 'failed') {

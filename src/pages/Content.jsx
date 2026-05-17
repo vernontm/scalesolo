@@ -736,7 +736,7 @@ function EmbedCoverIntroBlock({ item, onUpdate }) {
             onChange={(e) => toggle(e.target.checked)}
             style={{ accentColor: '#0ea5e9' }}
           />
-          <span style={{ color: 'var(--text)' }}>Embed cover as 1s intro for TikTok / YouTube / FB / Threads</span>
+          <span style={{ color: 'var(--text)' }}>Embed cover as half-second intro for TikTok / YouTube / FB / Threads</span>
         </label>
         <div style={{ flex: 1 }} />
         {hasEmbedded ? (
@@ -752,14 +752,14 @@ function EmbedCoverIntroBlock({ item, onUpdate }) {
           onClick={runEmbed}
           disabled={busy}
           style={{ fontSize: 11.5, padding: '5px 10px' }}
-          title="Re-encode the video with the cover prepended as a 1s intro card"
+          title="Build a new version of the video with the cover as a half-second intro card"
         >
           {busy ? <Loader2 size={11} className="spin" /> : <RotateCcw size={11} />}
           {hasEmbedded ? 'Re-embed' : 'Embed now'}
         </button>
       </div>
       <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 6, lineHeight: 1.4 }}>
-        Builds a new version of the video with the cover as a 1-second intro card (~10–30 seconds, no AI tokens). The original video stays untouched; the new one is used automatically for non-Instagram platforms at scheduling time.
+        Builds a new version of the video with the cover as a half-second intro card (~10–30 seconds, no AI tokens). The original video stays untouched; the new one is used automatically for non-Instagram platforms at scheduling time.
       </div>
       {busy && (
         <div style={{ fontSize: 11, color: 'var(--amber)', marginTop: 4 }}>
