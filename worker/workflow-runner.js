@@ -328,6 +328,39 @@ const NODE_RUNNERS = {
       const first = settled.find((s) => s.status === 'rejected')
       throw new Error(`image_gen failed: ${first?.reason?.message || 'unknown'}`)
     }
+    // Autosave generated images to the brand's Library when this node
+    // isn't already feeding a save_library / schedule_post downstream
+    // (those will write their own row). Without this, image_gen nodes
+    // run in isolation produce assets that float in workflow output
+    // bundles but never land on the /library page. One content_scripts
+    // row per image_gen node — media_urls bundles every image the node
+    // produced. Title falls back to the prompt's first 60 chars.
+    try {
+      const willBundle = !!ctx?.hasDownstreamType?.(node.id, 'save_library')
+        || !!ctx?.hasDownstreamType?.(node.id, 'schedule_post')
+      if (!willBundle && ctx?.profileId) {
+        const urls = images.map((im) => im?.url).filter(Boolean)
+        if (urls.length) {
+          const autoTitle = (props.title || '').trim() || prompt.slice(0, 60) || 'Generated image'
+          await callApi('/api/content', {
+            profile_id:  ctx.profileId,
+            title:       autoTitle,
+            full_script: '',
+            media_urls:  urls,
+            media_type:  'image',
+            status:      'draft',
+            // No request_slot — these are library assets, not pending
+            // posts. They show on /library and the user can later push
+            // them through Schedule manually.
+          }, ctx.headers)
+        }
+      }
+    } catch (e) {
+      // Don't fail the run if library autosave hiccups — the in-memory
+      // images are still passed downstream. Surface in the run log so
+      // the user can spot it.
+      log?.(`[image_gen] library autosave skipped: ${e.message}`)
+    }
     return { images, media_type: 'image' }
   },
 

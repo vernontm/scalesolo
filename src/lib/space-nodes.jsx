@@ -7897,6 +7897,44 @@ export const NODE_REGISTRY = {
       if (collected.length === 0) {
         throw new Error(errors[0] || 'Generation failed')
       }
+      // Autosave generated images to the Library when this node isn't
+      // already feeding a save_library / schedule_post downstream
+      // (those write their own content_scripts row and we'd double-up).
+      // Without this, image_gen nodes run in isolation (e.g. a single
+      // "generate an image of X" node) produce assets that float in
+      // workflow output and never land on /library.
+      try {
+        const nodeId = ctx?.currentNodeId
+        const willBundle = nodeId && (
+          ctx?.hasDownstreamType?.(nodeId, 'save_library') ||
+          ctx?.hasDownstreamType?.(nodeId, 'schedule_post')
+        )
+        if (!willBundle && ctx?.profileId && ctx?.token) {
+          const urls = collected.map((im) => im?.url).filter(Boolean)
+          if (urls.length) {
+            const autoTitle =
+              (data.props?.title || '').trim() ||
+              (data.props?.prompt || '').trim().slice(0, 60) ||
+              'Generated image'
+            await fetch('/api/content', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}` },
+              body: JSON.stringify({
+                profile_id: profileForCall,
+                title:       autoTitle,
+                full_script: '',
+                media_urls:  urls,
+                media_type:  'image',
+                status:      'draft',
+              }),
+            }).catch((e) => {
+              console.warn('[image_gen] library autosave failed:', e?.message)
+            })
+          }
+        }
+      } catch (e) {
+        console.warn('[image_gen] library autosave skipped:', e?.message)
+      }
       return { images: collected }
     },
   },
