@@ -1504,11 +1504,28 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         embed_cover_intro: true,
       })
       if (!polished?.video_url) throw new Error('Polish returned no video_url')
+      // Detect silent cover-intro failure. polishCore returns
+      // cover_intro: { failed: true, reason } when prependCoverCore
+      // threw inside the worker job (or the worker is still on the
+      // old polishCore that doesn't know about cover_intro). Either
+      // way the user is owed a clear message rather than a sneaky
+      // "repaired" toast with no cover at the start.
+      const coverIntroMeta = polished.cover_intro || null
+      const coverIntroSucceeded = coverIntroMeta && !coverIntroMeta.failed
       // Step 3 — PATCH the row. patchScript handles optimistic UI +
       // Upload-Post resync when the row is already scheduled.
       toast({ kind: 'info', message: 'Finishing up: saving + resyncing Upload-Post…', ttl: 3000 })
       await patchScript(row.id, { media_url_with_cover: polished.video_url, embed_cover_intro: true })
-      toast({ kind: 'success', message: `"${rowLabel}" repaired. Music mixed, cover intro embedded, Upload-Post resynced.`, ttl: 6000 })
+      if (coverIntroSucceeded) {
+        toast({ kind: 'success', message: `"${rowLabel}" repaired. Music mixed, cover intro embedded, Upload-Post resynced.`, ttl: 6000 })
+      } else {
+        const reason = coverIntroMeta?.reason || 'worker may need redeploy to pick up cover-intro support'
+        toast({
+          kind: 'warn',
+          message: `"${rowLabel}" polished and resynced, but cover-intro was NOT prepended (${reason}). The video has music + cleanup but no cover at the start.`,
+          ttl: 9000,
+        })
+      }
     } catch (e) {
       toast({ kind: 'error', message: `Repair failed on "${rowLabel}": ${fmtErr(e) || e.message}`, ttl: 7000 })
     } finally {

@@ -666,7 +666,17 @@ export default async function handler(req, res) {
           profile_id,
           video_url: finalUrl,
         }).catch(() => {})
-        return res.status(200).json({ video_url: finalUrl, bytes: wBody.bytes, zapcap: zapcapMeta, via: 'worker' })
+        // Surface the worker's cover_intro_meta so the caller knows if
+        // the cover-intro chain ran cleanly. wBody.cover_intro shape
+        // is { duration_secs, bytes } on success or { failed: true,
+        // reason: '...' } when prependCoverCore threw inside polishCore.
+        return res.status(200).json({
+          video_url: finalUrl,
+          bytes: wBody.bytes,
+          zapcap: zapcapMeta,
+          cover_intro: wBody.cover_intro || null,
+          via: 'worker',
+        })
       } catch (e) {
         // Worker outage / error.
         //

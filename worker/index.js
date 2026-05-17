@@ -1158,13 +1158,18 @@ async function polishCore(body) {
     let aLabel = mute_video_audio && voiceoverPath ? null : '[0:a]'
 
     // Audio cleanup pass — applied to the source audio BEFORE the
-    // voiceover / music mix branches below. highpass kills mic rumble
-    // and AC hum (everything below 80Hz); loudnorm pulls the track to
-    // EBU R128 -16 LUFS (TikTok's recommended target) so quiet phone
-    // recordings don't get buried under the music bed. Skipped when
-    // there's no source audio to clean.
+    // voiceover / music mix branches below.
+    //   highpass=f=80       kills mic rumble + AC hum below 80 Hz
+    //   dynaudnorm=g=5:p=0.95
+    //                       single-pass dynamic loudness normalizer.
+    //                       Pulls quiet phone recordings up to a
+    //                       consistent perceived level WITHOUT the
+    //                       pump/breathe artifacts that single-pass
+    //                       loudnorm produces on speech. g=5 is a
+    //                       conservative 5-second window; p=0.95
+    //                       keeps peaks just under clipping.
     if (aLabel && audio_cleanup !== false) {
-      filters.push(`${aLabel}highpass=f=80,loudnorm=I=-16:TP=-1.5:LRA=11[aclean]`)
+      filters.push(`${aLabel}highpass=f=80,dynaudnorm=g=5:p=0.95[aclean]`)
       aLabel = '[aclean]'
     }
 
@@ -1200,7 +1205,15 @@ async function polishCore(body) {
       }
       filters.push(`[${musicIdx}:a]${audioChain.join(',')}[mus]`)
       const primary = aLabel || '[0:a]'
-      filters.push(`${primary}[mus]amix=inputs=2:duration=first:dropout_transition=0[aout]`)
+      // amix with normalize=0 keeps the user's music_volume setting as
+      // the literal mix ratio (default normalize=1 scales every input
+      // by 1/N which makes voice end up quieter than expected and the
+      // music feel comparatively dominant). weights=2 1 biases the
+      // mix toward voice so spoken audio always wins over the bed
+      // even when the source recording is soft. The final volume=0.7
+      // is headroom to prevent peak clipping on the sum.
+      filters.push(`${primary}[mus]amix=inputs=2:duration=first:dropout_transition=0:normalize=0:weights=2 1[premix]`)
+      filters.push(`[premix]volume=0.7[aout]`)
       aLabel = '[aout]'
     }
     if (vLabel === '[0:v]') { filters.push(`[0:v]null[vfin]`); vLabel = '[vfin]' }
