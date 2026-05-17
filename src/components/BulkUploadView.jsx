@@ -22,7 +22,7 @@ import { createPortal } from 'react-dom'
 import {
   Upload, Loader2, Sparkles, CalendarClock, Send, Download, Trash2,
   Check, X, AlertCircle, Image as ImageIcon, Video as VideoIcon, ChevronDown, Zap,
-  RefreshCw, Type, Wand2, Settings as SettingsIcon,
+  RefreshCw, Type, Wand2, Settings as SettingsIcon, Film,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase.js'
 import { toast, confirmDialog } from './Toast.jsx'
@@ -1386,6 +1386,86 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     }
   }
 
+  // Per-row "Polish + cover-intro" repair action. Used to fix rows that
+  // landed on the calendar without the new cover-gen + polish-with-
+  // cover-intro pipeline (e.g. uploaded before autopilot got both
+  // toggles, or where cover-gen failed silently mid-run). Steps:
+  //   1. If the row has no cover_image_url yet, generate one via
+  //      /api/content/generate-cover (start + commit).
+  //   2. Call /api/videos/polish with embed_cover_intro=true. Worker
+  //      polishes + prepends the cover as a 0.5s intro in one job.
+  //   3. PATCH media_url_with_cover on the row. If the row is already
+  //      scheduled on Upload-Post, the PATCH handler cancels the old
+  //      job and resubmits with the new URL automatically.
+  const [polishingRowId, setPolishingRowId] = useState(null)
+  const polishAndEmbedRow = async (row) => {
+    if (!row?.id || row.media_type !== 'video') return
+    const sourceUrl = Array.isArray(row.media_urls) && row.media_urls[0]
+    if (!sourceUrl) {
+      toast({ kind: 'warn', message: 'Row has no source video.' })
+      return
+    }
+    if (!hasCoverTemplate) {
+      toast({ kind: 'warn', message: 'No cover template set on this brand. Add one in Brand Profile first.' })
+      return
+    }
+    setPolishingRowId(row.id)
+    try {
+      let coverUrl = row.cover_image_url
+      // Step 1 — generate a cover image if none exists yet.
+      if (!coverUrl) {
+        const startResp = await fetch('/api/content/generate-cover?action=start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ script_id: row.id }),
+        })
+        const startBody = await startResp.json().catch(() => ({}))
+        if (!startResp.ok || !startBody.taskId) {
+          throw new Error(startBody?.error || `Cover start failed (${startResp.status})`)
+        }
+        // Poll up to ~3 min — same threshold the autopilot uses.
+        const POLL_MS = 4000
+        const TIMEOUT_MS = 3 * 60_000
+        const started = Date.now()
+        while (!coverUrl && Date.now() - started < TIMEOUT_MS) {
+          await new Promise((r) => setTimeout(r, POLL_MS))
+          const statusResp = await fetch(
+            `/api/images/status?taskId=${encodeURIComponent(startBody.taskId)}`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          )
+          const statusBody = await statusResp.json().catch(() => ({}))
+          if (statusBody.state === 'success' && Array.isArray(statusBody.images) && statusBody.images.length) {
+            coverUrl = statusBody.images[0]?.url || statusBody.images[0]
+            break
+          }
+          if (statusBody.state === 'failed') throw new Error(statusBody.error || 'Cover generation failed')
+        }
+        if (!coverUrl) throw new Error('Cover generation timed out')
+        // Commit so cover_image_url + instagram_cover_url land on the row.
+        const commitResp = await fetch('/api/content/generate-cover?action=commit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ script_id: row.id, image_url: coverUrl }),
+        })
+        if (!commitResp.ok) throw new Error('Cover commit failed')
+      }
+      // Step 2 — polish with embedded cover intro.
+      const polished = await polishOneVideoWithCover(sourceUrl, {
+        cover_image_url: coverUrl,
+        embed_cover_intro: true,
+      })
+      if (!polished?.video_url) throw new Error('Polish returned no video_url')
+      // Step 3 — PATCH the row. patchScript handles optimistic UI +
+      // Upload-Post resync when the row is already scheduled.
+      await patchScript(row.id, { media_url_with_cover: polished.video_url, embed_cover_intro: true })
+      toast({ kind: 'success', message: 'Polished + cover-intro embedded. Upload-Post is now serving the new video.' })
+    } catch (e) {
+      toast({ kind: 'error', message: `Repair failed: ${fmtErr(e) || e.message}` })
+    } finally {
+      setPolishingRowId(null)
+    }
+  }
+
   const deleteScript = async (id) => {
     const ok = await confirmDialog({ title: 'Delete this row?', confirmText: 'Delete', destructive: true })
     if (!ok) return
@@ -2134,6 +2214,36 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                             title={compressingId === r.id ? 'Compressing…' : 'Compress / optimize video (fixes HEVC, HDR, 4K, rotation)'}
                           >
                             {compressingId === r.id ? <Loader2 size={14} className="spin" /> : <Wand2 size={14} />}
+                          </button>
+                        )}
+                        {/* Per-row "Polish + embed cover" repair. Runs
+                            cover-gen (if missing) + polish-with-cover
+                            in one shot. Useful for fixing rows that
+                            landed on the calendar without going through
+                            the autopilot polish+cover pipeline. */}
+                        {r.media_type === 'video' && Array.isArray(r.media_urls) && r.media_urls[0] && (
+                          <button
+                            aria-label="Polish + embed cover intro"
+                            disabled={polishingRowId === r.id || !hasCoverTemplate}
+                            onClick={() => polishAndEmbedRow(r)}
+                            style={{
+                              background: 'transparent', border: 'none',
+                              color: r.media_url_with_cover ? 'var(--green)' : 'var(--muted)',
+                              cursor: (polishingRowId === r.id || !hasCoverTemplate) ? 'not-allowed' : 'pointer',
+                              padding: 6, borderRadius: 6,
+                              opacity: polishingRowId === r.id ? 0.5 : 1,
+                            }}
+                            title={
+                              !hasCoverTemplate
+                                ? 'Set a cover template on this brand first'
+                                : polishingRowId === r.id
+                                  ? 'Polishing + embedding cover…'
+                                  : r.media_url_with_cover
+                                    ? 'Re-run polish + embed cover'
+                                    : 'Polish video + embed cover as 0.5s intro'
+                            }
+                          >
+                            {polishingRowId === r.id ? <Loader2 size={14} className="spin" /> : <Film size={14} />}
                           </button>
                         )}
                         <button
