@@ -220,12 +220,16 @@ export default function Landing() {
 
         <div style={heroGrid} className="hero-grid">
           {/* Static headline. White base text with the brand-red
-              gradient applied only to "faceless brand". */}
+              gradient applied only to "faceless brand". The
+              mobile-line-break <br /> below shows up only at
+              <= 860px so the H1 breaks cleanly into two visual
+              lines on phones: "Launch your faceless / brand in
+              minutes." */}
           <h1
             style={{ ...heroH1, textAlign: 'center', margin: 0, color: 'var(--text)' }}
             className="fade-up"
           >
-            Launch your <span className="brand-text">faceless brand</span> in minutes.
+            Launch your <span className="brand-text">faceless<br className="mobile-line-break" /> brand</span> in minutes.
           </h1>
 
           {/* Hero video with rotating conic-gradient halo, centered
