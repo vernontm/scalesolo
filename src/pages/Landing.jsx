@@ -219,27 +219,13 @@ export default function Landing() {
         <div aria-hidden style={heroFlameWisp} />
 
         <div style={heroGrid} className="hero-grid">
-          {/* Headline first — single-line typewriter that cycles through
-              the two phrases. The Typewriter renders its own coloured
-              text + blinking caret. Min-height keeps the H1 from
-              collapsing between phases. */}
+          {/* Static headline. White base text with the brand-red
+              gradient applied only to "faceless brand". */}
           <h1
-            style={{
-              ...heroH1, textAlign: 'center', margin: 0,
-              // Reserve two lines worth of height regardless of how
-              // many lines the current phrase wraps to. Keeps the
-              // video + CTAs below from shifting between phases.
-              minHeight: 'calc(1.02em * 2)',
-            }}
+            style={{ ...heroH1, textAlign: 'center', margin: 0, color: 'var(--text)' }}
             className="fade-up"
-            aria-label="Launch your faceless brand in minutes. Set it up once. Run it on autopilot."
           >
-            <Typewriter
-              phrases={[
-                { text: 'Launch your faceless brand in minutes.', red: ['faceless brand'] },
-                { text: 'Set it up once. Run it on autopilot.',   red: ['Run it on autopilot.'] },
-              ]}
-            />
+            Launch your <span className="brand-text">faceless brand</span> in minutes.
           </h1>
 
           {/* Hero video with rotating conic-gradient halo, centered
