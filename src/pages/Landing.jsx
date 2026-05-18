@@ -89,6 +89,23 @@ export default function Landing() {
   // button can sit inside HeroShot but the muted attribute on the
   // <video> reflects it reactively.
   const [heroMuted, setHeroMuted] = useState(true)
+  // "See how it works" CTA → fullscreen demo modal. Plays the same
+  // hero ad on-demand, unmuted by default, with native controls so
+  // the visitor can scrub / pause.
+  const [demoOpen, setDemoOpen] = useState(false)
+  useEffect(() => {
+    if (!demoOpen) return
+    const onKey = (e) => { if (e.key === 'Escape') setDemoOpen(false) }
+    document.addEventListener('keydown', onKey)
+    // Lock body scroll while the modal is open so the page behind
+    // doesn't move when the user scrolls inside the lightbox.
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prev
+    }
+  }, [demoOpen])
   // "Sign in" goes to the login page for existing users. We pass
   // ?mode=signin explicitly so Login.jsx forces the sign-in tab even
   // if a previous browse session stashed a signup tier in localStorage
@@ -255,9 +272,14 @@ export default function Landing() {
               <button onClick={goPricing} className="btn-primary" style={ctaSizing}>
                 Start free <ArrowRight size={14} />
               </button>
-              <a href="#canvas" className="btn-secondary" style={ctaSizing}>
+              <button
+                type="button"
+                onClick={() => setDemoOpen(true)}
+                className="btn-secondary"
+                style={ctaSizing}
+              >
                 <Play size={13} fill="currentColor" /> See how it works
-              </a>
+              </button>
             </div>
             <div style={{ ...trustPills, justifyContent: 'center', marginBottom: 0 }} className="fade-up hero-pills">
               <span style={pill}><Check size={11} /> 3-day trial</span>
@@ -611,6 +633,63 @@ export default function Landing() {
           </div>
         </div>
       </footer>
+
+      {/* Demo-video lightbox. Triggered by the "See how it works" CTA
+          in the hero. Click backdrop / close button / Esc to dismiss.
+          Video plays unmuted with native controls so the visitor can
+          actually hear + scrub the demo. */}
+      {demoOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="ScaleSolo demo video"
+          onClick={() => setDemoOpen(false)}
+          style={{
+            position: 'fixed', inset: 0,
+            background: 'rgba(0, 0, 0, 0.88)',
+            backdropFilter: 'blur(6px)',
+            WebkitBackdropFilter: 'blur(6px)',
+            display: 'grid', placeItems: 'center',
+            zIndex: 1000, padding: 24,
+            animation: 'fadeIn 180ms var(--ease) forwards',
+          }}
+        >
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setDemoOpen(false) }}
+            aria-label="Close demo"
+            style={{
+              position: 'absolute', top: 18, right: 18,
+              width: 44, height: 44, borderRadius: 999,
+              background: 'rgba(255, 255, 255, 0.08)',
+              border: '1px solid rgba(255, 255, 255, 0.18)',
+              color: '#fff',
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              cursor: 'pointer',
+            }}
+          >
+            <X size={20} />
+          </button>
+          <video
+            // Click on the video itself doesn't close — that's the
+            // backdrop's job. Stop propagation so scrubbing / pausing
+            // works without the modal collapsing.
+            onClick={(e) => e.stopPropagation()}
+            src={HERO_IMAGE}
+            controls
+            autoPlay
+            playsInline
+            preload="auto"
+            style={{
+              width: 'min(1100px, 92vw)',
+              maxHeight: '86vh',
+              borderRadius: 14,
+              boxShadow: '0 30px 80px rgba(0, 0, 0, 0.6)',
+              background: '#000',
+            }}
+          />
+        </div>
+      )}
     </div>
   )
 }
