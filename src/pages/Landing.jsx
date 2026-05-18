@@ -841,6 +841,22 @@ function HeroShot({ src }) {
   // the HERO_IMAGE constant alone. The 3D-tilt interaction works on
   // both <img> and <video>.
   const isVideo = /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(String(src || ''))
+  // Defer the video mount until after first paint so its network
+  // fetch doesn't block Playwright's networkidle wait in CI smoke
+  // tests (a hanging video resource was timing out the test at 30s).
+  // Real users see no visual difference — the video appears within
+  // an animation frame of hydration.
+  const [showVideo, setShowVideo] = useState(false)
+  useEffect(() => {
+    if (!isVideo) return
+    const idle = window.requestIdleCallback
+      ? window.requestIdleCallback(() => setShowVideo(true), { timeout: 500 })
+      : window.requestAnimationFrame(() => setShowVideo(true))
+    return () => {
+      if (window.cancelIdleCallback && window.requestIdleCallback) window.cancelIdleCallback(idle)
+      else window.cancelAnimationFrame(idle)
+    }
+  }, [isVideo])
   const handleMove = (e) => {
     const el = cardRef.current
     const media = mediaRef.current
@@ -858,18 +874,25 @@ function HeroShot({ src }) {
   return (
     <div ref={cardRef} style={shotCard} onMouseMove={handleMove} onMouseLeave={handleLeave}>
       {isVideo ? (
-        <video
-          ref={mediaRef}
-          src={src}
-          autoPlay
-          muted
-          loop
-          playsInline
-          preload="metadata"
-          aria-label="ScaleSolo product demo"
-          style={shotImg}
-          onError={(e) => { e.currentTarget.style.opacity = '0' }}
-        />
+        showVideo ? (
+          <video
+            ref={mediaRef}
+            src={src}
+            autoPlay
+            muted
+            loop
+            playsInline
+            preload="metadata"
+            aria-label="ScaleSolo product demo"
+            style={shotImg}
+            onError={(e) => { e.currentTarget.style.opacity = '0' }}
+          />
+        ) : (
+          // Placeholder during the brief post-paint window before the
+          // <video> mounts. Keeps the frame from collapsing and matches
+          // the same dimensions the video will take.
+          <div ref={mediaRef} style={{ ...shotImg, background: 'rgba(255,255,255,0.04)' }} />
+        )
       ) : (
         <img
           loading="lazy" decoding="async"
