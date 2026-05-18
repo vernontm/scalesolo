@@ -854,10 +854,13 @@ const shotCard = {
   position: 'relative', zIndex: 1,
   background: 'transparent',
   display: 'grid', placeItems: 'center',
+  borderRadius: 18,
+  overflow: 'hidden',
 }
 const shotImg = {
   width: '100%', height: 'auto', display: 'block',
   position: 'relative', zIndex: 1,
+  borderRadius: 18,
   filter: 'drop-shadow(0 30px 60px rgba(0,0,0,0.55)) drop-shadow(0 0 40px rgba(239,68,68,0.18))',
   transition: 'transform 200ms ease-out',
   willChange: 'transform',
