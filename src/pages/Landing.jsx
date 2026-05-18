@@ -26,7 +26,10 @@ import UseCaseGrid from '../components/UseCaseGrid.jsx'
 //  Vendor names (Claude / HeyGen) removed from user-facing strings.
 // ─────────────────────────────────────────────────────────────────────
 
-const HERO_IMAGE = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/dash_landing_1x1.svg'
+// Hero asset — can be an image OR a video URL. HeroShot autodetects
+// the extension and renders <video> for .mp4/.webm/.mov, otherwise
+// falls back to <img>.
+const HERO_IMAGE = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/Scalesolo%20ad.mp4'
 const FEAT_IMG_BUILD   = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/shared/workflow_landing.mp4'
 const FEAT_IMG_RUN     = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/autoscheduling_landing.png'
 const FEAT_IMG_AVATAR  = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/shared/avatar_landing_video.mp4'
@@ -832,31 +835,51 @@ const shotImg = {
 // Hero dashboard image with subtle 3D tilt that follows the cursor.
 function HeroShot({ src }) {
   const cardRef = useRef(null)
-  const imgRef = useRef(null)
+  const mediaRef = useRef(null)
+  // Treat any URL ending in a known video extension as a video so the
+  // hero can be either an image or an autoplay loop, controlled by
+  // the HERO_IMAGE constant alone. The 3D-tilt interaction works on
+  // both <img> and <video>.
+  const isVideo = /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(String(src || ''))
   const handleMove = (e) => {
     const el = cardRef.current
-    const img = imgRef.current
-    if (!el || !img) return
+    const media = mediaRef.current
+    if (!el || !media) return
     const r = el.getBoundingClientRect()
     const px = (e.clientX - r.left) / r.width  // 0..1
     const py = (e.clientY - r.top) / r.height
     const rx = (0.5 - py) * 8   // tilt up/down
     const ry = (px - 0.5) * 10  // tilt left/right
-    img.style.transform = `perspective(900px) rotateX(${rx}deg) rotateY(${ry}deg) scale(1.02)`
+    media.style.transform = `perspective(900px) rotateX(${rx}deg) rotateY(${ry}deg) scale(1.02)`
   }
   const handleLeave = () => {
-    if (imgRef.current) imgRef.current.style.transform = 'perspective(900px) rotateX(0deg) rotateY(0deg) scale(1)'
+    if (mediaRef.current) mediaRef.current.style.transform = 'perspective(900px) rotateX(0deg) rotateY(0deg) scale(1)'
   }
   return (
     <div ref={cardRef} style={shotCard} onMouseMove={handleMove} onMouseLeave={handleLeave}>
-      <img
-        loading="lazy" decoding="async"
-        ref={imgRef}
-        src={src}
-        alt="ScaleSolo dashboard"
-        style={shotImg}
-        onError={(e) => { e.currentTarget.style.opacity = '0' }}
-      />
+      {isVideo ? (
+        <video
+          ref={mediaRef}
+          src={src}
+          autoPlay
+          muted
+          loop
+          playsInline
+          preload="metadata"
+          aria-label="ScaleSolo product demo"
+          style={shotImg}
+          onError={(e) => { e.currentTarget.style.opacity = '0' }}
+        />
+      ) : (
+        <img
+          loading="lazy" decoding="async"
+          ref={mediaRef}
+          src={src}
+          alt="ScaleSolo dashboard"
+          style={shotImg}
+          onError={(e) => { e.currentTarget.style.opacity = '0' }}
+        />
+      )}
     </div>
   )
 }
