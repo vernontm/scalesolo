@@ -236,8 +236,8 @@ export default function Landing() {
           >
             <Typewriter
               phrases={[
-                'Launch your faceless brand in minutes.',
-                'Set it up once. Run it on autopilot.',
+                { text: 'Launch your faceless brand in minutes.', red: ['faceless brand'] },
+                { text: 'Set it up once. Run it on autopilot.',   red: ['Run it on autopilot.'] },
               ]}
             />
           </h1>
@@ -877,21 +877,27 @@ const shotImg = {
 // one char-by-char, holds a beat, backspaces it, then advances to
 // the next. Loops forever.
 //
-// Renders the typed text inline so it inherits the parent H1's
-// alignment + line-wrap behavior with no positioning gymnastics.
-// The parent H1 should set a fixed min-height (e.g. 2.2em) to
-// reserve enough room for the longest phrase at any viewport so
-// content below doesn't shift between phases.
+// Each phrase is { text, red? } — `red` is an array of substrings
+// that should render in the brand-red gradient when typed; every
+// other character is rendered white (var(--text)).
+//
+// Renders inline so it inherits the parent H1's alignment + wrap
+// behavior. Parent H1 should reserve enough vertical room
+// (min-height) so content below doesn't shift between phases.
 function Typewriter({ phrases = [], typeSpeed = 55, backSpeed = 30, holdMs = 1400 }) {
   const [text, setText] = useState('')
   const [phase, setPhase] = useState('type')   // 'type' | 'hold' | 'back'
   const [idx, setIdx] = useState(0)            // which phrase
+  // Normalize each phrase into a { text, red } shape so the render
+  // path doesn't have to branch on whether the caller passed plain
+  // strings or phrase objects.
+  const norm = phrases.map((p) => (typeof p === 'string' ? { text: p, red: [] } : { text: p.text || '', red: p.red || [] }))
+  const current = norm[idx] || { text: '', red: [] }
   useEffect(() => {
-    const current = phrases[idx] || ''
     let t
     if (phase === 'type') {
-      if (text.length < current.length) {
-        t = setTimeout(() => setText(current.slice(0, text.length + 1)), typeSpeed)
+      if (text.length < current.text.length) {
+        t = setTimeout(() => setText(current.text.slice(0, text.length + 1)), typeSpeed)
       } else {
         t = setTimeout(() => setPhase('hold'), holdMs)
       }
@@ -901,16 +907,51 @@ function Typewriter({ phrases = [], typeSpeed = 55, backSpeed = 30, holdMs = 140
       if (text.length > 0) {
         t = setTimeout(() => setText(text.slice(0, -1)), backSpeed)
       } else {
-        // Advance to next phrase (loop).
-        setIdx((idx + 1) % phrases.length)
+        setIdx((idx + 1) % norm.length)
         setPhase('type')
       }
     }
     return () => clearTimeout(t)
-  }, [text, phase, idx, phrases, typeSpeed, backSpeed, holdMs])
+  }, [text, phase, idx, current.text, typeSpeed, backSpeed, holdMs, norm.length])
+  // Resolve red highlight substrings into [start, end) index ranges
+  // against the current phrase. Substrings missing from the phrase
+  // (typo, etc) are silently dropped.
+  const redRanges = current.red
+    .map((sub) => {
+      const s = current.text.indexOf(sub)
+      return s === -1 ? null : [s, s + sub.length]
+    })
+    .filter(Boolean)
+  // Walk the currently-typed substring and split it into white and
+  // red-gradient segments based on whether each character index
+  // falls inside one of the red ranges.
+  const segments = []
+  let i = 0
+  while (i < text.length) {
+    const inRed = redRanges.find(([s, e]) => i >= s && i < e)
+    if (inRed) {
+      const end = Math.min(text.length, inRed[1])
+      segments.push({ red: true, str: text.slice(i, end), key: i })
+      i = end
+    } else {
+      const nextRedStart = redRanges
+        .map(([s]) => s)
+        .filter((s) => s > i)
+        .reduce((min, s) => Math.min(min, s), text.length)
+      const end = Math.min(nextRedStart, text.length)
+      segments.push({ red: false, str: text.slice(i, end), key: i })
+      i = end
+    }
+  }
   return (
     <>
-      <span className="brand-text">{text}</span>
+      {segments.map((seg) =>
+        seg.red ? (
+          <span key={seg.key} className="brand-text">{seg.str}</span>
+        ) : (
+          <span key={seg.key} style={{ color: 'var(--text)' }}>{seg.str}</span>
+        )
+      )}
       <span
         aria-hidden
         style={{
