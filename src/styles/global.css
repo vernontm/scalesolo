@@ -159,6 +159,12 @@ a { color: inherit; text-decoration: none; }
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
 }
+/* Typewriter caret in the landing hero. Steps between visible and
+   transparent every 500ms for a classic terminal-style blink. */
+@keyframes caretBlink {
+  0%, 49%   { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
 @keyframes floatDrift {
   0%   { transform: translate3d(0, 0, 0); opacity: 0.25; }
   50%  { transform: translate3d(8px, -22px, 0); opacity: 0.85; }

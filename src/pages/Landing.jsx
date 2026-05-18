@@ -5,6 +5,7 @@ import {
   Layers, Wand2, RefreshCw, ShieldCheck, Quote, Play,
   Instagram, Youtube, Twitter, Linkedin, Music2, Captions as CaptionsIcon,
   Mic2, ShoppingBag, GraduationCap, Newspaper, Menu, X, PenLine, Film,
+  Volume2, VolumeX,
 } from 'lucide-react'
 import PricingPlans from '../components/PricingPlans.jsx'
 import WorkflowDemo from '../components/WorkflowDemo.jsx'
@@ -83,6 +84,11 @@ const testimonials = [
 
 export default function Landing() {
   const nav = useNavigate()
+  // Hero video starts muted (browsers require it for autoplay) and
+  // can be unmuted via the overlay button. State lives here so the
+  // button can sit inside HeroShot but the muted attribute on the
+  // <video> reflects it reactively.
+  const [heroMuted, setHeroMuted] = useState(true)
   // "Sign in" goes to the login page for existing users. We pass
   // ?mode=signin explicitly so Login.jsx forces the sign-in tab even
   // if a previous browse session stashed a signup tier in localStorage
@@ -213,9 +219,21 @@ export default function Landing() {
         <div aria-hidden style={heroFlameWisp} />
 
         <div style={heroGrid} className="hero-grid">
-          {/* Headline first */}
-          <h1 style={{ ...heroH1, textAlign: 'center', margin: 0 }} className="fade-up">
-            Launch your faceless brand in minutes.<br /><span className="brand-text">Run it on autopilot.</span>
+          {/* Headline first — single-line typewriter that cycles through
+              the two phrases. The Typewriter renders its own coloured
+              text + blinking caret. Min-height keeps the H1 from
+              collapsing between phases. */}
+          <h1
+            style={{ ...heroH1, textAlign: 'center', margin: 0, minHeight: '1.05em' }}
+            className="fade-up"
+            aria-label="Launch your faceless brand in minutes. Run it on autopilot."
+          >
+            <Typewriter
+              phrases={[
+                'Launch your faceless brand in minutes.',
+                'Run it on autopilot.',
+              ]}
+            />
           </h1>
 
           {/* Hero video with rotating conic-gradient halo, centered
@@ -224,13 +242,17 @@ export default function Landing() {
             <div aria-hidden style={shotUnderGlow} />
             <div style={shotFrame}>
               <div aria-hidden style={{ ...shotHalo, animation: 'glowSpin 12s linear infinite' }} />
-              <HeroShot src={HERO_IMAGE} />
+              <HeroShot
+                src={HERO_IMAGE}
+                muted={heroMuted}
+                onToggleMute={() => setHeroMuted((m) => !m)}
+              />
             </div>
           </div>
 
           {/* Subhead + CTAs + trust pills below the video */}
           <div style={heroCopy} className="hero-copy">
-            <p style={{ ...heroSub, margin: '0 0 24px', textAlign: 'center' }} className="fade-up">
+            <p style={{ ...heroSub, margin: '0 auto 24px', textAlign: 'center' }} className="fade-up">
               The first AI platform that builds a faceless brand for you and runs it on autopilot. No camera. No editor. No daily grind.
             </p>
             <div style={{ ...heroCtas, justifyContent: 'center' }} className="fade-up hero-ctas">
@@ -842,7 +864,56 @@ const shotImg = {
 }
 
 // Hero dashboard image with subtle 3D tilt that follows the cursor.
-function HeroShot({ src }) {
+// Typewriter that cycles through a sequence of phrases. Types each
+// one char-by-char, holds a beat, backspaces it, then advances to
+// the next. Loops forever. Used for the hero H1 so the headline
+// has motion the moment the page loads.
+function Typewriter({ phrases = [], typeSpeed = 55, backSpeed = 30, holdMs = 1400 }) {
+  const [text, setText] = useState('')
+  const [phase, setPhase] = useState('type')   // 'type' | 'hold' | 'back'
+  const [idx, setIdx] = useState(0)            // which phrase
+  useEffect(() => {
+    const current = phrases[idx] || ''
+    let t
+    if (phase === 'type') {
+      if (text.length < current.length) {
+        t = setTimeout(() => setText(current.slice(0, text.length + 1)), typeSpeed)
+      } else {
+        t = setTimeout(() => setPhase('hold'), holdMs)
+      }
+    } else if (phase === 'hold') {
+      t = setTimeout(() => setPhase('back'), holdMs)
+    } else if (phase === 'back') {
+      if (text.length > 0) {
+        t = setTimeout(() => setText(text.slice(0, -1)), backSpeed)
+      } else {
+        // Advance to next phrase (loop).
+        setIdx((idx + 1) % phrases.length)
+        setPhase('type')
+      }
+    }
+    return () => clearTimeout(t)
+  }, [text, phase, idx, phrases, typeSpeed, backSpeed, holdMs])
+  return (
+    <>
+      <span className="brand-text">{text}</span>
+      <span
+        aria-hidden
+        style={{
+          display: 'inline-block',
+          width: '0.05em',
+          marginLeft: 4,
+          background: 'currentColor',
+          height: '0.95em',
+          verticalAlign: 'middle',
+          animation: 'caretBlink 1s steps(2, start) infinite',
+        }}
+      />
+    </>
+  )
+}
+
+function HeroShot({ src, muted, onToggleMute }) {
   const cardRef = useRef(null)
   const mediaRef = useRef(null)
   // Treat any URL ending in a known video extension as a video so the
@@ -884,18 +955,48 @@ function HeroShot({ src }) {
     <div ref={cardRef} style={shotCard} onMouseMove={handleMove} onMouseLeave={handleLeave}>
       {isVideo ? (
         showVideo ? (
-          <video
-            ref={mediaRef}
-            src={src}
-            autoPlay
-            muted
-            loop
-            playsInline
-            preload="metadata"
-            aria-label="ScaleSolo product demo"
-            style={shotImg}
-            onError={(e) => { e.currentTarget.style.opacity = '0' }}
-          />
+          <>
+            <video
+              ref={mediaRef}
+              src={src}
+              autoPlay
+              muted={muted}
+              loop
+              playsInline
+              preload="metadata"
+              aria-label="ScaleSolo product demo"
+              style={shotImg}
+              onError={(e) => { e.currentTarget.style.opacity = '0' }}
+            />
+            {/* Unmute toggle — overlays the video frame. Click stops
+                propagation so it doesn't trigger the parent tilt
+                handlers. Sits over the bottom-right corner. */}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onToggleMute?.() }}
+              aria-label={muted ? 'Unmute video' : 'Mute video'}
+              title={muted ? 'Unmute' : 'Mute'}
+              style={{
+                position: 'absolute',
+                right: 12, bottom: 12,
+                width: 44, height: 44,
+                borderRadius: 999,
+                background: 'rgba(0, 0, 0, 0.55)',
+                backdropFilter: 'blur(8px)',
+                WebkitBackdropFilter: 'blur(8px)',
+                border: '1px solid rgba(255, 255, 255, 0.18)',
+                color: '#fff',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                cursor: 'pointer',
+                zIndex: 3,
+                transition: 'transform 120ms var(--ease), background 120ms var(--ease)',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.08)'; e.currentTarget.style.background = 'rgba(0,0,0,0.75)' }}
+              onMouseLeave={(e) => { e.currentTarget.style.transform = ''; e.currentTarget.style.background = 'rgba(0,0,0,0.55)' }}
+            >
+              {muted ? <VolumeX size={18} /> : <Volume2 size={18} />}
+            </button>
+          </>
         ) : (
           // Placeholder during the brief post-paint window before the
           // <video> mounts. Keeps the frame from collapsing and matches
