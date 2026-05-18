@@ -213,14 +213,27 @@ export default function Landing() {
         <div aria-hidden style={heroFlameWisp} />
 
         <div style={heroGrid} className="hero-grid">
+          {/* Headline first */}
+          <h1 style={{ ...heroH1, textAlign: 'center', margin: 0 }} className="fade-up">
+            Launch your faceless brand in minutes.<br /><span className="brand-text">Run it on autopilot.</span>
+          </h1>
+
+          {/* Hero video with rotating conic-gradient halo, centered
+              between the headline and the subhead/CTAs. */}
+          <div style={{ ...shotWrap, marginTop: 0, marginBottom: 0, width: '100%' }} className="fade-up hero-shot">
+            <div aria-hidden style={shotUnderGlow} />
+            <div style={shotFrame}>
+              <div aria-hidden style={{ ...shotHalo, animation: 'glowSpin 12s linear infinite' }} />
+              <HeroShot src={HERO_IMAGE} />
+            </div>
+          </div>
+
+          {/* Subhead + CTAs + trust pills below the video */}
           <div style={heroCopy} className="hero-copy">
-            <h1 style={{ ...heroH1, textAlign: 'left' }} className="fade-up">
-              Launch your faceless brand in minutes.<br /><span className="brand-text">Run it on autopilot.</span>
-            </h1>
-            <p style={{ ...heroSub, margin: '0 0 32px', textAlign: 'left' }} className="fade-up">
+            <p style={{ ...heroSub, margin: '0 0 24px', textAlign: 'center' }} className="fade-up">
               The first AI platform that builds a faceless brand for you and runs it on autopilot. No camera. No editor. No daily grind.
             </p>
-            <div style={{ ...heroCtas, justifyContent: 'flex-start' }} className="fade-up hero-ctas">
+            <div style={{ ...heroCtas, justifyContent: 'center' }} className="fade-up hero-ctas">
               <button onClick={goPricing} className="btn-primary" style={ctaSizing}>
                 Start free <ArrowRight size={14} />
               </button>
@@ -228,19 +241,10 @@ export default function Landing() {
                 <Play size={13} fill="currentColor" /> See how it works
               </a>
             </div>
-            <div style={{ ...trustPills, justifyContent: 'flex-start', marginBottom: 0 }} className="fade-up hero-pills">
+            <div style={{ ...trustPills, justifyContent: 'center', marginBottom: 0 }} className="fade-up hero-pills">
               <span style={pill}><Check size={11} /> 3-day trial</span>
               <span style={pill}><Check size={11} /> 5-min setup</span>
               <span style={pill}><Check size={11} /> Cancel anytime</span>
-            </div>
-          </div>
-
-          {/* Hero image with rotating conic-gradient halo */}
-          <div style={{ ...shotWrap, marginTop: 0, marginBottom: 0 }} className="fade-up hero-shot">
-            <div aria-hidden style={shotUnderGlow} />
-            <div style={shotFrame}>
-              <div aria-hidden style={{ ...shotHalo, animation: 'glowSpin 12s linear infinite' }} />
-              <HeroShot src={HERO_IMAGE} />
             </div>
           </div>
         </div>
@@ -712,13 +716,18 @@ const hero = {
   zIndex: 1,
   isolation: 'isolate',
 }
+// Single-column hero: H1 → video → subhead → CTAs → trust pills.
+// Centred horizontally so the video sits visually under the headline
+// rather than off to one side.
 const heroGrid = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(min(420px, 100%), 1fr))',
-  gap: 56,
+  display: 'flex',
+  flexDirection: 'column',
   alignItems: 'center',
+  gap: 24,
+  maxWidth: 920,
+  margin: '0 auto',
 }
-const heroCopy = { textAlign: 'left' }
+const heroCopy = { textAlign: 'center', width: '100%' }
 
 // Outer-most flame: tall radial column, deep red core fading orange.
 const heroFlameOuter = {

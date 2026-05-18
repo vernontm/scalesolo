@@ -1289,11 +1289,14 @@ a:focus-visible {
 @keyframes pillGlow { 0%, 100% { box-shadow: 0 0 0 rgba(239,68,68,0); border-color: rgba(139, 92, 246, 0.30); }
                       50%      { box-shadow: 0 0 16px rgba(239,68,68,0.35); border-color: rgba(239,68,68,0.55); color: var(--text); } }
 
-/* Landing hero: on mobile, image stacks above copy + tighter padding. */
+/* Landing hero: single-column on desktop AND mobile (H1 → video →
+   subhead → CTAs → pills). On mobile, tighten padding and cap the
+   video width so it doesn't dominate the fold. The JSX renders in
+   the desired order so we don't need `order:` overrides anymore. */
 @media (max-width: 860px) {
   .hero-section { padding: 9px 16px 16px !important; }
-  .hero-grid    { gap: 8px !important; }
-  .hero-shot    { order: -1; max-width: 60%; margin: 0 auto !important; }
+  .hero-grid    { gap: 12px !important; }
+  .hero-shot    { max-width: 60%; margin: 0 auto !important; }
   .hero-shot .hero-img-wrap, .hero-shot > div { margin: 0 !important; }
   .hero-copy    { text-align: center !important; }
   .hero-copy h1 { font-size: clamp(22px, 6.4vw, 32px) !important; line-height: 1.08 !important; margin-bottom: 14px !important; text-align: center !important; }
@@ -1302,6 +1305,8 @@ a:focus-visible {
   .hero-copy .hero-ctas,
   .hero-copy .hero-pills   { justify-content: center !important; }
   .hero-copy .hero-ctas    { margin-bottom: 12px !important; }
+  /* H1 outside .hero-copy now — apply same mobile scaling. */
+  .hero-grid > h1 { font-size: clamp(22px, 6.4vw, 32px) !important; line-height: 1.08 !important; text-align: center !important; }
 }
 
 /* Spaces zoom controls (bottom-left). Custom-styled to match the app and
