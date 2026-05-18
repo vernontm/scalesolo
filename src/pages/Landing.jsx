@@ -226,12 +226,12 @@ export default function Landing() {
           <h1
             style={{ ...heroH1, textAlign: 'center', margin: 0 }}
             className="fade-up"
-            aria-label="Launch your faceless brand in minutes. Run it on autopilot."
+            aria-label="Launch your faceless brand in minutes. Set it up once. Run it on autopilot."
           >
             <Typewriter
               phrases={[
                 'Launch your faceless brand in minutes.',
-                'Run it on autopilot.',
+                'Set it up once. Run it on autopilot.',
               ]}
             />
           </h1>
