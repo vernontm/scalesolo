@@ -224,7 +224,13 @@ export default function Landing() {
               text + blinking caret. Min-height keeps the H1 from
               collapsing between phases. */}
           <h1
-            style={{ ...heroH1, textAlign: 'center', margin: 0 }}
+            style={{
+              ...heroH1, textAlign: 'center', margin: 0,
+              // Reserve two lines worth of height regardless of how
+              // many lines the current phrase wraps to. Keeps the
+              // video + CTAs below from shifting between phases.
+              minHeight: 'calc(1.02em * 2)',
+            }}
             className="fade-up"
             aria-label="Launch your faceless brand in minutes. Set it up once. Run it on autopilot."
           >
@@ -871,13 +877,11 @@ const shotImg = {
 // one char-by-char, holds a beat, backspaces it, then advances to
 // the next. Loops forever.
 //
-// Height-locked: renders an INVISIBLE copy of the longest phrase
-// (using the same font / wrapping rules as the visible text) inside
-// a relative wrapper. The visible typewriter is absolutely positioned
-// on top. Result: the H1 always occupies the height of the longest
-// phrase at the current viewport width, so the video + everything
-// below never shifts as characters get typed / deleted or as we
-// swap between phases.
+// Renders the typed text inline so it inherits the parent H1's
+// alignment + line-wrap behavior with no positioning gymnastics.
+// The parent H1 should set a fixed min-height (e.g. 2.2em) to
+// reserve enough room for the longest phrase at any viewport so
+// content below doesn't shift between phases.
 function Typewriter({ phrases = [], typeSpeed = 55, backSpeed = 30, holdMs = 1400 }) {
   const [text, setText] = useState('')
   const [phase, setPhase] = useState('type')   // 'type' | 'hold' | 'back'
@@ -904,45 +908,22 @@ function Typewriter({ phrases = [], typeSpeed = 55, backSpeed = 30, holdMs = 140
     }
     return () => clearTimeout(t)
   }, [text, phase, idx, phrases, typeSpeed, backSpeed, holdMs])
-  // Pick the longest phrase by rendered length — this is what we use
-  // as the invisible spacer. Could differ from "most characters" if
-  // phrases had different scripts, but for ASCII Latin it's a safe
-  // approximation.
-  const longest = phrases.reduce((a, b) => (b.length > a.length ? b : a), phrases[0] || '')
   return (
-    <span style={{ position: 'relative', display: 'inline-block', maxWidth: '100%' }}>
-      {/* Invisible reservation — locks both height AND width to the
-          longest phrase at the current font size / viewport so the
-          H1 never reflows mid-animation. aria-hidden so the screen
-          reader uses the H1's aria-label instead. */}
-      <span aria-hidden style={{ visibility: 'hidden', whiteSpace: 'normal' }}>{longest}</span>
-      {/* Absolutely-positioned visible content. inset:0 keeps it
-          centred inside the spacer so the typewriter text appears
-          where the static H1 would have rendered. */}
+    <>
+      <span className="brand-text">{text}</span>
       <span
+        aria-hidden
         style={{
-          position: 'absolute', inset: 0,
-          display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
-          textAlign: 'inherit',
+          display: 'inline-block',
+          width: '2px',
+          marginLeft: 4,
+          background: 'var(--text)',
+          height: '0.95em',
+          verticalAlign: 'middle',
+          animation: 'caretBlink 1s steps(2, start) infinite',
         }}
-      >
-        <span>
-          <span className="brand-text">{text}</span>
-          <span
-            aria-hidden
-            style={{
-              display: 'inline-block',
-              width: '0.05em',
-              marginLeft: 4,
-              background: 'currentColor',
-              height: '0.95em',
-              verticalAlign: 'middle',
-              animation: 'caretBlink 1s steps(2, start) infinite',
-            }}
-          />
-        </span>
-      </span>
-    </span>
+      />
+    </>
   )
 }
 
