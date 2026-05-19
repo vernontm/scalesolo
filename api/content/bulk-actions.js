@@ -87,7 +87,7 @@ async function generateCaptions({ res, profile_id, script_ids, user_id }) {
   } else {
     q += '&caption=is.null'
   }
-  q += '&select=id,title,full_script,hook,caption,media_type,media_urls'
+  q += '&select=id,title,full_script,hook,caption,media_type,media_urls,status,scheduled_datetime,uploadpost_request_id,uploadpost_job_id'
   const scripts = await supaFetch(q)
   if (!scripts?.length) return res.status(200).json({ updated: 0 })
 
@@ -315,6 +315,13 @@ Return ONLY valid JSON:
   // transcriptFailures so the UI can toast a clear "n video(s)
   // couldn't be auto-captioned" message instead of leaving the user
   // confused about why nothing changed.
+  // Rows that were already scheduled BEFORE this regen — keep their
+  // status as scheduled, then push the new caption to Upload-Post via
+  // a resync at the end. Without this branch, regen would downgrade
+  // every scheduled row back to caption_ready, leaving the Upload-Post
+  // job firing with the stale text and forcing the user to manually
+  // re-schedule.
+  const needsUploadPostResync = []
   const results = await Promise.allSettled(captionResults.map((r, i) => {
     const script = scripts[i]
     if (!script || !r) return Promise.resolve({ ok: false })
@@ -322,20 +329,46 @@ Return ONLY valid JSON:
       transcriptFailures.push({ id: script.id, reason: 'no_speech_detected' })
       return Promise.resolve({ ok: false, skipped: 'no_transcript' })
     }
+    const wasScheduled = script.status === 'scheduled'
+    const wasPosted = script.status === 'posted'
     const patch = {
       caption: r.caption || null,
       hashtags: r.hashtags || null,
       first_comment: r.first_comment || null,
-      status: 'caption_ready',
+      // Preserve terminal / mid-flight statuses. Only fresh rows
+      // (draft / null / failed) flip to caption_ready.
+      status: wasPosted ? 'posted' : (wasScheduled ? 'scheduled' : 'caption_ready'),
     }
     if (r.title) patch.title = r.title
     if (r.hook) patch.hook = r.hook
     if (r.full_script) patch.full_script = r.full_script
+    if (wasScheduled && (script.uploadpost_request_id || script.uploadpost_job_id)) {
+      needsUploadPostResync.push(script.id)
+    }
     return supaFetch(`content_scripts?id=eq.${script.id}`, { method: 'PATCH', body: patch, prefer: 'return=minimal' })
       .then(() => ({ ok: true }))
       .catch((e) => { console.warn('caption patch failed for', script.id, e.message); return { ok: false } })
   }))
   const updated = results.filter((r) => r.status === 'fulfilled' && r.value?.ok).length
+
+  // Push the new caption to Upload-Post for every scheduled row we
+  // just refreshed. Reuses the existing resync flow which cancels the
+  // old Upload-Post job + resubmits with the row's CURRENT (newly
+  // regenerated) caption + hashtags + first_comment.
+  let uploadPostResynced = 0
+  let uploadPostResyncFailed = 0
+  if (needsUploadPostResync.length) {
+    try {
+      // Stub the response collector so resyncUploadPost can write
+      // status / json without affecting the live `res`.
+      const stubRes = { _status: 200, _body: null, status(c) { this._status = c; return this }, json(b) { this._body = b; return this } }
+      await resyncUploadPost({ req: { headers: {} }, res: stubRes, profile_id, script_ids: needsUploadPostResync })
+      uploadPostResynced = stubRes._body?.resynced ?? 0
+      uploadPostResyncFailed = stubRes._body?.failed ?? 0
+    } catch (e) {
+      console.warn('caption-regen resync failed:', e?.message)
+    }
+  }
 
   // Consume credits AFTER the Claude call returned. Idempotent ref_id
   // (the AI request id from the response would be cleaner, but we
@@ -389,6 +422,11 @@ Return ONLY valid JSON:
     // UI can toast "n video(s) couldn't be transcribed — their captions
     // may be generic." Better than silently shipping brand-only captions.
     transcript_failures: transcriptFailures,
+    // Already-scheduled rows whose Upload-Post job got refreshed
+    // with the new caption. UI can toast "X scheduled posts updated
+    // on Upload-Post with new captions."
+    upload_post_resynced: uploadPostResynced,
+    upload_post_resync_failed: uploadPostResyncFailed,
     debug,
   })
 }
@@ -406,7 +444,16 @@ async function autoSchedule({ res, profile_id, script_ids, user_id }) {
   const takenIso = (taken || []).map((r) => r.scheduled_datetime).filter(Boolean)
   const takenSet = new Set(takenIso.map((s) => new Date(s).toISOString()))
 
-  let q = `content_scripts?profile_id=eq.${profile_id}&scheduled_datetime=is.null`
+  // Pick up every row that's NOT already in scheduled / posted / failed
+  // status. That covers two cases:
+  //   1. Brand-new rows with no scheduled_datetime → allocate a slot.
+  //   2. Rows that were once scheduled but got knocked back to
+  //      caption_ready (e.g. a caption-regen pre-fix flipped status
+  //      while keeping the scheduled_datetime). We KEEP their existing
+  //      scheduled_datetime instead of pushing them to the back of the
+  //      queue, then flip status back to scheduled + push fresh
+  //      caption to Upload-Post.
+  let q = `content_scripts?profile_id=eq.${profile_id}`
   if (Array.isArray(script_ids) && script_ids.length) {
     q += `&id=in.(${script_ids.map((id) => encodeURIComponent(id)).join(',')})`
   } else {
@@ -416,7 +463,7 @@ async function autoSchedule({ res, profile_id, script_ids, user_id }) {
   // this guard, bulk-auto-schedule was the main source of ghost
   // queue entries: it'd parade every caption_ready / draft row into
   // the calendar regardless of whether there was anything to publish.
-  q += '&select=id,media_urls&order=created_at.asc&limit=200'
+  q += '&select=id,media_urls,scheduled_datetime&order=scheduled_datetime.asc.nullslast,created_at.asc&limit=200'
   const rawCandidates = await supaFetch(q)
   if (!rawCandidates?.length) return res.status(200).json({ scheduled: 0, skipped_no_media: 0 })
 
@@ -429,8 +476,15 @@ async function autoSchedule({ res, profile_id, script_ids, user_id }) {
   // Allocate slots sequentially so the schedule stays gap-free, but
   // execute the PATCHes in parallel — each row's payload is different
   // (different scheduled_datetime), so we can't merge into one UPDATE.
+  // Rows that already have a scheduled_datetime keep it; brand-new
+  // rows pick the next open slot.
   const assignments = []
   for (const row of candidates) {
+    if (row.scheduled_datetime) {
+      assignments.push({ id: row.id, slot: row.scheduled_datetime, kept_existing: true })
+      takenSet.add(new Date(row.scheduled_datetime).toISOString())
+      continue
+    }
     const slot = findNextOpenSlot(profile, [...takenSet])
     if (!slot) break
     assignments.push({ id: row.id, slot })

@@ -1668,6 +1668,15 @@ export default function BulkUploadView({ profileId, token, onChange }) {
       // some rows didn't get captioned. Show the actual underlying
       // reason (Scribe error / empty / no_speech_detected) when we
       // have one so it's diagnosable instead of a generic blame line.
+      // Append "X scheduled posts updated on Upload-Post" when caption
+      // regen pushed fresh captions to already-scheduled rows.
+      let summaryWithResync = summary
+      if (action === 'generate-captions' && body.upload_post_resynced > 0) {
+        summaryWithResync += `, ${body.upload_post_resynced} scheduled post${body.upload_post_resynced === 1 ? '' : 's'} updated on Upload-Post`
+        if (body.upload_post_resync_failed > 0) {
+          summaryWithResync += ` (${body.upload_post_resync_failed} resync failed)`
+        }
+      }
       const tFails = Array.isArray(body.transcript_failures) ? body.transcript_failures : []
       if (tFails.length && action === 'generate-captions') {
         // Group identical reasons so a batch with the same Scribe error
@@ -1678,11 +1687,11 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           .map(([r, n]) => `${n}× ${r}`)
           .join(', ')
         const tail = ` · ${tFails.length} video${tFails.length === 1 ? '' : 's'} couldn't be transcribed (${detail})`
-        toast({ kind: body.updated > 0 ? 'success' : 'warn', message: summary + tail })
+        toast({ kind: body.updated > 0 ? 'success' : 'warn', message: summaryWithResync + tail })
         // eslint-disable-next-line no-console
         console.warn('[generate-captions] transcript failures', tFails, 'debug:', body.debug)
       } else {
-        toast({ kind: 'success', message: summary })
+        toast({ kind: 'success', message: summaryWithResync })
       }
       refresh()
     } catch (e) {
