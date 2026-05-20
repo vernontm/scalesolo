@@ -1189,9 +1189,12 @@ async function polishCore(body) {
         // Source video muted → voiceover IS the primary track.
         aLabel = '[vox]'
       } else {
-        // Mix source audio under the voiceover. Voiceover wins
-        // perceptually since aLabel was the source.
-        filters.push(`${aLabel}[vox]amix=inputs=2:duration=longest:dropout_transition=0:weights=0.3 1.0[avox]`)
+        // Mix source audio under the voiceover. Equivalent to amix
+        // weights=0.3 1.0 but built from a volume filter + plain
+        // amix so the chain works on older ffmpeg builds that don't
+        // support the weights / normalize options.
+        filters.push(`${aLabel}volume=0.3[src_quiet]`)
+        filters.push(`[src_quiet][vox]amix=inputs=2:duration=longest:dropout_transition=0[avox]`)
         aLabel = '[avox]'
       }
     }
@@ -1235,7 +1238,16 @@ async function polishCore(body) {
       // the sidechain trigger and the other as the actual mix input.
       filters.push(`${primary}asplit=2[vox_mix][vox_sc]`)
       filters.push(`[mus_raw][vox_sc]sidechaincompress=threshold=0.03:ratio=8:attack=5:release=400:level_sc=4[mus_ducked]`)
-      filters.push(`[vox_mix][mus_ducked]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[premix]`)
+      // Default amix on older ffmpeg auto-normalizes by dividing each
+      // input by N (2 here). That re-mutes the carefully-attenuated
+      // music and quiets the voice too. Doubling both inputs first
+      // gives us amix(2.0 voice + 2.0 * music_vol music)/2 =
+      // 1.0 voice + music_vol music — i.e. the same end levels we'd
+      // get from normalize=0, but using only filters present in the
+      // ffmpeg version @ffmpeg-installer ships.
+      filters.push(`[vox_mix]volume=2.0[vox_dbl]`)
+      filters.push(`[mus_ducked]volume=2.0[mus_dbl]`)
+      filters.push(`[vox_dbl][mus_dbl]amix=inputs=2:duration=first:dropout_transition=0[premix]`)
       filters.push(`[premix]alimiter=limit=0.95:attack=5:release=50[aout]`)
       aLabel = '[aout]'
     }
