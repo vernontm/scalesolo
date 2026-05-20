@@ -15,6 +15,10 @@ import { supabase } from '../lib/supabase.js'
 // - Unauthenticated subscribe → stash intent + send to /login. The post-signup
 //   flow can read scalesolo.signup.{tier,cycle} from localStorage.
 
+// Credit / video math note: 1 avatar video ≈ 5 video units (a unit
+// is ~6.7s at HeyGen V4, so a 30-second video burns 5). The bullets
+// below show both the raw video_units number AND the rough video
+// count so it's not ambiguous what you actually get.
 const TIERS = [
   {
     key: 'solo_starter',
@@ -27,7 +31,7 @@ const TIERS = [
       '1 brand profile',
       '1 active workflow (Space)',
       '100K AI tokens / month',
-      '10 avatar video units / month',
+      '50 video units / month (~10 videos)',
       'Auto-run + multi-platform scheduling',
       'Brand-voice script + caption generation',
     ],
@@ -36,15 +40,15 @@ const TIERS = [
   {
     key: 'solo_pro',
     name: 'Solo Pro',
-    monthly: 79,
-    annual: 65,
+    monthly: 89,
+    annual: 74,
     profile_limit: 2,
     blurb: 'The everything plan for serious solo creators.',
     features: [
       '2 brand profiles',
       'Unlimited workflows',
       '500K AI tokens / month',
-      '30 avatar video units / month',
+      '100 video units / month (~20 videos)',
       'Cycle-looks rotation (different outfit per run)',
       'Workflow templates + run history',
       'Priority support',
@@ -54,15 +58,15 @@ const TIERS = [
   {
     key: 'solo_studio',
     name: 'Solo Studio',
-    monthly: 149,
-    annual: 124,
+    monthly: 229,
+    annual: 190,
     profile_limit: 5,
     blurb: 'Multi-brand creators and agencies of one.',
     features: [
       '5 brand profiles',
       'Unlimited workflows per brand',
       '2M AI tokens / month',
-      '100 avatar video units / month',
+      '250 video units / month (~50 videos)',
       'Everything in Pro',
       'Publish your workflows as templates',
       'Founder direct line (Slack)',
@@ -74,12 +78,14 @@ const TIERS = [
 const FOUNDING = {
   key: 'founding',
   name: 'Founding Member',
-  monthly: 39,
+  monthly: 79,
   cap: 100,
   blurb: 'Lifetime price lock. 100 spots. Never goes up.',
   features: [
-    'Lifetime $39/mo (lock guaranteed)',
+    'Lifetime $79/mo (lock guaranteed)',
     'Everything in Solo Pro',
+    '1M AI tokens / month (2× Pro)',
+    '150 video units / month (~30 videos, 1.5× Pro)',
     'Founding-member badge in app',
     'Direct input on the roadmap',
   ],

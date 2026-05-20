@@ -69,10 +69,12 @@ export const TIERS = {
     profile_limit: 2,
     monthly_price_id: process.env.STRIPE_PRICE_FOUNDING,
     annual_price_id:  process.env.STRIPE_PRICE_FOUNDING_ANNUAL,
-    monthly_usd: 69,
-    annual_usd:  690,
+    monthly_usd: 79,
+    annual_usd:  790,
     lifetime_lock: true,
-    credits: { ai_tokens: 500_000, video_units: 100, voice_minutes: 0 },
+    // Founding = Solo Pro + 2× AI tokens (500K → 1M) + 50% more
+    // video units (100 → 150 ≈ 30 videos at 5 units each).
+    credits: { ai_tokens: 1_000_000, video_units: 150, voice_minutes: 0 },
     limits: {
       active_workflows: 10,
       avatars_per_profile: 3,
@@ -80,7 +82,7 @@ export const TIERS = {
       public_templates: true,
     },
     support: 'Priority chat + email + founding-member Discord',
-    description: 'Solo Pro at $20/mo off — locked for life. 100 spots only.',
+    description: 'Solo Pro features, locked for life, with 2× AI tokens and 50% more video units. 100 spots only.',
   },
 }
 
