@@ -148,37 +148,50 @@ export default function PricingPlans() {
 
   return (
     <>
-      {/* ── Founding member banner ───────────────────────────────── */}
+      {/* ── Founding member banner ───────────────────────────────────
+          Two-row layout that actually fills the banner width:
+            Row 1 — icon + title/subtitle on the left, spots-left
+                    pill + Claim CTA pinned to the right.
+            Row 2 — all 6 features in a 3-column grid (2 cols on
+                    iPad, 1 col on phone) so the bullets stretch
+                    across the full banner instead of bunching up
+                    on the right side. */}
       <div style={foundingBanner} className="fade-up founding-banner">
         <div style={foundingTopBadge}>Limited, first 100 only</div>
-        <div style={foundingMeta}>
-          <div style={foundingIcon}><Crown size={20} strokeWidth={2.4} /></div>
-          <div>
-            <div style={foundingTitle}>{FOUNDING.name}, ${FOUNDING.monthly}/mo lifetime lock</div>
-            <div style={foundingSub}>{FOUNDING.blurb}</div>
+
+        {/* Row 1: header */}
+        <div style={foundingHeaderRow}>
+          <div style={foundingMeta}>
+            <div style={foundingIcon}><Crown size={20} strokeWidth={2.4} /></div>
+            <div>
+              <div style={foundingTitle}>{FOUNDING.name}, ${FOUNDING.monthly}/mo lifetime lock</div>
+              <div style={foundingSub}>{FOUNDING.blurb}</div>
+            </div>
+          </div>
+          <div style={foundingCtaWrap}>
+            <span style={remainingPill}>
+              {foundingSoldOut ? 'Sold out' : `${foundingRemaining} of ${FOUNDING.cap} spots left`}
+            </span>
+            <button
+              className="btn-primary"
+              style={{ minWidth: 200 }}
+              disabled={foundingSoldOut || loadingTier === 'founding'}
+              onClick={() => handleSubscribe('founding')}
+            >
+              {loadingTier === 'founding' ? <span className="spinner" /> : <Crown size={15} />}
+              {foundingSoldOut ? 'Sold out' : 'Claim founding price'}
+            </button>
           </div>
         </div>
-        <ul style={{ ...featureList, marginTop: 0, marginBottom: 0, marginRight: 'auto', minWidth: 280 }}>
+
+        {/* Row 2: features grid */}
+        <ul style={foundingFeatureGrid} className="founding-feature-grid">
           {FOUNDING.features.map((f) => (
             <li key={f} style={featureRow}>
               <BadgeCheck size={15} strokeWidth={2.5} style={checkIcon} /> {f}
             </li>
           ))}
         </ul>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10 }}>
-          <span style={remainingPill}>
-            {foundingSoldOut ? 'Sold out' : `${foundingRemaining} of ${FOUNDING.cap} spots left`}
-          </span>
-          <button
-            className="btn-primary"
-            style={{ minWidth: 200 }}
-            disabled={foundingSoldOut || loadingTier === 'founding'}
-            onClick={() => handleSubscribe('founding')}
-          >
-            {loadingTier === 'founding' ? <span className="spinner" /> : <Crown size={15} />}
-            {foundingSoldOut ? 'Sold out' : 'Claim founding price'}
-          </button>
-        </div>
       </div>
 
       {/* ── Cycle toggle ─────────────────────────────────────────── */}
@@ -351,11 +364,39 @@ const foundingBanner = {
   borderRadius: 18,
   padding: '28px 32px',
   display: 'flex',
-  alignItems: 'center',
-  gap: 24,
-  flexWrap: 'wrap',
+  // Stack the header row and the features grid vertically.
+  flexDirection: 'column',
+  gap: 22,
   boxShadow: '0 18px 48px rgba(239,68,68,0.16)',
   position: 'relative',
+}
+// Header row inside the banner. icon+title on the left, spots-left
+// pill + Claim CTA pinned to the right via marginLeft:auto on the
+// CTA wrap. Wraps on tablet so the CTA stack drops to its own line.
+const foundingHeaderRow = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 18,
+  flexWrap: 'wrap',
+}
+const foundingCtaWrap = {
+  marginLeft: 'auto',
+  display: 'flex',
+  alignItems: 'center',
+  gap: 12,
+  flexWrap: 'wrap',
+  justifyContent: 'flex-end',
+}
+// 6 features in a 3-column grid that fills the banner width.
+// .founding-feature-grid in global.css drops to 2 cols on iPad and
+// 1 col on phone via media queries.
+const foundingFeatureGrid = {
+  margin: 0,
+  padding: 0,
+  listStyle: 'none',
+  display: 'grid',
+  gridTemplateColumns: 'repeat(3, 1fr)',
+  gap: '10px 24px',
 }
 const foundingTopBadge = {
   position: 'absolute',

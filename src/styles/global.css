@@ -602,18 +602,20 @@ a:focus-visible {
   .nav-burger { display: inline-flex; }
 }
 
-/* ── Founding banner: center contents on mobile ──────────────────────── */
+/* ── Founding banner: features grid collapses on smaller screens ─────
+   Desktop renders 6 features in a 3-col grid (defined inline). Drop
+   to 2 cols on iPad and 1 col on phone so each bullet keeps a
+   readable line length. */
+@media (max-width: 960px) {
+  .founding-feature-grid { grid-template-columns: repeat(2, 1fr) !important; }
+}
 @media (max-width: 700px) {
   .founding-banner {
-    flex-direction: column !important;
     text-align: center !important;
-    align-items: center !important;
     padding: 32px 22px 24px !important;
   }
-  .founding-banner > div { justify-content: center; align-items: center; }
-  .founding-banner ul     { margin: 0 !important; min-width: 0 !important; align-items: center; }
   .founding-banner ul li  { justify-content: center; }
-  .founding-banner > div:last-child { align-items: center !important; width: 100%; }
+  .founding-feature-grid  { grid-template-columns: 1fr !important; }
 }
 
 /* ── Stack-replaced section ──────────────────────────────────────────── */
