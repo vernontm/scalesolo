@@ -27,8 +27,12 @@ async function expectRenders(page, path) {
     },
     { timeout: 10_000 },
   )
-  // Network idle so lazy chunks finish loading.
-  await page.waitForLoadState('networkidle').catch(() => {})
+  // Brief settling delay for lazy chunks. We deliberately don't wait
+  // for `networkidle` here because the landing hero autoplays an mp4
+  // whose metadata fetch keeps the network from ever going idle, and
+  // the 30s test timeout will trip even though render-correctness
+  // already passed above.
+  await page.waitForTimeout(800)
   // No JS errors during mount.
   expect(errors, `JS errors on ${path}`).toEqual([])
 }
