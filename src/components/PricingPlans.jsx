@@ -79,10 +79,12 @@ const FOUNDING = {
   key: 'founding',
   name: 'Founding Member',
   monthly: 79,
+  annual: 65,        // $65/mo billed annually = $790/yr
+  annual_total: 790,
   cap: 100,
   blurb: 'Lifetime price lock. 100 spots. Never goes up.',
   features: [
-    'Lifetime $79/mo (lock guaranteed)',
+    'Lifetime $79/mo or $65/mo billed annually ($790/yr)',
     'Everything in Solo Pro',
     '1M AI tokens / month (2× Pro)',
     '150 video units / month (~30 videos, 1.5× Pro)',
@@ -159,12 +161,20 @@ export default function PricingPlans() {
       <div style={foundingBanner} className="fade-up founding-banner">
         <div style={foundingTopBadge}>Limited, first 100 only</div>
 
-        {/* Row 1: header */}
+        {/* Row 1: header. Title reflects the active billing cycle so
+            the founding price the visitor sees in the banner matches
+            what they'd be charged when they click Claim. */}
         <div style={foundingHeaderRow}>
           <div style={foundingMeta}>
             <div style={foundingIcon}><Crown size={20} strokeWidth={2.4} /></div>
             <div>
-              <div style={foundingTitle}>{FOUNDING.name}, ${FOUNDING.monthly}/mo lifetime lock</div>
+              <div style={foundingTitle}>
+                {FOUNDING.name},{' '}
+                {cycle === 'annual'
+                  ? <>${FOUNDING.annual}/mo billed annually <span style={{ color: 'var(--muted)', fontWeight: 500 }}>(${FOUNDING.annual_total}/yr)</span></>
+                  : <>${FOUNDING.monthly}/mo</>
+                } lifetime lock
+              </div>
               <div style={foundingSub}>{FOUNDING.blurb}</div>
             </div>
           </div>
