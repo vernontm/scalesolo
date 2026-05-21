@@ -14,6 +14,9 @@ import Placeholder from './pages/Placeholder.jsx'
 import Landing from './pages/Landing.jsx'
 import Pricing from './pages/Pricing.jsx'
 import LandingPublic from './pages/LandingPublic.jsx'
+// Ad-traffic landing page. Lazy so the main /-landing bundle doesn't
+// pay for it on every visit; ad clicks pull this chunk on demand.
+const LandingFaceless = lazy(() => import('./pages/LandingFaceless.jsx'))
 import AuthCallback from './pages/AuthCallback.jsx'
 import FormPublic from './pages/FormPublic.jsx'
 
@@ -239,6 +242,7 @@ export default function App() {
           <Route path="/auth/callback" element={<AuthCallback />} />
           <Route path="/f/:slug" element={<FormPublic />} />
           <Route path="/p/:slug" element={<LandingPublic />} />
+          <Route path="/faceless-brand" element={<Suspense fallback={<RouteFallback />}><LandingFaceless /></Suspense>} />
           <Route path="*" element={<Login />} />
         </Routes>
         <ToastHost />
@@ -252,6 +256,10 @@ export default function App() {
       <Routes>
         <Route path="/pricing" element={<Pricing />} />
         <Route path="/f/:slug" element={<FormPublic />} />
+        {/* Ad landing always serves the dedicated faceless page,
+            even for signed-in users who clicked an ad on someone
+            else's device. Suspense fallback while the lazy chunk loads. */}
+        <Route path="/faceless-brand" element={<Suspense fallback={<RouteFallback />}><LandingFaceless /></Suspense>} />
         <Route path="/*" element={<AppShell />} />
       </Routes>
       <ToastHost />
