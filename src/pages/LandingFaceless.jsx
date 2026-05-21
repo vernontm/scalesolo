@@ -1,29 +1,76 @@
-// Ad-traffic landing page at /faceless-brand. Single-promise funnel:
-//   hero → demo video → 4 numbered steps → stats bar → founding pricing.
+// Ad-traffic landing page at /faceless-brand. Funnel structure tuned
+// for paid social → signup conversion:
+//   1. Hero (autoplay demo + primary CTA)
+//   2. Social-proof strip — real faceless brand profiles
+//   3. Headline stat — the 403K views screenshot, framed as proof
+//   4. Four steps, each anchored on a real product GIF + body copy
+//   5. Stats bar (creator economy)
+//   6. Final pricing block (founding price)
+//   7. Footer
 //
-// No top nav (logo only) so visitors can't bounce off into the broader
-// feature tour. Footer is legal-only. Every CTA scrolls to the
-// founding pricing block at the bottom; from there they hit Stripe
-// Checkout. Single path: ad → page → pay → signup.
+// Multiple "Start your free trial" CTAs scroll-link to #pricing, which
+// drops straight into PricingPlans. Single conversion target. The
+// minimal header (logo only) is intentional — we don't want ad traffic
+// bouncing into the broader feature tour.
+//
+// Step media lives at /landing/faceless-steps/step-{1..4}.mp4 (autoplay
+// muted loop, vertical 1080x1920) plus four proof PNGs alongside.
 
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Zap, ArrowRight, Check, Play, Volume2, VolumeX, X,
-  Camera, Wand2, Mic2, Sparkles,
 } from 'lucide-react'
 import PricingPlans from '../components/PricingPlans.jsx'
 
-// Shared hero video URL — same one the main / landing uses.
 const HERO_VIDEO = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/Scalesolo%20ad.mp4'
+
+const STEP_MEDIA = '/landing/faceless-steps/'
+
+const STEPS = [
+  {
+    n: '01',
+    src: `${STEP_MEDIA}step-1.mp4`,
+    eyebrow: 'Step 1 · Create your avatar',
+    title: 'Drop in one photo. We build your AI avatar.',
+    body: 'Type a name, upload one clean headshot, and ScaleSolo turns it into a fully-rigged avatar you can reuse forever. No camera, no studio, no awkward selfie sessions every week.',
+  },
+  {
+    n: '02',
+    src: `${STEP_MEDIA}step-2.mp4`,
+    eyebrow: 'Step 2 · Build your first look',
+    title: 'Pick three photos with the same outfit. Done.',
+    body: "Same outfit = same look. Save it once and ScaleSolo keeps your feed visually consistent across every video. Rotate multiple Looks so your audience never sees the same scene twice.",
+  },
+  {
+    n: '03',
+    src: `${STEP_MEDIA}step-3.mp4`,
+    eyebrow: 'Step 3 · Give your avatar a voice',
+    title: 'Clone your voice or pick one from our library.',
+    body: 'Every script reads in your real voice, with your pacing and energy. Or pick from a built-in library if you want to stay completely anonymous. The result sounds human, not robotic.',
+  },
+  {
+    n: '04',
+    src: `${STEP_MEDIA}step-4.mp4`,
+    eyebrow: 'Step 4 · Set it on autopilot',
+    title: 'Connect a workflow. Let it post forever.',
+    body: 'Wire up your nodes once: idea → script → avatar → video → caption → schedule. Hit auto-run. ScaleSolo creates and posts content to TikTok, Instagram, YouTube Shorts, Facebook Reels, and Threads while you sleep.',
+  },
+]
+
+const PROOF_TILES = [
+  { src: `${STEP_MEDIA}proof-podcast.png`, alt: 'Talk It Out Podcast · 387.7K likes' },
+  { src: `${STEP_MEDIA}proof-margo.png`,   alt: 'Soul of Margo · faceless creator profile' },
+  { src: `${STEP_MEDIA}proof-3.png`,       alt: 'Faceless brand growth example' },
+]
 
 export default function LandingFaceless() {
   const [heroMuted, setHeroMuted] = useState(true)
   const [demoOpen, setDemoOpen] = useState(false)
-  // Defer hero video mount past first paint so the smoke test (and
-  // slow networks) don't hang on the metadata fetch. Same trick the
-  // main / landing uses.
   const [showHeroVideo, setShowHeroVideo] = useState(false)
+
+  // Defer hero mount past first paint so smoke tests / slow networks
+  // don't hang on the metadata fetch.
   useEffect(() => {
     const idle = window.requestIdleCallback
       ? window.requestIdleCallback(() => setShowHeroVideo(true), { timeout: 500 })
@@ -34,7 +81,7 @@ export default function LandingFaceless() {
     }
   }, [])
 
-  // Esc closes the demo lightbox + lock body scroll while open.
+  // Esc closes lightbox + lock body scroll while open.
   useEffect(() => {
     if (!demoOpen) return
     const onKey = (e) => { if (e.key === 'Escape') setDemoOpen(false) }
@@ -52,33 +99,47 @@ export default function LandingFaceless() {
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
+  // Primary trial CTA reused across the page so every section has an
+  // obvious next-step button.
+  const TrialCTA = ({ label = 'Start your free trial', secondary = false }) => (
+    <button
+      type="button"
+      onClick={scrollToPricing}
+      className={secondary ? 'btn-secondary' : 'btn-primary'}
+      style={ctaSizing}
+    >
+      {label} <ArrowRight size={14} />
+    </button>
+  )
+
   return (
     <div style={page}>
-      {/* ── MINIMAL HEADER: logo only ─────────────────────────────────── */}
+      {/* ── MINIMAL HEADER ─────────────────────────────────────────────── */}
       <header style={header}>
         <Link to="/" style={logoLink} aria-label="ScaleSolo home">
           <span style={logoMark}><Zap size={16} strokeWidth={2.6} /></span>
           <span style={logoText}>ScaleSolo</span>
         </Link>
+        <button type="button" onClick={scrollToPricing} className="btn-primary" style={headerCta}>
+          Start free trial
+        </button>
       </header>
 
-      {/* ── HERO ──────────────────────────────────────────────────────── */}
+      {/* ── HERO ───────────────────────────────────────────────────────── */}
       <section style={hero}>
         <div aria-hidden style={heroGlowOuter} />
         <div aria-hidden style={heroGlowInner} />
 
         <div style={heroInner}>
-          <span style={eyebrow}>For creators going faceless</span>
+          <span style={eyebrow}>Faceless brands · zero cameras · full autopilot</span>
           <h1 style={h1}>
-            Build a <span className="brand-text">faceless brand</span> that posts every day without you.
+            Grow a <span className="brand-text">faceless brand</span> 10x faster.
           </h1>
           <p style={sub}>
-            No camera. No editor. No daily grind. Upload a photo, clone your voice, hit run.
-            ScaleSolo turns a single script into a finished avatar video and auto-schedules it
-            across every platform.
+            No camera. No editor. No daily grind. Upload one photo, clone your voice, and
+            ScaleSolo turns a single idea into a finished video and posts it everywhere for you.
           </p>
 
-          {/* Hero video (deferred mount past first paint) */}
           <div style={videoWrap} className="fade-up">
             <div aria-hidden style={videoHalo} />
             <div style={videoFrame}>
@@ -111,23 +172,99 @@ export default function LandingFaceless() {
           </div>
 
           <div style={ctas}>
-            <button onClick={scrollToPricing} className="btn-primary" style={ctaSizing}>
-              Claim founding price <ArrowRight size={14} />
-            </button>
+            <TrialCTA />
             <button type="button" onClick={() => setDemoOpen(true)} className="btn-secondary" style={ctaSizing}>
               <Play size={13} fill="currentColor" /> Watch full demo
             </button>
           </div>
 
           <div style={trustPills}>
-            <span style={pill}><Check size={11} /> 3-day trial</span>
-            <span style={pill}><Check size={11} /> 5-min setup</span>
+            <span style={pill}><Check size={11} /> 3-day free trial</span>
+            <span style={pill}><Check size={11} /> 5-minute setup</span>
             <span style={pill}><Check size={11} /> Cancel anytime</span>
           </div>
         </div>
       </section>
 
-      {/* ── STATS BAR ─────────────────────────────────────────────────── */}
+      {/* ── SOCIAL PROOF: real faceless brands ─────────────────────────── */}
+      <section style={section}>
+        <div style={sectionHead}>
+          <div style={sectionEyebrow}>Real faceless brands</div>
+          <h2 style={h2}>
+            Creators are scaling brands like these <span className="brand-text">without ever showing their face.</span>
+          </h2>
+          <p style={sectionBody}>
+            Faceless avatar brands now rack up hundreds of thousands of views, followers, and likes
+            on autopilot. ScaleSolo is the engine that powers them.
+          </p>
+        </div>
+
+        <div style={proofGrid}>
+          {PROOF_TILES.map((t) => (
+            <div key={t.src} style={proofTile} className="fade-up">
+              <img src={t.src} alt={t.alt} style={proofImg} loading="lazy" />
+            </div>
+          ))}
+        </div>
+
+        <div style={stepsCtaWrap}>
+          <TrialCTA label="Start building yours · free trial" />
+        </div>
+      </section>
+
+      {/* ── HEADLINE STAT: 403K views proof ────────────────────────────── */}
+      <section style={section}>
+        <div style={proofSplit}>
+          <div style={proofSplitText}>
+            <div style={sectionEyebrow}>The result, in one screenshot</div>
+            <h2 style={h2}>
+              <span style={{ background: 'linear-gradient(90deg, #10b981, #6ee7b7)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>403,840 views.</span>
+            </h2>
+            <h3 style={proofH3}>Zero on-camera time. One faceless avatar.</h3>
+            <p style={sectionBody}>
+              30 days. One creator. One avatar. The exact ScaleSolo workflow you're about to see.
+              305,383 accounts reached, 163% growth, and not a single video where the creator showed
+              their face.
+            </p>
+            <div style={{ ...stepsCtaWrap, marginTop: 22, justifyContent: 'flex-start' }}>
+              <TrialCTA />
+            </div>
+          </div>
+          <div style={proofSplitMedia}>
+            <div style={proofHalo} aria-hidden />
+            <img
+              src={`${STEP_MEDIA}proof-stats.png`}
+              alt="403,840 views in 30 days · Instagram analytics"
+              style={proofPhone}
+              loading="lazy"
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* ── HOW IT WORKS: 4 steps × videos ─────────────────────────────── */}
+      <section style={section}>
+        <div style={sectionHead}>
+          <div style={sectionEyebrow}>How it works</div>
+          <h2 style={h2}>Four steps. About five minutes.</h2>
+          <p style={sectionBody}>
+            The exact workflow that takes one photo and one idea, and ships a finished video to every
+            platform you post on.
+          </p>
+        </div>
+
+        <ol style={stepsList}>
+          {STEPS.map((s, i) => (
+            <StepRow key={s.n} step={s} flip={i % 2 === 1} />
+          ))}
+        </ol>
+
+        <div style={stepsCtaWrap}>
+          <TrialCTA label="Get the workflow · free trial" />
+        </div>
+      </section>
+
+      {/* ── STATS BAR ──────────────────────────────────────────────────── */}
       <section style={section}>
         <div className="stats-grid">
           <Stat number="$250B+" label={<>Creator economy<br />size by 2027</>} />
@@ -135,67 +272,51 @@ export default function LandingFaceless() {
           <Stat number="30+ hrs" label={<>Saved per brand,<br />every single week</>} />
           <Stat number="9+"      label={<>Platforms publishing<br />on full autopilot</>} />
         </div>
-      </section>
-
-      {/* ── HOW IT WORKS ──────────────────────────────────────────────── */}
-      <section style={section}>
-        <div style={sectionHead}>
-          <div style={sectionEyebrow}>How it works</div>
-          <h2 style={h2}>Four steps. About five minutes.</h2>
-          <p style={sectionBody}>
-            The exact workflow our founding members use to launch a faceless brand and run
-            it on autopilot.
-          </p>
-        </div>
-
-        <ol style={stepsList}>
-          <Step
-            n="01"
-            Icon={Camera}
-            title="Upload your photo or generate an avatar"
-            body="Drop a photo, use a generated AI face, or build a new avatar inside the app. Your persona never has to change between videos."
-          />
-          <Step
-            n="02"
-            Icon={Wand2}
-            title="Build different Looks"
-            body="Save outfits, angles, backgrounds, and moods. ScaleSolo rotates through them so your feed never feels copy-pasted."
-          />
-          <Step
-            n="03"
-            Icon={Mic2}
-            title="Clone your voice or pick one"
-            body="Clone your real voice in seconds, or choose from a built-in library. Every script you write reads in your tone, with your pacing."
-          />
-          <Step
-            n="04"
-            Icon={Sparkles}
-            title="Run the workflow template"
-            body="Pick your avatar, type a topic, hit run. You get a finished video with title overlay, captions, hashtags, music, and a branded cover, auto-scheduled across TikTok, Instagram, YouTube Shorts, Facebook Reels, and Threads."
-          />
-        </ol>
 
         <div style={stepsCtaWrap}>
-          <button onClick={scrollToPricing} className="btn-primary" style={ctaSizing}>
-            Lock in founding price <ArrowRight size={14} />
-          </button>
+          <TrialCTA />
         </div>
       </section>
 
-      {/* ── FOUNDING + PRICING ────────────────────────────────────────── */}
+      {/* ── PRICING ────────────────────────────────────────────────────── */}
       <section id="pricing" style={{ ...section, paddingTop: 24 }}>
         <div style={sectionHead}>
           <div style={sectionEyebrow}>Founding pricing</div>
           <h2 style={h2}>One-hundred lifetime spots. <span className="brand-text">Never goes up.</span></h2>
           <p style={sectionBody}>
-            Lock $79/mo (or $65/mo billed annually) for life. Everything in Solo Pro plus 2× AI
-            tokens, 50% more video units, and direct input on the roadmap.
+            Lock $79/mo (or $65/mo billed annually) for life. Includes 2× AI tokens, 50% more video
+            units, and direct input on the roadmap. 3-day free trial, cancel anytime.
           </p>
         </div>
         <PricingPlans />
       </section>
 
-      {/* ── MINIMAL FOOTER ────────────────────────────────────────────── */}
+      {/* ── FINAL CTA STRIP ────────────────────────────────────────────── */}
+      <section style={{ ...section, paddingTop: 8 }}>
+        <div style={finalCta}>
+          <div style={finalCtaGlow} aria-hidden />
+          <h2 style={{ ...h2, fontSize: 'clamp(26px, 3.6vw, 36px)' }}>
+            Start your <span className="brand-text">faceless brand</span> in the next 5 minutes.
+          </h2>
+          <p style={{ ...sectionBody, maxWidth: 560 }}>
+            Drop in a photo, build your first Look, and let ScaleSolo do the rest.
+            Free for three days. Then $79/mo, locked for life.
+          </p>
+          <div style={{ ...ctas, marginTop: 14 }}>
+            <TrialCTA />
+            <button type="button" onClick={() => setDemoOpen(true)} className="btn-secondary" style={ctaSizing}>
+              <Play size={13} fill="currentColor" /> See it in action
+            </button>
+          </div>
+          <div style={trustPills}>
+            <span style={pill}><Check size={11} /> 3-day free trial</span>
+            <span style={pill}><Check size={11} /> No card commitment</span>
+            <span style={pill}><Check size={11} /> Cancel anytime</span>
+          </div>
+        </div>
+      </section>
+
+      {/* ── FOOTER ─────────────────────────────────────────────────────── */}
       <footer style={footer}>
         <div>© {new Date().getFullYear()} ScaleSolo</div>
         <div style={footerLinks}>
@@ -205,7 +326,7 @@ export default function LandingFaceless() {
         </div>
       </footer>
 
-      {/* ── DEMO LIGHTBOX ─────────────────────────────────────────────── */}
+      {/* ── DEMO LIGHTBOX ──────────────────────────────────────────────── */}
       {demoOpen && (
         <div
           role="dialog"
@@ -246,14 +367,50 @@ function Stat({ number, label }) {
   )
 }
 
-function Step({ n, Icon, title, body }) {
+// Step card: vertical 9:16 video on one side, copy on the other.
+// Alternates side via `flip`. Lazy-loaded videos autoplay loop muted
+// inline; preload="metadata" keeps initial cost down.
+function StepRow({ step, flip }) {
+  const ref = useRef(null)
+  const [inView, setInView] = useState(false)
+  // IntersectionObserver gates `<video>` mount so the page doesn't fire
+  // four parallel metadata fetches on load. Step 1 mounts immediately
+  // (above the fold for desktop) — observer kicks in for 2-4.
+  useEffect(() => {
+    if (!ref.current) return
+    if (step.n === '01') { setInView(true); return }
+    const obs = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) { setInView(true); obs.disconnect(); break }
+      }
+    }, { rootMargin: '200px' })
+    obs.observe(ref.current)
+    return () => obs.disconnect()
+  }, [step.n])
+
   return (
-    <li style={stepCard} className="fade-up">
-      <div style={stepNum}>{n}</div>
-      <div style={stepIconWrap}><Icon size={20} strokeWidth={2.2} /></div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={stepTitle}>{title}</div>
-        <div style={stepBody}>{body}</div>
+    <li style={{ ...stepRow, flexDirection: flip ? 'row-reverse' : 'row' }} ref={ref}>
+      <div style={stepMediaWrap} className="step-media-wrap">
+        <div style={stepMediaHalo} aria-hidden />
+        <div style={stepMediaFrame}>
+          {inView ? (
+            <video
+              src={step.src}
+              autoPlay muted loop playsInline preload="metadata"
+              aria-label={step.title}
+              style={stepVideoEl}
+              onError={(e) => { e.currentTarget.style.opacity = '0' }}
+            />
+          ) : (
+            <div style={{ ...stepVideoEl, background: 'rgba(255,255,255,0.04)' }} />
+          )}
+        </div>
+      </div>
+      <div style={stepCopy} className="step-copy">
+        <div style={stepN}>{step.n}</div>
+        <div style={stepEyebrow}>{step.eyebrow}</div>
+        <h3 style={stepHeadline}>{step.title}</h3>
+        <p style={stepBodyCopy}>{step.body}</p>
       </div>
     </li>
   )
@@ -262,9 +419,11 @@ function Step({ n, Icon, title, body }) {
 // ── styles ────────────────────────────────────────────────────────────
 const page = { background: 'var(--bg)', color: 'var(--text)', minHeight: '100vh' }
 const header = {
-  display: 'flex', alignItems: 'center', justifyContent: 'center',
-  padding: '20px 24px', borderBottom: '1px solid rgba(255,255,255,0.06)',
+  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+  padding: '16px 24px', borderBottom: '1px solid rgba(255,255,255,0.06)',
+  maxWidth: 1180, margin: '0 auto',
 }
+const headerCta = { padding: '8px 16px', fontSize: 13, gap: 6 }
 const logoLink = { display: 'inline-flex', alignItems: 'center', gap: 8, textDecoration: 'none', color: 'var(--text)' }
 const logoMark = {
   width: 28, height: 28, borderRadius: 8,
@@ -365,38 +524,142 @@ const h2 = {
 }
 const sectionBody = { color: 'var(--text-soft)', fontSize: 15, lineHeight: 1.55, margin: '14px auto 0' }
 
+// Social-proof grid: 3 phone screenshots side by side, click-and-hold
+// vertical aspect.
+const proofGrid = {
+  display: 'grid', gap: 18,
+  gridTemplateColumns: 'repeat(auto-fit, minmax(min(260px, 100%), 1fr))',
+  maxWidth: 920, margin: '0 auto',
+}
+const proofTile = {
+  position: 'relative',
+  borderRadius: 18,
+  background: 'linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01))',
+  border: '1px solid rgba(255,255,255,0.06)',
+  padding: 10,
+  boxShadow: '0 20px 50px -10px rgba(0,0,0,0.5)',
+}
+const proofImg = {
+  display: 'block',
+  width: '100%', height: 'auto', aspectRatio: '1290 / 2796',
+  objectFit: 'cover',
+  borderRadius: 12,
+}
+
+// Split section: 403K stats screenshot + headline copy side by side.
+const proofSplit = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(min(320px, 100%), 1fr))',
+  gap: 32,
+  alignItems: 'center',
+  maxWidth: 1080,
+  margin: '0 auto',
+}
+const proofSplitText = { textAlign: 'left' }
+const proofH3 = {
+  marginTop: 8, fontFamily: 'var(--font-display)',
+  fontSize: 'clamp(20px, 2.4vw, 26px)', fontWeight: 700,
+  color: 'var(--text)', letterSpacing: '-0.015em',
+}
+const proofSplitMedia = {
+  position: 'relative',
+  display: 'grid', placeItems: 'center',
+}
+const proofHalo = {
+  position: 'absolute', inset: '-15%',
+  background: 'radial-gradient(40% 40% at 50% 50%, rgba(16,185,129,0.35), transparent 70%)',
+  filter: 'blur(40px)', pointerEvents: 'none', zIndex: 0,
+}
+const proofPhone = {
+  position: 'relative', zIndex: 1,
+  width: '100%', maxWidth: 320,
+  aspectRatio: '1290 / 2796', objectFit: 'cover',
+  borderRadius: 28, border: '4px solid rgba(255,255,255,0.06)',
+  boxShadow: '0 40px 80px -10px rgba(0,0,0,0.55), 0 0 0 2px rgba(16,185,129,0.35)',
+}
+
+// Steps list: each step is a row with video + copy. Flips sides on
+// even steps.
 const stepsList = {
   listStyle: 'none', padding: 0, margin: 0,
-  display: 'grid', gap: 14,
-  gridTemplateColumns: 'repeat(auto-fit, minmax(min(420px, 100%), 1fr))',
+  display: 'flex', flexDirection: 'column', gap: 60,
 }
-const stepCard = {
-  display: 'flex', alignItems: 'flex-start', gap: 16,
-  padding: '22px 24px',
-  background: 'linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01))',
-  border: '1px solid rgba(255,255,255,0.06)',
-  borderRadius: 16,
+const stepRow = {
+  display: 'flex', alignItems: 'center',
+  gap: 48, flexWrap: 'wrap',
+}
+const stepMediaWrap = {
   position: 'relative',
+  flex: '1 1 280px', maxWidth: 360, minWidth: 240,
+  margin: '0 auto',
 }
-const stepNum = {
+const stepMediaHalo = {
+  position: 'absolute', inset: '-18%',
+  background: 'radial-gradient(40% 40% at 50% 50%, rgba(239,68,68,0.28), transparent 70%)',
+  filter: 'blur(40px)', pointerEvents: 'none', zIndex: 0,
+}
+const stepMediaFrame = {
+  position: 'relative', zIndex: 1,
+  borderRadius: 28, overflow: 'hidden',
+  background: '#000',
+  border: '4px solid rgba(255,255,255,0.08)',
+  boxShadow: '0 40px 80px -10px rgba(0,0,0,0.55)',
+  aspectRatio: '1080 / 1920',
+}
+const stepVideoEl = {
+  width: '100%', height: '100%', display: 'block',
+  objectFit: 'cover',
+}
+const stepCopy = {
+  flex: '1 1 360px', minWidth: 280,
+}
+const stepN = {
   fontFamily: 'var(--font-display)', fontWeight: 800,
-  fontSize: 18,
+  fontSize: 64,
   background: 'linear-gradient(135deg, var(--red), var(--red-dark))',
   WebkitBackgroundClip: 'text', backgroundClip: 'text',
   color: 'transparent',
-  letterSpacing: '-0.02em',
-  paddingTop: 2,
+  letterSpacing: '-0.04em',
+  lineHeight: 0.9,
+  marginBottom: 6,
 }
-const stepIconWrap = {
-  width: 40, height: 40, borderRadius: 10, flexShrink: 0,
-  background: 'rgba(239,68,68,0.12)',
+const stepEyebrow = {
+  display: 'inline-flex', padding: '4px 12px', borderRadius: 999,
+  background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.25)',
+  color: 'var(--red)', fontSize: 10.5, fontFamily: 'var(--font-display)',
+  fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase',
+  marginBottom: 12,
+}
+const stepHeadline = {
+  fontFamily: 'var(--font-display)', fontWeight: 800,
+  fontSize: 'clamp(22px, 2.6vw, 30px)', lineHeight: 1.15,
+  letterSpacing: '-0.02em', margin: 0,
+}
+const stepBodyCopy = {
+  marginTop: 12, color: 'var(--text-soft)',
+  fontSize: 15.5, lineHeight: 1.6,
+}
+const stepsCtaWrap = { display: 'flex', justifyContent: 'center', marginTop: 36, gap: 12, flexWrap: 'wrap' }
+
+// Final-CTA strip.
+const finalCta = {
+  position: 'relative',
+  maxWidth: 760, margin: '0 auto',
+  padding: '48px 28px',
+  borderRadius: 24,
+  background: 'linear-gradient(180deg, rgba(239,68,68,0.10), rgba(239,68,68,0.02))',
   border: '1px solid rgba(239,68,68,0.32)',
-  color: 'var(--red)',
-  display: 'grid', placeItems: 'center',
+  display: 'flex', flexDirection: 'column', alignItems: 'center',
+  gap: 14, textAlign: 'center',
+  overflow: 'hidden', isolation: 'isolate',
 }
-const stepTitle = { fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16, marginBottom: 4 }
-const stepBody = { color: 'var(--text-soft)', fontSize: 14, lineHeight: 1.5 }
-const stepsCtaWrap = { display: 'flex', justifyContent: 'center', marginTop: 28 }
+const finalCtaGlow = {
+  position: 'absolute', top: '-40%', left: '50%',
+  transform: 'translateX(-50%)',
+  width: '120%', height: 360,
+  background: 'radial-gradient(50% 50% at 50% 50%, rgba(251,191,36,0.18), transparent 70%)',
+  filter: 'blur(40px)', pointerEvents: 'none', zIndex: -1,
+}
 
 const footer = {
   borderTop: '1px solid rgba(255,255,255,0.06)',
