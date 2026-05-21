@@ -21,8 +21,64 @@
 // Scheduled via vercel.json: "schedule": "* * * * *" (every minute).
 
 import { setCors, supaFetch } from '../_lib/supabase.js'
+import { customerIdForUser } from '../_lib/credits.js'
 
 export const config = { maxDuration: 60 }
+
+// Mirrors NODE_COST_HINT in src/lib/space-nodes.jsx. Duplicated here so
+// the cron doesn't have to import the giant client bundle. Kept in sync
+// manually — if NODE_COST_HINT changes, update both spots.
+const NODE_COST_HINT = {
+  text_input: 0, manual_caption: 0, image_upload: 0, brand_profile: 200,
+  auto_run: 0, script_gen: 3000, caption_gen: 2500, text_post_gen: 2000,
+  image_gen: 4000, avatar_picker: 0, voice_gen: 2000, url_reference: 0,
+  collection: 0, combine_videos: 1500, combine_av: 400, video_polish: 1500,
+  captions: 2000, schedule_post: 100, save_library: 0,
+  // avatar_render is metered in VIDEO UNITS, not AI tokens — handled below.
+}
+
+// Each avatar_render node = ~5 video credits per 30-second clip. Multi-
+// clip / cycle-looks runs can spend more, but 5 is the conservative
+// pre-flight estimate that matches the body's surface UI.
+const AVATAR_RENDER_VIDEO_UNITS = 5
+
+// Compute the estimated cost of a single workflow run from its graph.
+// Returns { ai_tokens, video_units } — both are minimums (the run may
+// cost more if e.g. voice_gen spans a long script). Used purely to
+// decide "can the next run even start?".
+function estimateRunCost(graph) {
+  let aiTokens = 0
+  let videoUnits = 0
+  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : []
+  for (const node of nodes) {
+    const t = node?.data?.kind || node?.type
+    if (!t) continue
+    if (t === 'avatar_render') {
+      videoUnits += AVATAR_RENDER_VIDEO_UNITS
+      continue
+    }
+    const cost = NODE_COST_HINT[t]
+    if (Number.isFinite(cost)) aiTokens += cost
+  }
+  return { ai_tokens: aiTokens, video_units: videoUnits }
+}
+
+// Pull current pool balances for a user. Returns null if the user has no
+// customer record yet — caller should treat that as "no budget".
+async function fetchPoolBalances(userId) {
+  try {
+    const customerId = await customerIdForUser(userId)
+    if (!customerId) return null
+    const rows = await supaFetch(
+      `credit_pools?customer_id=eq.${customerId}&select=pool_type,balance`
+    )
+    const byPool = { ai_tokens: 0, video_units: 0, voice_minutes: 0 }
+    for (const r of rows || []) byPool[r.pool_type] = Number(r.balance)
+    return byPool
+  } catch {
+    return null
+  }
+}
 
 const WORKER_URL = process.env.WORKER_URL
 const WORKER_SECRET = process.env.WORKER_SHARED_SECRET
@@ -110,14 +166,74 @@ export default async function handler(req, res) {
     // doesn't fan out 50 concurrent worker requests — the worker has
     // its own concurrency limit and we want fair scheduling.
     for (const row of due || []) {
+      const isUnlimited = Number(row.max_runs) === 0
+
       // Cap hit while waiting in the queue? Mark inactive and skip.
-      if (Number(row.runs_used) >= Number(row.max_runs)) {
+      // Unlimited rows (max_runs = 0) skip this check entirely — they
+      // stop via the budget gate below instead.
+      if (!isUnlimited && Number(row.runs_used) >= Number(row.max_runs)) {
         await supaFetch(`scheduled_workflows?id=eq.${row.id}`, {
           method: 'PATCH',
           body: { active: false, updated_at: new Date().toISOString() },
           prefer: 'return=minimal',
         }).catch(() => {})
         continue
+      }
+
+      // In-progress check: the worker writes space_runs rows with
+      // status=running while a workflow is executing. If one is still
+      // running for THIS trigger, skip this tick so we don't fire a
+      // second run on top of an in-progress one. The "10 second pause
+      // between completed runs" semantic is enforced here: even if
+      // next_fire_at is overdue, we wait for the previous run to
+      // finish before dispatching the next one.
+      try {
+        const inProgress = await supaFetch(
+          `space_runs?space_id=eq.${encodeURIComponent(row.space_id)}` +
+          `&triggered_by=eq.auto_run&status=eq.running&select=id&limit=1`
+        ).catch(() => [])
+        if (inProgress?.length) {
+          stats.skipped_claimed += 1
+          continue
+        }
+      } catch { /* fall through — better to attempt than to silently stall */ }
+
+      // Budget pre-flight: estimate the cost of one run from the
+      // graph and refuse to fire if either pool can't cover it.
+      // Unlimited mode REQUIRES this check (it's how the "stop when
+      // credits run out" semantics work); bounded mode also runs it
+      // so users don't burn a slot on a guaranteed-to-fail run.
+      try {
+        const cost = estimateRunCost(row.graph)
+        const pools = await fetchPoolBalances(row.user_id)
+        const aiOk = !pools ? false : pools.ai_tokens >= cost.ai_tokens
+        const videoOk = !pools ? false : pools.video_units >= cost.video_units
+        if (!aiOk || !videoOk) {
+          // Out of budget — deactivate. Surface the reason on
+          // last_error so the canvas can show it.
+          const reason = !pools
+            ? 'Stopped: no customer / credit record'
+            : !aiOk && !videoOk
+              ? `Stopped: needs ${cost.ai_tokens.toLocaleString()} AI tokens + ${cost.video_units} video credits, have ${pools.ai_tokens.toLocaleString()} + ${pools.video_units}`
+              : !aiOk
+                ? `Stopped: needs ${cost.ai_tokens.toLocaleString()} AI tokens, have ${pools.ai_tokens.toLocaleString()}`
+                : `Stopped: needs ${cost.video_units} video credits, have ${pools.video_units}`
+          await supaFetch(`scheduled_workflows?id=eq.${row.id}`, {
+            method: 'PATCH',
+            body: {
+              active: false,
+              last_error: reason,
+              updated_at: new Date().toISOString(),
+            },
+            prefer: 'return=minimal',
+          }).catch(() => {})
+          continue
+        }
+      } catch (e) {
+        // Pre-flight is best-effort. If we can't compute, fall
+        // through and let the worker's own per-node credit checks
+        // catch insufficiency. Log for debugging.
+        console.warn(`[cron] budget pre-flight failed for schedule ${row.id}:`, e?.message)
       }
 
       // Claim the row. If two cron instances overlap (Vercel's
@@ -161,13 +277,17 @@ export default async function handler(req, res) {
         const wBody = await wRes.json().catch(() => ({}))
         if (!wRes.ok) throw new Error(wBody?.error || `Worker ${wRes.status}`)
 
-        // Tick succeeded (worker accepted). Bump runs_used, advance
-        // next_fire_at, clear lock + last error. Worker's own
-        // success/failure callback will overwrite last_error later
-        // if the actual workflow run errors.
-        const nextFireAt = new Date(Date.now() + Number(row.interval_ms)).toISOString()
+        // Tick succeeded (worker accepted). Bump runs_used and set
+        // next_fire_at = NOW + 10s. The in-progress check above
+        // gates the actual dispatch on the previous run finishing,
+        // so even though next_fire_at fires every minute, only one
+        // run will be in flight per trigger at a time. The 10s
+        // setting is preserved as the floor — once the worker
+        // completes, the next cron tick (within 60s) fires the
+        // next run.
+        const nextFireAt = new Date(Date.now() + 10_000).toISOString()
         const newRunsUsed = Number(row.runs_used) + 1
-        const reachedCap = newRunsUsed >= Number(row.max_runs)
+        const reachedCap = !isUnlimited && newRunsUsed >= Number(row.max_runs)
         await supaFetch(`scheduled_workflows?id=eq.${row.id}`, {
           method: 'PATCH',
           body: {

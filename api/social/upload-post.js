@@ -335,6 +335,11 @@ export default async function handler(req, res) {
     // re-renders of the same content separated by hours still create
     // their own rows.
     let savedItem = null
+    // Hoisted so the post-try backfill block at line ~469 can see them.
+    // Without this, "const" inside the try block was block-scoped and the
+    // backfill threw `uploadpostRequestId is not defined` on every run.
+    let uploadpostRequestId = null
+    let uploadpostJobId = null
     try {
       const isFuture = !!resolvedScheduledIso && new Date(resolvedScheduledIso).getTime() > Date.now() + 30_000
       const status = isFuture ? 'scheduled' : 'posted'
@@ -402,14 +407,14 @@ export default async function handler(req, res) {
       // this, scheduled-but-not-yet-fired posts have no way for us to
       // look up their delivery status (the status endpoint is keyed
       // entirely on request_id).
-      const uploadpostRequestId = body?.request_id || body?.id || null
+      uploadpostRequestId = body?.request_id || body?.id || null
       // Also capture the INTERNAL job_id. Per the documented schedule-
       // posts API, cancellations key on job_id (DELETE /api/uploadposts
       // /schedule/<job_id>) and the list endpoint only exposes job_id,
       // not request_id. Without persisting this here, every later
       // cancel had to scan a list looking for request_id — which the
       // current API doesn't return, so cancels silently failed.
-      const uploadpostJobId =
+      uploadpostJobId =
         body?.job_id ||
         body?.jobId ||
         body?.schedule?.job_id ||

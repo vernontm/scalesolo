@@ -3356,18 +3356,14 @@ export const NODE_COST_HINT = {
 
 function AutoRunBody({ data, onPatch }) {
   const props = data.props || {}
-  // New primary inputs. Default to 2 runs per day on fresh nodes —
-  // that matches the "set and forget for a week" use case (~14 posts
-  // over 7 days). Existing nodes that only have `cadence` in their
-  // props keep working: autoRunIntervalMs falls back to the legacy
-  // lookup, and we surface the legacy dropdown below for one-click
-  // migration.
-  const runsPerUnit = Number(props.runs_per_unit ?? 2)
-  const unitId = props.unit || 'day'
-  const cadence = props.cadence || '15m'
-  const usingFrequency = props.runs_per_unit != null && props.unit != null
-
-  const maxRuns = Number(props.max_runs ?? 10)
+  // Simplified shape: total_runs + unlimited toggle. Legacy props
+  // (runs_per_unit / unit / cadence / max_runs) are migrated below on
+  // first render so old saved graphs don't lose anything.
+  const legacyMaxRuns = Number(props.max_runs ?? NaN)
+  const totalRuns = Number.isFinite(Number(props.total_runs))
+    ? Number(props.total_runs)
+    : (Number.isFinite(legacyMaxRuns) ? legacyMaxRuns : 10)
+  const unlimited = !!props.unlimited
   const runsUsed = Number(props.runs_used ?? 0)
   const active = !!props.active
 
@@ -3401,60 +3397,33 @@ function AutoRunBody({ data, onPatch }) {
     return () => { cancelled = true; clearInterval(t) }
   }, [active, spaceId, data.__id])
 
-  // Auto-commit the default frequency on legacy nodes (saved before
-  // the Frequency input existed). Without this, the body displays
-  // "2 per day" + a hidden "use this" link, but the SCHEDULER
-  // silently still uses the legacy cadence ("Every 15 minutes" by
-  // default) because runs_per_unit / unit are null. Users were
-  // surprised their "2 per day" setting ran every 15 min. By
-  // promoting the defaults on first render we make the displayed
-  // frequency match the actual behavior.
-  //
-  // Note: this useEffect MUST come after the `active` const above —
-  // it reads `active` in the dep array, and JS const TDZ rules trip
-  // if we declare it earlier (a real "Cannot access 'a' before
-  // initialization" crash, hard to spot in minified bundles).
-  useEffect(() => {
-    if (usingFrequency) return
-    if (active) return  // never silently rewrite props on an active trigger
-    onPatch?.({ runs_per_unit: runsPerUnit, unit: unitId })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [usingFrequency, active])
   const lastRun = props.last_run_at
-  const remaining = Math.max(0, maxRuns - runsUsed)
-  // Draft strings so each input can transiently clear while typing
-  // (e.g. backspace from "10" → "" → "5") without snapping back.
-  const [maxRunsDraft, setMaxRunsDraft] = useState(String(maxRuns))
-  useEffect(() => { setMaxRunsDraft(String(maxRuns)) }, [maxRuns])
-  const [runsDraft, setRunsDraft] = useState(String(runsPerUnit))
-  useEffect(() => { setRunsDraft(String(runsPerUnit)) }, [runsPerUnit])
-
-  const intervalMs = autoRunIntervalMs(props)
-  const intervalText = intervalLabel(intervalMs)
-  const unitMeta = AUTORUN_UNITS.find((u) => u.id === unitId) || AUTORUN_UNITS[1]
+  const remaining = unlimited ? Infinity : Math.max(0, totalRuns - runsUsed)
   const estPerRun = Number(data?._ctxCostPerRun ?? 0)
 
-  // Confirmation modal: opens BEFORE the auto-run actually starts so
-  // the user has to re-read the cadence + budget + max-runs and tick
-  // a box before the cron fires. Prevents accidental "I clicked Start
-  // and it burned 50 credits before I realized."
+  // Draft string so the number input can transiently clear while
+  // typing (e.g. backspace from "10" → "" → "5") without snapping back.
+  const [totalDraft, setTotalDraft] = useState(String(totalRuns))
+  useEffect(() => { setTotalDraft(String(totalRuns)) }, [totalRuns])
+
+  // Confirmation modal — opens before the schedule actually starts.
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [acknowledged, setAcknowledged] = useState(false)
 
-  // Derive daily / weekly run counts from the chosen cadence so the
-  // modal can spell out "this will fire ~X times per day."
-  const runsPerDay = intervalMs > 0 ? (24 * 60 * 60 * 1000) / intervalMs : 0
-  const runsPerDayLabel = runsPerDay >= 1
-    ? `${runsPerDay >= 10 ? Math.round(runsPerDay) : runsPerDay.toFixed(runsPerDay < 2 ? 1 : 0)} per day`
-    : `~${(runsPerDay * 7).toFixed(1)} per week`
-  const totalBudget = estPerRun * Math.max(0, (maxRuns - runsUsed))
+  const totalBudget = unlimited ? 0 : estPerRun * Math.max(0, totalRuns - runsUsed)
 
   const actuallyStart = async () => {
     onPatch({ active: true, runs_used: 0, last_run_at: null })
     if (typeof window !== 'undefined' && window.__spaceStartServerSchedule) {
+      // 10-second pause between completed runs is enforced server-side.
+      // We pass it as interval_ms so the cron knows the cadence; the
+      // cron also gates dispatch on "no in-progress space_run for this
+      // trigger" so back-to-back runs only fire after the previous one
+      // actually finishes. max_runs = 0 → unlimited (cron interprets
+      // zero as "run until any budget pool hits zero").
       await window.__spaceStartServerSchedule(data.__id, {
-        interval_ms: intervalMs,
-        max_runs: maxRuns,
+        interval_ms: 10_000,
+        max_runs: unlimited ? 0 : Math.max(1, totalRuns),
       })
     }
     setConfirmOpen(false)
@@ -3468,8 +3437,6 @@ function AutoRunBody({ data, onPatch }) {
   }
   const toggle = async () => {
     if (!active) {
-      // Open the confirmation modal first — don't kick off the
-      // schedule until the user explicitly acknowledges.
       setAcknowledged(false)
       setConfirmOpen(true)
     } else {
@@ -3485,109 +3452,59 @@ function AutoRunBody({ data, onPatch }) {
 
   return (
     <>
-      <NodeField label="Frequency">
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <input
-            type="number"
-            className="nodrag"
-            min={1}
-            max={99}
-            step={1}
-            style={{ ...tinyInput, flex: '0 0 60px' }}
-            value={runsDraft}
-            onChange={(e) => {
-              const v = e.target.value
-              setRunsDraft(v)
-              if (v === '') return
-              const n = parseInt(v, 10)
-              if (Number.isFinite(n)) {
-                onPatch({ runs_per_unit: Math.max(1, Math.min(99, n)), unit: unitId })
-              }
-            }}
-            onBlur={() => {
-              const n = parseInt(runsDraft, 10)
-              if (!Number.isFinite(n) || n < 1) {
-                const fallback = Number.isFinite(runsPerUnit) && runsPerUnit >= 1 ? runsPerUnit : 2
-                setRunsDraft(String(fallback))
-                if (fallback !== runsPerUnit) onPatch({ runs_per_unit: fallback, unit: unitId })
-              }
-            }}
-            disabled={active}
-            title="How many times to run within the period below"
-          />
-          <select
-            className="nodrag"
-            style={{ ...tinyInput, flex: 1 }}
-            value={unitId}
-            onChange={(e) => onPatch({ runs_per_unit: runsPerUnit, unit: e.target.value })}
-            disabled={active}
-          >
-            {AUTORUN_UNITS.map((u) => (
-              <option key={u.id} value={u.id}>{u.label}</option>
-            ))}
-          </select>
-        </div>
-        <div style={{ marginTop: 4, fontSize: 10, color: 'var(--muted)' }}>
-          Fires roughly every {intervalText}. {runsPerUnit} × {unitMeta.label.replace('per ', '')}
-          {!usingFrequency && (
-            <>
-              {' · '}
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onPatch({ runs_per_unit: runsPerUnit, unit: unitId }) }}
-                style={{ background: 'transparent', border: 'none', color: 'var(--red)', cursor: 'pointer', padding: 0, fontSize: 10, textDecoration: 'underline' }}
-                title="Use this frequency instead of the legacy cadence dropdown"
-              >use this</button>
-            </>
-          )}
-        </div>
-      </NodeField>
-      {!usingFrequency && (
-        <NodeField label="Legacy cadence (fallback)">
-          <select
-            className="nodrag"
-            style={tinyInput}
-            value={cadence}
-            onChange={(e) => onPatch({ cadence: e.target.value })}
-            disabled={active}
-            title="Pre-frequency cadence. Saved spaces still use this until you switch to the Frequency input above."
-          >
-            {AUTORUN_OPTIONS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-          </select>
-        </NodeField>
-      )}
-      <NodeField label="Stop after N runs">
+      <NodeField label="How many times to run?">
         <input
           type="number"
           className="nodrag"
           min={1}
           max={1000}
           step={1}
-          style={tinyInput}
-          value={maxRunsDraft}
+          style={{ ...tinyInput, opacity: unlimited ? 0.45 : 1 }}
+          value={unlimited ? '' : totalDraft}
+          placeholder={unlimited ? 'Unlimited' : '10'}
           onChange={(e) => {
             const v = e.target.value
-            setMaxRunsDraft(v)
-            // Empty / mid-edit: don't commit anything yet so the field
-            // stays clearable. We snap to a valid number on blur.
+            setTotalDraft(v)
             if (v === '') return
             const n = parseInt(v, 10)
-            if (Number.isFinite(n)) {
-              onPatch({ max_runs: Math.max(1, Math.min(1000, n)) })
-            }
+            if (Number.isFinite(n)) onPatch({ total_runs: Math.max(1, Math.min(1000, n)) })
           }}
           onBlur={() => {
-            const n = parseInt(maxRunsDraft, 10)
+            if (unlimited) return
+            const n = parseInt(totalDraft, 10)
             if (!Number.isFinite(n) || n < 1) {
-              // Empty or invalid on commit → snap to current value or 1.
-              const fallback = Number.isFinite(maxRuns) && maxRuns >= 1 ? maxRuns : 1
-              setMaxRunsDraft(String(fallback))
-              if (fallback !== maxRuns) onPatch({ max_runs: fallback })
+              const fallback = Number.isFinite(totalRuns) && totalRuns >= 1 ? totalRuns : 10
+              setTotalDraft(String(fallback))
+              if (fallback !== totalRuns) onPatch({ total_runs: fallback })
             }
           }}
-          disabled={active}
+          disabled={active || unlimited}
         />
       </NodeField>
+      <label
+        className="nodrag"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          marginTop: 6, padding: '7px 9px',
+          background: 'var(--surface-2)', border: '1px solid var(--border)',
+          borderRadius: 7, cursor: active ? 'not-allowed' : 'pointer',
+          fontSize: 11.5, color: 'var(--text-soft)',
+          opacity: active ? 0.6 : 1,
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={unlimited}
+          disabled={active}
+          onChange={(e) => onPatch({ unlimited: e.target.checked })}
+          style={{ accentColor: 'var(--red)', flexShrink: 0 }}
+        />
+        <span>
+          <strong style={{ color: 'var(--text)' }}>Unlimited</strong>
+          <span style={{ color: 'var(--muted)' }}> · run until credits run out</span>
+        </span>
+      </label>
 
       <button
         type="button"
@@ -3602,7 +3519,9 @@ function AutoRunBody({ data, onPatch }) {
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
         }}
       >
-        {active ? <><Pause size={12} /> Active — every {intervalText}</> : <><Play size={12} /> Start auto-run</>}
+        {active
+          ? <><Pause size={12} /> Active — {unlimited ? 'unlimited' : `${totalRuns - runsUsed} left`}</>
+          : <><Play size={12} /> Start auto-run</>}
       </button>
 
       {/* Pre-start confirmation modal. Portaled to document.body so
@@ -3656,8 +3575,10 @@ function AutoRunBody({ data, onPatch }) {
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
                 fontSize: 12.5,
               }}>
-                <span style={{ color: 'var(--text-soft)' }}>Cadence</span>
-                <strong style={{ color: 'var(--text)' }}>Every {intervalText}</strong>
+                <span style={{ color: 'var(--text-soft)' }}>Runs</span>
+                <strong style={{ color: 'var(--text)' }}>
+                  {unlimited ? 'Unlimited (stops when credits run out)' : `${totalRuns} run${totalRuns === 1 ? '' : 's'}`}
+                </strong>
               </div>
               <div style={{
                 padding: '10px 12px', borderRadius: 8,
@@ -3665,19 +3586,10 @@ function AutoRunBody({ data, onPatch }) {
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
                 fontSize: 12.5,
               }}>
-                <span style={{ color: 'var(--text-soft)' }}>Frequency</span>
-                <strong style={{ color: 'var(--text)' }}>{runsPerDayLabel}</strong>
+                <span style={{ color: 'var(--text-soft)' }}>Pause between runs</span>
+                <strong style={{ color: 'var(--text)' }}>~10 seconds</strong>
               </div>
-              <div style={{
-                padding: '10px 12px', borderRadius: 8,
-                background: 'var(--surface-2)', border: '1px solid var(--border)',
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
-                fontSize: 12.5,
-              }}>
-                <span style={{ color: 'var(--text-soft)' }}>Stops after</span>
-                <strong style={{ color: 'var(--text)' }}>{maxRuns} run{maxRuns === 1 ? '' : 's'}</strong>
-              </div>
-              {estPerRun > 0 && (
+              {estPerRun > 0 && !unlimited && (
                 <div style={{
                   padding: '10px 12px', borderRadius: 8,
                   background: 'rgba(245,158,11,0.10)', border: '1px solid rgba(245,158,11,0.35)',
@@ -3691,6 +3603,16 @@ function AutoRunBody({ data, onPatch }) {
                     <span>Total batch budget</span>
                     <strong style={{ color: '#fbbf24' }}>~{totalBudget.toLocaleString()} AI tokens</strong>
                   </div>
+                </div>
+              )}
+              {unlimited && estPerRun > 0 && (
+                <div style={{
+                  padding: '10px 12px', borderRadius: 8,
+                  background: 'rgba(245,158,11,0.10)', border: '1px solid rgba(245,158,11,0.35)',
+                  fontSize: 12.5, color: 'var(--text-soft)', lineHeight: 1.5,
+                }}>
+                  Each run costs ~<strong style={{ color: 'var(--text)' }}>{estPerRun.toLocaleString()}</strong> AI tokens.
+                  Auto-run will stop the moment your video credits or AI tokens can't cover the next run.
                 </div>
               )}
             </div>
@@ -3713,7 +3635,7 @@ function AutoRunBody({ data, onPatch }) {
                 style={{ marginTop: 2, accentColor: '#2ecc71', flexShrink: 0 }}
               />
               <span>
-                I understand this workflow will run on its own at the cadence above and will keep firing until it hits the run cap or I stop it manually.
+                I understand this workflow will run on its own back-to-back until it hits the run count above {unlimited ? 'or my credits run out' : ''} or I stop it manually.
               </span>
             </label>
 
@@ -3752,14 +3674,14 @@ function AutoRunBody({ data, onPatch }) {
       ), document.body)}
 
       <div style={{ marginTop: 8, fontSize: 10.5, lineHeight: 1.5, color: 'var(--muted)' }}>
-        <div>Runs used: <strong style={{ color: 'var(--text)' }}>{runsUsed} / {maxRuns}</strong> ({remaining} left)</div>
-        {estPerRun > 0 && (
-          <div>Est. cost / run: <strong style={{ color: 'var(--text)' }}>~{estPerRun.toLocaleString()}</strong> AI tokens. Total budget for this batch: ~{(estPerRun * remaining).toLocaleString()}.</div>
+        <div>Runs used: <strong style={{ color: 'var(--text)' }}>{runsUsed}{unlimited ? '' : ` / ${totalRuns}`}</strong>{unlimited ? ' · unlimited' : ` (${remaining} left)`}</div>
+        {estPerRun > 0 && !unlimited && (
+          <div>Est. cost / run: <strong style={{ color: 'var(--text)' }}>~{estPerRun.toLocaleString()}</strong> AI tokens. Total budget: ~{(estPerRun * remaining).toLocaleString()}.</div>
+        )}
+        {estPerRun > 0 && unlimited && (
+          <div>Est. cost / run: <strong style={{ color: 'var(--text)' }}>~{estPerRun.toLocaleString()}</strong> AI tokens. Stops when video credits or AI tokens hit zero.</div>
         )}
         {lastRun && <div>Last run: {new Date(lastRun).toLocaleTimeString()}</div>}
-        {intervalMs <= 300_000 && active && (
-          <div style={{ color: 'var(--amber)', marginTop: 4 }}>Tight cadence — this burns credits fast. Stop when you're done verifying.</div>
-        )}
         {!active && runsUsed > 0 && (
           <button
             type="button"
@@ -3809,7 +3731,7 @@ function AutoRunBody({ data, onPatch }) {
               {new Date(serverSchedule.next_fire_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
             </strong></div>
           )}
-          <div>Server runs: <strong style={{ color: 'var(--text)' }}>{serverSchedule.runs_used} / {serverSchedule.max_runs}</strong></div>
+          <div>Server runs: <strong style={{ color: 'var(--text)' }}>{serverSchedule.runs_used}{Number(serverSchedule.max_runs) === 0 ? ' · unlimited' : ` / ${serverSchedule.max_runs}`}</strong></div>
           {serverSchedule.last_run_at && (
             <div>Last server run: {new Date(serverSchedule.last_run_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</div>
           )}
@@ -7218,10 +7140,13 @@ export const NODE_REGISTRY = {
   },
 
   auto_run: {
-    label: 'Auto-run', description: 'Runs your whole workflow on a schedule you set (for example, 2 times per day). Set a maximum number of runs so it stops automatically. Keep this page open if you want it to run in the background, or save and let the server run it.',
+    label: 'Auto-run', description: 'Runs the whole workflow back-to-back the number of times you pick (or unlimited until your credits run out). After each run finishes, we wait a short pause and start the next one. Leave Unlimited on to keep firing until video credits or AI tokens hit zero.',
     icon: Repeat, category: 'inputs', color: '#f97316',
     inputs: [], outputs: [{ id: 'out', label: 'Out' }],
-    initialProps: { runs_per_unit: 2, unit: 'day', cadence: '15m', max_runs: 10, runs_used: 0, active: false, last_run_at: null },
+    // New simplified shape. Legacy props (runs_per_unit / unit / cadence /
+    // max_runs) are still read by AutoRunBody on first load so older saved
+    // graphs migrate cleanly to total_runs without losing prior config.
+    initialProps: { total_runs: 10, unlimited: false, runs_used: 0, active: false, last_run_at: null },
     Body: AutoRunBody,
     run: async ({ data }) => ({ tick: new Date().toISOString(), run_index: Number(data.props?.runs_used || 0) + 1 }),
   },

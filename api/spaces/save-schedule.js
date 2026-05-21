@@ -46,8 +46,8 @@ export default async function handler(req, res) {
       if (!space_id || !trigger_node_id || !profile_id) {
         return res.status(400).json({ error: 'space_id, trigger_node_id, profile_id required' })
       }
-      if (!Number.isFinite(Number(interval_ms)) || Number(interval_ms) < 60_000) {
-        return res.status(400).json({ error: 'interval_ms must be >= 60_000' })
+      if (!Number.isFinite(Number(interval_ms)) || Number(interval_ms) < 10_000) {
+        return res.status(400).json({ error: 'interval_ms must be >= 10_000' })
       }
       if (!graph || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) {
         return res.status(400).json({ error: 'graph.nodes + graph.edges required' })
@@ -79,7 +79,12 @@ export default async function handler(req, res) {
         trigger_node_id,
         active: true,
         interval_ms: Number(interval_ms),
-        max_runs: Math.max(1, Math.min(10_000, Number(max_runs) || 10)),
+        // max_runs = 0 is the sentinel for "unlimited" (run until any
+        // credit pool can't cover the next run). Anything else gets
+        // clamped to [1, 10000].
+        max_runs: Number(max_runs) === 0
+          ? 0
+          : Math.max(1, Math.min(10_000, Number(max_runs) || 10)),
         // runs_used + last_run_at preserved by the upsert below — only
         // the columns we explicitly set get overwritten.
         next_fire_at: nextFireAt,
