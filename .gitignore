@@ -16,3 +16,10 @@ supabase/.branches/
 test-results/
 playwright-report/
 playwright/.cache/
+
+# HyperFrames composition working directories — 121MB of render artifacts,
+# intermediate audio mixes, VO takes, mp4 renders. Source HTMLs are the
+# only thing that would matter to version, but everything else is
+# regenerable from `npx hyperframes render` so we keep the whole tree
+# out of git. Final assets live in public/landing/faceless-steps/.
+marketing/faceless-steps/
