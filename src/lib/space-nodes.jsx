@@ -6113,6 +6113,34 @@ function SchedulePostBody({ data, onPatch }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isTextChain])
 
+  // First-touch auto-fill. If the node's platforms list is empty
+  // (initialProps default) AND the profile already has connected
+  // social accounts, seed the selection with whatever's actually
+  // connected. Prevents the "I selected 4 platforms but only 1 was
+  // wired" foot-gun: previously the picker let users select
+  // platforms that weren't connected (just disabled the pill), so
+  // a workflow would submit to Upload-Post asking for 4 platforms
+  // but only 1 would deliver. Upload-Post sat in_progress on the
+  // unconnected 3 forever and the row in ScaleSolo showed as
+  // failed even though the connected platform posted fine.
+  //
+  // platforms_initialized is a sibling prop sentinel — set the
+  // first time we touch the platforms list so we don't auto-fill
+  // again later if the user explicitly clears their selection.
+  // Non-empty existing selections (legacy graphs / manual edits)
+  // get the sentinel set without touching the platforms array, so
+  // we stop reasoning about them too.
+  useEffect(() => {
+    if (props.platforms_initialized) return
+    if (!connected.length) return
+    if (platforms.length > 0) {
+      onPatch({ platforms_initialized: true })
+      return
+    }
+    onPatch({ platforms: [...connected], platforms_initialized: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected.length])
+
   const togglePlatform = (id) => {
     if (!connected.includes(id)) return  // hard-gated, button is disabled too
     // For text-only upstream chains, hard-gate platforms that don't
