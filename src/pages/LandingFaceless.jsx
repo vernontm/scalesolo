@@ -27,6 +27,7 @@ import {
   Zap, ArrowRight, Check, Play, X, Lock, Shield, Sparkles, ChevronDown,
   ChevronLeft, ChevronRight,
 } from 'lucide-react'
+import { trackViewContent, trackInitiateCheckout } from '../lib/meta-pixel.js'
 
 const HERO_VIDEO = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/Scalesolo%20ad.mp4'
 
@@ -207,6 +208,14 @@ export default function LandingFaceless() {
     return () => { cancelled = true }
   }, [])
 
+  // Fire a Meta Pixel ViewContent event the first time the visitor
+  // lands on /faceless-brand. Signals "saw the offer" to Meta's
+  // Sales-objective optimizer + seeds the retargeting audience for
+  // warm-traffic remarketing campaigns later on.
+  useEffect(() => {
+    trackViewContent({ source: 'faceless_brand_landing' })
+  }, [])
+
   // Sticky mobile CTA bar reveals after the user scrolls past the hero —
   // gives them an always-visible CTA without taking up real estate
   // immediately on first paint.
@@ -221,6 +230,12 @@ export default function LandingFaceless() {
     if (busy) return
     setBusy(true)
     setCheckoutError(null)
+    // Fire Pixel InitiateCheckout BEFORE the redirect so we capture
+    // intent even if the user closes the tab mid-Stripe. The real
+    // Purchase event fires later on the post-checkout /login page
+    // (browser-side) + server-side via api/stripe-webhook (CAPI),
+    // deduped on the Stripe session id.
+    trackInitiateCheckout({ source: 'faceless_brand_landing' })
     try {
       const r = await fetch('/api/stripe-trial-checkout', { method: 'POST' })
       const body = await r.json().catch(() => ({}))

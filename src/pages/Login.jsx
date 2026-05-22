@@ -150,6 +150,20 @@ export default function Login() {
   useEffect(() => {
     if (!stripeSessionId) return
     let cancelled = false
+    // Browser-side Meta Pixel Purchase event. eventID = stripe
+    // session id so the server-side CAPI Purchase fired by
+    // api/stripe-webhook on checkout.session.completed dedupes
+    // cleanly with this one. We fire it BEFORE the resolve fetch
+    // so even if the resolve call fails the conversion still
+    // attributes back to the ad. Lazy-loaded so the public Login
+    // page doesn't pull the pixel module unless someone arrives
+    // here from a Stripe redirect.
+    import('../lib/meta-pixel.js').then(({ trackPurchase }) => {
+      trackPurchase(stripeSessionId, {
+        content_name: 'Faceless Brand Trial',
+        source: 'stripe_checkout_return',
+      })
+    }).catch(() => {})
     ;(async () => {
       try {
         const r = await fetch(`/api/stripe-resolve-session?id=${encodeURIComponent(stripeSessionId)}`)
