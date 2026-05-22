@@ -10,6 +10,7 @@ import {
   cancelEmail,
   paymentFailedEmail,
 } from './_lib/email-templates.js'
+import { sendCAPIPurchase } from './_lib/meta-capi.js'
 
 export const config = { runtime: 'edge' }
 
@@ -497,9 +498,88 @@ async function onPaymentFailed(invoice) {
   } catch {}
 }
 
+// Mirror the browser-side fbq Purchase event server-side via Meta's
+// Conversions API. eventId = the Stripe checkout-session id so Meta
+// dedupes this server-side event with the browser-side one fired
+// from src/lib/meta-pixel.js trackPurchase() on /login?stripe_session=…
+// after the redirect back from Stripe. Anything Meta can pull from
+// the session (email, name, address) gets hashed + included so the
+// event matches a Facebook user with a high match rate.
+//
+// Fire-and-await-with-cap pattern: we await the CAPI call so the
+// fetch actually completes (Edge Runtime freezes after response),
+// but we never throw — a CAPI failure logs and moves on. The
+// Stripe webhook must respond to Stripe within ~10s regardless.
+async function fireCAPIPurchaseFromSession(session) {
+  try {
+    if (!session?.id) return
+    // Skip non-paying sessions defensively. If payment_status is
+    // anything other than 'paid' / 'no_payment_required' we don't
+    // want to count it as a Purchase.
+    const ps = String(session.payment_status || '').toLowerCase()
+    if (ps && ps !== 'paid' && ps !== 'no_payment_required') return
+
+    const cd = session.customer_details || {}
+    const addr = cd.address || {}
+    // Stripe gives the full name in one field — split on whitespace
+    // for first / last. Matches what Meta expects (separate fn / ln).
+    const fullName = (cd.name || '').trim()
+    const nameParts = fullName ? fullName.split(/\s+/) : []
+    const firstName = nameParts[0] || null
+    const lastName  = nameParts.length > 1 ? nameParts.slice(-1)[0] : null
+
+    // The $1 trial activation fee is a fixed 100 cents — but if the
+    // session amount_total is non-zero we send that instead so we get
+    // accurate ROAS reporting on whatever the user actually paid.
+    const totalCents = Number(session.amount_total ?? 100)
+    const value = Math.max(0.01, totalCents / 100)
+    const currency = (session.currency || 'usd').toUpperCase()
+
+    // Reconstruct the source URL so attribution reports show which
+    // landing page drove this purchase. Falls back to the bare domain
+    // if metadata.source isn't set.
+    const baseUrl = process.env.SCALESOLO_DOMAIN || process.env.FRONTEND_URL || 'https://scalesolo.ai'
+    const source  = session.metadata?.source || 'unknown'
+    const eventSourceUrl = source === 'faceless_brand_landing'
+      ? `${baseUrl}/faceless-brand`
+      : `${baseUrl}/pricing`
+
+    await sendCAPIPurchase({
+      eventId: session.id,
+      value,
+      currency,
+      contentName: session.metadata?.source === 'faceless_brand_landing'
+        ? 'Faceless Brand Trial'
+        : 'ScaleSolo Subscription',
+      eventSourceUrl,
+      user: {
+        email:      cd.email || session.customer_email || null,
+        firstName,
+        lastName,
+        city:       addr.city || null,
+        state:      addr.state || null,
+        zip:        addr.postal_code || null,
+        country:    addr.country || null,
+        externalId: session.client_reference_id || session.customer || null,
+        // IP / user-agent / fbc / fbp aren't captured server-side at
+        // webhook time (the user finished checkout on Stripe's domain,
+        // not ours, so we don't have their browser context). Browser-
+        // side Pixel covers these — server-side just adds email +
+        // name + address as additional matching signal.
+      },
+    })
+  } catch (err) {
+    console.warn('[stripe-webhook] CAPI Purchase mirror failed:', err?.message || err)
+  }
+}
+
 async function routeEvent(event) {
   switch (event.type) {
     case 'checkout.session.completed':
+      // Fire Meta CAPI Purchase first (independent of topup vs
+      // subscription handling). Server-side dedup-pair with the
+      // browser-side fbq Purchase on /login?stripe_session=…
+      await fireCAPIPurchaseFromSession(event.data.object)
       // Top-up purchases are one-shot (mode=payment) — grant credits here.
       // Subscription Checkouts trigger customer.subscription.created separately.
       return onTopupCompleted(event.data.object)
