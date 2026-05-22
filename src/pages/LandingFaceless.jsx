@@ -174,7 +174,7 @@ export default function LandingFaceless() {
       <section style={section}>
         <div style={sectionHead}>
           <div style={sectionEyebrow}>How it works</div>
-          <h2 style={h2}>Four steps. About five minutes.</h2>
+          <h2 style={h2}>Launch Your AI Avatar Brand in minutes</h2>
           <p style={sectionBody}>
             The exact workflow that takes one photo and one idea, and ships a finished video to every
             platform you post on.
