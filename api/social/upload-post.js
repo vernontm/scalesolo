@@ -16,6 +16,7 @@
 // because Upload-Post wants the bytes, not a URL.
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { isUserOnTrial } from '../_lib/billing.js'
 import { resolveUploadpostUser, uploadpostEnsureUserProfile } from '../_lib/uploadpost.js'
 import { isUserOnTrial } from '../_lib/billing.js'
 import { findNextOpenSlot } from '../_lib/scheduling.js'
@@ -265,7 +266,21 @@ export default async function handler(req, res) {
       }
     }
 
+    // Trial gate. The $1 trial includes everything EXCEPT auto-
+    // scheduling — once a post has a resolvedScheduledIso (either
+    // because the user picked a date or because auto-mode found the
+    // next slot), trial users are blocked. Immediate "Post now"
+    // submissions fall through and work normally. Client UI gates
+    // this too (see SchedulePostBody + the schedule_post node's
+    // run() throw) but we re-check server-side as defense in depth.
     if (resolvedScheduledIso) {
+      const onTrial = await isUserOnTrial(auth.user.id)
+      if (onTrial) {
+        return res.status(402).json({
+          error: 'Auto-scheduling is locked on the $1 trial. Choose "Post now" to publish immediately, or upgrade your subscription to unlock scheduled posting.',
+          code: 'TRIAL_LOCK_SCHEDULING',
+        })
+      }
       fd.append('scheduled_date', resolvedScheduledIso)
       if (resolvedTimezone) fd.append('timezone', resolvedTimezone)
     }

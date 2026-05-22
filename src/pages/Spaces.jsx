@@ -3736,10 +3736,14 @@ function SpaceBuilder({ space, onSave, onClose }) {
       if (t === 'auto_run') {
         // Body uses _ctxSpaceId to fetch its server-side schedule
         // state from /api/spaces/save-schedule and show the live
-        // next_fire_at / runs_used / last_error readout.
+        // next_fire_at / runs_used / last_error readout. _ctxIsTrialing
+        // drives the trial overlay that locks the controls during the
+        // $1 trial (auto-run is the "auto-scheduling" feature we hold
+        // back until the trial converts).
         return { ...n, data: {
           ...withSlot,
           _ctxSpaceId: spaceIdRef.current || space?.id || null,
+          _ctxIsTrialing: subscriptionStatus === 'trialing',
         } }
       }
       if (t === 'schedule_post') {

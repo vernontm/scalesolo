@@ -3366,6 +3366,7 @@ function AutoRunBody({ data, onPatch }) {
   const unlimited = !!props.unlimited
   const runsUsed = Number(props.runs_used ?? 0)
   const active = !!props.active
+  const trialLocked = !!data._ctxIsTrialing
 
   // Server-side schedule status — fetched live from /api/spaces/save-schedule
   // for this node when it's active. Drives the "Server: next at X,
@@ -3452,6 +3453,13 @@ function AutoRunBody({ data, onPatch }) {
 
   return (
     <>
+      {trialLocked && <TrialLockNotice feature="Auto-run / auto-scheduling" />}
+      {/* Lock the body's controls while on trial. pointer-events:
+          none kills clicks on the number input + unlimited checkbox +
+          Start/Stop button; opacity dims the UI so the gate is
+          visible. The TrialLockNotice above stays interactive (its
+          href is the upgrade CTA). */}
+      <div style={trialLocked ? { pointerEvents: 'none', opacity: 0.55, userSelect: 'none' } : null}>
       <NodeField label="How many times to run?">
         <input
           type="number"
@@ -3745,6 +3753,7 @@ function AutoRunBody({ data, onPatch }) {
       <div style={{ marginTop: 8, fontSize: 10, color: 'var(--muted)', lineHeight: 1.4 }}>
         Server-scheduled — fires from our cron even when this tab is closed. The local timer also runs as a backup while the canvas is open.
       </div>
+      </div>{/* /trial-lock wrapper */}
     </>
   )
 }
@@ -7148,7 +7157,16 @@ export const NODE_REGISTRY = {
     // graphs migrate cleanly to total_runs without losing prior config.
     initialProps: { total_runs: 10, unlimited: false, runs_used: 0, active: false, last_run_at: null },
     Body: AutoRunBody,
-    run: async ({ data }) => ({ tick: new Date().toISOString(), run_index: Number(data.props?.runs_used || 0) + 1 }),
+    run: async ({ data }) => {
+      // Trial gate. The auto_run loop fires the workflow on a cron,
+      // which is the "auto-scheduling" we hold back during the $1
+      // trial. Block the tick at run-time so even if a user manually
+      // ticks "active" the workflow never actually starts.
+      if (data?._ctxIsTrialing) {
+        throw new Error('Auto-run is locked on the $1 trial. Upgrade your subscription to fire the workflow on its own → /billing')
+      }
+      return { tick: new Date().toISOString(), run_index: Number(data.props?.runs_used || 0) + 1 }
+    },
   },
 
   brand_profile: {
@@ -8860,7 +8878,7 @@ export const NODE_REGISTRY = {
     Body: SchedulePostBody,
     run: async ({ data, inputs, ctx }) => {
       if (data?._ctxIsTrialing) {
-        throw new Error('Scheduling / publishing is locked during free trial. Upgrade for 20% off your first month → /billing')
+        throw new Error('Auto-scheduling is locked on the $1 trial. Upgrade your subscription to schedule posts → /billing')
       }
       const arr = asArr(inputs?.in)
       let caption = ''

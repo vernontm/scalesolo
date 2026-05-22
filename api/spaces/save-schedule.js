@@ -28,6 +28,7 @@
 //     "server-scheduled" badges + reflect cron-side runs_used.
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { isUserOnTrial } from '../_lib/billing.js'
 
 export default async function handler(req, res) {
   setCors(req, res)
@@ -53,6 +54,19 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'graph.nodes + graph.edges required' })
       }
       await assertProfileAccess(auth.user.id, profile_id)
+
+      // Trial gate. Auto-run schedules drive scheduled posting + the
+      // back-to-back workflow loop — both fall under "auto-scheduling"
+      // which is the only feature locked on the $1 trial. Block the
+      // schedule from being persisted at all so the cron never sees
+      // it. Client UI also gates this (AutoRunBody trial overlay) but
+      // we re-check server-side as defense in depth.
+      if (await isUserOnTrial(auth.user.id)) {
+        return res.status(402).json({
+          error: 'Auto-run is locked on the $1 trial. Upgrade your subscription to schedule workflows that fire on their own.',
+          code: 'TRIAL_LOCK_AUTORUN',
+        })
+      }
 
       // First fire fires SOON — 60 seconds from now — so the user
       // gets visible feedback that the schedule works without
