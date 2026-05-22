@@ -62,7 +62,7 @@ const STEPS = [
 ]
 
 const PROOF_TILES = [
-  { src: `${STEP_MEDIA}proof-podcast.png`, alt: 'Talk It Out Podcast · 387.7K likes' },
+  { src: `${STEP_MEDIA}proof-stats.png`,   alt: '403,840 views in 30 days · Instagram analytics' },
   { src: `${STEP_MEDIA}proof-margo.png`,   alt: 'Soul of Margo · faceless creator profile' },
   { src: `${STEP_MEDIA}proof-3.png`,       alt: 'Faceless brand growth example' },
 ]
@@ -215,19 +215,19 @@ export default function LandingFaceless() {
         </div>
       </section>
 
-      {/* ── HEADLINE STAT: 403K views proof ────────────────────────────── */}
+      {/* ── HEADLINE STAT: Talk It Out Podcast proof ───────────────────── */}
       <section style={section}>
         <div style={proofSplit}>
           <div style={proofSplitText}>
             <div style={sectionEyebrow}>The result, in one screenshot</div>
             <h2 style={h2}>
-              <span style={{ background: 'linear-gradient(90deg, #10b981, #6ee7b7)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>403,840 views.</span>
+              <span style={{ background: 'linear-gradient(90deg, #10b981, #6ee7b7)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>2.1M views. On one video.</span>
             </h2>
-            <h3 style={proofH3}>Zero on-camera time. One faceless avatar.</h3>
+            <h3 style={proofH3}>Built with ScaleSolo. No host ever on camera.</h3>
             <p style={sectionBody}>
-              30 days. One creator. One avatar. The exact ScaleSolo workflow you're about to see.
-              305,383 accounts reached, 163% growth, and not a single video where the creator showed
-              their face.
+              Talk It Out Podcast is a faceless brand. Avatar videos only. 387.7K total likes,
+              a growing follower count, and pinned posts hitting 2.1M, 500K, and 226K views each —
+              all without a real face on camera. This is the exact workflow you're about to see.
             </p>
             <div style={{ ...stepsCtaWrap, marginTop: 22, justifyContent: 'flex-start' }}>
               <TrialCTA />
@@ -236,8 +236,8 @@ export default function LandingFaceless() {
           <div style={proofSplitMedia}>
             <div style={proofHalo} aria-hidden />
             <img
-              src={`${STEP_MEDIA}proof-stats.png`}
-              alt="403,840 views in 30 days · Instagram analytics"
+              src={`${STEP_MEDIA}proof-podcast.png`}
+              alt="Talk It Out Podcast · 387.7K likes · faceless brand built with ScaleSolo"
               style={proofPhone}
               loading="lazy"
             />
