@@ -192,20 +192,6 @@ export default function LandingFaceless() {
         </div>
       </section>
 
-      {/* ── STATS BAR ──────────────────────────────────────────────────── */}
-      <section style={section}>
-        <div className="stats-grid">
-          <Stat number="$250B+" label={<>Creator economy<br />size by 2027</>} />
-          <Stat number="10x"     label={<>Your monthly<br />content output</>} />
-          <Stat number="30+ hrs" label={<>Saved per brand,<br />every single week</>} />
-          <Stat number="9+"      label={<>Platforms publishing<br />on full autopilot</>} />
-        </div>
-
-        <div style={stepsCtaWrap}>
-          <TrialCTA />
-        </div>
-      </section>
-
       {/* ── PRICING ────────────────────────────────────────────────────── */}
       <section id="pricing" style={{ ...section, paddingTop: 24 }}>
         <div style={sectionHead}>
@@ -282,15 +268,6 @@ export default function LandingFaceless() {
           />
         </div>
       )}
-    </div>
-  )
-}
-
-function Stat({ number, label }) {
-  return (
-    <div className="stat-cell">
-      <div className="stat-number">{number}</div>
-      <div className="stat-label">{label}</div>
     </div>
   )
 }
