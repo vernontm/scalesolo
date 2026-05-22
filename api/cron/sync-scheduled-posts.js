@@ -50,8 +50,13 @@ async function fetchStatus(requestId) {
 //
 // 'posted' when ANY platform succeeded; 'failed' when EVERY platform
 // failed; null (leave scheduled) when still in progress.
+//
+// Returns { verdict, summary } where summary is a short human string
+// describing per-platform outcomes so we can persist it as last_error
+// on failure. Without this, failed rows had `last_error = null` and
+// users couldn't see why the post died.
 function classify(body) {
-  if (!body || typeof body !== 'object') return null
+  if (!body || typeof body !== 'object') return { verdict: null, summary: null }
 
   // Per-platform results array — the canonical shape today.
   const resultsArr = Array.isArray(body.results)
@@ -62,15 +67,28 @@ function classify(body) {
   if (Array.isArray(resultsArr) && resultsArr.length) {
     const anySuccess = resultsArr.some((r) => r?.success === true || r?.success === 'true')
     const allFailed  = resultsArr.every((r) => r?.success === false || r?.success === 'false')
-    if (anySuccess) return 'posted'
-    if (allFailed)  return 'failed'
-    return null  // partial / still progressing
+    // Build a "tiktok: <reason> · instagram: <reason>" string so it
+    // shows up on the row's last_error when we mark it failed.
+    const summary = resultsArr
+      .map((r) => {
+        const p = (r?.platform || r?.network || 'unknown').toLowerCase()
+        if (r?.success === true || r?.success === 'true') return `${p}: ok`
+        const why = (r?.error_message || r?.error || r?.message || r?.reason || 'failed')
+          .toString().trim().slice(0, 160)
+        return `${p}: ${why}`
+      })
+      .join(' · ')
+      .slice(0, 800)
+    if (anySuccess) return { verdict: 'posted', summary: null }
+    if (allFailed)  return { verdict: 'failed', summary }
+    return { verdict: null, summary: null }  // partial / still progressing
   }
 
   // Legacy object-shaped variant: { platforms: { tiktok: 'posted', ... } }
   const platforms = body.platforms || body.data?.platforms || null
   if (platforms && typeof platforms === 'object' && !Array.isArray(platforms)) {
-    const states = Object.values(platforms).map((v) => {
+    const entries = Object.entries(platforms)
+    const states = entries.map(([, v]) => {
       if (typeof v === 'string') return v.toLowerCase()
       if (v?.status) return String(v.status).toLowerCase()
       if (v?.state)  return String(v.state).toLowerCase()
@@ -78,17 +96,27 @@ function classify(body) {
       if (v?.success === false) return 'failed'
       return ''
     })
-    if (states.some((s) => /post|deliver|success/.test(s))) return 'posted'
-    if (states.length && states.every((s) => /fail|error/.test(s))) return 'failed'
-    return null
+    const summary = entries.map(([k, v], i) => {
+      const s = states[i]
+      if (/post|deliver|success/.test(s)) return `${k}: ok`
+      const why = (v?.error_message || v?.error || v?.message || s || 'failed')
+        .toString().trim().slice(0, 160)
+      return `${k}: ${why}`
+    }).join(' · ').slice(0, 800)
+    if (states.some((s) => /post|deliver|success/.test(s))) return { verdict: 'posted', summary: null }
+    if (states.length && states.every((s) => /fail|error/.test(s))) return { verdict: 'failed', summary }
+    return { verdict: null, summary: null }
   }
 
   // Last-ditch: top-level only. Recognize "completed" since that's
   // what the documented endpoint returns when all platforms have fired.
   const topStatus = String(body.status || body.state || '').toLowerCase()
-  if (topStatus === 'completed' || topStatus === 'posted' || topStatus === 'delivered') return 'posted'
-  if (topStatus === 'failed' || topStatus === 'error') return 'failed'
-  return null
+  if (topStatus === 'completed' || topStatus === 'posted' || topStatus === 'delivered') return { verdict: 'posted', summary: null }
+  if (topStatus === 'failed' || topStatus === 'error') {
+    const why = (body.error_message || body.error || body.message || topStatus).toString().slice(0, 800)
+    return { verdict: 'failed', summary: why }
+  }
+  return { verdict: null, summary: null }
 }
 
 export default async function handler(req, res) {
@@ -108,29 +136,58 @@ export default async function handler(req, res) {
 
   try {
     const nowIso = new Date().toISOString()
-    const rows = await supaFetch(
+    // Primary pass: scheduled rows past their fire time. Plus a
+    // secondary pass picking up rows already marked `failed` but
+    // with no last_error captured — back-fills per-platform error
+    // reasons on legacy failures so Ray (and end users) can see
+    // why a post died instead of staring at an empty error column.
+    const dueScheduled = await supaFetch(
       `content_scripts?status=eq.scheduled&scheduled_datetime=lt.${encodeURIComponent(nowIso)}` +
-      `&uploadpost_request_id=not.is.null&select=id,uploadpost_request_id,scheduled_datetime,profile_id&limit=200`
+      `&uploadpost_request_id=not.is.null&select=id,status,uploadpost_request_id&limit=200`
     ).catch(() => [])
+    const orphanedFails = await supaFetch(
+      `content_scripts?status=eq.failed&last_error=is.null` +
+      `&uploadpost_request_id=not.is.null&select=id,status,uploadpost_request_id&limit=50`
+    ).catch(() => [])
+    const rows = [...(dueScheduled || []), ...(orphanedFails || [])]
 
-    const results = { posted: 0, failed: 0, indeterminate: 0, errors: 0 }
+    const results = { posted: 0, failed: 0, indeterminate: 0, errors: 0, backfilled: 0 }
 
-    for (const row of rows || []) {
+    for (const row of rows) {
       try {
         const { ok, body } = await fetchStatus(row.uploadpost_request_id)
         if (!ok) { results.errors += 1; continue }
-        const verdict = classify(body)
+        const { verdict, summary } = classify(body)
+
+        // Existing-failed back-fill: keep status=failed, just write
+        // last_error so the user can see why. Don't touch posted/
+        // scheduled rows during the back-fill loop.
+        if (row.status === 'failed') {
+          if (summary) {
+            await supaFetch(`content_scripts?id=eq.${row.id}`, {
+              method: 'PATCH',
+              body: { last_error: summary },
+              prefer: 'return=minimal',
+            })
+            results.backfilled += 1
+          }
+          continue
+        }
+
         if (verdict === 'posted') {
           await supaFetch(`content_scripts?id=eq.${row.id}`, {
             method: 'PATCH',
-            body: { status: 'posted' },
+            body: { status: 'posted', last_error: null },
             prefer: 'return=minimal',
           })
           results.posted += 1
         } else if (verdict === 'failed') {
           await supaFetch(`content_scripts?id=eq.${row.id}`, {
             method: 'PATCH',
-            body: { status: 'failed' },
+            body: {
+              status: 'failed',
+              last_error: summary || 'All platforms reported failure (no detail returned).',
+            },
             prefer: 'return=minimal',
           })
           results.failed += 1
@@ -144,7 +201,7 @@ export default async function handler(req, res) {
     }
 
     return res.status(200).json({
-      examined: (rows || []).length,
+      examined: rows.length,
       ...results,
     })
   } catch (err) {
