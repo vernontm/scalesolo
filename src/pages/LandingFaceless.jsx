@@ -31,7 +31,7 @@ const STEP_MEDIA = '/landing/faceless-steps/'
 const STEP_GIF_BASE = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/steps-gif/'
 
 const PROOF_TILES = [
-  { src: `${STEP_MEDIA}proof-stats.png`,   alt: '403,840 views in 30 days · Instagram analytics' },
+  { src: `${STEP_MEDIA}proof-podcast.png`, alt: 'Talk It Out Podcast · 387.7K likes' },
   { src: `${STEP_MEDIA}proof-margo.png`,   alt: 'Soul of Margo · faceless creator profile' },
   { src: `${STEP_MEDIA}proof-3.png`,       alt: 'Faceless brand growth example' },
 ]
@@ -137,6 +137,36 @@ export default function LandingFaceless() {
 
         <div style={stepsCtaWrap}>
           <TrialCTA label="Start building yours · free trial" />
+        </div>
+      </section>
+
+      {/* ── HEADLINE STAT: 403K views proof ────────────────────────────── */}
+      <section style={section}>
+        <div style={proofSplit}>
+          <div style={proofSplitText}>
+            <div style={sectionEyebrow}>The result, in one screenshot</div>
+            <h2 style={h2}>
+              <span style={{ background: 'linear-gradient(90deg, #10b981, #6ee7b7)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>403,840 views.</span>
+            </h2>
+            <h3 style={proofH3}>Zero on-camera time. One faceless avatar.</h3>
+            <p style={sectionBody}>
+              30 days. One creator. One avatar. The exact ScaleSolo workflow you're about to see.
+              305,383 accounts reached, 163% growth, and not a single video where the creator showed
+              their face.
+            </p>
+            <div style={{ ...stepsCtaWrap, marginTop: 22, justifyContent: 'flex-start' }}>
+              <TrialCTA />
+            </div>
+          </div>
+          <div style={proofSplitMedia}>
+            <div style={proofHalo} aria-hidden />
+            <img
+              src={`${STEP_MEDIA}proof-stats.png`}
+              alt="403,840 views in 30 days · Instagram analytics"
+              style={proofPhone}
+              loading="lazy"
+            />
+          </div>
         </div>
       </section>
 
@@ -356,6 +386,38 @@ const proofImg = {
   width: '100%', height: 'auto', aspectRatio: '1290 / 2796',
   objectFit: 'cover',
   borderRadius: 12,
+}
+
+// Split section: 403K stats screenshot + headline copy side by side.
+const proofSplit = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(min(320px, 100%), 1fr))',
+  gap: 32,
+  alignItems: 'center',
+  maxWidth: 1080,
+  margin: '0 auto',
+}
+const proofSplitText = { textAlign: 'left' }
+const proofH3 = {
+  marginTop: 8, fontFamily: 'var(--font-display)',
+  fontSize: 'clamp(20px, 2.4vw, 26px)', fontWeight: 700,
+  color: 'var(--text)', letterSpacing: '-0.015em',
+}
+const proofSplitMedia = {
+  position: 'relative',
+  display: 'grid', placeItems: 'center',
+}
+const proofHalo = {
+  position: 'absolute', inset: '-15%',
+  background: 'radial-gradient(40% 40% at 50% 50%, rgba(16,185,129,0.35), transparent 70%)',
+  filter: 'blur(40px)', pointerEvents: 'none', zIndex: 0,
+}
+const proofPhone = {
+  position: 'relative', zIndex: 1,
+  width: '100%', maxWidth: 320,
+  aspectRatio: '1290 / 2796', objectFit: 'cover',
+  borderRadius: 28, border: '4px solid rgba(255,255,255,0.06)',
+  boxShadow: '0 40px 80px -10px rgba(0,0,0,0.55), 0 0 0 2px rgba(16,185,129,0.35)',
 }
 
 // Steps list: each step is a row with video + copy. Flips sides on
