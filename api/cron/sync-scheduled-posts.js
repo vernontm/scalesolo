@@ -143,11 +143,11 @@ export default async function handler(req, res) {
     // why a post died instead of staring at an empty error column.
     const dueScheduled = await supaFetch(
       `content_scripts?status=eq.scheduled&scheduled_datetime=lt.${encodeURIComponent(nowIso)}` +
-      `&uploadpost_request_id=not.is.null&select=id,status,uploadpost_request_id&limit=200`
+      `&uploadpost_request_id=not.is.null&select=id,status,uploadpost_request_id,scheduled_datetime&limit=200`
     ).catch(() => [])
     const orphanedFails = await supaFetch(
       `content_scripts?status=eq.failed&last_error=is.null` +
-      `&uploadpost_request_id=not.is.null&select=id,status,uploadpost_request_id&limit=50`
+      `&uploadpost_request_id=not.is.null&select=id,status,uploadpost_request_id,scheduled_datetime&limit=50`
     ).catch(() => [])
     const rows = [...(dueScheduled || []), ...(orphanedFails || [])]
 
@@ -157,19 +157,29 @@ export default async function handler(req, res) {
       try {
         const { ok, status, body } = await fetchStatus(row.uploadpost_request_id)
 
-        // Existing-failed back-fill: keep status=failed, just write
-        // last_error so the user can see why. ALWAYS writes
-        // something now (was silently no-op'ing on rows where
-        // Upload-Post returned a sparse response — e.g. old
-        // request_ids whose per-platform error_message field has
-        // been purged). At minimum we record what Upload-Post said,
-        // even if it was "no platforms array" / "no status", so the
-        // row tells us something instead of staying null forever.
+        // Existing-failed back-fill. Two scenarios:
+        //
+        //   (a) Row was wrongly marked failed because the cron ran
+        //       within seconds of scheduled_datetime — before
+        //       Upload-Post had finished pushing to any platform.
+        //       classify() saw [tiktok: pending, ig: pending, ...]
+        //       interpreted them as `success: false` and flipped
+        //       status to failed. By the time the back-fill runs
+        //       (minutes-to-hours later) TikTok / IG / etc may
+        //       have actually delivered, so the row should be
+        //       PROMOTED BACK to status='posted'. This is what bit
+        //       Ava's post: TikTok delivered, but our row says
+        //       failed because we polled too early.
+        //
+        //   (b) Genuinely failed everywhere. classify() returns
+        //       verdict='failed' (or null if Upload-Post purged
+        //       the detail). In that case we just write
+        //       diagnostic info to last_error so the user can see
+        //       what Upload-Post said and the row stays failed.
         if (row.status === 'failed') {
-          const { summary } = classify(body)
-          // Snapshot a compact preview of the raw response in case
-          // we need to read it later — capped at 240 chars so we
-          // don't dump a 5KB blob into last_error.
+          const { verdict, summary } = classify(body)
+          // Compact preview of the raw response in case we need to
+          // read it later — capped so we don't dump a 5KB blob.
           const rawPreview = (() => {
             try {
               if (!body) return 'empty body'
@@ -177,6 +187,22 @@ export default async function handler(req, res) {
               return j.length > 240 ? j.slice(0, 240) + '…' : j
             } catch { return '<unserializable>' }
           })()
+
+          // Scenario (a): Upload-Post now shows at least one
+          // platform succeeded. Flip status back to posted +
+          // clear the (incorrect) last_error.
+          if (ok && verdict === 'posted') {
+            await supaFetch(`content_scripts?id=eq.${row.id}`, {
+              method: 'PATCH',
+              body: { status: 'posted', last_error: null },
+              prefer: 'return=minimal',
+            })
+            results.posted += 1
+            continue
+          }
+
+          // Scenario (b): still failed. Write whatever diagnostic
+          // info we can scrape together.
           const errorText = summary
             || (!ok ? `Upload-Post status endpoint returned HTTP ${status}: ${rawPreview}` : null)
             || (body?.status ? `Upload-Post status: ${body.status} · raw: ${rawPreview}` : null)
@@ -201,6 +227,25 @@ export default async function handler(req, res) {
           })
           results.posted += 1
         } else if (verdict === 'failed') {
+          // Grace window. Upload-Post takes minutes to actually
+          // push to TikTok/IG/YouTube/Facebook after we submit. If
+          // the cron polls within ~5 min of scheduled_datetime and
+          // every platform reports `success: false`, that's almost
+          // never a real failure — it's "Upload-Post hasn't
+          // delivered yet, give it more time." Leaving the row as
+          // scheduled means the next cron tick (10 min later) will
+          // re-check and we'll see the real outcome. This is the
+          // bug that bit Ava's post: cron fired 44 seconds after
+          // scheduled_datetime, all platforms still pending, we
+          // marked it failed, but TikTok actually delivered
+          // minutes later.
+          const scheduledMs = Date.parse(row.scheduled_datetime || '')
+          const ageMs       = Number.isFinite(scheduledMs) ? Date.now() - scheduledMs : Infinity
+          const GRACE_MS    = 5 * 60 * 1000
+          if (ageMs < GRACE_MS) {
+            results.indeterminate += 1
+            continue
+          }
           await supaFetch(`content_scripts?id=eq.${row.id}`, {
             method: 'PATCH',
             body: {
