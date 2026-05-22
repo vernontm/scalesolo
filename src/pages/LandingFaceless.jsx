@@ -19,7 +19,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  Zap, ArrowRight, Check, Play, Volume2, VolumeX, X,
+  Zap, ArrowRight, Check, Play, X,
 } from 'lucide-react'
 import PricingPlans from '../components/PricingPlans.jsx'
 
@@ -68,21 +68,7 @@ const PROOF_TILES = [
 ]
 
 export default function LandingFaceless() {
-  const [heroMuted, setHeroMuted] = useState(true)
   const [demoOpen, setDemoOpen] = useState(false)
-  const [showHeroVideo, setShowHeroVideo] = useState(false)
-
-  // Defer hero mount past first paint so smoke tests / slow networks
-  // don't hang on the metadata fetch.
-  useEffect(() => {
-    const idle = window.requestIdleCallback
-      ? window.requestIdleCallback(() => setShowHeroVideo(true), { timeout: 500 })
-      : window.requestAnimationFrame(() => setShowHeroVideo(true))
-    return () => {
-      if (window.cancelIdleCallback && window.requestIdleCallback) window.cancelIdleCallback(idle)
-      else window.cancelAnimationFrame(idle)
-    }
-  }, [])
 
   // Esc closes lightbox + lock body scroll while open.
   useEffect(() => {
@@ -138,41 +124,6 @@ export default function LandingFaceless() {
           <h1 style={h1}>
             Grow a <span className="brand-text">faceless brand</span> 10x faster.
           </h1>
-          <p style={sub}>
-            No camera. No editor. No daily grind. Upload one photo, clone your voice, and
-            ScaleSolo turns a single idea into a finished video and posts it everywhere for you.
-          </p>
-
-          <div style={videoWrap} className="fade-up">
-            <div aria-hidden style={videoHalo} />
-            <div style={videoFrame}>
-              {showHeroVideo ? (
-                <>
-                  <video
-                    src={HERO_VIDEO}
-                    autoPlay
-                    muted={heroMuted}
-                    loop
-                    playsInline
-                    preload="metadata"
-                    aria-label="ScaleSolo faceless brand demo"
-                    style={videoEl}
-                    onError={(e) => { e.currentTarget.style.opacity = '0' }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setHeroMuted((m) => !m)}
-                    aria-label={heroMuted ? 'Unmute' : 'Mute'}
-                    style={muteBtn}
-                  >
-                    {heroMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
-                  </button>
-                </>
-              ) : (
-                <div style={{ ...videoEl, background: 'rgba(255,255,255,0.04)' }} />
-              )}
-            </div>
-          </div>
 
           <div style={ctas}>
             <TrialCTA />
@@ -448,40 +399,7 @@ const h1 = {
   fontSize: 'clamp(36px, 6vw, 64px)', lineHeight: 1.04,
   letterSpacing: '-0.025em', margin: 0,
 }
-const sub = {
-  fontSize: 17, color: 'var(--text-soft)', maxWidth: 640,
-  lineHeight: 1.55, margin: '4px auto 8px',
-}
-
-const videoWrap = { position: 'relative', width: '100%', maxWidth: 820, margin: '8px 0 4px' }
-const videoHalo = {
-  position: 'absolute', inset: '-22%',
-  background: 'conic-gradient(from 0deg, rgba(239,68,68,0) 0%, rgba(239,68,68,0.55) 8%, rgba(255,140,80,0.85) 12%, rgba(239,68,68,0.55) 16%, rgba(239,68,68,0) 24%, rgba(239,68,68,0) 50%, rgba(239,68,68,0.45) 58%, rgba(255,180,120,0.75) 62%, rgba(239,68,68,0.45) 66%, rgba(239,68,68,0) 74%)',
-  filter: 'blur(40px)', zIndex: 0,
-  animation: 'glowSpin 12s linear infinite',
-}
-const videoFrame = {
-  position: 'relative', zIndex: 1,
-  borderRadius: 18, overflow: 'hidden',
-  background: '#000',
-}
-const videoEl = {
-  width: '100%', height: 'auto', display: 'block',
-  filter: 'drop-shadow(0 30px 60px rgba(0,0,0,0.55)) drop-shadow(0 0 40px rgba(239,68,68,0.18))',
-  borderRadius: 18,
-}
-const muteBtn = {
-  position: 'absolute', right: 12, bottom: 12,
-  width: 44, height: 44, borderRadius: 999,
-  background: 'rgba(0, 0, 0, 0.55)',
-  backdropFilter: 'blur(8px)',
-  WebkitBackdropFilter: 'blur(8px)',
-  border: '1px solid rgba(255, 255, 255, 0.18)',
-  color: '#fff',
-  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-  cursor: 'pointer', zIndex: 3,
-}
-const ctas = { display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center', marginTop: 6 }
+const ctas = { display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center', marginTop: 14 }
 const ctaSizing = { padding: '13px 24px', fontSize: 14, justifyContent: 'center' }
 const trustPills = { display: 'flex', gap: 14, flexWrap: 'wrap', justifyContent: 'center', marginTop: 4 }
 const pill = {
