@@ -216,8 +216,9 @@ export default function LandingFaceless() {
             Get instant access for <span className="brand-text">$1</span>.
           </h2>
           <p style={{ ...sectionBody, maxWidth: 580 }}>
-            Try ScaleSolo for 3 days, full access, no limits. After your trial you'll lock in our
-            Founding price for life — never goes up. Cancel anytime online before day 3 and you
+            Try ScaleSolo for 3 days. Build avatars, generate videos, polish, and post manually —
+            it's all yours. Auto-scheduling unlocks the moment your trial converts. After day 3
+            you lock in our Founding price for life. Cancel anytime online before then and you
             won't be billed again.
           </p>
           <div style={{ ...ctas, marginTop: 14 }}>
