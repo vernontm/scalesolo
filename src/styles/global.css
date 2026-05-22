@@ -355,6 +355,22 @@ a { color: inherit; text-decoration: none; }
   .tile-glow::before { opacity: 0.45; }
 }
 
+/* /faceless-brand mobile layout overrides.
+   The 403K split section uses a left-aligned text column on desktop
+   (with the phone screenshot beside it). On mobile that column stacks
+   above the screenshot — center it so the CTA + headline match the
+   rest of the centered mobile flow. */
+@media (max-width: 760px) {
+  .faceless-split-text { text-align: center; }
+  .faceless-split-cta  { justify-content: center !important; }
+  /* Risk-reversal microcopy + every primary-CTA wrapper centers
+     under its respective section header. They already use
+     justify-content: center in JS, but flex-wrap edge cases on
+     narrow viewports sometimes leave a CTA hugging the left edge.
+     This is the belt-and-suspenders. */
+  .faceless-split-cta > button { margin: 0 auto; }
+}
+
 /* Hover-lift for marketing cards. Apply via className="lift". */
 .lift { transition: transform 220ms var(--ease), box-shadow 220ms var(--ease), border-color 220ms var(--ease); }
 .lift:hover {

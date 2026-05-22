@@ -25,6 +25,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Zap, ArrowRight, Check, Play, X, Lock, Shield, Sparkles, ChevronDown,
+  ChevronLeft, ChevronRight,
 } from 'lucide-react'
 
 const HERO_VIDEO = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/Scalesolo%20ad.mp4'
@@ -120,7 +121,7 @@ const TESTIMONIALS = [
     color: 'linear-gradient(135deg, #ef4444, #f59e0b)',
     name: 'Kara H.',
     role: 'Relationships podcast host',
-    quote: '"I cloned my voice, dropped in one photo, and now my faceless podcast posts every day on autopilot. One pinned video hit 2.1M views — I never showed my face once."',
+    quote: '"I cloned my voice, dropped in one photo, and now my faceless podcast posts every day on autopilot. One pinned video hit 2.1M views, and I never showed my face once."',
     result: '2.1M views on one pinned post',
   },
   {
@@ -136,7 +137,7 @@ const TESTIMONIALS = [
     color: 'linear-gradient(135deg, #10b981, #06b6d4)',
     name: 'Samir R.',
     role: 'Real estate coach',
-    quote: '"Closed 2 deals from leads who saw my avatar videos. The avatar is consistent — same voice, same look, every video. My audience trusts a face they keep seeing. $1 was the easiest decision I\'ve made all year."',
+    quote: '"Closed 2 deals from leads who saw my avatar videos. The avatar is consistent. Same voice, same look, every video. My audience trusts a face they keep seeing. $1 was the easiest decision I\'ve made all year."',
     result: '$14K in commissions from 1 funnel',
   },
 ]
@@ -144,11 +145,11 @@ const TESTIMONIALS = [
 const FAQ = [
   {
     q: 'What happens after the 3-day trial?',
-    a: "You'll be charged $79/month on day 4 — locked at the Founding price for as long as you stay. If you cancel any time before day 3, you're never billed again and your $1 stays $1.",
+    a: "You'll be charged $79/month on day 4, locked at the Founding price for as long as you stay. If you cancel any time before day 3, you're never billed again and your $1 stays $1.",
   },
   {
     q: 'Can I really cancel any time?',
-    a: 'Yes. One click in your dashboard, no email-us-and-wait nonsense. Cancel before day 3 and you owe nothing more. Cancel after and your subscription ends at the end of the month — no partial-month charges.',
+    a: 'Yes. One click in your dashboard, no email-us-and-wait nonsense. Cancel before day 3 and you owe nothing more. Cancel after and your subscription ends at the end of the month, no partial-month charges.',
   },
   {
     q: 'Do I have to be on camera for any of this?',
@@ -164,7 +165,7 @@ const FAQ = [
   },
   {
     q: "Why is the Founding price 'locked for life'?",
-    a: "Founding members are how we keep building. As long as your subscription stays active, your monthly rate never goes up — no matter how much we add to the platform. Cancel and the founding price is gone for good.",
+    a: "Founding members are how we keep building. As long as your subscription stays active, your monthly rate never goes up, no matter how much we add to the platform. Cancel and the founding price is gone for good.",
   },
 ]
 
@@ -250,7 +251,7 @@ export default function LandingFaceless() {
   const RiskReversal = () => (
     <div style={riskRow}>
       <span style={riskItem}><Check size={11} /> $1 today</span>
-      <span style={riskItem}><Check size={11} /> Cancel anytime — $1 stays $1</span>
+      <span style={riskItem}><Check size={11} /> Cancel anytime, $1 stays $1</span>
       <span style={riskItem}><Lock size={11} /> Founding price locked for life</span>
     </div>
   )
@@ -285,7 +286,7 @@ export default function LandingFaceless() {
 
           <h1 style={h1}>
             Build a <span className="brand-text">faceless brand</span><br />
-            that posts every day — without you.
+            that posts every day, without you.
           </h1>
           <p style={heroSub}>
             One photo in. Finished videos out. Auto-published to <strong style={{ color: 'var(--text)' }}>9+ platforms</strong> while you sleep.
@@ -311,21 +312,12 @@ export default function LandingFaceless() {
             Brands like these are scaling <span className="brand-text">without ever showing their face.</span>
           </h2>
           <p style={sectionBody}>
-            Hundreds of thousands of views, followers, and likes — all on autopilot. ScaleSolo is the engine that powers them.
+            Hundreds of thousands of views, followers, and likes, all on autopilot. ScaleSolo is the engine that powers them.
           </p>
         </div>
 
-        <div style={proofGrid}>
-          {PROOF_TILES.map((t, i) => (
-            <div
-              key={t.src}
-              className="tile-glow fade-up"
-              style={{ ...proofTile, ['--tile-delay']: `${i * 2.6}s` }}
-            >
-              <img src={t.src} alt={t.alt} style={proofImg} loading="lazy" />
-            </div>
-          ))}
-        </div>
+        <ProofTiles />
+
 
         <div style={stepsCtaWrap}>
           <TrialCTA label={<>Start building yours · <span className="sparkle-host">$1</span></>} />
@@ -336,7 +328,7 @@ export default function LandingFaceless() {
       {/* ── HEADLINE STAT: 403K ───────────────────────────────────────── */}
       <section style={section}>
         <div style={proofSplit}>
-          <div style={proofSplitText}>
+          <div style={proofSplitText} className="faceless-split-text">
             <div style={sectionEyebrow}>The result, in one screenshot</div>
             <h2 style={h2}>
               <span style={greenAccent}>403,840 views.</span>
@@ -346,7 +338,7 @@ export default function LandingFaceless() {
               30 days. One creator. One avatar. The exact ScaleSolo workflow you're about to see.
               305,383 accounts reached, 163% growth, and not a single video where the creator showed their face.
             </p>
-            <div style={{ ...stepsCtaWrap, marginTop: 22, justifyContent: 'flex-start' }}>
+            <div style={{ ...stepsCtaWrap, marginTop: 22 }} className="faceless-split-cta">
               <TrialCTA />
             </div>
           </div>
@@ -498,7 +490,7 @@ export default function LandingFaceless() {
             Get instant access for <span className="brand-text sparkle-host">$1</span>.
           </h2>
           <p style={{ ...sectionBody, maxWidth: 580 }}>
-            Try ScaleSolo for 3 days. Build avatars, generate videos, polish, and post manually — it's all yours.
+            Try ScaleSolo for 3 days. Build avatars, generate videos, polish, and post manually. It's all yours.
             Auto-scheduling unlocks the moment your trial converts. After day 3 you lock in our Founding price for life.
             Cancel anytime online before then and you won't be billed again.
           </p>
@@ -581,6 +573,115 @@ export default function LandingFaceless() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// Proof tiles. Desktop renders the three tiles as a 3-up grid with
+// the sequential tile-glow cycle (handled by CSS). Mobile renders a
+// horizontal carousel showing one tile at a time, auto-advancing
+// every ~5s, with chevron arrows to scrub manually.
+function ProofTiles() {
+  const [isMobile, setIsMobile] = useState(false)
+  const [index, setIndex] = useState(0)
+  const [paused, setPaused] = useState(false)
+
+  // Track viewport width via matchMedia so we don't render the carousel
+  // logic when desktop never needs it.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return
+    const mq = window.matchMedia('(max-width: 760px)')
+    const sync = () => setIsMobile(mq.matches)
+    sync()
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
+  }, [])
+
+  // Auto-advance the carousel every 5s while on mobile and the user
+  // hasn't paused via arrow interaction. setInterval re-fires on
+  // index/paused change so the timer resets when user nav happens.
+  useEffect(() => {
+    if (!isMobile || paused) return
+    const t = setInterval(() => {
+      setIndex((i) => (i + 1) % PROOF_TILES.length)
+    }, 5000)
+    return () => clearInterval(t)
+  }, [isMobile, paused])
+
+  // Pause autoplay briefly after a manual arrow click so the next
+  // auto-tick doesn't yank the slide away from the user immediately.
+  const nudge = (delta) => {
+    setIndex((i) => (i + delta + PROOF_TILES.length) % PROOF_TILES.length)
+    setPaused(true)
+    setTimeout(() => setPaused(false), 8000)
+  }
+
+  if (!isMobile) {
+    return (
+      <div style={proofGrid}>
+        {PROOF_TILES.map((t, i) => (
+          <div
+            key={t.src}
+            className="tile-glow fade-up"
+            style={{ ...proofTile, ['--tile-delay']: `${i * 2.6}s` }}
+          >
+            <img src={t.src} alt={t.alt} style={proofImg} loading="lazy" />
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  return (
+    <div style={carouselWrap}>
+      <div style={carouselViewport}>
+        <div
+          style={{
+            ...carouselTrack,
+            transform: `translateX(-${index * 100}%)`,
+          }}
+        >
+          {PROOF_TILES.map((t, i) => (
+            <div
+              key={t.src}
+              className={`tile-glow ${i === index ? 'fade-in' : ''}`}
+              style={{ ...proofTile, ...carouselSlide, ['--tile-delay']: '0s' }}
+            >
+              <img src={t.src} alt={t.alt} style={proofImg} loading="lazy" />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => nudge(-1)}
+        aria-label="Previous example"
+        style={{ ...carouselArrow, left: 4 }}
+      >
+        <ChevronLeft size={20} />
+      </button>
+      <button
+        type="button"
+        onClick={() => nudge(1)}
+        aria-label="Next example"
+        style={{ ...carouselArrow, right: 4 }}
+      >
+        <ChevronRight size={20} />
+      </button>
+
+      <div style={carouselDots} aria-hidden>
+        {PROOF_TILES.map((_, i) => (
+          <span
+            key={i}
+            style={{
+              ...carouselDot,
+              background: i === index ? 'var(--red)' : 'rgba(255,255,255,0.25)',
+              width: i === index ? 18 : 6,
+            }}
+          />
+        ))}
+      </div>
     </div>
   )
 }
@@ -736,9 +837,52 @@ const proofImg = {
   display: 'block',
   width: '100%', height: 'auto', aspectRatio: '1290 / 2796',
   objectFit: 'cover',
+  objectPosition: 'center top',
   borderRadius: 12,
   position: 'relative',
   zIndex: 1,
+}
+
+// Mobile carousel for the proof tiles. One slide visible at a time,
+// auto-advancing horizontally with arrows on either side and dots
+// underneath.
+const carouselWrap = {
+  position: 'relative',
+  maxWidth: 360, margin: '0 auto',
+}
+const carouselViewport = {
+  overflow: 'hidden',
+  borderRadius: 22,
+}
+const carouselTrack = {
+  display: 'flex',
+  width: '100%',
+  transition: 'transform 480ms cubic-bezier(0.22, 1, 0.36, 1)',
+}
+const carouselSlide = {
+  flex: '0 0 100%',
+  minWidth: 0,
+}
+const carouselArrow = {
+  position: 'absolute',
+  top: '50%', transform: 'translateY(-50%)',
+  width: 38, height: 38, borderRadius: 999,
+  background: 'rgba(10, 10, 14, 0.78)',
+  border: '1px solid rgba(255,255,255,0.18)',
+  color: '#fff',
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  cursor: 'pointer',
+  zIndex: 3,
+  backdropFilter: 'blur(8px)',
+  WebkitBackdropFilter: 'blur(8px)',
+}
+const carouselDots = {
+  display: 'flex', justifyContent: 'center', gap: 6,
+  marginTop: 14,
+}
+const carouselDot = {
+  height: 6, borderRadius: 999,
+  transition: 'all 240ms',
 }
 
 // 403K split
