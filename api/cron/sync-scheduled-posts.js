@@ -155,24 +155,43 @@ export default async function handler(req, res) {
 
     for (const row of rows) {
       try {
-        const { ok, body } = await fetchStatus(row.uploadpost_request_id)
-        if (!ok) { results.errors += 1; continue }
-        const { verdict, summary } = classify(body)
+        const { ok, status, body } = await fetchStatus(row.uploadpost_request_id)
 
         // Existing-failed back-fill: keep status=failed, just write
-        // last_error so the user can see why. Don't touch posted/
-        // scheduled rows during the back-fill loop.
+        // last_error so the user can see why. ALWAYS writes
+        // something now (was silently no-op'ing on rows where
+        // Upload-Post returned a sparse response — e.g. old
+        // request_ids whose per-platform error_message field has
+        // been purged). At minimum we record what Upload-Post said,
+        // even if it was "no platforms array" / "no status", so the
+        // row tells us something instead of staying null forever.
         if (row.status === 'failed') {
-          if (summary) {
-            await supaFetch(`content_scripts?id=eq.${row.id}`, {
-              method: 'PATCH',
-              body: { last_error: summary },
-              prefer: 'return=minimal',
-            })
-            results.backfilled += 1
-          }
+          const { summary } = classify(body)
+          // Snapshot a compact preview of the raw response in case
+          // we need to read it later — capped at 240 chars so we
+          // don't dump a 5KB blob into last_error.
+          const rawPreview = (() => {
+            try {
+              if (!body) return 'empty body'
+              const j = typeof body === 'string' ? body : JSON.stringify(body)
+              return j.length > 240 ? j.slice(0, 240) + '…' : j
+            } catch { return '<unserializable>' }
+          })()
+          const errorText = summary
+            || (!ok ? `Upload-Post status endpoint returned HTTP ${status}: ${rawPreview}` : null)
+            || (body?.status ? `Upload-Post status: ${body.status} · raw: ${rawPreview}` : null)
+            || `Upload-Post returned no per-platform error detail. raw: ${rawPreview}`
+          await supaFetch(`content_scripts?id=eq.${row.id}`, {
+            method: 'PATCH',
+            body: { last_error: errorText.slice(0, 1000) },
+            prefer: 'return=minimal',
+          })
+          results.backfilled += 1
           continue
         }
+
+        if (!ok) { results.errors += 1; continue }
+        const { verdict, summary } = classify(body)
 
         if (verdict === 'posted') {
           await supaFetch(`content_scripts?id=eq.${row.id}`, {
