@@ -376,8 +376,10 @@ export default function LandingFaceless() {
         <RiskReversal />
       </section>
 
-      {/* ── VALUE STACK ────────────────────────────────────────────────── */}
-      <section style={section}>
+      <SectionDivider />
+
+      {/* ── VALUE STACK (amber wash) ───────────────────────────────────── */}
+      <section style={{ ...section, ...sectionWashAmber }}>
         <div style={sectionHead}>
           <div style={sectionEyebrow}>Everything your $1 unlocks</div>
           <h2 style={h2}>What's inside the <span className="brand-text">$1 trial</span>.</h2>
@@ -419,8 +421,10 @@ export default function LandingFaceless() {
         <RiskReversal />
       </section>
 
-      {/* ── TESTIMONIALS ───────────────────────────────────────────────── */}
-      <section style={section}>
+      <SectionDivider />
+
+      {/* ── TESTIMONIALS (indigo wash) ─────────────────────────────────── */}
+      <section style={{ ...section, ...sectionWashIndigo }}>
         <div style={sectionHead}>
           <div style={sectionEyebrow}>Early Founding members</div>
           <h2 style={h2}>Real creators. <span className="brand-text">Real results.</span></h2>
@@ -445,8 +449,10 @@ export default function LandingFaceless() {
         </div>
       </section>
 
-      {/* ── FAQ ────────────────────────────────────────────────────────── */}
-      <section style={section}>
+      <SectionDivider />
+
+      {/* ── FAQ (neutral lift) ─────────────────────────────────────────── */}
+      <section style={{ ...section, ...sectionWashNeutral }}>
         <div style={sectionHead}>
           <div style={sectionEyebrow}>Common questions</div>
           <h2 style={h2}>Answered before you ask.</h2>
@@ -477,6 +483,8 @@ export default function LandingFaceless() {
         </div>
         <RiskReversal />
       </section>
+
+      <SectionDivider />
 
       {/* ── FINAL CTA STRIP ────────────────────────────────────────────── */}
       <section style={{ ...section, paddingTop: 8 }}>
@@ -686,6 +694,14 @@ function ProofTiles() {
   )
 }
 
+// Thin red gradient line between sections. Same trick Apple / Linear /
+// Vercel use to break up a long dark page without changing the base
+// background. Centered, 60% width, fades to transparent on both sides
+// so it reads as a "scene break" rather than a hard divider.
+function SectionDivider() {
+  return <div aria-hidden style={sectionDivider} />
+}
+
 // Step card: landscape 16:9 GIF on one side, copy on the other.
 function StepRow({ step, flip }) {
   return (
@@ -799,6 +815,38 @@ const riskItem = {
 
 // Sections
 const section = { maxWidth: 1180, margin: '0 auto', padding: '48px 20px' }
+
+// Thin gradient line between content sections. 60% width, centered,
+// fades on both ends. Same idea Apple uses between feature blocks.
+const sectionDivider = {
+  width: 'min(60%, 720px)',
+  height: 1,
+  margin: '0 auto',
+  background: 'linear-gradient(90deg, transparent, rgba(239,68,68,0.40), transparent)',
+}
+
+// Themed background washes per Hormozi-style section anchoring.
+// `position: relative` + radial-gradient on the section itself (not
+// the body) so the wash sits behind the content but doesn't leak
+// outside the section bounds.
+//
+// Each section keeps the base dark bg from <body> showing through;
+// the wash is layered on top with a soft radial gradient.
+const sectionWashAmber = {
+  position: 'relative',
+  isolation: 'isolate',
+  background: 'radial-gradient(80% 60% at 50% 0%, rgba(251,191,36,0.10), transparent 70%)',
+}
+const sectionWashIndigo = {
+  position: 'relative',
+  isolation: 'isolate',
+  background: 'radial-gradient(70% 60% at 30% 0%, rgba(99,102,241,0.16), transparent 70%)',
+}
+const sectionWashNeutral = {
+  position: 'relative',
+  isolation: 'isolate',
+  background: 'radial-gradient(75% 60% at 50% 0%, rgba(255,255,255,0.025), transparent 70%)',
+}
 const sectionHead = { textAlign: 'center', maxWidth: 760, margin: '0 auto 36px' }
 const sectionEyebrow = {
   display: 'inline-flex', padding: '4px 12px', borderRadius: 999,
