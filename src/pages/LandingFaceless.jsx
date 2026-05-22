@@ -61,12 +61,6 @@ const STEPS = [
   },
 ]
 
-const PROOF_TILES = [
-  { src: `${STEP_MEDIA}proof-stats.png`,   alt: '403,840 views in 30 days · Instagram analytics' },
-  { src: `${STEP_MEDIA}proof-margo.png`,   alt: 'Soul of Margo · faceless creator profile' },
-  { src: `${STEP_MEDIA}proof-3.png`,       alt: 'Faceless brand growth example' },
-]
-
 export default function LandingFaceless() {
   const [demoOpen, setDemoOpen] = useState(false)
 
@@ -113,58 +107,6 @@ export default function LandingFaceless() {
           Start free trial
         </button>
       </header>
-
-      {/* ── HERO ───────────────────────────────────────────────────────── */}
-      <section style={hero}>
-        <div aria-hidden style={heroGlowOuter} />
-        <div aria-hidden style={heroGlowInner} />
-
-        <div style={heroInner}>
-          <span style={eyebrow}>Faceless brands · zero cameras · full autopilot</span>
-          <h1 style={h1}>
-            Grow a <span className="brand-text">faceless brand</span> 10x faster.
-          </h1>
-
-          <div style={ctas}>
-            <TrialCTA />
-            <button type="button" onClick={() => setDemoOpen(true)} className="btn-secondary" style={ctaSizing}>
-              <Play size={13} fill="currentColor" /> Watch full demo
-            </button>
-          </div>
-
-          <div style={trustPills}>
-            <span style={pill}><Check size={11} /> 3-day free trial</span>
-            <span style={pill}><Check size={11} /> 5-minute setup</span>
-            <span style={pill}><Check size={11} /> Cancel anytime</span>
-          </div>
-        </div>
-      </section>
-
-      {/* ── SOCIAL PROOF: real faceless brands ─────────────────────────── */}
-      <section style={section}>
-        <div style={sectionHead}>
-          <div style={sectionEyebrow}>Real faceless brands</div>
-          <h2 style={h2}>
-            Creators are scaling brands like these <span className="brand-text">without ever showing their face.</span>
-          </h2>
-          <p style={sectionBody}>
-            Faceless avatar brands now rack up hundreds of thousands of views, followers, and likes
-            on autopilot. ScaleSolo is the engine that powers them.
-          </p>
-        </div>
-
-        <div style={proofGrid}>
-          {PROOF_TILES.map((t) => (
-            <div key={t.src} style={proofTile} className="fade-up">
-              <img src={t.src} alt={t.alt} style={proofImg} loading="lazy" />
-            </div>
-          ))}
-        </div>
-
-        <div style={stepsCtaWrap}>
-          <TrialCTA label="Start building yours · free trial" />
-        </div>
-      </section>
 
       {/* ── HEADLINE STAT: Talk It Out Podcast proof ───────────────────── */}
       <section style={section}>
@@ -367,38 +309,6 @@ const logoMark = {
 }
 const logoText = { fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16, letterSpacing: '-0.01em' }
 
-const hero = {
-  position: 'relative', overflow: 'hidden',
-  padding: '56px 20px 64px',
-  isolation: 'isolate',
-}
-const heroGlowOuter = {
-  position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)',
-  width: 'min(900px, 95vw)', height: 900, pointerEvents: 'none', zIndex: -1,
-  background: 'radial-gradient(60% 50% at 50% 30%, rgba(239,68,68,0.32) 0%, rgba(239,68,68,0) 70%)',
-  filter: 'blur(8px)',
-}
-const heroGlowInner = {
-  position: 'absolute', top: 80, left: '50%', transform: 'translateX(-50%)',
-  width: 'min(560px, 80vw)', height: 480, pointerEvents: 'none', zIndex: -1,
-  background: 'radial-gradient(40% 50% at 50% 30%, rgba(251,191,36,0.18) 0%, rgba(239,68,68,0) 80%)',
-}
-const heroInner = {
-  maxWidth: 920, margin: '0 auto', display: 'flex', flexDirection: 'column',
-  alignItems: 'center', textAlign: 'center', gap: 18,
-}
-const eyebrow = {
-  display: 'inline-flex', alignItems: 'center',
-  padding: '5px 12px', borderRadius: 999,
-  background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.35)',
-  color: 'var(--red)', fontSize: 11, fontFamily: 'var(--font-display)',
-  fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
-}
-const h1 = {
-  fontFamily: 'var(--font-display)', fontWeight: 800,
-  fontSize: 'clamp(36px, 6vw, 64px)', lineHeight: 1.04,
-  letterSpacing: '-0.025em', margin: 0,
-}
 const ctas = { display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center', marginTop: 14 }
 const ctaSizing = { padding: '13px 24px', fontSize: 14, justifyContent: 'center' }
 const trustPills = { display: 'flex', gap: 14, flexWrap: 'wrap', justifyContent: 'center', marginTop: 4 }
@@ -425,29 +335,7 @@ const h2 = {
 }
 const sectionBody = { color: 'var(--text-soft)', fontSize: 15, lineHeight: 1.55, margin: '14px auto 0' }
 
-// Social-proof grid: 3 phone screenshots side by side, click-and-hold
-// vertical aspect.
-const proofGrid = {
-  display: 'grid', gap: 18,
-  gridTemplateColumns: 'repeat(auto-fit, minmax(min(260px, 100%), 1fr))',
-  maxWidth: 920, margin: '0 auto',
-}
-const proofTile = {
-  position: 'relative',
-  borderRadius: 18,
-  background: 'linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01))',
-  border: '1px solid rgba(255,255,255,0.06)',
-  padding: 10,
-  boxShadow: '0 20px 50px -10px rgba(0,0,0,0.5)',
-}
-const proofImg = {
-  display: 'block',
-  width: '100%', height: 'auto', aspectRatio: '1290 / 2796',
-  objectFit: 'cover',
-  borderRadius: 12,
-}
-
-// Split section: 403K stats screenshot + headline copy side by side.
+// Split section: Talk It Out podcast screenshot + headline copy side by side.
 const proofSplit = {
   display: 'grid',
   gridTemplateColumns: 'repeat(auto-fit, minmax(min(320px, 100%), 1fr))',
