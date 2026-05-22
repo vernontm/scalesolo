@@ -140,36 +140,6 @@ export default function LandingFaceless() {
         </div>
       </section>
 
-      {/* ── HEADLINE STAT: Talk It Out Podcast proof ───────────────────── */}
-      <section style={section}>
-        <div style={proofSplit}>
-          <div style={proofSplitText}>
-            <div style={sectionEyebrow}>The result, in one screenshot</div>
-            <h2 style={h2}>
-              <span style={{ background: 'linear-gradient(90deg, #10b981, #6ee7b7)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>2.1M views. On one video.</span>
-            </h2>
-            <h3 style={proofH3}>Built with ScaleSolo. No host ever on camera.</h3>
-            <p style={sectionBody}>
-              Talk It Out Podcast is a faceless brand. Avatar videos only. 387.7K total likes,
-              a growing follower count, and pinned posts hitting 2.1M, 500K, and 226K views each —
-              all without a real face on camera. This is the exact workflow you're about to see.
-            </p>
-            <div style={{ ...stepsCtaWrap, marginTop: 22, justifyContent: 'flex-start' }}>
-              <TrialCTA />
-            </div>
-          </div>
-          <div style={proofSplitMedia}>
-            <div style={proofHalo} aria-hidden />
-            <img
-              src={`${STEP_MEDIA}proof-podcast.png`}
-              alt="Talk It Out Podcast · 387.7K likes · faceless brand built with ScaleSolo"
-              style={proofPhone}
-              loading="lazy"
-            />
-          </div>
-        </div>
-      </section>
-
       {/* ── HOW IT WORKS: 4 steps × videos ─────────────────────────────── */}
       <section style={section}>
         <div style={sectionHead}>
@@ -386,38 +356,6 @@ const proofImg = {
   width: '100%', height: 'auto', aspectRatio: '1290 / 2796',
   objectFit: 'cover',
   borderRadius: 12,
-}
-
-// Split section: Talk It Out podcast screenshot + headline copy side by side.
-const proofSplit = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(min(320px, 100%), 1fr))',
-  gap: 32,
-  alignItems: 'center',
-  maxWidth: 1080,
-  margin: '0 auto',
-}
-const proofSplitText = { textAlign: 'left' }
-const proofH3 = {
-  marginTop: 8, fontFamily: 'var(--font-display)',
-  fontSize: 'clamp(20px, 2.4vw, 26px)', fontWeight: 700,
-  color: 'var(--text)', letterSpacing: '-0.015em',
-}
-const proofSplitMedia = {
-  position: 'relative',
-  display: 'grid', placeItems: 'center',
-}
-const proofHalo = {
-  position: 'absolute', inset: '-15%',
-  background: 'radial-gradient(40% 40% at 50% 50%, rgba(16,185,129,0.35), transparent 70%)',
-  filter: 'blur(40px)', pointerEvents: 'none', zIndex: 0,
-}
-const proofPhone = {
-  position: 'relative', zIndex: 1,
-  width: '100%', maxWidth: 320,
-  aspectRatio: '1290 / 2796', objectFit: 'cover',
-  borderRadius: 28, border: '4px solid rgba(255,255,255,0.06)',
-  boxShadow: '0 40px 80px -10px rgba(0,0,0,0.55), 0 0 0 2px rgba(16,185,129,0.35)',
 }
 
 // Steps list: each step is a row with video + copy. Flips sides on
