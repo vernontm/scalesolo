@@ -30,6 +30,12 @@ const STEP_MEDIA = '/landing/faceless-steps/'
 // Single source of truth — easier to swap renders without touching the repo.
 const STEP_GIF_BASE = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/steps-gif/'
 
+const PROOF_TILES = [
+  { src: `${STEP_MEDIA}proof-stats.png`,   alt: '403,840 views in 30 days · Instagram analytics' },
+  { src: `${STEP_MEDIA}proof-margo.png`,   alt: 'Soul of Margo · faceless creator profile' },
+  { src: `${STEP_MEDIA}proof-3.png`,       alt: 'Faceless brand growth example' },
+]
+
 const STEPS = [
   {
     n: '01',
@@ -107,6 +113,32 @@ export default function LandingFaceless() {
           Start free trial
         </button>
       </header>
+
+      {/* ── SOCIAL PROOF: real faceless brands ─────────────────────────── */}
+      <section style={section}>
+        <div style={sectionHead}>
+          <div style={sectionEyebrow}>Real faceless brands</div>
+          <h2 style={h2}>
+            Creators are scaling brands like these <span className="brand-text">without ever showing their face.</span>
+          </h2>
+          <p style={sectionBody}>
+            Faceless avatar brands now rack up hundreds of thousands of views, followers, and likes
+            on autopilot. ScaleSolo is the engine that powers them.
+          </p>
+        </div>
+
+        <div style={proofGrid}>
+          {PROOF_TILES.map((t) => (
+            <div key={t.src} style={proofTile} className="fade-up">
+              <img src={t.src} alt={t.alt} style={proofImg} loading="lazy" />
+            </div>
+          ))}
+        </div>
+
+        <div style={stepsCtaWrap}>
+          <TrialCTA label="Start building yours · free trial" />
+        </div>
+      </section>
 
       {/* ── HEADLINE STAT: Talk It Out Podcast proof ───────────────────── */}
       <section style={section}>
@@ -334,6 +366,27 @@ const h2 = {
   letterSpacing: '-0.02em', margin: 0,
 }
 const sectionBody = { color: 'var(--text-soft)', fontSize: 15, lineHeight: 1.55, margin: '14px auto 0' }
+
+// Social-proof grid: 3 phone screenshots side by side, vertical aspect.
+const proofGrid = {
+  display: 'grid', gap: 18,
+  gridTemplateColumns: 'repeat(auto-fit, minmax(min(260px, 100%), 1fr))',
+  maxWidth: 920, margin: '0 auto',
+}
+const proofTile = {
+  position: 'relative',
+  borderRadius: 18,
+  background: 'linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01))',
+  border: '1px solid rgba(255,255,255,0.06)',
+  padding: 10,
+  boxShadow: '0 20px 50px -10px rgba(0,0,0,0.5)',
+}
+const proofImg = {
+  display: 'block',
+  width: '100%', height: 'auto', aspectRatio: '1290 / 2796',
+  objectFit: 'cover',
+  borderRadius: 12,
+}
 
 // Split section: Talk It Out podcast screenshot + headline copy side by side.
 const proofSplit = {
