@@ -55,6 +55,14 @@ async function fetchStatus(requestId) {
 // describing per-platform outcomes so we can persist it as last_error
 // on failure. Without this, failed rows had `last_error = null` and
 // users couldn't see why the post died.
+//
+// Edge case Upload-Post hits us with: status='in_progress' with
+// completed > 0 but total has never settled. In practice this means
+// SOME platforms delivered (those in the results array) and others
+// never will (no token, no platform setup, Upload-Post stuck). We
+// treat partial completion as 'posted' once at least one result
+// shows success — there's no value to waiting forever for the
+// remaining platforms that are never coming.
 function classify(body) {
   if (!body || typeof body !== 'object') return { verdict: null, summary: null }
 
@@ -65,7 +73,18 @@ function classify(body) {
       ? body.data.results
       : null
   if (Array.isArray(resultsArr) && resultsArr.length) {
-    const anySuccess = resultsArr.some((r) => r?.success === true || r?.success === 'true')
+    // Treat any truthy value as success — Upload-Post has at various
+    // times returned `success: true`, `"true"`, `"success"`, or an
+    // `upload_timestamp` field alongside no success flag at all.
+    // The presence of an upload_timestamp is the strongest signal
+    // that the platform actually delivered.
+    const isResultSuccess = (r) => {
+      if (r?.success === true || r?.success === 'true') return true
+      if (typeof r?.status === 'string' && /post|deliver|success|complet/i.test(r.status)) return true
+      if (r?.upload_timestamp || r?.post_url) return true
+      return false
+    }
+    const anySuccess = resultsArr.some(isResultSuccess)
     const allFailed  = resultsArr.every((r) => r?.success === false || r?.success === 'false')
     // Build a "tiktok: <reason> · instagram: <reason>" string so it
     // shows up on the row's last_error when we mark it failed.
@@ -178,13 +197,15 @@ export default async function handler(req, res) {
         //       what Upload-Post said and the row stays failed.
         if (row.status === 'failed') {
           const { verdict, summary } = classify(body)
-          // Compact preview of the raw response in case we need to
-          // read it later — capped so we don't dump a 5KB blob.
+          // Preview of the raw response for diagnostic purposes.
+          // Capped at ~800 chars so we can see the whole results
+          // array on a typical 4-platform post without exhausting
+          // the 1000-char last_error budget.
           const rawPreview = (() => {
             try {
               if (!body) return 'empty body'
               const j = typeof body === 'string' ? body : JSON.stringify(body)
-              return j.length > 240 ? j.slice(0, 240) + '…' : j
+              return j.length > 800 ? j.slice(0, 800) + '…' : j
             } catch { return '<unserializable>' }
           })()
 
@@ -209,7 +230,7 @@ export default async function handler(req, res) {
             || `Upload-Post returned no per-platform error detail. raw: ${rawPreview}`
           await supaFetch(`content_scripts?id=eq.${row.id}`, {
             method: 'PATCH',
-            body: { last_error: errorText.slice(0, 1000) },
+            body: { last_error: errorText.slice(0, 2000) },
             prefer: 'return=minimal',
           })
           results.backfilled += 1
