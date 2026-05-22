@@ -1,27 +1,26 @@
-// Ad-traffic landing page at /faceless-brand. Funnel structure tuned
-// for paid social → signup conversion:
-//   1. Hero (autoplay demo + primary CTA)
-//   2. Social-proof strip — real faceless brand profiles
-//   3. Headline stat — the 403K views screenshot, framed as proof
-//   4. Four steps, each anchored on a real product GIF + body copy
-//   5. Stats bar (creator economy)
-//   6. Final pricing block (founding price)
-//   7. Footer
+// Ad-traffic landing page at /faceless-brand. Funnel is a $1 tripwire:
+//   1. Social-proof tile grid (3 faceless brand profiles)
+//   2. Headline stat (403,840 views proof)
+//   3. Four steps, each anchored on a real product GIF + body copy
+//   4. Scarcity bar — $1 trial, $79/mo after, only 100 Founding spots
+//   5. Final CTA strip
+//   6. Footer
 //
-// Multiple "Start your free trial" CTAs scroll-link to #pricing, which
-// drops straight into PricingPlans. Single conversion target. The
-// minimal header (logo only) is intentional — we don't want ad traffic
-// bouncing into the broader feature tour.
+// Every CTA hits POST /api/stripe-trial-checkout which creates a
+// Stripe Checkout session that charges $1 today + starts a 3-day
+// trial on the $79/mo Founding price. After 3 days the subscription
+// auto-converts. Modeled after DigitalMarketer's "$1 charter trial"
+// landing. The pricing comparison table is intentionally hidden on
+// /faceless-brand — full PricingPlans still lives on /pricing and in
+// the in-app paywall for warm traffic.
 //
-// Step media lives at /landing/faceless-steps/step-{1..4}.mp4 (autoplay
-// muted loop, vertical 1080x1920) plus four proof PNGs alongside.
+// Step media: landscape GIFs hosted in Supabase storage.
 
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Zap, ArrowRight, Check, Play, X,
 } from 'lucide-react'
-import PricingPlans from '../components/PricingPlans.jsx'
 
 const HERO_VIDEO = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/Scalesolo%20ad.mp4'
 
@@ -69,6 +68,8 @@ const STEPS = [
 
 export default function LandingFaceless() {
   const [demoOpen, setDemoOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [checkoutError, setCheckoutError] = useState(null)
 
   // Esc closes lightbox + lock body scroll while open.
   useEffect(() => {
@@ -83,21 +84,35 @@ export default function LandingFaceless() {
     }
   }, [demoOpen])
 
-  const scrollToPricing = () => {
-    const el = document.getElementById('pricing')
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  // Single click target: POSTs to the $1-trial Stripe endpoint and
+  // hands the browser off to the returned Checkout URL. The endpoint
+  // is anonymous — Stripe collects the email itself during checkout.
+  const startTrial = async () => {
+    if (busy) return
+    setBusy(true)
+    setCheckoutError(null)
+    try {
+      const r = await fetch('/api/stripe-trial-checkout', { method: 'POST' })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok || !body.url) throw new Error(body?.error || `Couldn't start checkout (${r.status})`)
+      window.location.href = body.url
+    } catch (e) {
+      setCheckoutError(e.message || 'Something went wrong starting your trial.')
+      setBusy(false)
+    }
   }
 
-  // Primary trial CTA reused across the page so every section has an
-  // obvious next-step button.
-  const TrialCTA = ({ label = 'Start your free trial', secondary = false }) => (
+  // Primary CTA used across the page. Every visible button on the
+  // funnel is one of these — single conversion target.
+  const TrialCTA = ({ label = 'Start your trial for $1', secondary = false }) => (
     <button
       type="button"
-      onClick={scrollToPricing}
+      onClick={startTrial}
+      disabled={busy}
       className={secondary ? 'btn-secondary' : 'btn-primary'}
-      style={ctaSizing}
+      style={{ ...ctaSizing, opacity: busy ? 0.7 : 1, cursor: busy ? 'wait' : 'pointer' }}
     >
-      {label} <ArrowRight size={14} />
+      {busy ? 'Opening checkout…' : label} <ArrowRight size={14} />
     </button>
   )
 
@@ -109,8 +124,8 @@ export default function LandingFaceless() {
           <span style={logoMark}><Zap size={16} strokeWidth={2.6} /></span>
           <span style={logoText}>ScaleSolo</span>
         </Link>
-        <button type="button" onClick={scrollToPricing} className="btn-primary" style={headerCta}>
-          Start free trial
+        <button type="button" onClick={startTrial} disabled={busy} className="btn-primary" style={headerCta}>
+          {busy ? 'Opening…' : 'Start trial · $1'}
         </button>
       </header>
 
@@ -136,7 +151,7 @@ export default function LandingFaceless() {
         </div>
 
         <div style={stepsCtaWrap}>
-          <TrialCTA label="Start building yours · free trial" />
+          <TrialCTA label="Start building yours · $1 trial" />
         </div>
       </section>
 
@@ -188,45 +203,39 @@ export default function LandingFaceless() {
         </ol>
 
         <div style={stepsCtaWrap}>
-          <TrialCTA label="Get the workflow · free trial" />
+          <TrialCTA label="Get the workflow · $1 trial" />
         </div>
       </section>
 
-      {/* ── PRICING ────────────────────────────────────────────────────── */}
-      <section id="pricing" style={{ ...section, paddingTop: 24 }}>
-        <div style={sectionHead}>
-          <div style={sectionEyebrow}>Founding pricing</div>
-          <h2 style={h2}>One-hundred lifetime spots. <span className="brand-text">Never goes up.</span></h2>
-          <p style={sectionBody}>
-            Lock $79/mo (or $65/mo billed annually) for life. Includes 2× AI tokens, 50% more video
-            units, and direct input on the roadmap. 3-day free trial, cancel anytime.
-          </p>
-        </div>
-        <PricingPlans />
-      </section>
-
-      {/* ── FINAL CTA STRIP ────────────────────────────────────────────── */}
+      {/* ── FINAL CTA STRIP ($1 tripwire) ──────────────────────────────── */}
       <section style={{ ...section, paddingTop: 8 }}>
         <div style={finalCta}>
           <div style={finalCtaGlow} aria-hidden />
-          <h2 style={{ ...h2, fontSize: 'clamp(26px, 3.6vw, 36px)' }}>
-            Start your <span className="brand-text">faceless brand</span> in the next 5 minutes.
+          <div style={sectionEyebrow}>Founding access · only 100 spots</div>
+          <h2 style={{ ...h2, fontSize: 'clamp(28px, 3.6vw, 40px)' }}>
+            Get instant access for <span className="brand-text">$1</span>.
           </h2>
-          <p style={{ ...sectionBody, maxWidth: 560 }}>
-            Drop in a photo, build your first Look, and let ScaleSolo do the rest.
-            Free for three days. Then $79/mo, locked for life.
+          <p style={{ ...sectionBody, maxWidth: 580 }}>
+            Try ScaleSolo for 3 days, full access, no limits. After your trial you'll lock in our
+            Founding price for life — never goes up. Cancel anytime online before day 3 and you
+            won't be billed again.
           </p>
           <div style={{ ...ctas, marginTop: 14 }}>
-            <TrialCTA />
+            <TrialCTA label="Get instant access for $1" />
             <button type="button" onClick={() => setDemoOpen(true)} className="btn-secondary" style={ctaSizing}>
               <Play size={13} fill="currentColor" /> See it in action
             </button>
           </div>
           <div style={trustPills}>
-            <span style={pill}><Check size={11} /> 3-day free trial</span>
-            <span style={pill}><Check size={11} /> No card commitment</span>
-            <span style={pill}><Check size={11} /> Cancel anytime</span>
+            <span style={pill}><Check size={11} /> $1 today · 3-day trial</span>
+            <span style={pill}><Check size={11} /> Cancel anytime, no hassle</span>
+            <span style={pill}><Check size={11} /> Founding price locked for life</span>
           </div>
+          {checkoutError && (
+            <div style={errorBox} role="alert">
+              {checkoutError}
+            </div>
+          )}
         </div>
       </section>
 
@@ -471,6 +480,17 @@ const finalCta = {
   display: 'flex', flexDirection: 'column', alignItems: 'center',
   gap: 14, textAlign: 'center',
   overflow: 'hidden', isolation: 'isolate',
+}
+const errorBox = {
+  marginTop: 12,
+  padding: '10px 14px',
+  borderRadius: 10,
+  background: 'rgba(239,68,68,0.12)',
+  border: '1px solid rgba(239,68,68,0.35)',
+  color: '#ffd2d2',
+  fontSize: 13,
+  maxWidth: 480,
+  lineHeight: 1.4,
 }
 const finalCtaGlow = {
   position: 'absolute', top: '-40%', left: '50%',
