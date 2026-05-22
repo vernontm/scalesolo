@@ -16,7 +16,7 @@
 // Step media lives at /landing/faceless-steps/step-{1..4}.mp4 (autoplay
 // muted loop, vertical 1080x1920) plus four proof PNGs alongside.
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Zap, ArrowRight, Check, Play, Volume2, VolumeX, X,
@@ -26,32 +26,35 @@ import PricingPlans from '../components/PricingPlans.jsx'
 const HERO_VIDEO = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/Scalesolo%20ad.mp4'
 
 const STEP_MEDIA = '/landing/faceless-steps/'
+// Landscape step GIFs hosted in Supabase storage (landing-media bucket).
+// Single source of truth — easier to swap renders without touching the repo.
+const STEP_GIF_BASE = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/steps-gif/'
 
 const STEPS = [
   {
     n: '01',
-    src: `${STEP_MEDIA}step-1.mp4`,
+    src: `${STEP_GIF_BASE}step-1-landscape.gif`,
     eyebrow: 'Step 1 · Create your avatar',
     title: 'Drop in one photo. We build your AI avatar.',
     body: 'Type a name, upload one clean headshot, and ScaleSolo turns it into a fully-rigged avatar you can reuse forever. No camera, no studio, no awkward selfie sessions every week.',
   },
   {
     n: '02',
-    src: `${STEP_MEDIA}step-2.mp4`,
+    src: `${STEP_GIF_BASE}step-2-landscape.gif`,
     eyebrow: 'Step 2 · Build your first look',
     title: 'Pick three photos with the same outfit. Done.',
     body: "Same outfit = same look. Save it once and ScaleSolo keeps your feed visually consistent across every video. Rotate multiple Looks so your audience never sees the same scene twice.",
   },
   {
     n: '03',
-    src: `${STEP_MEDIA}step-3.mp4`,
+    src: `${STEP_GIF_BASE}step-3-landscape.gif`,
     eyebrow: 'Step 3 · Give your avatar a voice',
     title: 'Clone your voice or pick one from our library.',
     body: 'Every script reads in your real voice, with your pacing and energy. Or pick from a built-in library if you want to stay completely anonymous. The result sounds human, not robotic.',
   },
   {
     n: '04',
-    src: `${STEP_MEDIA}step-4.mp4`,
+    src: `${STEP_GIF_BASE}step-4-landscape.gif`,
     eyebrow: 'Step 4 · Set it on autopilot',
     title: 'Connect a workflow. Let it post forever.',
     body: 'Wire up your nodes once: idea → script → avatar → video → caption → schedule. Hit auto-run. ScaleSolo creates and posts content to TikTok, Instagram, YouTube Shorts, Facebook Reels, and Threads while you sleep.',
@@ -367,43 +370,23 @@ function Stat({ number, label }) {
   )
 }
 
-// Step card: vertical 9:16 video on one side, copy on the other.
-// Alternates side via `flip`. Lazy-loaded videos autoplay loop muted
-// inline; preload="metadata" keeps initial cost down.
+// Step card: landscape 16:9 GIF on one side, copy on the other.
+// Alternates side via `flip`. Browser handles GIF playback natively —
+// loading="lazy" defers fetch until the row scrolls near the viewport
+// so the page doesn't pull four big GIFs at first paint.
 function StepRow({ step, flip }) {
-  const ref = useRef(null)
-  const [inView, setInView] = useState(false)
-  // IntersectionObserver gates `<video>` mount so the page doesn't fire
-  // four parallel metadata fetches on load. Step 1 mounts immediately
-  // (above the fold for desktop) — observer kicks in for 2-4.
-  useEffect(() => {
-    if (!ref.current) return
-    if (step.n === '01') { setInView(true); return }
-    const obs = new IntersectionObserver((entries) => {
-      for (const e of entries) {
-        if (e.isIntersecting) { setInView(true); obs.disconnect(); break }
-      }
-    }, { rootMargin: '200px' })
-    obs.observe(ref.current)
-    return () => obs.disconnect()
-  }, [step.n])
-
   return (
-    <li style={{ ...stepRow, flexDirection: flip ? 'row-reverse' : 'row' }} ref={ref}>
+    <li style={{ ...stepRow, flexDirection: flip ? 'row-reverse' : 'row' }}>
       <div style={stepMediaWrap} className="step-media-wrap">
         <div style={stepMediaHalo} aria-hidden />
         <div style={stepMediaFrame}>
-          {inView ? (
-            <video
-              src={step.src}
-              autoPlay muted loop playsInline preload="metadata"
-              aria-label={step.title}
-              style={stepVideoEl}
-              onError={(e) => { e.currentTarget.style.opacity = '0' }}
-            />
-          ) : (
-            <div style={{ ...stepVideoEl, background: 'rgba(255,255,255,0.04)' }} />
-          )}
+          <img
+            src={step.src}
+            alt={step.title}
+            style={stepGifEl}
+            loading="lazy"
+            onError={(e) => { e.currentTarget.style.opacity = '0' }}
+          />
         </div>
       </div>
       <div style={stepCopy} className="step-copy">
@@ -590,23 +573,23 @@ const stepRow = {
 }
 const stepMediaWrap = {
   position: 'relative',
-  flex: '1 1 280px', maxWidth: 360, minWidth: 240,
+  flex: '1 1 380px', maxWidth: 560, minWidth: 280,
   margin: '0 auto',
 }
 const stepMediaHalo = {
-  position: 'absolute', inset: '-18%',
-  background: 'radial-gradient(40% 40% at 50% 50%, rgba(239,68,68,0.28), transparent 70%)',
+  position: 'absolute', inset: '-14%',
+  background: 'radial-gradient(45% 45% at 50% 50%, rgba(239,68,68,0.28), transparent 70%)',
   filter: 'blur(40px)', pointerEvents: 'none', zIndex: 0,
 }
 const stepMediaFrame = {
   position: 'relative', zIndex: 1,
-  borderRadius: 28, overflow: 'hidden',
+  borderRadius: 18, overflow: 'hidden',
   background: '#000',
   border: '4px solid rgba(255,255,255,0.08)',
   boxShadow: '0 40px 80px -10px rgba(0,0,0,0.55)',
-  aspectRatio: '1080 / 1920',
+  aspectRatio: '1920 / 1080',
 }
-const stepVideoEl = {
+const stepGifEl = {
   width: '100%', height: '100%', display: 'block',
   objectFit: 'cover',
 }
