@@ -1859,6 +1859,12 @@ function SpaceBuilder({ space, onSave, onClose }) {
   // or Realtime echo. applyRow checks this before re-rendering the
   // summary for an already-finalized run.
   const dismissedRunIdsRef = useRef(new Set())
+  // Tracks run ids we've already played the finish chime for. Prevents
+  // the chime from re-firing every time the same finished row gets
+  // re-applied via prime fetch / Realtime echo / focus-refetch /
+  // polling tick. Session-only (no localStorage) — fresh page load
+  // can chime once per still-undismissed run, which is fine.
+  const chimedRunIdsRef = useRef(new Set())
   useEffect(() => {
     try {
       const raw = localStorage.getItem('scalesolo.spaces.dismissedRunIds')
@@ -2455,10 +2461,16 @@ function SpaceBuilder({ space, onSave, onClose }) {
         // so a glance-away user still knows whether to come check the
         // canvas. Wrapped in try because Web Audio fails on tabs that
         // never received a user gesture (browser autoplay gate).
-        try {
-          const success = row.status === 'success'
-          playRunFinishChime(success ? 'success' : 'warn')
-        } catch { /* silent */ }
+        // Gated on chimedRunIdsRef so the same run only chimes once,
+        // even when prime fetch / Realtime / focus-refetch / polling
+        // re-applies the row before the user dismisses the panel.
+        if (!chimedRunIdsRef.current.has(row.id)) {
+          chimedRunIdsRef.current.add(row.id)
+          try {
+            const success = row.status === 'success'
+            playRunFinishChime(success ? 'success' : 'warn')
+          } catch { /* silent */ }
+        }
       }
     }
     // Prime: fetch the latest run (any status) so:
