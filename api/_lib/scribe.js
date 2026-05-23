@@ -200,8 +200,7 @@ export async function transcribeFromUrl(mediaUrl, opts = {}) {
      /\.wav$/i.test(mediaUrl) ? 'audio/wav'   :
      /\.m4a$/i.test(mediaUrl) ? 'audio/mp4'   :
      'video/mp4')
-  const filename =
-    (mediaUrl.split('?')[0].split('/').pop() || 'media') || 'media'
+  const filename = mediaUrl.split('?')[0].split('/').pop() || 'media'
   const blob = new Blob([buf], { type: guessedType })
 
   const fb = await callScribe((f) => f.set('file', blob, filename))

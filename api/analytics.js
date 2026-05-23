@@ -46,7 +46,7 @@ export default async function handler(req, res) {
       }
     }
 
-    const summary = await computeSummary(profileId, win)
+    const summary = await computeSummary(profileId, win, force)
 
     // Upsert snapshot. Same profile + period + date overwrites.
     try {
@@ -83,7 +83,7 @@ export default async function handler(req, res) {
   }
 }
 
-async function computeSummary(profileId, win) {
+async function computeSummary(profileId, win, force = false) {
   const days = WINDOW_DAYS[win]
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
 

@@ -2082,6 +2082,7 @@ function MentionPrompt({ value, onChange, placeholder, minHeight = 60, brands = 
       )}
       {/* Legacy code path retained below for the old name/image suggestion
           layout — neutralized by the always-false guard above. */}
+      {/* eslint-disable-next-line no-constant-binary-expression */}
       {false && (
         <div>
           {brands.map((b) => (
@@ -7251,7 +7252,7 @@ export const NODE_REGISTRY = {
     outputs: [{ id: 'out', label: 'Out' }],
     initialProps: { format: 'tiktok-script', topic: '', target_length_secs: 45, mode: 'original' },
     Body: ScriptGenBody,
-    run: async ({ data, inputs, inputsByName, ctx }) => {
+    run: async ({ data, inputs, inputsByName, ctx, reportProgress }) => {
       const incoming = inputs?.in
       const brand = pickBrand(incoming)
       const mode = data.props?.mode === 'remix' ? 'remix' : 'original'

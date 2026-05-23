@@ -17,9 +17,10 @@ import { findNextOpenSlot } from '../_lib/scheduling.js'
 import { message } from '../_lib/anthropic.js'
 import { loadBrandContext, renderBrandContextMarkdown } from '../_lib/brand-context.js'
 import { transcribeFromUrl } from '../_lib/scribe.js'
-import { uploadpostCancelByRequestId } from '../_lib/uploadpost.js'
 import {
-  resolveUploadpostUser, uploadpostEnsureUserProfile,
+  uploadpostCancelByRequestId,
+  resolveUploadpostUser,
+  uploadpostEnsureUserProfile,
 } from '../_lib/uploadpost.js'
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY

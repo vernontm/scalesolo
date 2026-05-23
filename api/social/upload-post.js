@@ -352,15 +352,18 @@ export default async function handler(req, res) {
     // Hoisted so the post-try backfill block at line ~469 can see them.
     // Without this, "const" inside the try block was block-scoped and the
     // backfill threw `uploadpostRequestId is not defined` on every run.
+    // titleStr hoisted for the same reason — referenced inside the
+    // job-id backfill loop to match scheduled posts by title.
     let uploadpostRequestId = null
     let uploadpostJobId = null
+    let titleStr = ''
     try {
       const isFuture = !!resolvedScheduledIso && new Date(resolvedScheduledIso).getTime() > Date.now() + 30_000
       const status = isFuture ? 'scheduled' : 'posted'
       const mediaUrls = isText ? [] : (isVideo ? [video_url] : photos)
       const mediaType = isText ? 'text' : (isVideo ? 'video' : 'image')
       const postType = isText ? 'text' : (isVideo ? 'video' : 'post')
-      const titleStr = (title || '').trim() || (description || '').slice(0, 60).trim() || 'Scheduled post'
+      titleStr = (title || '').trim() || (description || '').slice(0, 60).trim() || 'Scheduled post'
       const primaryMediaUrl = mediaUrls?.[0]
       const fiveMinAgo = new Date(Date.now() - 5 * 60_000).toISOString()
 

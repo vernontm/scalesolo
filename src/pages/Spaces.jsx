@@ -3,7 +3,7 @@
 // in a ScaleSolo card, with input/output handles auto-derived from the
 // registry.
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react'
 import {
   ReactFlow, Controls, Background, Handle, Position, addEdge,
   applyNodeChanges, applyEdgeChanges, MarkerType, useReactFlow,
@@ -21,8 +21,7 @@ import {
   BookOpen, ChevronLeft, ChevronRight, Lock, Globe, Bookmark, FileVideo,
   ShieldCheck, Undo2, Redo2, CalendarClock,
 } from 'lucide-react'
-import { useRef } from 'react'
-// (useEffect already imported above for other effects in this file)
+// useRef merged into the React import at the top of the file.
 import { supabase } from '../lib/supabase.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
