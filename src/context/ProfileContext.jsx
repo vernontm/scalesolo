@@ -25,9 +25,16 @@ export function ProfileProvider({ children }) {
     }
     setLoading(true)
     try {
+      // Select * on the nested profile row — the editor reads from this
+      // same list when opening a row to edit, so a narrow column list
+      // causes fields like always_include / do_not_say / brand_cta /
+      // owner_name / handles to "save" but reappear empty on reopen
+      // (the PATCH writes them fine; the next list refresh just doesn't
+      // ask for them). No heavy columns live on this table — embeddings
+      // are stored elsewhere — so * is cheap and future-proof.
       const { data, error } = await supabase
         .from('profile_access')
-        .select('role, allowed_pages, profiles ( id, business_name, industry, brand_primary_color, brand_secondary_color, logo_url, is_active, synced_platforms, timezone, preferred_tone, target_audience, core_hashtags, brand_bible, polish_template, cover_template )')
+        .select('role, allowed_pages, profiles ( * )')
         .eq('user_id', user.id)
       if (error) throw error
       const list = (data || [])
