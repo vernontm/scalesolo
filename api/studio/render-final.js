@@ -39,6 +39,8 @@ import { tmpdir } from 'node:os'
 import { spawn } from 'node:child_process'
 
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg'
+import puppeteer from 'puppeteer-core'
+import chromium from '@sparticuz/chromium'
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { gateStudio } from './_lib/gate.js'
 
@@ -47,6 +49,30 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
 const STUDIO_BUCKET = 'studio-media'
+
+// Base URL the headless browser uses to fetch composition HTML during
+// the bake. Vercel sets VERCEL_URL at runtime to the current
+// deployment's hostname (per-deploy hash on previews, production
+// domain on main). Prefer an explicit override for local dev / Fly
+// migration; otherwise build it from VERCEL_URL.
+function renderBaseUrl() {
+  if (process.env.STUDIO_RENDER_BASE_URL) return process.env.STUDIO_RENDER_BASE_URL.replace(/\/$/, '')
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`
+  // Last-resort: if we're literally running on a dev box, the dev server
+  // typically lives at :5173 with a Vite proxy serving /studio-compositions.
+  return 'http://localhost:5173'
+}
+
+// Same encoding the React iframe uses. URL hash carries base64(JSON).
+function encodeVarsForUrl(vars) {
+  try {
+    const json = JSON.stringify(vars || {})
+    // Use Buffer for Node so we don't have to deal with browser globals.
+    return encodeURIComponent(Buffer.from(json, 'utf8').toString('base64'))
+  } catch {
+    return ''
+  }
+}
 
 export const config = {
   maxDuration: 300,
@@ -136,6 +162,149 @@ function wrapText(text, perLine = 38) {
   }
   if (cur) lines.push(cur)
   return lines.slice(0, 6).join('\n')
+}
+
+// ── Headless Chrome (Puppeteer) — HyperFrames composition renderer ─────────
+// Reused across every motion-graphics chunk in a single bake. Cold start
+// is ~2-3s; subsequent compositions reuse the same browser process so
+// we only pay it once per render.
+let _browserPromise = null
+async function getBrowser() {
+  if (_browserPromise) return _browserPromise
+  _browserPromise = (async () => {
+    // sparticuz/chromium bundles a serverless-optimized Chromium and the
+    // matching launch args. Locally we still need puppeteer-core to use
+    // an installed Chrome (sparticuz works on Vercel/Lambda).
+    const executablePath = await chromium.executablePath()
+    return puppeteer.launch({
+      args: [
+        ...chromium.args,
+        '--hide-scrollbars',
+        '--disable-web-security',
+      ],
+      defaultViewport: { width: 1920, height: 1080 },
+      executablePath,
+      headless: chromium.headless,
+    })
+  })()
+  return _browserPromise
+}
+
+async function closeBrowserSafe() {
+  if (!_browserPromise) return
+  try {
+    const b = await _browserPromise
+    await b.close()
+  } catch { /* swallow on shutdown */ }
+  _browserPromise = null
+}
+
+// Render a HyperFrames composition to an MP4 chunk by:
+//   1. Loading the composition HTML in headless Chrome with mode=render
+//      so the runtime registers the GSAP timeline on window.__timelines
+//      instead of auto-playing in preview-loop mode.
+//   2. Seeking the timeline at 30fps intervals across the segment's
+//      target duration and screenshotting each frame.
+//   3. ffmpeg-encoding the frame sequence + muxing the voice mp3.
+//
+// Frame capture is the slow part — ~50-100ms per 1080p PNG. For a 5s
+// segment at 30fps (150 frames) that's roughly 8-15s per chunk. The
+// browser instance is reused across chunks so cold-start cost is paid
+// once per bake.
+async function renderHyperFramesChunk(seg, paths, dim, durationSecs, fontPath) {
+  const browser = await getBrowser()
+  const page = await browser.newPage()
+  try {
+    await page.setViewport({ width: dim.w, height: dim.h, deviceScaleFactor: 1 })
+
+    const baseUrl = renderBaseUrl()
+    const compId = seg.hyperframes_composition_id
+    const varsHash = encodeVarsForUrl(seg.hyperframes_variables || {})
+    const url = `${baseUrl}/studio-compositions/${compId}.html?mode=render#vars=${varsHash}`
+
+    await page.goto(url, { waitUntil: 'networkidle0', timeout: 30_000 })
+
+    // Wait for the timeline to register. In render mode, the composition's
+    // script calls studioPlay(tl) which stashes the timeline on
+    // window.__timelines[compositionId] but does NOT auto-play. If the
+    // composition fails to register, we fall through to the drawtext
+    // renderer (caller catches the throw).
+    await page.waitForFunction(
+      (id) => window.__timelines && window.__timelines[id],
+      { timeout: 10_000 },
+      compId,
+    )
+
+    // Pull the timeline's actual duration so we can map render time to
+    // timeline time. Useful when the composition is shorter than the
+    // segment (we hold the last frame) or longer (we capture a portion).
+    const tlDur = await page.evaluate((id) => {
+      const tl = window.__timelines[id]
+      return tl?.duration ? Number(tl.duration()) : 0
+    }, compId)
+
+    const captureDur = Math.max(0.5, durationSecs)
+    const fps = 30
+    const totalFrames = Math.ceil(captureDur * fps)
+    const framesDir = paths.framesDir
+    await mkdir(framesDir, { recursive: true })
+
+    for (let i = 0; i < totalFrames; i++) {
+      // Map the current frame's time in the segment to a position on
+      // the composition's GSAP timeline. If the timeline is shorter
+      // than the segment, we clamp to its end (holds the final frame).
+      const tInSegment = i / fps
+      const tInTimeline = tlDur > 0 ? Math.min(tInSegment, tlDur) : tInSegment
+      await page.evaluate((id, time) => {
+        const tl = window.__timelines[id]
+        if (tl?.seek) tl.seek(time, false)
+      }, compId, tInTimeline)
+
+      const framePath = join(framesDir, `frame-${String(i).padStart(5, '0')}.png`)
+      await page.screenshot({ path: framePath, type: 'png', omitBackground: false })
+    }
+
+    // Encode frames → MP4 (no audio yet)
+    const videoOnly = join(framesDir, 'video.mp4')
+    await runFFmpeg([
+      '-y',
+      '-framerate', String(fps),
+      '-i', join(framesDir, 'frame-%05d.png'),
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
+      '-pix_fmt', 'yuv420p',
+      '-movflags', '+faststart',
+      videoOnly,
+    ], 90_000)
+
+    // Mux voice (or silent track) so concat sees a consistent audio stream.
+    const outFile = paths.outChunk
+    const args = ['-y', '-i', videoOnly]
+    if (paths.voice) args.push('-i', paths.voice)
+    args.push(
+      '-t', String(captureDur.toFixed(3)),
+      '-map', '0:v:0',
+    )
+    if (paths.voice) {
+      args.push('-map', '1:a:0')
+    } else {
+      args.push('-f', 'lavfi', '-t', String(captureDur.toFixed(3)),
+                '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000',
+                '-map', '2:a:0')
+    }
+    args.push(
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
+      '-c:a', 'aac', '-b:a', '128k', '-ar', '48000',
+      '-af', 'aresample=async=1:first_pts=0',
+      '-pix_fmt', 'yuv420p',
+      '-avoid_negative_ts', 'make_zero',
+      '-movflags', '+faststart',
+      outFile,
+    )
+    await runFFmpeg(args, 60_000)
+    return outFile
+  } finally {
+    await page.close().catch(() => {})
+  }
 }
 
 // ── Per-segment chunk renderers ─────────────────────────────────────────────
@@ -354,6 +523,7 @@ export default async function handler(req, res) {
         voice:     null,
         textHead:  join(dir, 'head.txt'),
         textSub:   join(dir, 'sub.txt'),
+        framesDir: join(dir, 'frames'),
         outChunk:  join(dir, 'out.mp4'),
       }
 
@@ -373,10 +543,26 @@ export default async function handler(req, res) {
       } else if (seg.segment_type === 'voiceover_broll') {
         await downloadTo(seg.image_url, paths.image)
         await renderBrollChunk(seg, paths, dim, Math.max(2, voiceDuration || 4))
-      } else if (seg.segment_type === 'voiceover_motion_graphics') {
-        await renderMotionChunk(seg, paths, dim, Math.max(2, voiceDuration || 4), fontPath)
-      } else if (seg.segment_type === 'pure_motion_graphics') {
-        await renderMotionChunk(seg, paths, dim, 2.5, fontPath)
+      } else if (seg.segment_type === 'voiceover_motion_graphics' || seg.segment_type === 'pure_motion_graphics') {
+        // Try real HyperFrames rendering (Puppeteer screen-capture) first.
+        // Falls back to the ffmpeg drawtext stub if Chromium fails for
+        // any reason — composition not found, timeline registration
+        // timeout, etc. — so the bake never blocks on a single bad
+        // composition.
+        const wantDuration = seg.segment_type === 'pure_motion_graphics'
+          ? 2.5
+          : Math.max(2, voiceDuration || 4)
+        const hasComp = !!seg.hyperframes_composition_id
+        if (hasComp) {
+          try {
+            await renderHyperFramesChunk(seg, paths, dim, wantDuration, fontPath)
+          } catch (e) {
+            console.warn(`[studio-render] HyperFrames render failed for ${seg.hyperframes_composition_id}, falling back to drawtext:`, e?.message || e)
+            await renderMotionChunk(seg, paths, dim, wantDuration, fontPath)
+          }
+        } else {
+          await renderMotionChunk(seg, paths, dim, wantDuration, fontPath)
+        }
       } else {
         continue
       }
@@ -465,6 +651,10 @@ export default async function handler(req, res) {
     }
     return res.status(err.status || 500).json({ error: err.message })
   } finally {
+    // Close any Chrome instance the HyperFrames renderer launched so
+    // subsequent invocations on the same warm Lambda don't pile up
+    // browser processes / leak memory.
+    await closeBrowserSafe()
     if (workdir) {
       await rm(workdir, { recursive: true, force: true }).catch(() => {})
     }

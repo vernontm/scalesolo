@@ -32,7 +32,7 @@
       "memory": 3008
     },
     "api/studio/render-final.js": {
-      "includeFiles": "{node_modules/@ffmpeg-installer/**,api/_fonts/**}",
+      "includeFiles": "{node_modules/@ffmpeg-installer/**,node_modules/@sparticuz/chromium/**,api/_fonts/**}",
       "maxDuration": 300,
       "memory": 3008
     },
