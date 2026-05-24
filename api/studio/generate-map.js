@@ -26,6 +26,7 @@ import { gateStudio } from './_lib/gate.js'
 import { message as anthropicMessage } from '../_lib/anthropic.js'
 import { loadBrandContext, renderBrandContextMarkdown } from '../_lib/brand-context.js'
 import { resolveTemplate } from './_lib/templates.js'
+import { OVERLAY_DEFINITIONS, ALL_ZONES, isValidZoneForOrientation } from './_lib/overlay-definitions.js'
 
 // The composition library the segmentation pass is allowed to pick
 // from. Stable ids — the actual HTML compositions ship in task #8.
@@ -118,6 +119,34 @@ const SEGMENT_TOOL = {
               maximum: 20,
               description: 'How long this segment should play. Used only for pacing the LLM; the real duration comes from the generated voice audio.',
             },
+            overlay_placements: {
+              type: 'array',
+              maxItems: 4,
+              description: 'Optional overlay cards riding ON TOP of an avatar or voiceover_broll segment. Use sparingly — at most 2 overlays per segment, and only when the spoken content benefits from a visual anchor (a stat, a tool name, a chapter beat, a CTA). Never use overlays on motion-graphics segments; those are already self-contained.',
+              items: {
+                type: 'object',
+                required: ['overlay_id', 'zone', 'content'],
+                properties: {
+                  overlay_id: {
+                    type: 'string',
+                    enum: Object.keys(OVERLAY_DEFINITIONS),
+                    description: 'Which overlay card to render.',
+                  },
+                  zone: {
+                    type: 'string',
+                    enum: [...ALL_ZONES],
+                    description: 'Where on the frame to place it. Side slots: l-top/l-mid/l-bot/r-top/r-mid/r-bot. lower-third for captions. top-strip is vertical-only.',
+                  },
+                  content: {
+                    type: 'object',
+                    description: 'Slot values for the chosen overlay. Shape varies: stat-callout-v1 needs { label, number, unit?, sub? }, caption-overlay-v1 needs { text, highlight? }, tool-logo-v1 needs { logo, name, desc? }, action-prompt-v1 needs { text, arrow? }, source-citation-v1 needs { label?, citation }, chapter-marker-v1 needs { meta, title }, word-emphasis-v1 needs { word }, watermark-v1 needs { handle }.',
+                    additionalProperties: true,
+                  },
+                  start_offset_secs: { type: 'number', minimum: 0, maximum: 60 },
+                  duration_secs:     { type: 'number', minimum: 0.3, maximum: 60 },
+                },
+              },
+            },
           },
         },
       },
@@ -125,7 +154,7 @@ const SEGMENT_TOOL = {
   },
 }
 
-function buildSystem(brandMarkdown, tmpl) {
+function buildSystem(brandMarkdown, tmpl, captionsEnabled) {
   // Template constraints get woven into the prompt so Claude segments
   // according to the chosen visual preset's pacing + composition pool +
   // SFX vibe. The resolved template already has {accent} replaced with
@@ -139,6 +168,39 @@ function buildSystem(brandMarkdown, tmpl) {
   const sfxGuidance = audio.sfx_pool?.length
     ? `When you add a sound_effect to a segment, pick from this pool: ${audio.sfx_pool.join(', ')}. Density target: ${audio.sfx_density || 'medium'}.`
     : 'Use sound_effect sparingly.'
+
+  // Overlay guidance — only fire if this template actually has an
+  // overlay_pool. Some minimalist templates ship without one.
+  const overlayPool = tmpl.overlay_pool || []
+  const overlayGuidance = overlayPool.length ? `
+Overlay cards (ON TOP of avatar / voiceover_broll segments — never on motion-graphics):
+${overlayPool.map((id) => {
+  const def = OVERLAY_DEFINITIONS[id]
+  if (!def) return null
+  return `  - ${id}: ${def.description} Allowed zones: ${def.allowed_zones.join(', ')}. Default: ${def.default_zone}.`
+}).filter(Boolean).join('\n')}
+
+Overlay rules (read the script content carefully and add overlays that REINFORCE what the avatar is saying):
+- Only put overlays on avatar or voiceover_broll segments. Never on motion-graphics.
+- Center column is reserved for the avatar. Never target it.
+- Cap at 2 non-caption overlays per segment (captions don't count toward the cap).
+- A stat the avatar speaks aloud ("we grew 10x", "47 thousand subscribers") → stat-callout-v1 in r-mid with the actual number. Always include the unit suffix if it's natural ("10" + unit "x", "47K", "$2M").
+- A specific company or tool the avatar names ("HeyGen", "Claude", "Notion", "Shopify", "OpenAI", any product brand) → tool-logo-v1 with logo glyph = the company's first letter (capital). Place in r-top so it sits next to the speaker. Name field is the full company name.
+- A cited statistic with a named source ("according to Forbes", "the Vernon Tech report") → stat-callout-v1 AND source-citation-v1 paired (stat in r-mid, citation in l-bot).
+- A section / chapter beat — when the avatar transitions to a new idea — → chapter-marker-v1 in l-top (or top-strip if this is a vertical video). meta = "Part N / total" or the section number; title = a 2-4 word section name.
+- A direct CTA the avatar speaks ("save this", "follow for more", "link in bio", "subscribe") → action-prompt-v1.
+- A single punchy word worth slamming onto screen ("10X", "STOP", "WAIT") → word-emphasis-v1 in lower-third. Use at most 1 per video.
+- watermark-v1 (@handle) should run on the FIRST segment only as a corner-tr placement. Skip it on later segments — the renderer handles persistence automatically when present at segment 0.
+${captionsEnabled ? `
+Captions (REQUIRED on this video — captions_enabled is on):
+- EVERY avatar and voiceover_broll segment must include a caption-overlay-v1 placement in lower-third.
+- The caption's content.text is the script_text for that segment (verbatim, no edits).
+- The caption's content.highlight is ONE punchy word from that script_text — the most important word in the line. Match casing exactly to script_text so the renderer can locate and wrap it. Skip the highlight if no word truly stands out, but never skip the caption itself.
+- Captions do NOT count toward the 2-overlay-per-segment cap.
+- Captions are mandatory regardless of segment_type=avatar or voiceover_broll.
+` : `
+Captions: OFF for this video. Do not emit any caption-overlay-v1 placements.
+`}` : ''
 
   return `You are Studio's segmentation engine. Your job: turn a topic into a long-form vertical or horizontal video, broken into segments that flow like a YouTube short-form-meets-explainer.
 
@@ -163,9 +225,25 @@ Pacing for this template:
 
 Sound design:
 - ${sfxGuidance}
+${overlayGuidance}
+Intro segment (HARD RULE):
+- The first segment is ALWAYS segment_type: avatar. Never motion_graphics. The hook is the avatar speaking on camera.
+- Pack the intro segment with overlays to keep viewers engaged: chapter-marker-v1 in l-top with meta "INTRO" and a 2-4 word title that captures the hook, PLUS one of (word-emphasis-v1 with the punchiest word in the hook OR stat-callout-v1 if the hook contains a number). Plus the watermark-v1 in corner-tr.
+- Treat the intro overlays as the energy engine. The avatar carries the audio; the overlays carry the visual hook.
+
+Choosing the right HyperFrames composition (NEVER pick in order — pick what fits the spoken content):
+- title-card-v1: only for section transitions or the headline of a new beat. Large display text. Use when the avatar just said "Here's the thing" or "Now for part two" and the next segment is a single big idea.
+- stat-reveal-v1: only when the segment leads with a single concrete number ("47K followers", "3 hours", "$2M ARR"). Wrong if the script doesn't say a specific number.
+- list-overlay-v1: only when the avatar is enumerating 3-5 discrete items. Count the items in the script literally — if the avatar lists "voice, image, video, edit", that's 4 items, so list-overlay-v1 with exactly 4 bullets. If the script lists 2 items, prefer comparison-v1. If 6+, split across two list-overlay segments.
+- quote-card-v1: only when the script actually quotes someone or includes a quoted statement. Set attribution if the source is named.
+- comparison-v1: only for explicit A-vs-B / before-vs-after / old-vs-new framing. Two columns, equal weight.
+- lower-third-v1: only for name + role labeling (e.g. showing "Rayvaughn · AI Architect" while the avatar speaks).
+- end-card-v1: the LAST segment, always. CTA + handle.
+
+List-item counting rule:
+- When picking list-overlay-v1, the hyperframes_variables.bullets MUST be an array of strings whose length matches the actual count of items in the script_text. If the avatar says "voice, video, and image generation", that's 3 bullets — never pad to 5 or shrink to 2. If the script lists items without naming a count number, infer the count from the items mentioned.
 
 Other rules:
-- Open with an avatar or motion graphic hook in the first 2 seconds.
 - Close with a clear CTA. Use end-card-v1 for the final visual (if it's in the composition pool).
 - Total runtime should land within ±15% of the target duration.
 - Default transition between segments: ${tmpl.default_transition || 'cut'}. Per-segment overrides allowed.
@@ -217,12 +295,46 @@ function extractToolInput(claudeBody) {
 // Bounded write helper — Claude can in theory return wild values
 // despite the schema; we clamp before writing so the DB CHECK
 // constraints never fire mid-insert.
-function sanitizeSegment(s, idx) {
+// Filter overlay placements against the template's overlay_pool and
+// the video's orientation. Anything Claude returns that violates either
+// is silently dropped — segmentation is best-effort and the user can
+// add overlays back manually via the chat editor.
+function sanitizeOverlayPlacements(raw, tmpl, orientation) {
+  if (!Array.isArray(raw) || !raw.length) return []
+  const pool = new Set(tmpl?.overlay_pool || [])
+  const out = []
+  for (const p of raw) {
+    if (!p || typeof p !== 'object') continue
+    if (!OVERLAY_DEFINITIONS[p.overlay_id]) continue
+    if (pool.size && !pool.has(p.overlay_id)) continue
+    const def = OVERLAY_DEFINITIONS[p.overlay_id]
+    const zone = typeof p.zone === 'string' ? p.zone : def.default_zone
+    if (!ALL_ZONES.has(zone)) continue
+    if (!def.allowed_zones.includes(zone)) continue
+    if (!isValidZoneForOrientation(zone, orientation)) continue
+    const content = (p.content && typeof p.content === 'object') ? p.content : {}
+    const placement = { overlay_id: p.overlay_id, zone, content }
+    if (typeof p.start_offset_secs === 'number') placement.start_offset_secs = Math.max(0, Math.min(60, p.start_offset_secs))
+    if (typeof p.duration_secs === 'number') placement.duration_secs = Math.max(0.3, Math.min(60, p.duration_secs))
+    out.push(placement)
+    if (out.length >= 4) break
+  }
+  return out
+}
+
+function sanitizeSegment(s, idx, tmpl, orientation) {
   const segment_type = SEGMENT_TYPES.includes(s.segment_type) ? s.segment_type : 'voiceover_broll'
   const transition_in = TRANSITIONS.includes(s.transition_in) ? s.transition_in : 'cut'
   const sound_effect = (typeof s.sound_effect === 'string' && SFX_LIBRARY.includes(s.sound_effect)) ? s.sound_effect : null
   const hyperframes_composition_id =
     HF_COMPOSITION_IDS.includes(s.hyperframes_composition_id) ? s.hyperframes_composition_id : null
+  // Overlays only make sense on speaker footage (avatar / voiceover_broll).
+  // Motion-graphics segments are already self-contained — drop overlays
+  // claimed for them.
+  const overlaysEligible = segment_type === 'avatar' || segment_type === 'voiceover_broll'
+  const overlay_placements = overlaysEligible
+    ? sanitizeOverlayPlacements(s.overlay_placements, tmpl, orientation)
+    : []
   return {
     segment_index: idx,
     segment_type,
@@ -234,7 +346,115 @@ function sanitizeSegment(s, idx) {
       ? s.hyperframes_variables : {},
     transition_in,
     sound_effect,
+    overlay_placements,
   }
+}
+
+// Pick a "punchy" word from a phrase to highlight inside captions. Looks
+// for the longest non-stopword token — good enough to land a useful
+// highlight on most lines. Returns null when nothing stands out.
+const CAPTION_STOPWORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'but', 'so', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+  'i', 'you', 'we', 'they', 'he', 'she', 'it', 'me', 'us', 'them', 'him', 'her',
+  'my', 'your', 'our', 'their', 'his', 'her', 'its',
+  'in', 'on', 'at', 'to', 'for', 'of', 'with', 'as', 'by', 'from', 'into', 'about',
+  'this', 'that', 'these', 'those', 'there', 'here', 'where', 'when', 'what', 'which', 'who',
+  'do', 'did', 'does', 'has', 'have', 'had', 'will', 'would', 'should', 'could', 'can',
+  'just', 'like', 'than', 'then', 'one', 'all', 'not', 'only', 'really', 'very',
+])
+function pickCaptionHighlight(text) {
+  if (!text) return null
+  const tokens = String(text).split(/(\s+|[.,!?;:])/).filter(Boolean)
+  const candidates = tokens
+    .map((t) => t.trim())
+    .filter((t) => /[a-zA-Z0-9]/.test(t))
+    .filter((t) => !CAPTION_STOPWORDS.has(t.toLowerCase()))
+    .filter((t) => t.length >= 3)
+  if (!candidates.length) return null
+  // Prefer ALL-CAPS / numbers, then longest token.
+  const ranked = candidates.sort((a, b) => {
+    const aCaps = a === a.toUpperCase() && /[A-Z]/.test(a) ? 1 : 0
+    const bCaps = b === b.toUpperCase() && /[A-Z]/.test(b) ? 1 : 0
+    if (aCaps !== bCaps) return bCaps - aCaps
+    const aNum = /\d/.test(a) ? 1 : 0
+    const bNum = /\d/.test(b) ? 1 : 0
+    if (aNum !== bNum) return bNum - aNum
+    return b.length - a.length
+  })
+  return ranked[0]
+}
+
+// Server-side enforcement of segmentation invariants that the prompt
+// asks for but can't guarantee:
+//   1. Intro segment is `avatar` type — never motion_graphics.
+//   2. Captions injection: every avatar / voiceover_broll segment has
+//      exactly one caption-overlay-v1 placement when captions are on
+//      (auto-inserted from script_text if Claude forgot); none when off.
+//   3. Overlay placements are de-duplicated against pool/orientation
+//      one more time as a belt-and-suspenders check.
+function postProcessSegments(segments, { captionsOn, orientation, overlayPool }) {
+  if (!segments?.length) return segments
+  const pool = new Set(overlayPool || [])
+  const out = segments.map((s, i) => ({ ...s }))
+
+  // 1. Intro must be avatar. If Claude returned a motion_graphics intro,
+  // flip the type. The avatar will speak the segment's script_text (or
+  // a fallback hook line if it was empty for a motion-graphics segment).
+  if (out[0]) {
+    if (out[0].segment_type !== 'avatar') {
+      out[0].segment_type = 'avatar'
+      if (!out[0].script_text || !out[0].script_text.trim()) {
+        out[0].script_text = 'Hold up.'
+      }
+      out[0].hyperframes_composition_id = null
+      out[0].hyperframes_variables = {}
+      out[0].image_prompt = null
+    }
+  }
+
+  // 2. Captions injection. Walk every speaker segment.
+  for (const seg of out) {
+    const eligible = seg.segment_type === 'avatar' || seg.segment_type === 'voiceover_broll'
+    if (!eligible) {
+      // Strip any captions Claude wrongly attached to motion-graphics rows.
+      seg.overlay_placements = (seg.overlay_placements || []).filter((p) => p.overlay_id !== 'caption-overlay-v1')
+      continue
+    }
+    const existing = Array.isArray(seg.overlay_placements) ? seg.overlay_placements : []
+    const hasCaption = existing.some((p) => p.overlay_id === 'caption-overlay-v1')
+
+    if (!captionsOn) {
+      // Captions off — strip any Claude inserted anyway.
+      seg.overlay_placements = existing.filter((p) => p.overlay_id !== 'caption-overlay-v1')
+      continue
+    }
+    if (hasCaption) continue
+    // Captions on, missing — inject one IF the template's pool allows it.
+    if (pool.size && !pool.has('caption-overlay-v1')) continue
+    const text = (seg.script_text || '').trim()
+    if (!text) continue
+    const highlight = pickCaptionHighlight(text)
+    seg.overlay_placements = [
+      ...existing,
+      {
+        overlay_id: 'caption-overlay-v1',
+        zone: 'lower-third',
+        content: highlight ? { text, highlight } : { text },
+      },
+    ]
+  }
+
+  // 3. Belt-and-suspenders: orientation filter once more (e.g. drop
+  // top-strip from any landscape segments that slipped through).
+  for (const seg of out) {
+    if (!Array.isArray(seg.overlay_placements)) continue
+    seg.overlay_placements = seg.overlay_placements.filter((p) => {
+      if (p.zone === 'top-strip' && orientation === 'landscape') return false
+      return true
+    })
+  }
+
+  return out
 }
 
 export default async function handler(req, res) {
@@ -294,7 +514,7 @@ export default async function handler(req, res) {
       const resolvedTemplate = resolveTemplate(video.template_id || 'sleek', video.brand_color)
 
       const claudeResp = await anthropicMessage({
-        system: buildSystem(brandMarkdown, resolvedTemplate),
+        system: buildSystem(brandMarkdown, resolvedTemplate, video.captions_enabled !== false),
         messages: [{ role: 'user', content: buildUser(video) }],
         tools: [SEGMENT_TOOL],
         tool_choice: { type: 'tool', name: 'emit_video_map' },
@@ -304,7 +524,10 @@ export default async function handler(req, res) {
       if (!mapInput || !Array.isArray(mapInput.segments) || !mapInput.segments.length) {
         throw new Error('Claude did not return a usable video map')
       }
-      segments = mapInput.segments.map(sanitizeSegment)
+      const orientation = video.aspect_ratio === '9:16' ? 'vertical' : 'landscape'
+      const captionsOn = video.captions_enabled !== false
+      segments = mapInput.segments.map((s, i) => sanitizeSegment(s, i, resolvedTemplate, orientation))
+      segments = postProcessSegments(segments, { captionsOn, orientation, overlayPool: resolvedTemplate.overlay_pool || [] })
     } catch (e) {
       // Rollback status, surface the error to the UI
       await supaFetch(`studio_videos?id=eq.${video.id}`, {

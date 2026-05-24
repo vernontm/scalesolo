@@ -1,0 +1,97 @@
+<!doctype html>
+<html
+  lang="en"
+  data-composition-id="overlay-layer-v1"
+  data-composition-variables='[
+    {"id":"orientation","type":"enum","label":"Orientation","default":"landscape","options":[
+      {"value":"landscape","label":"Landscape"},
+      {"value":"vertical","label":"Vertical"}
+    ]},
+    {"id":"placements","type":"string","label":"Placements (JSON)","default":"[]"},
+    {"id":"overlay_overrides","type":"string","label":"Overlay overrides (JSON)","default":"{}"},
+    {"id":"accent_color","type":"color","label":"Accent","default":"#e3151e"},
+    {"id":"motion_entrance","type":"string","label":"Entrance primitive","default":"slide_up_fade"},
+    {"id":"motion_exit","type":"string","label":"Exit primitive","default":"fade_out"},
+    {"id":"motion_emphasis","type":"string","label":"Emphasis primitive","default":"pulse_glow"}
+  ]'
+>
+<head>
+<meta charset="UTF-8">
+<title>Studio · Overlay Layer v1</title>
+<link rel="stylesheet" href="/studio-compositions/_shared.css">
+<link rel="stylesheet" href="/studio-compositions/_overlays.css">
+<link rel="stylesheet" href="/studio-compositions/_motion.css">
+<style>
+  /* Transparent canvas — this composition ONLY renders the overlay
+     cards. The avatar footage is composited under it by ffmpeg in
+     the final bake. */
+  html, body { background: transparent !important; }
+  .studio-grid, .studio-glow { display: none; }
+  body { padding: 0; }
+</style>
+</head>
+<body>
+
+<!-- The overlay layer is injected here by the runtime script. Server-
+     side rendering would also work — both paths use the same string
+     output from renderOverlayLayer(). -->
+<div id="overlay-root"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script src="/studio-compositions/_runtime.js"></script>
+<script type="module">
+  // The composition is variable-driven: it receives placements +
+  // tokens via window.__studioVars (URL hash) and renders the overlay
+  // layer into #overlay-root using the same renderOverlayLayer() that
+  // the worker uses server-side. Same code, two callsites → preview
+  // and final bake stay pixel-identical.
+  //
+  // Browser copy is hand-kept in sync with api/studio/_lib/overlay-renderer.js.
+  // Same logic in both — the worker imports the api/_lib version
+  // server-side; this iframe imports the public copy.
+  import { renderOverlayLayer } from '/studio-compositions/_overlay-renderer.js'
+
+  const vars = window.__studioVars || {}
+
+  let placements = []
+  let overrides = {}
+  try { placements = JSON.parse(vars.placements || '[]') } catch { placements = [] }
+  try { overrides  = JSON.parse(vars.overlay_overrides || '{}') } catch { overrides = {} }
+
+  const html = renderOverlayLayer({
+    placements,
+    orientation: vars.orientation || 'landscape',
+    overlay_overrides: overrides,
+    accent: vars.accent_color || '#e3151e',
+  })
+
+  const root = document.getElementById('overlay-root')
+  root.innerHTML = html
+
+  // Apply the template's motion primitives to every card. Per the
+  // architecture rule: one entrance, one exit, one emphasis — same 4
+  // for every element. The renderer attaches classes; the CSS in
+  // _motion.css handles the actual keyframes.
+  const entrance = vars.motion_entrance || 'slide_up_fade'
+  const emphasis = vars.motion_emphasis || 'pulse_glow'
+
+  const cards = root.querySelectorAll('.ov > *')
+  cards.forEach((card) => {
+    card.classList.add(`motion-entrance-${entrance}`)
+    // Emphasis only makes sense on certain card types — apply broadly
+    // and let the CSS handle no-op on .none.
+    if (emphasis && emphasis !== 'none') {
+      card.classList.add(`motion-emphasis-${emphasis}`)
+    }
+  })
+
+  // Build a paused GSAP timeline that just holds the composition for
+  // its data-duration. The CSS animations carry the motion; GSAP is
+  // here for HyperFrames timeline registration.
+  const tl = gsap.timeline({ paused: true })
+  tl.to({}, { duration: 1 }) // placeholder — actual duration comes from data-duration on the host
+  window.studioPlay(tl)
+</script>
+
+</body>
+</html>

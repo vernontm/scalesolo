@@ -27,6 +27,8 @@ import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/su
 import { gateStudio } from './_lib/gate.js'
 import { message as anthropicMessage } from '../_lib/anthropic.js'
 import { loadBrandContext, renderBrandContextMarkdown } from '../_lib/brand-context.js'
+import { resolveTemplate } from './_lib/templates.js'
+import { OVERLAY_DEFINITIONS, ALL_ZONES, isValidZoneForOrientation } from './_lib/overlay-definitions.js'
 
 // Mirror the allowlists in generate-map.js so the chat can't pick a
 // composition_id / transition the renderer doesn't honor.
@@ -110,6 +112,42 @@ const TOOLS = [
     },
   },
   {
+    name: 'place_overlay',
+    description: 'Add an overlay card to an avatar or voiceover_broll segment. Overlays ride on top of speaker footage in defined zones — never use them on motion-graphics segments. Pass replace=true to clear existing overlays on the segment first; default appends.',
+    input_schema: {
+      type: 'object',
+      required: ['segment_id', 'placement'],
+      properties: {
+        segment_id: { type: 'string' },
+        replace:    { type: 'boolean', description: 'When true, clears the segment\'s existing overlays before adding this one. Default false (append).' },
+        placement: {
+          type: 'object',
+          required: ['overlay_id', 'zone', 'content'],
+          properties: {
+            overlay_id: { type: 'string', enum: Object.keys(OVERLAY_DEFINITIONS) },
+            zone:       { type: 'string', enum: [...ALL_ZONES] },
+            content:    { type: 'object', additionalProperties: true, description: 'Shape varies per overlay_id. See overlay-definitions.js for required fields.' },
+            start_offset_secs: { type: 'number', minimum: 0, maximum: 60 },
+            duration_secs:     { type: 'number', minimum: 0.3, maximum: 60 },
+          },
+        },
+      },
+    },
+  },
+  {
+    name: 'remove_overlay',
+    description: 'Remove overlays from a segment. Pass overlay_id to remove all instances of one type; pass index to remove the Nth placement (0-indexed); omit both to clear all overlays on the segment.',
+    input_schema: {
+      type: 'object',
+      required: ['segment_id'],
+      properties: {
+        segment_id: { type: 'string' },
+        overlay_id: { type: 'string', enum: Object.keys(OVERLAY_DEFINITIONS) },
+        index:      { type: 'integer', minimum: 0 },
+      },
+    },
+  },
+  {
     name: 'swap_composition',
     description: 'Replace a motion-graphics segment\'s HyperFrames composition + variables in one shot. Shortcut for "make this title card a quote card instead" — sets composition id, replaces variables wholesale.',
     input_schema: {
@@ -149,6 +187,7 @@ function renderMapForLLM(video, segments) {
       variables: s.hyperframes_variables || {},
       transition: s.transition_in,
       sfx: s.sound_effect,
+      overlays: Array.isArray(s.overlay_placements) ? s.overlay_placements : [],
       status: s.status,
     })),
   }, null, 2)
@@ -269,16 +308,99 @@ async function execSwapComposition(input, ctx) {
   return { kind: 'swap_composition', segment_id: id, composition_id: compId }
 }
 
+// Validate a single placement against the template's overlay_pool and
+// the video's orientation. Throws on the first violation — the chat
+// surfaces this string back to the user, so it should be human-readable.
+function validatePlacement(p, ctx) {
+  if (!p || typeof p !== 'object') throw new Error('placement is required')
+  const def = OVERLAY_DEFINITIONS[p.overlay_id]
+  if (!def) throw new Error(`overlay_id "${p.overlay_id}" is not a known overlay`)
+  if (ctx.overlayPool.size && !ctx.overlayPool.has(p.overlay_id)) {
+    throw new Error(`overlay "${p.overlay_id}" is not in this template's overlay_pool`)
+  }
+  const zone = p.zone || def.default_zone
+  if (!ALL_ZONES.has(zone)) throw new Error(`zone "${zone}" is not a valid zone`)
+  if (!def.allowed_zones.includes(zone)) {
+    throw new Error(`overlay "${p.overlay_id}" cannot render in zone "${zone}". Allowed: ${def.allowed_zones.join(', ')}`)
+  }
+  if (!isValidZoneForOrientation(zone, ctx.orientation)) {
+    throw new Error(`zone "${zone}" is not valid for orientation "${ctx.orientation}"`)
+  }
+}
+
+async function execPlaceOverlay(input, ctx) {
+  const id = input?.segment_id
+  if (!id) throw new Error('place_overlay: segment_id required')
+  const seg = ctx.segById.get(id)
+  if (!seg) throw new Error(`place_overlay: segment ${id} not found in this video`)
+  if (seg.segment_type !== 'avatar' && seg.segment_type !== 'voiceover_broll') {
+    throw new Error(`place_overlay: overlays only ride on avatar / voiceover_broll segments (this one is ${seg.segment_type}).`)
+  }
+  const placement = input.placement
+  validatePlacement(placement, ctx)
+
+  // Build the clean placement row — only known fields.
+  const clean = {
+    overlay_id: placement.overlay_id,
+    zone: placement.zone || OVERLAY_DEFINITIONS[placement.overlay_id].default_zone,
+    content: (placement.content && typeof placement.content === 'object') ? placement.content : {},
+  }
+  if (typeof placement.start_offset_secs === 'number') clean.start_offset_secs = Math.max(0, Math.min(60, placement.start_offset_secs))
+  if (typeof placement.duration_secs === 'number') clean.duration_secs = Math.max(0.3, Math.min(60, placement.duration_secs))
+
+  const existing = Array.isArray(seg.overlay_placements) ? seg.overlay_placements : []
+  const next = input.replace ? [clean] : [...existing, clean]
+  // Cap at 4 — same as the segmentation schema.
+  const capped = next.slice(0, 4)
+
+  await supaFetch(`studio_segments?id=eq.${id}`, {
+    method: 'PATCH',
+    body: { overlay_placements: capped },
+    prefer: 'return=minimal',
+  })
+  // Mirror into ctx so subsequent ops in the same turn see the update.
+  seg.overlay_placements = capped
+  return { kind: 'place_overlay', segment_id: id, overlay_id: clean.overlay_id, zone: clean.zone, total: capped.length }
+}
+
+async function execRemoveOverlay(input, ctx) {
+  const id = input?.segment_id
+  if (!id) throw new Error('remove_overlay: segment_id required')
+  const seg = ctx.segById.get(id)
+  if (!seg) throw new Error(`remove_overlay: segment ${id} not found in this video`)
+  const existing = Array.isArray(seg.overlay_placements) ? seg.overlay_placements : []
+  let next
+  if (typeof input.index === 'number') {
+    next = existing.filter((_, i) => i !== input.index)
+  } else if (input.overlay_id) {
+    next = existing.filter((p) => p.overlay_id !== input.overlay_id)
+  } else {
+    next = []
+  }
+  await supaFetch(`studio_segments?id=eq.${id}`, {
+    method: 'PATCH',
+    body: { overlay_placements: next },
+    prefer: 'return=minimal',
+  })
+  seg.overlay_placements = next
+  return { kind: 'remove_overlay', segment_id: id, removed: existing.length - next.length, remaining: next.length }
+}
+
 const EXECUTORS = {
   patch_segment: execPatchSegment,
   delete_segment: execDeleteSegment,
   insert_segment: execInsertSegment,
   swap_composition: execSwapComposition,
+  place_overlay: execPlaceOverlay,
+  remove_overlay: execRemoveOverlay,
 }
 
 // ── System prompt ───────────────────────────────────────────────────────────
 
-function buildSystem(brandMd, mapJson) {
+function buildSystem(brandMd, mapJson, ctx) {
+  const overlayPoolBlock = ctx?.overlayPool?.size
+    ? `\nOverlay cards available for this template (place via place_overlay):\n${[...ctx.overlayPool].map((id) => `  - ${id}: ${OVERLAY_DEFINITIONS[id]?.description || ''}`).join('\n')}\nOverlays only ride on avatar / voiceover_broll segments. Never place on motion-graphics segments. Center column is reserved for the avatar — never target it.\n`
+    : ''
   return `You are Studio's chat editor — a surgical-edit agent for a long-form video map.
 
 The user is iterating on a video they've already drafted. Their request will be a natural-language ask like "change segment 4's B-roll to a sunset" or "make all the motion graphics use the accent color red" or "drop segment 7." Your job is to translate that into the smallest possible set of structured tool calls that achieve the ask, then briefly summarize what you did.
@@ -295,7 +417,7 @@ Operating rules:
 Composition library (use these exact ids):
   title-card-v1, stat-reveal-v1, list-overlay-v1, quote-card-v1,
   lower-third-v1, comparison-v1, end-card-v1
-
+${overlayPoolBlock}
 ${brandMd ? `Brand context:\n${brandMd}\n` : ''}
 
 Current video map:
@@ -336,9 +458,15 @@ export default async function handler(req, res) {
       brandMd = renderBrandContextMarkdown(ctxBrand, { exclude: ['exemplars'] })
     } catch { /* brand context optional */ }
 
-    // Map id → segment for tool executor lookups
+    // Map id → segment for tool executor lookups. Also resolve the
+    // template so overlay placements can be validated against its
+    // overlay_pool, and stamp the orientation so vertical-only zones
+    // get rejected in landscape videos.
     const segById = new Map(segments.map((s) => [s.id, s]))
-    const ctx = { video, segments, segById }
+    const tmpl = resolveTemplate(video.template_id || 'sleek', video.brand_color)
+    const orientation = video.aspect_ratio === '9:16' ? 'vertical' : 'landscape'
+    const overlayPool = new Set(tmpl.overlay_pool || [])
+    const ctx = { video, segments, segById, tmpl, orientation, overlayPool }
 
     // Build the message array. Prior history (if any) + the new user
     // turn. We don't replay tool_use/tool_result blocks — those were
@@ -351,7 +479,7 @@ export default async function handler(req, res) {
 
     // First Claude turn — gets a tool_use back (hopefully)
     const claudeResp = await anthropicMessage({
-      system: buildSystem(brandMd, renderMapForLLM(video, segments)),
+      system: buildSystem(brandMd, renderMapForLLM(video, segments), ctx),
       messages,
       tools: TOOLS,
       max_tokens: 4000,

@@ -1,0 +1,444 @@
+/* Studio motion vocabulary v1 — 37 primitives.
+ *
+ * Mirrors MOTION-VOCABULARY.md and api/studio/_lib/motion-primitives.js.
+ * Each primitive is implemented as either:
+ *
+ *   - a @keyframes block + a `.motion-<id>` utility class that wires up
+ *     duration, easing, and fill-mode (most primitives), OR
+ *   - a small set of cooperating rules that need JS to orchestrate
+ *     (typewriter, whip, glitch_cut — those are tagged below).
+ *
+ * Architecture rule: each template uses EXACTLY 4 primitives. The
+ * renderer toggles which classes are applied — it never composes
+ * primitives within a template.
+ *
+ * Convention: all entrance primitives are forwards-fill (the resting
+ * state IS the final keyframe). Exits are forwards-fill too (so the
+ * element stays gone). Emphasis primitives loop infinitely. Transitions
+ * are scoped to a containing .transition-layer that the renderer sets
+ * up around two adjacent segments.
+ *
+ * Accent / chromatic colors pull from --accent-primary and
+ * --accent-secondary CSS variables so VHS-style primitives adapt to
+ * each template instead of hardcoding magenta/cyan.
+ */
+
+:root {
+  --accent-primary: #e3151e;
+  --accent-secondary: #ff3742;
+}
+
+/* ─── ENTRANCE PRIMITIVES (13) ───────────────────────────────────── */
+
+/* 1. cut — instant appearance. No animation; just establishes the
+   resting state. Renderer applies this class to skip motion entirely. */
+.motion-entrance-cut { opacity: 1; }
+
+/* 2. fade_soft */
+@keyframes motion-fade-soft {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.motion-entrance-fade_soft {
+  animation: motion-fade-soft 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* 3. fade_quick */
+.motion-entrance-fade_quick {
+  animation: motion-fade-soft 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* 4. crossfade — same keyframe as fade_soft but the renderer overlaps
+   it with the previous element's exit. Visually identical at the
+   element level; orchestration handles the overlap. */
+.motion-entrance-crossfade {
+  animation: motion-fade-soft 600ms linear both;
+}
+
+/* 5. slide_up_fade */
+@keyframes motion-slide-up-fade {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.motion-entrance-slide_up_fade {
+  animation: motion-slide-up-fade 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* 6. slide_down_fade */
+@keyframes motion-slide-down-fade {
+  from { opacity: 0; transform: translateY(-20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.motion-entrance-slide_down_fade {
+  animation: motion-slide-down-fade 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* 7. slide_left_fade */
+@keyframes motion-slide-left-fade {
+  from { opacity: 0; transform: translateX(30px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.motion-entrance-slide_left_fade {
+  animation: motion-slide-left-fade 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* 8. slide_right_fade */
+@keyframes motion-slide-right-fade {
+  from { opacity: 0; transform: translateX(-30px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.motion-entrance-slide_right_fade {
+  animation: motion-slide-right-fade 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* 9. scale_in */
+@keyframes motion-scale-in {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.motion-entrance-scale_in {
+  animation: motion-scale-in 400ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-origin: center;
+}
+
+/* 10. pop_in — back-ease overshoot */
+@keyframes motion-pop-in {
+  0%   { opacity: 0; transform: scale(0.85); }
+  60%  { opacity: 1; transform: scale(1.05); }
+  100% { opacity: 1; transform: scale(1); }
+}
+.motion-entrance-pop_in {
+  animation: motion-pop-in 500ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  transform-origin: center;
+}
+
+/* 11. typewriter — REQUIRES JS. The JS handler wraps text in per-char
+   spans with animation-delay = idx * 40ms. The class only carries the
+   cursor blink. */
+@keyframes motion-typewriter-char {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes motion-typewriter-cursor {
+  0%, 50%   { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+.motion-entrance-typewriter [data-typewriter-char] {
+  opacity: 0;
+  animation: motion-typewriter-char 1ms linear forwards;
+}
+.motion-entrance-typewriter [data-typewriter-cursor] {
+  display: inline-block;
+  width: 1ch;
+  animation: motion-typewriter-cursor 600ms steps(1) infinite;
+}
+
+/* 12. staggered_lines — REQUIRES JS to apply per-line delays
+   (animation-delay = idx * 100ms on each child). */
+@keyframes motion-staggered-line {
+  from { opacity: 0; transform: translateY(15px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.motion-entrance-staggered_lines > * {
+  opacity: 0;
+  animation: motion-staggered-line 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* 13. glitch — RGB tear w/ chromatic aberration. Pure CSS. */
+@keyframes motion-glitch {
+  0%   { opacity: 0; transform: translateX(0); filter: hue-rotate(0); text-shadow: none; }
+  10%  { opacity: 1; transform: translateX(-3px); filter: hue-rotate(90deg);
+         text-shadow: 3px 0 0 var(--accent-secondary), -3px 0 0 var(--accent-primary); }
+  20%  { opacity: 1; transform: translateX(3px);  filter: hue-rotate(-90deg);
+         text-shadow: 3px 0 0 var(--accent-secondary), -3px 0 0 var(--accent-primary); }
+  30%  { opacity: 0.5; transform: translateX(-2px); filter: hue-rotate(45deg);
+         text-shadow: 3px 0 0 var(--accent-secondary), -3px 0 0 var(--accent-primary); }
+  40%  { opacity: 1; transform: translateX(0); filter: hue-rotate(0); text-shadow: none; }
+  100% { opacity: 1; transform: translateX(0); filter: hue-rotate(0); text-shadow: none; }
+}
+.motion-entrance-glitch {
+  animation: motion-glitch 350ms steps(1) both;
+}
+
+/* ─── EXIT PRIMITIVES (8) ────────────────────────────────────────── */
+
+/* 14. cut_out */
+.motion-exit-cut_out { opacity: 0; }
+
+/* 15. fade_out */
+@keyframes motion-fade-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+.motion-exit-fade_out {
+  animation: motion-fade-out 400ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+/* 16. fade_out_quick */
+.motion-exit-fade_out_quick {
+  animation: motion-fade-out 150ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+/* 17. slide_down_out */
+@keyframes motion-slide-down-out {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(20px); }
+}
+.motion-exit-slide_down_out {
+  animation: motion-slide-down-out 400ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+/* 18. slide_up_out */
+@keyframes motion-slide-up-out {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(-20px); }
+}
+.motion-exit-slide_up_out {
+  animation: motion-slide-up-out 400ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+/* 19. slide_off_left */
+@keyframes motion-slide-off-left {
+  from { opacity: 1; transform: translateX(0); }
+  to   { opacity: 0; transform: translateX(-30px); }
+}
+.motion-exit-slide_off_left {
+  animation: motion-slide-off-left 400ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+/* 20. scale_out */
+@keyframes motion-scale-out {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(0.95); }
+}
+.motion-exit-scale_out {
+  animation: motion-scale-out 300ms cubic-bezier(0.4, 0, 1, 1) both;
+  transform-origin: center;
+}
+
+/* 21. glitch_out */
+@keyframes motion-glitch-out {
+  0%   { opacity: 1; transform: translateX(0); filter: hue-rotate(0); text-shadow: none; }
+  30%  { opacity: 1; transform: translateX(4px); filter: hue-rotate(60deg);
+         text-shadow: 3px 0 0 var(--accent-secondary), -3px 0 0 var(--accent-primary); }
+  60%  { opacity: 0.4; transform: translateX(-4px); filter: hue-rotate(-60deg);
+         text-shadow: 3px 0 0 var(--accent-secondary), -3px 0 0 var(--accent-primary); }
+  100% { opacity: 0; transform: translateX(0); filter: hue-rotate(0); text-shadow: none; }
+}
+.motion-exit-glitch_out {
+  animation: motion-glitch-out 250ms steps(1) both;
+}
+
+/* ─── EMPHASIS PRIMITIVES (8) — always infinite loop ─────────────── */
+
+/* 22. none — explicit no-op */
+.motion-emphasis-none { animation: none; }
+
+/* 23. pulse_glow — accent shadow rhythmic intensify */
+@keyframes motion-pulse-glow-box {
+  0%   { box-shadow: 0 0 12px var(--accent-primary); }
+  50%  { box-shadow: 0 0 32px var(--accent-primary), 0 0 60px var(--accent-primary); }
+  100% { box-shadow: 0 0 12px var(--accent-primary); }
+}
+@keyframes motion-pulse-glow-text {
+  0%   { text-shadow: 0 0 8px var(--accent-primary); }
+  50%  { text-shadow: 0 0 24px var(--accent-primary), 0 0 48px var(--accent-primary); }
+  100% { text-shadow: 0 0 8px var(--accent-primary); }
+}
+.motion-emphasis-pulse_glow {
+  animation: motion-pulse-glow-box 2000ms ease-in-out infinite;
+}
+.motion-emphasis-pulse_glow.text {
+  animation: motion-pulse-glow-text 2000ms ease-in-out infinite;
+}
+
+/* 24. subtle_float */
+@keyframes motion-subtle-float {
+  0%   { transform: translateY(0); }
+  50%  { transform: translateY(-4px); }
+  100% { transform: translateY(0); }
+}
+.motion-emphasis-subtle_float {
+  animation: motion-subtle-float 4000ms ease-in-out infinite;
+}
+
+/* 25. breathe_scale */
+@keyframes motion-breathe-scale {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.02); }
+  100% { transform: scale(1); }
+}
+.motion-emphasis-breathe_scale {
+  animation: motion-breathe-scale 3000ms ease-in-out infinite;
+  transform-origin: center;
+}
+
+/* 26. jitter — VHS tape tracking. Pre-computed offsets keep it
+   deterministic (no Math.random at runtime). */
+@keyframes motion-jitter {
+  0%    { transform: translate(0, 0); }
+  16.6% { transform: translate(1px, -1px); }
+  33.3% { transform: translate(-2px, 1px); }
+  50%   { transform: translate(2px, 2px); }
+  66.6% { transform: translate(-1px, -2px); }
+  83.3% { transform: translate(1px, 1px); }
+  100%  { transform: translate(0, 0); }
+}
+.motion-emphasis-jitter {
+  animation: motion-jitter 200ms steps(1) infinite;
+}
+
+/* 27. chromatic_drift — RGB split using template accent vars */
+@keyframes motion-chromatic-drift {
+  0%   { text-shadow: 0 0 0 transparent; }
+  40%  { text-shadow: 3px 0 0 var(--accent-secondary), -3px 0 0 var(--accent-primary); }
+  60%  { text-shadow: 3px 0 0 var(--accent-secondary), -3px 0 0 var(--accent-primary); }
+  100% { text-shadow: 0 0 0 transparent; }
+}
+.motion-emphasis-chromatic_drift {
+  animation: motion-chromatic-drift 3000ms ease-in-out infinite;
+}
+
+/* 28. shimmer — light sweep across chrome */
+@keyframes motion-shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.motion-emphasis-shimmer {
+  background-image: linear-gradient(110deg, transparent 30%, rgba(255,255,255,0.3) 50%, transparent 70%);
+  background-size: 200% 100%;
+  animation: motion-shimmer 5000ms ease-in-out infinite;
+}
+.motion-emphasis-shimmer.light-theme {
+  background-image: linear-gradient(110deg, transparent 30%, rgba(0,0,0,0.15) 50%, transparent 70%);
+}
+
+/* 29. blink_slow — hard on/off, no fade */
+@keyframes motion-blink-slow {
+  0%   { opacity: 1; }
+  50%  { opacity: 0.3; }
+  100% { opacity: 1; }
+}
+.motion-emphasis-blink_slow {
+  animation: motion-blink-slow 1200ms steps(1) infinite;
+}
+
+/* ─── TRANSITION PRIMITIVES (8) ──────────────────────────────────── */
+
+/* Transitions are scoped to a `.transition-layer` that wraps two
+   adjacent segments. Apply `.transition-<id>` to the layer; the A and B
+   children get .seg-a / .seg-b classes. The renderer sets up this
+   structure when bridging two segments. */
+
+/* 30. cut_transition — no-op */
+.transition-cut_transition .seg-a { opacity: 1; }
+.transition-cut_transition .seg-b { opacity: 1; }
+
+/* 31. fade_transition — symmetric crossfade */
+@keyframes transition-fade-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+@keyframes transition-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.transition-fade_transition .seg-a {
+  animation: transition-fade-out 600ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+.transition-fade_transition .seg-b {
+  animation: transition-fade-in 600ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+/* 32. dip_to_black — fade out, hold 200ms, fade in (1000ms total) */
+@keyframes transition-dip-out {
+  0%   { opacity: 1; }
+  30%  { opacity: 0; }
+  100% { opacity: 0; }
+}
+@keyframes transition-dip-in {
+  0%   { opacity: 0; }
+  50%  { opacity: 0; }
+  100% { opacity: 1; }
+}
+.transition-dip_to_black { background: #000; }
+.transition-dip_to_black .seg-a {
+  animation: transition-dip-out 1000ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+.transition-dip_to_black .seg-b {
+  animation: transition-dip-in 1000ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+/* 33. whip — motion-blur swipe. REQUIRES JS to stagger A→B handoff
+   precisely, but the keyframes themselves are CSS. */
+@keyframes transition-whip-a {
+  0%   { transform: translateX(0); filter: blur(0); }
+  100% { transform: translateX(-100%); filter: blur(12px); }
+}
+@keyframes transition-whip-b {
+  0%   { transform: translateX(100%); filter: blur(12px); }
+  100% { transform: translateX(0); filter: blur(0); }
+}
+.transition-whip .seg-a {
+  animation: transition-whip-a 200ms cubic-bezier(0.8, 0, 0.2, 1) both;
+}
+.transition-whip .seg-b {
+  animation: transition-whip-b 200ms cubic-bezier(0.8, 0, 0.2, 1) both;
+  animation-delay: 200ms;
+}
+
+/* 34. zoom_in — push-in transition */
+@keyframes transition-zoom-out {
+  0%   { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.1); }
+}
+@keyframes transition-zoom-in {
+  0%   { opacity: 0; transform: scale(0.95); }
+  100% { opacity: 1; transform: scale(1); }
+}
+.transition-zoom_in .seg-a {
+  animation: transition-zoom-out 300ms cubic-bezier(0.4, 0, 0.2, 1) both;
+  transform-origin: center;
+}
+.transition-zoom_in .seg-b {
+  animation: transition-zoom-in 300ms cubic-bezier(0.4, 0, 0.2, 1) both;
+  animation-delay: 300ms;
+  transform-origin: center;
+}
+
+/* 35. wipe_right — clip-path reveal */
+@keyframes transition-wipe-right {
+  0%   { clip-path: inset(0 100% 0 0); }
+  100% { clip-path: inset(0 0% 0 0); }
+}
+.transition-wipe_right .seg-a { opacity: 1; }
+.transition-wipe_right .seg-b {
+  animation: transition-wipe-right 500ms cubic-bezier(0.65, 0, 0.35, 1) both;
+}
+
+/* 36. dissolve_slow — long crossfade */
+.transition-dissolve_slow .seg-a {
+  animation: transition-fade-out 1200ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+.transition-dissolve_slow .seg-b {
+  animation: transition-fade-in 1200ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+/* 37. glitch_cut — REQUIRES JS for the 50ms static-flash overlay
+   between A and B. The CSS pieces are reused from glitch / glitch_out;
+   JS coordinates the white-noise filter frame. */
+.transition-glitch_cut .seg-a {
+  animation: motion-glitch-out 200ms steps(1) both;
+}
+.transition-glitch_cut .seg-b {
+  animation: motion-glitch 100ms steps(1) both;
+  animation-delay: 250ms;
+}
+.transition-glitch_cut .static-flash {
+  position: absolute;
+  inset: 0;
+  background: white;
+  opacity: 0;
+  filter: url(#studio-noise);
+  animation: motion-fade-soft 50ms steps(1) 200ms forwards;
+}

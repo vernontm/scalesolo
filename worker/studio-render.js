@@ -156,6 +156,159 @@ async function resolveFont() {
   throw new Error('No bundled font found in worker/fonts/ or worker/_fonts/.')
 }
 
+// ── Template fetch (overlay overrides, motion, accent) ────────────────────
+// The worker doesn't share an import path with /api code, so we fetch
+// the resolved template over HTTP from /api/studio/template-resolved.
+// Auth: the same WORKER_SHARED_SECRET that protects this worker's
+// inbound endpoint, sent as x-worker-secret. Cached per-bake — the
+// template never changes mid-render.
+async function fetchResolvedTemplate(baseUrl, env, templateId, accent) {
+  const secret = env.WORKER_SHARED_SECRET
+  if (!secret) {
+    console.warn('[studio-render] WORKER_SHARED_SECRET not set — overlay layer disabled.')
+    return null
+  }
+  if (!templateId) return null
+  const url = `${baseUrl}/api/studio/template-resolved?id=${encodeURIComponent(templateId)}` +
+              (accent ? `&accent=${encodeURIComponent(accent)}` : '')
+  try {
+    const r = await fetch(url, { headers: { 'x-worker-secret': secret } })
+    if (!r.ok) {
+      console.warn(`[studio-render] template fetch returned ${r.status} for ${templateId}; overlays will be skipped.`)
+      return null
+    }
+    const j = await r.json()
+    return j.template || null
+  } catch (e) {
+    console.warn(`[studio-render] template fetch failed: ${e.message}; overlays will be skipped.`)
+    return null
+  }
+}
+
+// ── Overlay layer renderer (transparent PNG sequence) ─────────────────────
+// Renders public/studio-compositions/overlay-layer-v1.html at full
+// segment dimensions with omitBackground=true so we get an alpha
+// channel. Returns the framesDir path. Caller composites it onto the
+// base segment chunk.
+//
+// Skipped when placements is empty — returns null, signal to caller
+// that no overlay step is needed.
+async function renderOverlayPngs(seg, dir, dim, durationSecs, baseUrl, bypassSecret, template) {
+  const placements = Array.isArray(seg.overlay_placements) ? seg.overlay_placements : []
+  if (!placements.length) return null
+  if (!template) return null
+
+  const orientation = dim.w >= dim.h ? 'landscape' : 'vertical'
+  const motion = template.motion || {}
+  const overlayOverrides = template.overlay_overrides || {}
+  const accent = template.colors?.primary_accent || '#e3151e'
+
+  const vars = {
+    placements: JSON.stringify(placements),
+    overlay_overrides: JSON.stringify(overlayOverrides),
+    orientation,
+    accent_color: accent,
+    motion_entrance: motion.entrance || 'slide_up_fade',
+    motion_exit: motion.exit || 'fade_out',
+    motion_emphasis: motion.emphasis || 'pulse_glow',
+  }
+
+  const browser = await getBrowser()
+  const page = await browser.newPage()
+  page.on('pageerror', (err) => console.warn(`[overlay-page] ${err.message}`))
+  page.on('requestfailed', (req) => {
+    console.warn(`[overlay-page] requestfailed ${req.url()}: ${req.failure()?.errorText || 'unknown'}`)
+  })
+
+  if (bypassSecret) {
+    await page.setExtraHTTPHeaders({
+      'x-vercel-protection-bypass': bypassSecret,
+      'x-vercel-set-bypass-cookie': 'samesitenone',
+    })
+  }
+
+  try {
+    await page.setViewport({ width: dim.w, height: dim.h, deviceScaleFactor: 1 })
+    const varsHash = encodeVarsForUrl(vars)
+    const url = `${baseUrl}/studio-compositions/overlay-layer-v1.html?mode=render#vars=${varsHash}`
+    await page.goto(url, { waitUntil: 'load', timeout: 30_000 })
+
+    // Same in-page poll as renderHyperFramesChunk — wait for the
+    // overlay-layer's timeline to register, which only happens after
+    // renderOverlayLayer() has injected the DOM.
+    const ready = await page.evaluate(async () => {
+      const start = Date.now()
+      while (Date.now() - start < 10_000) {
+        if (window.__timelines && window.__timelines['overlay-layer-v1']) return true
+        await new Promise((r) => setTimeout(r, 60))
+      }
+      return false
+    })
+    if (!ready) {
+      console.warn(`[studio-render] overlay timeline never registered for seg ${seg.id}; skipping overlay step.`)
+      return null
+    }
+
+    const fps = 30
+    const totalFrames = Math.ceil(Math.max(0.5, durationSecs) * fps)
+    const framesDir = join(dir, 'overlay-frames')
+    await mkdir(framesDir, { recursive: true })
+
+    // CSS animation handles the actual motion — we just need to capture
+    // frames at the right rate. Seek to time t for each frame so the
+    // first 500ms of slide_up_fade is properly captured.
+    for (let i = 0; i < totalFrames; i++) {
+      const tInSegment = i / fps
+      // The overlay layer uses pure CSS animations, not GSAP timelines.
+      // CSS animation-delay is computed at element-create time and
+      // advances with real wall-clock time. To capture deterministic
+      // frames we use page.evaluate to set the timeline progress on
+      // the placeholder GSAP timeline (forces a tick) AND set the CSS
+      // animationPlayState to 'paused' after seeking. Simpler approach:
+      // freeze animations at element creation by setting playState to
+      // paused, then advance via animation-delay manipulation.
+      await page.evaluate((time) => {
+        const cards = document.querySelectorAll('.ov > *')
+        cards.forEach((card) => {
+          card.style.animationDelay = `-${time}s`
+          card.style.animationPlayState = 'paused'
+        })
+      }, tInSegment)
+
+      const framePath = join(framesDir, `frame-${String(i).padStart(5, '0')}.png`)
+      // omitBackground=true gives us the alpha channel we need to
+      // composite over the avatar/b-roll base chunk.
+      await page.screenshot({ path: framePath, type: 'png', omitBackground: true })
+    }
+
+    return framesDir
+  } finally {
+    await page.close().catch(() => {})
+  }
+}
+
+// Composite an overlay PNG sequence onto an existing chunk. Re-encodes
+// — there's no lossless way to overlay alpha onto an MP4 in place.
+async function compositeOverlayOntoChunk(baseMp4, overlayFramesDir, durationSecs, outMp4) {
+  const fps = 30
+  await runFFmpeg([
+    '-y',
+    '-i', baseMp4,
+    '-framerate', String(fps),
+    '-i', join(overlayFramesDir, 'frame-%05d.png'),
+    '-filter_complex', '[0:v][1:v]overlay=0:0:shortest=1[v]',
+    '-map', '[v]',
+    '-map', '0:a:0',
+    '-t', String(durationSecs.toFixed(3)),
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
+    '-c:a', 'copy',
+    '-pix_fmt', 'yuv420p',
+    '-movflags', '+faststart',
+    outMp4,
+  ], 120_000)
+  return outMp4
+}
+
 // ── HyperFrames composition renderer (Puppeteer + frame capture) ──────────
 async function renderHyperFramesChunk(seg, paths, dim, durationSecs, baseUrl, bypassSecret) {
   const browser = await getBrowser()
@@ -390,11 +543,19 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
   const baseUrl = renderBaseUrl(env)
   const bypassSecret = env.VERCEL_AUTOMATION_BYPASS_SECRET || null
 
+  // 2.5. Fetch resolved template once. Carries overlay_overrides + motion
+  // + accent that the overlay-layer composition needs. Null is fine —
+  // overlays will be skipped and the bake proceeds without them.
+  const resolvedTemplate = await fetchResolvedTemplate(
+    baseUrl, env, video.template_id, video.brand_color,
+  )
+
   // 3. Initial progress write
   const progress = {
     stage: 'baking', current: 0, total: segments.length,
     started_at: new Date().toISOString(),
     hf_rendered: [], hf_fallback: [],
+    overlay_rendered: [], overlay_skipped: [],
   }
   await supabase.from('studio_videos')
     .update({ status: 'rendering', error: null, render_progress: progress })
@@ -464,6 +625,40 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
       } else {
         continue
       }
+
+      // ── Overlay layer composite (avatar + broll only) ───────────────
+      // Overlays ride ON TOP of speaker footage. They're a no-op for
+      // pure_motion_graphics and full-screen HF compositions (those are
+      // already self-contained). Skipped silently when:
+      //   - the segment has no overlay_placements, OR
+      //   - the template fetch failed (resolvedTemplate is null), OR
+      //   - the segment type isn't avatar / voiceover_broll.
+      const overlaysEligible = seg.segment_type === 'avatar' || seg.segment_type === 'voiceover_broll'
+      const overlayDuration = seg.segment_type === 'avatar'
+        ? Math.max(0.5, voiceDuration || 0)
+        : Math.max(2, voiceDuration || 4)
+      if (overlaysEligible && resolvedTemplate && Array.isArray(seg.overlay_placements) && seg.overlay_placements.length) {
+        try {
+          const overlayFramesDir = await renderOverlayPngs(
+            seg, dir, dim, overlayDuration, baseUrl, bypassSecret, resolvedTemplate,
+          )
+          if (overlayFramesDir) {
+            const composited = join(dir, 'out-with-overlay.mp4')
+            await compositeOverlayOntoChunk(paths.outChunk, overlayFramesDir, overlayDuration, composited)
+            paths.outChunk = composited
+            progress.overlay_rendered.push({ seg_id: seg.id, n: seg.overlay_placements.length })
+          } else {
+            progress.overlay_skipped.push({ seg_id: seg.id, reason: 'no_frames_dir' })
+          }
+        } catch (e) {
+          // Overlay failure must NOT break the bake. Log it, surface it
+          // in render_progress, and ship the base chunk as-is.
+          const reason = (e?.message || String(e)).slice(0, 800)
+          console.warn(`[studio-render] overlay composite failed for seg ${seg.id}: ${reason}`)
+          progress.overlay_skipped.push({ seg_id: seg.id, reason })
+        }
+      }
+
       chunkPaths.push(paths.outChunk)
       progress.current = i + 1
       await writeProgress()
@@ -516,6 +711,8 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
       final_video_url: finalUrl,
       hf_rendered: progress.hf_rendered.length,
       hf_fallback: progress.hf_fallback.length,
+      overlay_rendered: progress.overlay_rendered.length,
+      overlay_skipped: progress.overlay_skipped.length,
     }
   } finally {
     await closeBrowserSafe()
