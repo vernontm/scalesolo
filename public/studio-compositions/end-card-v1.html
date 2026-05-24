@@ -2,112 +2,183 @@
 <html lang="en"
   data-composition-id="end-card-v1"
   data-composition-variables='[
-    {"id":"title","type":"string","label":"Headline","default":"Try ScaleSolo for $1."},
-    {"id":"subtitle","type":"string","label":"Subtitle","default":"Three days. Every feature. No commitment."},
-    {"id":"cta","type":"string","label":"CTA","default":"scalesolo.ai"},
+    {"id":"ornament","type":"string","label":"Ornament","default":"End of Transmission"},
+    {"id":"title","type":"string","label":"Headline","default":"Built with Claude"},
+    {"id":"accent_word","type":"string","label":"Accent word in headline","default":"Claude"},
+    {"id":"tagline","type":"string","label":"Tagline","default":"subscribe for the next system breakdown."},
+    {"id":"cta_text","type":"string","label":"CTA text","default":"Subscribe Now"},
+    {"id":"handle","type":"string","label":"Handle (no @)","default":"raytheaiguy"},
     {"id":"accent_color","type":"color","label":"Accent color","default":"#e3151e"}
   ]'>
 <head>
 <meta charset="utf-8" />
-<title>End card v1</title>
-<!-- Critical brand styles inlined first so the iframe renders on the
-     dark brand canvas with Plus Jakarta Sans even if _shared.css fails
-     to load (Vercel rewrite race, network blip, cache poison). -->
+<title>End card v1 — Sleek</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   html, body {
     width: 100%; height: 100%; overflow: hidden;
-    background: #000; color: #fff;
+    background: #0a0a0c; color: #fff;
     font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
 </style>
 <link rel="stylesheet" href="/studio-compositions/_shared.css" />
 <style>
-  .stage { text-align: center; max-width: 90%; }
-  .title {
-    font-size: clamp(48px, 8vw, 130px);
-    margin-bottom: clamp(14px, 1.6vw, 24px);
+  :root {
+    --bg-base: #0a0a0c; --accent: #e3151e; --accent-glow: rgba(227,21,30,0.4);
+    --text-primary: #fff; --text-secondary: rgba(255,255,255,0.65);
+    --grid-color: rgba(227,21,30,0.15);
   }
-  .subtitle {
-    font-size: clamp(18px, 2.4vw, 32px);
-    color: rgba(255,255,255,0.7);
+  body { background: var(--bg-base); }
+  .frame { position: absolute; inset: 0; overflow: hidden; }
+  .frame::before {
+    content: ''; position: absolute; inset: -20%;
+    background-image:
+      linear-gradient(var(--grid-color) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+    background-size: 50px 50px;
+    animation: drift_slow 30s linear infinite;
+    z-index: 1; pointer-events: none;
+  }
+  @keyframes drift_slow { from { transform: translate(0,0); } to { transform: translate(-50px,-50px); } }
+  .frame::after {
+    content: ''; position: absolute;
+    top: -30%; right: -20%; width: 70%; height: 100%;
+    background: radial-gradient(circle, var(--accent-glow) 0%, transparent 60%);
+    z-index: 2; filter: blur(20px); pointer-events: none;
+  }
+
+  .end-card {
+    position: relative; z-index: 3;
+    height: 100%;
+    display: flex; flex-direction: column;
+    justify-content: center; align-items: center;
+    text-align: center;
+    padding: 0 7%;
+  }
+  .ornament {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: clamp(10px, 1.1vw, 14px);
+    color: var(--accent);
+    margin-bottom: clamp(20px, 2.4vw, 32px);
+    letter-spacing: 0.4em;
+    font-weight: 700;
+    text-transform: uppercase;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .ornament::before, .ornament::after {
+    content: ''; width: clamp(28px, 3vw, 44px); height: 1px;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+  }
+  .headline {
+    font-weight: 900;
+    font-size: clamp(48px, 7vw, 110px);
+    line-height: 0.95;
+    letter-spacing: -0.03em;
+    margin-bottom: clamp(12px, 1.4vw, 22px);
+  }
+  .chrome {
+    background: linear-gradient(180deg, #ffffff 0%, #e8e8ed 40%, #8a8a92 50%, #d4d4dc 60%, #ffffff 100%);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .accent {
+    color: var(--accent);
+    text-shadow: 0 0 20px rgba(227,21,30,0.6), 0 0 40px rgba(227,21,30,0.3);
+  }
+  .tagline {
     font-weight: 600;
-    margin-bottom: clamp(28px, 4vw, 56px);
-    letter-spacing: 0.02em;
+    font-size: clamp(15px, 1.8vw, 24px);
+    color: var(--text-secondary);
+    margin-bottom: clamp(32px, 4vw, 56px);
+    letter-spacing: 0.01em;
   }
-  .cta-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 14px;
-    padding: clamp(18px, 2vw, 28px) clamp(36px, 4vw, 56px);
-    background: #e3151e;
+  .cta-row {
+    display: flex; align-items: center; gap: clamp(18px, 2.4vw, 36px);
+  }
+  .cta-primary {
+    background: var(--accent);
     color: #fff;
+    padding: clamp(12px, 1.6vw, 22px) clamp(24px, 3vw, 44px);
+    border-radius: 12px;
     font-weight: 800;
-    font-size: clamp(22px, 2.8vw, 38px);
-    border-radius: 999px;
-    box-shadow: 0 16px 48px rgba(227,21,30,0.45);
-    letter-spacing: -0.01em;
+    font-size: clamp(13px, 1.4vw, 19px);
+    letter-spacing: 0.02em;
+    box-shadow:
+      0 6px 24px rgba(227, 21, 30, 0.5),
+      0 0 40px rgba(227, 21, 30, 0.3);
   }
-  .cta-arrow {
-    width: 1em; height: 1em; display: grid; place-items: center;
+  .handle {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: clamp(14px, 1.4vw, 20px);
+    color: var(--text-primary);
+    font-weight: 600;
+    letter-spacing: 0.05em;
   }
-  .glow {
-    width: 80%;
-    height: 80%;
-    top: 10%;
-    left: 10%;
-    background: #e3151e;
-    opacity: 0;
+  .handle::before {
+    content: '@ ';
+    color: var(--accent);
   }
 </style>
 </head>
 <body>
-  <div class="studio-grid"></div>
-  <div class="studio-glow glow"></div>
-  <div class="studio-stage">
-    <div class="stage">
-      <h1 class="studio-display title" id="title">
-        <span class="studio-chrome">Try ScaleSolo for</span>
-        <span class="studio-accent">$1.</span>
-      </h1>
-      <p class="subtitle" id="subtitle">Three days. Every feature. No commitment.</p>
-      <div class="cta-pill" id="cta">
-        scalesolo.ai
-        <span class="cta-arrow">→</span>
-      </div>
+  <div class="frame"></div>
+  <div class="end-card">
+    <div class="ornament" id="ornament">End of Transmission</div>
+    <h2 class="headline" id="headline"></h2>
+    <p class="tagline" id="tagline">subscribe for the next system breakdown.</p>
+    <div class="cta-row">
+      <div class="cta-primary" id="cta">Subscribe Now</div>
+      <div class="handle" id="handle">raytheaiguy</div>
     </div>
   </div>
+
   <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
   <script src="/studio-compositions/_runtime.js"></script>
   <script>
     (function () {
-      // If a custom title is supplied, replace the whole title (we
-      // can't easily split it without an accent_word var, so default
-      // to the static layout).
       const v = window.__studioVars
-      if (v.title) {
-        document.getElementById('title').innerHTML = `<span class="studio-chrome">${v.title}</span>`
-      }
-      window.studioApply({
-        subtitle: { var: 'subtitle', prop: 'textContent' },
-      })
-      if (v.cta) {
-        const cta = document.getElementById('cta')
-        cta.innerHTML = `${v.cta}<span class="cta-arrow">→</span>`
-      }
       const accent = v.accent_color || '#e3151e'
-      document.querySelector('.glow').style.background = accent
-      const pill = document.getElementById('cta')
-      pill.style.background = accent
-      pill.style.boxShadow = `0 16px 48px ${accent}73`
+      const root = document.documentElement
+      root.style.setProperty('--accent', accent)
+      const hexToRgba = (hex, a) => {
+        const m = (hex || '').match(/^#?([0-9a-f]{6})$/i)
+        if (!m) return `rgba(227,21,30,${a})`
+        const n = parseInt(m[1], 16)
+        return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`
+      }
+      root.style.setProperty('--grid-color', hexToRgba(accent, 0.15))
+      root.style.setProperty('--accent-glow', hexToRgba(accent, 0.4))
+
+      if (v.ornament) document.getElementById('ornament').textContent = v.ornament
+      if (v.tagline != null) document.getElementById('tagline').textContent = v.tagline
+      if (v.cta_text) document.getElementById('cta').textContent = v.cta_text
+      if (v.handle) document.getElementById('handle').textContent = v.handle
+
+      // Headline with accent-word split
+      const title = v.title || 'Built with Claude'
+      const aw = (v.accent_word || '').trim()
+      const headline = document.getElementById('headline')
+      if (aw && title.toLowerCase().includes(aw.toLowerCase())) {
+        const idx = title.toLowerCase().indexOf(aw.toLowerCase())
+        const before = title.slice(0, idx).trim()
+        const match = title.slice(idx, idx + aw.length)
+        const after = title.slice(idx + aw.length).trim()
+        headline.innerHTML =
+          (before ? `<span class="chrome">${before}</span> ` : '') +
+          `<span class="accent">${match}</span>` +
+          (after ? ` <span class="chrome">${after}</span>` : '')
+      } else {
+        headline.innerHTML = `<span class="chrome">${title}</span>`
+      }
 
       const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } })
-      tl.from('.title',    { y: 60, opacity: 0, duration: 0.7 }, 0)
-        .from('.subtitle', { y: 30, opacity: 0, duration: 0.55 }, 0.2)
-        .from('.cta-pill', { scale: 0.7, opacity: 0, duration: 0.6, ease: 'back.out(1.4)' }, 0.4)
-        .to('.glow', { opacity: 0.55, duration: 1.3, ease: 'power2.out' }, 0)
-        .to('.cta-pill', { scale: 1.04, duration: 0.6, ease: 'sine.inOut', yoyo: true, repeat: 1 }, 1.2)
+      tl.from('.ornament',    { y: -10, opacity: 0, duration: 0.5 }, 0)
+        .from('.headline',    { y: 50, opacity: 0, duration: 0.8 }, 0.15)
+        .from('.tagline',     { y: 24, opacity: 0, duration: 0.5 }, 0.5)
+        .from('.cta-primary', { scale: 0.7, opacity: 0, duration: 0.6, ease: 'back.out(1.4)' }, 0.7)
+        .from('.handle',      { x: -20, opacity: 0, duration: 0.5 }, 0.85)
+        .to('.cta-primary', { scale: 1.05, duration: 0.6, ease: 'sine.inOut', yoyo: true, repeat: 1 }, 1.6)
         .to({}, { duration: 1.4 })
       window.studioPlay(tl)
     })()

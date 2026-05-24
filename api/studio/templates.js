@@ -30,6 +30,8 @@ export default async function handler(req, res) {
       tags: t.tags || [],
       primary_accent: t.colors?.primary_accent,
       composition_pool: t.composition_pool || [],
+      // Drives the inline selector's preview iframe.
+      preview: t.preview || null,
     }))
     return res.status(200).json({ templates: out })
   } catch (err) {

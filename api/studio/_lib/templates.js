@@ -107,6 +107,23 @@ export const SLEEK = {
     animation: 'word_by_word',
     highlight_color: '{accent}',
   },
+
+  // Drives the inline template-selector live preview iframe. Each
+  // template gets a dedicated *-template-preview-*.html composition
+  // that showcases its full visual signature in one frame: the
+  // background pattern + motion, typography treatment, card style,
+  // accent glow, etc. Cheap to swap when the accent_color changes
+  // since the composition reads CSS vars from window.__studioVars.
+  preview: {
+    composition_id: 'template-preview-sleek-v1',
+    variables: {
+      label: '[ THE SHIFT ]',
+      stat_number: '10x',
+      stat_label: 'faster shipping with AI as your back-end team.',
+      corner_label: 'STAT-REVEAL-V1',
+      accent_color: '{accent}',
+    },
+  },
 }
 
 // Add more templates here as Ray finishes spec'ing them.

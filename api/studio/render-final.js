@@ -356,18 +356,36 @@ async function renderAvatarChunk(seg, paths, dim, durationSecs) {
 }
 
 async function renderBrollChunk(seg, paths, dim, durationSecs) {
-  // Still image looped for the voice duration, with a subtle 1.0→1.06 zoom
-  // (Ken Burns) for motion. Mix in the voice audio.
+  // Still image looped for the voice duration with ONE continuous
+  // Ken-Burns zoom-in across the whole chunk. The previous version
+  // used the zoompan filter which restarts its zoom counter on every
+  // looped input frame — produces a visible re-zoom every couple
+  // seconds. New approach: scale the image up to 1.2x the canvas,
+  // then use a crop with TIME-VARYING dimensions that shrinks
+  // linearly from 1.0 to ~1.12x zoom across the segment, then scale
+  // back to canvas size. Crop's `t` is real time in seconds, so the
+  // zoom is one continuous push regardless of how the input loops.
   const outFile = paths.outChunk
-  // zoompan reads frame rate; we set 30fps everywhere.
-  const totalFrames = Math.max(30, Math.ceil(durationSecs * 30))
-  const vf =
-    `scale=${dim.w * 1.2}:${dim.h * 1.2}:force_original_aspect_ratio=increase,` +
-    `crop=${dim.w * 1.2}:${dim.h * 1.2},` +
-    `zoompan=z='min(zoom+0.0006,1.06)':d=${totalFrames}:s=${dim.w}x${dim.h}:fps=30`
+  const dur = durationSecs.toFixed(3)
+  // Zoom amount over the whole segment. Subtle on short clips so it
+  // doesn't feel rushed; the formula caps the per-second zoom.
+  const ZOOM_MAX = 0.12        // ends at 1.12x
+  const startW = dim.w * 1.3   // headroom so crop never falls outside the scaled image
+  const startH = dim.h * 1.3
+  // crop width/height shrink linearly with t. cw(t) = startW / (1 + ZOOM_MAX*t/dur)
+  const cw = `${startW}/(1+${ZOOM_MAX}*t/${dur})`
+  const ch = `${startH}/(1+${ZOOM_MAX}*t/${dur})`
+  const vf = [
+    `scale=${Math.round(startW)}:${Math.round(startH)}:force_original_aspect_ratio=increase`,
+    `crop=${Math.round(startW)}:${Math.round(startH)}`, // center-crop to the scaled-up canvas
+    `fps=30`,
+    `crop='${cw}':'${ch}':'(iw-ow)/2':'(ih-oh)/2'`,
+    `scale=${dim.w}:${dim.h}:flags=lanczos`,
+    `setsar=1`,
+  ].join(',')
   await runFFmpeg([
     '-y',
-    '-loop', '1', '-t', String(durationSecs.toFixed(3)), '-i', paths.image,
+    '-loop', '1', '-t', dur, '-i', paths.image,
     '-i', paths.voice,
     '-vf', vf,
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',

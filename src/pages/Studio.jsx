@@ -904,6 +904,7 @@ function StudioVideoEditor({ videoId }) {
 
           {(['mapped', 'editing', 'rendering', 'rendered'].includes(video.status)) && (
             <>
+              <TemplateSelector video={video} onApplied={(updated) => setVideo(updated || video)} />
               <SegmentList video={video} />
               <StudioChat videoId={video.id} />
             </>

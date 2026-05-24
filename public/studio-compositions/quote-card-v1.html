@@ -2,103 +2,157 @@
 <html lang="en"
   data-composition-id="quote-card-v1"
   data-composition-variables='[
-    {"id":"quote","type":"string","label":"Quote","default":"I went from 56 to 900 followers in 20 days. Without ever showing my face."},
-    {"id":"attribution","type":"string","label":"Attribution","default":"Ava, faceless brand operator"},
+    {"id":"quote","type":"string","label":"Quote","default":"The future isn'"'"'t a bigger team. It'"'"'s one person with a stack that thinks."},
+    {"id":"accent_word","type":"string","label":"Accent words in quote","default":"one person"},
+    {"id":"name","type":"string","label":"Name","default":"Ray Vernon"},
+    {"id":"role","type":"string","label":"Role / handle","default":"Founder, Vernon Tech & Media"},
     {"id":"accent_color","type":"color","label":"Accent color","default":"#e3151e"}
   ]'>
 <head>
 <meta charset="utf-8" />
-<title>Quote card v1</title>
-<!-- Critical brand styles inlined first so the iframe renders on the
-     dark brand canvas with Plus Jakarta Sans even if _shared.css fails
-     to load (Vercel rewrite race, network blip, cache poison). -->
+<title>Quote card v1 — Sleek</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   html, body {
     width: 100%; height: 100%; overflow: hidden;
-    background: #000; color: #fff;
+    background: #0a0a0c; color: #fff;
     font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
 </style>
 <link rel="stylesheet" href="/studio-compositions/_shared.css" />
 <style>
-  .stage { max-width: 84%; text-align: left; position: relative; }
-  .quote-mark {
-    position: absolute;
-    top: -0.4em; left: -0.05em;
-    font-size: clamp(140px, 22vw, 380px);
-    line-height: 1;
-    font-weight: 900;
-    color: #e3151e;
-    opacity: 0.18;
-    font-family: Georgia, 'Times New Roman', serif;
-    pointer-events: none;
+  :root {
+    --bg-base: #0a0a0c; --accent: #e3151e; --accent-glow: rgba(227,21,30,0.4);
+    --text-primary: #fff; --text-muted: rgba(255,255,255,0.4);
+    --grid-color: rgba(227,21,30,0.15);
   }
-  .quote {
-    font-size: clamp(28px, 4.2vw, 64px);
+  body { background: var(--bg-base); }
+  .frame { position: absolute; inset: 0; overflow: hidden; }
+  .frame::before {
+    content: ''; position: absolute; inset: -20%;
+    background-image:
+      linear-gradient(var(--grid-color) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+    background-size: 50px 50px;
+    animation: drift_slow 30s linear infinite;
+    z-index: 1; pointer-events: none;
+  }
+  @keyframes drift_slow { from { transform: translate(0,0); } to { transform: translate(-50px,-50px); } }
+  .frame::after {
+    content: ''; position: absolute;
+    top: -30%; right: -20%; width: 70%; height: 100%;
+    background: radial-gradient(circle, var(--accent-glow) 0%, transparent 60%);
+    z-index: 2; filter: blur(20px); pointer-events: none;
+  }
+
+  .quote-card {
+    position: relative; z-index: 3;
+    height: 100%;
+    display: flex; flex-direction: column;
+    justify-content: center; align-items: center;
+    text-align: center;
+    padding: 0 9%;
+  }
+  .quote-mark {
+    font-size: clamp(140px, 18vw, 240px);
+    line-height: 0.3;
+    color: var(--accent);
+    opacity: 0.18;
+    margin-bottom: clamp(24px, 3vw, 44px);
+    font-weight: 900;
+  }
+  blockquote {
     font-weight: 700;
-    line-height: 1.18;
-    margin-bottom: clamp(20px, 2.4vw, 36px);
-    position: relative;
-    letter-spacing: -0.01em;
+    font-size: clamp(28px, 4.2vw, 56px);
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+    max-width: 22ch;
+    margin-bottom: clamp(28px, 3vw, 44px);
+  }
+  blockquote .chrome {
+    background: linear-gradient(180deg, #ffffff 0%, #e8e8ed 40%, #8a8a92 50%, #d4d4dc 60%, #ffffff 100%);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  blockquote .accent {
+    color: var(--accent);
+    text-shadow: 0 0 20px rgba(227,21,30,0.6), 0 0 40px rgba(227,21,30,0.3);
   }
   .attribution {
-    font-size: clamp(16px, 1.8vw, 24px);
-    color: rgba(255,255,255,0.6);
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    display: inline-flex; align-items: center; gap: 14px;
+    display: flex; align-items: center; gap: 16px;
   }
   .attribution::before {
-    content: '';
-    width: clamp(28px, 4vw, 60px);
-    height: 2px;
-    background: #e3151e;
+    content: ''; width: 24px; height: 1.5px;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
   }
-  .glow {
-    width: 55%;
-    height: 55%;
-    bottom: 10%;
-    right: -15%;
-    background: #e3151e;
-    opacity: 0;
+  .attribution .name {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-weight: 700;
+    font-size: clamp(12px, 1.2vw, 16px);
+    color: var(--text-primary);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .attribution .role {
+    font-weight: 600;
+    font-size: clamp(12px, 1.2vw, 16px);
+    color: var(--text-muted);
   }
 </style>
 </head>
 <body>
-  <div class="studio-grid"></div>
-  <div class="studio-glow glow"></div>
-  <div class="studio-stage" style="place-items: center stretch;">
-    <div class="stage">
-      <div class="quote-mark" id="qmark">“</div>
-      <p class="studio-chrome quote" id="quote">I went from 56 to 900 followers in 20 days. Without ever showing my face.</p>
-      <div class="attribution" id="attribution">Ava, faceless brand operator</div>
+  <div class="frame"></div>
+  <div class="quote-card">
+    <div class="quote-mark">&ldquo;</div>
+    <blockquote id="quote"></blockquote>
+    <div class="attribution">
+      <span class="name" id="name">RAY VERNON</span>
+      <span class="role" id="role">Founder, Vernon Tech &amp; Media</span>
     </div>
   </div>
+
   <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
   <script src="/studio-compositions/_runtime.js"></script>
   <script>
     (function () {
-      window.studioApply({
-        quote:       { var: 'quote',       prop: 'textContent' },
-        attribution: { var: 'attribution', prop: 'textContent' },
-      })
-      const accent = window.__studioVars.accent_color || '#e3151e'
-      document.querySelector('.glow').style.background = accent
-      document.querySelector('.quote-mark').style.color = accent
-      document.querySelector('.attribution::before')
-      // attribution ::before color via injected style
-      const s = document.createElement('style')
-      s.textContent = `.attribution::before { background: ${accent}; }`
-      document.head.appendChild(s)
+      const v = window.__studioVars
+      const accent = v.accent_color || '#e3151e'
+      const root = document.documentElement
+      root.style.setProperty('--accent', accent)
+      const hexToRgba = (hex, a) => {
+        const m = (hex || '').match(/^#?([0-9a-f]{6})$/i)
+        if (!m) return `rgba(227,21,30,${a})`
+        const n = parseInt(m[1], 16)
+        return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`
+      }
+      root.style.setProperty('--grid-color', hexToRgba(accent, 0.15))
+      root.style.setProperty('--accent-glow', hexToRgba(accent, 0.4))
+
+      // Quote with accent-word split
+      const quote = v.quote || ''
+      const aw = (v.accent_word || '').trim()
+      const blockquote = document.getElementById('quote')
+      if (quote && aw && quote.toLowerCase().includes(aw.toLowerCase())) {
+        const idx = quote.toLowerCase().indexOf(aw.toLowerCase())
+        const before = quote.slice(0, idx)
+        const match = quote.slice(idx, idx + aw.length)
+        const after = quote.slice(idx + aw.length)
+        blockquote.innerHTML =
+          `<span class="chrome">${before}</span>` +
+          `<span class="accent">${match}</span>` +
+          `<span class="chrome">${after}</span>`
+      } else {
+        blockquote.innerHTML = `<span class="chrome">${quote || ''}</span>`
+      }
+
+      if (v.name) document.getElementById('name').textContent = String(v.name).toUpperCase()
+      if (v.role != null) document.getElementById('role').textContent = v.role
 
       const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } })
-      tl.from('.quote-mark', { scale: 0.4, opacity: 0, duration: 0.8, ease: 'back.out(1.6)' }, 0)
-        .from('.quote',       { y: 40, opacity: 0, duration: 0.7 }, 0.2)
-        .from('.attribution', { x: -30, opacity: 0, duration: 0.5 }, 0.5)
-        .to('.glow',          { opacity: 0.55, duration: 1.2, ease: 'power2.out' }, 0)
+      tl.from('.quote-mark',   { scale: 0.4, opacity: 0, duration: 0.8, ease: 'back.out(1.6)' }, 0)
+        .from('blockquote',    { y: 40, opacity: 0, duration: 0.7 }, 0.2)
+        .from('.attribution',  { x: -20, opacity: 0, duration: 0.5 }, 0.55)
         .to({}, { duration: 1.6 })
       window.studioPlay(tl)
     })()

@@ -2,100 +2,169 @@
 <html lang="en"
   data-composition-id="list-overlay-v1"
   data-composition-variables='[
-    {"id":"title","type":"string","label":"Headline","default":"Three things faceless brands do right"},
-    {"id":"bullets","type":"string","label":"Bullets (one per line)","default":"Ship daily, not perfectly\nUse one voice across every platform\nLet the AI handle the parts you hate"},
+    {"id":"title","type":"string","label":"Headline","default":"The 3 tools running my stack"},
+    {"id":"accent_word","type":"string","label":"Accent words in headline","default":"running my stack"},
+    {"id":"bullets","type":"string","label":"Bullets (one per line)","default":"Claude for strategy and execution\nHeyGen for avatar content at scale\nSupabase as the silent backbone"},
     {"id":"accent_color","type":"color","label":"Accent color","default":"#e3151e"}
   ]'>
 <head>
 <meta charset="utf-8" />
-<title>List overlay v1</title>
-<!-- Critical brand styles inlined first so the iframe renders on the
-     dark brand canvas with Plus Jakarta Sans even if _shared.css fails
-     to load (Vercel rewrite race, network blip, cache poison). -->
+<title>List overlay v1 — Sleek</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   html, body {
     width: 100%; height: 100%; overflow: hidden;
-    background: #000; color: #fff;
+    background: #0a0a0c; color: #fff;
     font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
 </style>
 <link rel="stylesheet" href="/studio-compositions/_shared.css" />
 <style>
-  .stage { width: 100%; max-width: 88%; text-align: left; padding-left: 4%; padding-right: 4%; }
-  .title {
-    font-size: clamp(36px, 5.5vw, 80px);
-    margin-bottom: clamp(20px, 3vw, 40px);
-    line-height: 1.05;
+  :root {
+    --bg-base: #0a0a0c; --accent: #e3151e; --accent-glow: rgba(227,21,30,0.4);
+    --text-primary: #fff; --text-secondary: rgba(255,255,255,0.65);
+    --surface-card: rgba(255,255,255,0.06); --surface-border: rgba(255,255,255,0.12);
+    --grid-color: rgba(227,21,30,0.15);
   }
-  .bullets {
+  body { background: var(--bg-base); }
+  .frame { position: absolute; inset: 0; overflow: hidden; }
+  .frame::before {
+    content: ''; position: absolute; inset: -20%;
+    background-image:
+      linear-gradient(var(--grid-color) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+    background-size: 50px 50px;
+    animation: drift_slow 30s linear infinite;
+    z-index: 1; pointer-events: none;
+  }
+  @keyframes drift_slow { from { transform: translate(0,0); } to { transform: translate(-50px,-50px); } }
+  .frame::after {
+    content: ''; position: absolute;
+    top: -30%; right: -20%; width: 70%; height: 100%;
+    background: radial-gradient(circle, var(--accent-glow) 0%, transparent 60%);
+    z-index: 2; filter: blur(20px); pointer-events: none;
+  }
+
+  .list-overlay {
+    position: relative; z-index: 3;
+    height: 100%;
+    display: flex; flex-direction: column;
+    justify-content: center;
+    padding: 0 7%;
+  }
+  .headline {
+    font-weight: 900;
+    font-size: clamp(34px, 5vw, 64px);
+    line-height: 1.02;
+    letter-spacing: -0.025em;
+    margin-bottom: clamp(24px, 3vw, 44px);
+    max-width: 22ch;
+  }
+  .chrome {
+    background: linear-gradient(180deg, #ffffff 0%, #e8e8ed 40%, #8a8a92 50%, #d4d4dc 60%, #ffffff 100%);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .accent {
+    color: var(--accent);
+    text-shadow: 0 0 20px rgba(227,21,30,0.6), 0 0 40px rgba(227,21,30,0.3);
+  }
+  ul {
     list-style: none;
-    display: grid;
-    gap: clamp(14px, 1.8vw, 24px);
+    display: flex; flex-direction: column;
+    gap: clamp(10px, 1.2vw, 18px);
   }
-  .bullets li {
-    display: flex; align-items: flex-start; gap: 18px;
-    font-size: clamp(22px, 3vw, 42px);
-    font-weight: 600;
-    color: #fff;
-    line-height: 1.25;
+  li {
+    display: flex; align-items: center;
+    gap: clamp(14px, 1.6vw, 22px);
+    padding: clamp(12px, 1.4vw, 20px) clamp(18px, 2vw, 28px);
+    background: var(--surface-card);
+    border: 1px solid var(--surface-border);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border-radius: 12px;
+    font-size: clamp(15px, 1.8vw, 24px);
+    font-weight: 700;
+    color: var(--text-primary);
   }
-  .bullets li::before {
-    content: '';
+  li .number {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: clamp(11px, 1.1vw, 14px);
+    font-weight: 700;
+    color: var(--accent);
+    background: rgba(227, 21, 30, 0.12);
+    border: 1px solid rgba(227, 21, 30, 0.3);
+    padding: 6px 10px;
+    border-radius: 6px;
+    letter-spacing: 0.05em;
+    min-width: 44px;
+    text-align: center;
     flex-shrink: 0;
-    width: clamp(8px, 1.1vw, 14px);
-    height: clamp(8px, 1.1vw, 14px);
-    border-radius: 50%;
-    background: #e3151e;
-    margin-top: clamp(14px, 1.6vw, 22px);
-    box-shadow: 0 0 16px rgba(227, 21, 30, 0.6);
-  }
-  .glow {
-    width: 60%;
-    height: 60%;
-    top: 20%;
-    left: -10%;
-    background: #e3151e;
-    opacity: 0;
   }
 </style>
 </head>
 <body>
-  <div class="studio-grid"></div>
-  <div class="studio-glow glow"></div>
-  <div class="studio-stage" style="place-items: center stretch;">
-    <div class="stage">
-      <h2 class="studio-display studio-chrome title" id="title">Three things faceless brands do right</h2>
-      <ul class="bullets" id="bullets"></ul>
-    </div>
+  <div class="frame"></div>
+  <div class="list-overlay">
+    <h2 class="headline" id="headline"></h2>
+    <ul id="bullets"></ul>
   </div>
+
   <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
   <script src="/studio-compositions/_runtime.js"></script>
   <script>
     (function () {
-      window.studioApply({ title: { var: 'title', prop: 'textContent' } })
-      const accent = window.__studioVars.accent_color || '#e3151e'
-      document.querySelector('.glow').style.background = accent
-      const bulletText = (window.__studioVars.bullets || 'Ship daily, not perfectly\nUse one voice across every platform\nLet the AI handle the parts you hate')
-      const items = String(bulletText).split('\n').map((s) => s.trim()).filter(Boolean).slice(0, 5)
+      const v = window.__studioVars
+      const accent = v.accent_color || '#e3151e'
+      const root = document.documentElement
+      root.style.setProperty('--accent', accent)
+      const hexToRgba = (hex, a) => {
+        const m = (hex || '').match(/^#?([0-9a-f]{6})$/i)
+        if (!m) return `rgba(227,21,30,${a})`
+        const n = parseInt(m[1], 16)
+        return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`
+      }
+      root.style.setProperty('--grid-color', hexToRgba(accent, 0.15))
+      root.style.setProperty('--accent-glow', hexToRgba(accent, 0.4))
+
+      // Headline with accent-word split
+      const title = v.title || 'The 3 tools running my stack'
+      const aw = (v.accent_word || '').trim()
+      const headline = document.getElementById('headline')
+      if (aw && title.toLowerCase().includes(aw.toLowerCase())) {
+        const idx = title.toLowerCase().indexOf(aw.toLowerCase())
+        const before = title.slice(0, idx).trim()
+        const match = title.slice(idx, idx + aw.length)
+        const after = title.slice(idx + aw.length).trim()
+        headline.innerHTML =
+          (before ? `<span class="chrome">${before}</span> ` : '') +
+          `<span class="accent">${match}</span>` +
+          (after ? ` <span class="chrome">${after}</span>` : '')
+      } else {
+        headline.innerHTML = `<span class="chrome">${title}</span>`
+      }
+
+      // Bullets
+      const bulletText = v.bullets || 'Claude for strategy and execution\nHeyGen for avatar content at scale\nSupabase as the silent backbone'
+      const items = String(bulletText).split('\n').map((s) => s.trim()).filter(Boolean).slice(0, 6)
       const ul = document.getElementById('bullets')
-      items.forEach((text) => {
+      items.forEach((text, idx) => {
         const li = document.createElement('li')
-        li.textContent = text
-        li.style.setProperty('--accent', accent)
+        const num = document.createElement('span')
+        num.className = 'number'
+        num.textContent = String(idx + 1).padStart(2, '0')
+        const txt = document.createElement('span')
+        txt.className = 'text'
+        txt.style.flex = '1'
+        txt.textContent = text
+        li.appendChild(num)
+        li.appendChild(txt)
         ul.appendChild(li)
       })
-      // Update bullet dot color via inline style on the pseudo-element parent
-      const style = document.createElement('style')
-      style.textContent = `.bullets li::before { background: ${accent}; box-shadow: 0 0 16px ${accent}99; }`
-      document.head.appendChild(style)
 
       const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } })
-      tl.from('.title', { y: 40, opacity: 0, duration: 0.6 }, 0)
-        .from('.bullets li', { y: 30, opacity: 0, duration: 0.5, stagger: 0.12 }, 0.25)
-        .to('.glow', { opacity: 0.45, duration: 1, ease: 'power2.out' }, 0)
-        .to({}, { duration: 1.6 })
+      tl.from('.headline', { y: 40, opacity: 0, duration: 0.7 }, 0)
+        .from('li', { y: 24, opacity: 0, duration: 0.5, stagger: 0.12 }, 0.3)
+        .to({}, { duration: 1.4 })
       window.studioPlay(tl)
     })()
   </script>

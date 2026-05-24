@@ -2,100 +2,175 @@
 <html lang="en"
   data-composition-id="title-card-v1"
   data-composition-variables='[
-    {"id":"title","type":"string","label":"Title","default":"Faceless brands are quietly winning"},
-    {"id":"subtitle","type":"string","label":"Subtitle","default":"And why personal brands are slowing down"},
-    {"id":"accent_word","type":"string","label":"Accent word in title (orange/red)","default":"winning"},
+    {"id":"eyebrow","type":"string","label":"Eyebrow","default":"Episode 04 · System Override"},
+    {"id":"title","type":"string","label":"Headline","default":"The AI stack that ships 10x faster"},
+    {"id":"accent_word","type":"string","label":"Accent word in headline","default":"10x faster"},
+    {"id":"subtitle","type":"string","label":"Subtitle","default":"How solo operators are running entire businesses with AI as their back-end team."},
     {"id":"accent_color","type":"color","label":"Accent color","default":"#e3151e"}
   ]'>
 <head>
 <meta charset="utf-8" />
-<title>Title card v1</title>
-<!-- Critical brand styles inlined first so the iframe renders on the
-     dark brand canvas with Plus Jakarta Sans even if _shared.css fails
-     to load (Vercel rewrite race, network blip, cache poison). The
-     external sheet adds the brand utility classes; this one keeps the
-     baseline correct no matter what. -->
+<title>Title card v1 — Sleek</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   html, body {
     width: 100%; height: 100%; overflow: hidden;
-    background: #000; color: #fff;
+    background: #0a0a0c; color: #fff;
     font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
 </style>
 <link rel="stylesheet" href="/studio-compositions/_shared.css" />
 <style>
-  .stage { text-align: center; max-width: 88%; }
-  .eyebrow { margin-bottom: clamp(14px, 1.5vw, 22px); }
-  .title {
-    font-size: clamp(56px, 9vw, 140px);
-    margin-bottom: clamp(14px, 1.6vw, 26px);
+  :root {
+    --bg-base: #0a0a0c;
+    --accent: #e3151e;
+    --accent-glow: rgba(227, 21, 30, 0.4);
+    --text-primary: #ffffff;
+    --text-secondary: rgba(255,255,255,0.65);
+    --grid-color: rgba(227, 21, 30, 0.15);
+  }
+  body { background: var(--bg-base); }
+  .frame { position: absolute; inset: 0; overflow: hidden; }
+  .frame::before {
+    content: ''; position: absolute; inset: -20%;
+    background-image:
+      linear-gradient(var(--grid-color) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+    background-size: 50px 50px;
+    animation: drift_slow 30s linear infinite;
+    z-index: 1; pointer-events: none;
+  }
+  @keyframes drift_slow { from { transform: translate(0,0); } to { transform: translate(-50px,-50px); } }
+  .frame::after {
+    content: ''; position: absolute;
+    top: -30%; right: -20%;
+    width: 70%; height: 100%;
+    background: radial-gradient(circle, var(--accent-glow) 0%, transparent 60%);
+    z-index: 2; filter: blur(20px); pointer-events: none;
+  }
+
+  .corner-mark {
+    position: absolute;
+    top: 4%; right: 4%;
+    width: clamp(70px, 7vw, 110px);
+    height: clamp(70px, 7vw, 110px);
+    z-index: 4;
+  }
+
+  .title-card {
+    position: relative; z-index: 3;
+    height: 100%;
+    display: flex; flex-direction: column;
+    justify-content: center;
+    padding: 0 7%;
+  }
+  .eyebrow {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: clamp(11px, 1.2vw, 15px);
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: clamp(14px, 1.8vw, 28px);
+    display: flex; align-items: center; gap: 14px;
+  }
+  .eyebrow::before {
+    content: ''; width: clamp(20px, 2.5vw, 36px); height: 1.5px;
+    background: var(--accent); box-shadow: 0 0 10px var(--accent);
+  }
+  .headline {
+    font-weight: 900;
+    font-size: clamp(40px, 6vw, 100px);
+    line-height: 0.98;
+    letter-spacing: -0.025em;
+    margin-bottom: clamp(16px, 2.2vw, 32px);
+    max-width: 18ch;
+  }
+  .chrome {
+    background: linear-gradient(180deg,
+      #ffffff 0%, #e8e8ed 40%, #8a8a92 50%, #d4d4dc 60%, #ffffff 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .accent {
+    color: var(--accent);
+    text-shadow: 0 0 20px rgba(227, 21, 30, 0.6), 0 0 40px rgba(227, 21, 30, 0.3);
   }
   .subtitle {
-    font-size: clamp(20px, 2.6vw, 36px);
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.7);
-    letter-spacing: 0.02em;
-  }
-  .glow {
-    width: 50%;
-    height: 50%;
-    top: 25%;
-    left: 25%;
-    background: #e3151e;
-    opacity: 0;
+    font-size: clamp(15px, 1.8vw, 24px);
+    line-height: 1.5;
+    color: var(--text-secondary);
+    max-width: 38ch;
   }
 </style>
 </head>
 <body>
-  <div class="studio-grid"></div>
-  <div class="studio-glow glow"></div>
-  <div class="studio-stage">
-    <div class="stage">
-      <div class="studio-eyebrow eyebrow" id="eyebrow">SCALESOLO</div>
-      <h1 class="studio-display title" id="title">
-        <span class="studio-chrome" id="title-base">Faceless brands are quietly</span>
-        <span class="studio-accent" id="title-accent">winning</span>
-      </h1>
-      <p class="subtitle" id="subtitle">And why personal brands are slowing down</p>
-    </div>
+  <div class="frame"></div>
+  <svg class="corner-mark" viewBox="0 0 100 100" fill="none" aria-hidden="true">
+    <path d="M70 10 L 90 10 L 90 30" stroke="#e3151e" stroke-width="1.5" opacity="0.8"/>
+    <path d="M90 70 L 90 90 L 70 90" stroke="#e3151e" stroke-width="1.5" opacity="0.8"/>
+    <circle cx="50" cy="50" r="3" fill="#e3151e"/>
+    <circle cx="50" cy="50" r="20" stroke="#e3151e" stroke-width="0.8" opacity="0.5" fill="none"/>
+    <circle cx="50" cy="50" r="35" stroke="#e3151e" stroke-width="0.5" opacity="0.3" fill="none"/>
+  </svg>
+
+  <div class="title-card">
+    <div class="eyebrow" id="eyebrow">Episode 04 · System Override</div>
+    <h1 class="headline" id="headline"></h1>
+    <p class="subtitle" id="subtitle"></p>
   </div>
+
   <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
   <script src="/studio-compositions/_runtime.js"></script>
   <script>
     (function () {
       const v = window.__studioVars
-      const title = v.title || 'Faceless brands are quietly winning'
-      const accentWord = (v.accent_word || '').trim()
-      const accentColor = v.accent_color || '#e3151e'
+      const accent = v.accent_color || '#e3151e'
+      const root = document.documentElement
+      root.style.setProperty('--accent', accent)
+      const hexToRgba = (hex, a) => {
+        const m = (hex || '').match(/^#?([0-9a-f]{6})$/i)
+        if (!m) return `rgba(227,21,30,${a})`
+        const n = parseInt(m[1], 16)
+        return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`
+      }
+      root.style.setProperty('--grid-color', hexToRgba(accent, 0.15))
+      root.style.setProperty('--accent-glow', hexToRgba(accent, 0.4))
+      // Update SVG corner mark colors
+      document.querySelectorAll('.corner-mark path, .corner-mark circle').forEach((el) => {
+        if (el.getAttribute('stroke')) el.setAttribute('stroke', accent)
+        if (el.getAttribute('fill') && el.getAttribute('fill') !== 'none') el.setAttribute('fill', accent)
+      })
 
-      const titleEl = document.getElementById('title')
-      // Split title around the accent word if it appears in the title.
-      if (accentWord && title.toLowerCase().includes(accentWord.toLowerCase())) {
-        const idx = title.toLowerCase().indexOf(accentWord.toLowerCase())
-        const before = title.slice(0, idx)
-        const match = title.slice(idx, idx + accentWord.length)
-        const after = title.slice(idx + accentWord.length)
-        titleEl.innerHTML =
-          (before ? `<span class="studio-chrome">${before.trim()}</span> ` : '') +
-          `<span class="studio-accent">${match}</span>` +
-          (after ? ` <span class="studio-chrome">${after.trim()}</span>` : '')
+      if (v.eyebrow) document.getElementById('eyebrow').textContent = v.eyebrow
+      if (v.subtitle != null) document.getElementById('subtitle').textContent = v.subtitle
+
+      // Title with accent-word split
+      const title = v.title || 'The AI stack that ships 10x faster'
+      const aw = (v.accent_word || '').trim()
+      const headline = document.getElementById('headline')
+      if (aw && title.toLowerCase().includes(aw.toLowerCase())) {
+        const idx = title.toLowerCase().indexOf(aw.toLowerCase())
+        const before = title.slice(0, idx).trim()
+        const match = title.slice(idx, idx + aw.length)
+        const after = title.slice(idx + aw.length).trim()
+        headline.innerHTML =
+          (before ? `<span class="chrome">${before}</span> ` : '') +
+          `<span class="accent">${match}</span>` +
+          (after ? ` <span class="chrome">${after}</span>` : '')
       } else {
-        titleEl.innerHTML = `<span class="studio-chrome">${title}</span>`
+        headline.innerHTML = `<span class="chrome">${title}</span>`
       }
 
-      window.studioApply({
-        subtitle: { var: 'subtitle', prop: 'textContent' },
-      })
-      document.querySelector('.glow').style.background = accentColor
-
       const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } })
-      tl.from('.eyebrow', { y: -20, opacity: 0, duration: 0.5 }, 0)
-        .from('.title', { y: 80, opacity: 0, duration: 0.85 }, 0.1)
-        .from('.subtitle', { y: 30, opacity: 0, duration: 0.6 }, 0.35)
-        .to('.glow', { opacity: 0.55, duration: 1.2, ease: 'power2.out' }, 0)
-        .to({}, { duration: 1.6 })
+      tl.from('.corner-mark', { scale: 0.6, opacity: 0, duration: 0.7, ease: 'back.out(1.3)' }, 0)
+        .from('.eyebrow',    { x: -20, opacity: 0, duration: 0.5 }, 0.1)
+        .from('.headline',   { y: 60, opacity: 0, duration: 0.85 }, 0.25)
+        .from('.subtitle',   { y: 30, opacity: 0, duration: 0.6 }, 0.5)
+        .to({}, { duration: 1.5 })
       window.studioPlay(tl)
     })()
   </script>

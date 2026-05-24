@@ -1,16 +1,18 @@
 <!doctype html>
 <html lang="en"
-  data-composition-id="stat-reveal-v1"
+  data-composition-id="template-preview-sleek-v1"
   data-composition-variables='[
-    {"id":"stat_label","type":"string","label":"Top label","default":"The Shift"},
-    {"id":"stat_number","type":"string","label":"Number","default":"10x"},
-    {"id":"stat_caption","type":"string","label":"Caption","default":"faster shipping with AI as your back-end team."},
+    {"id":"label","type":"string","label":"Eyebrow","default":"The Shift"},
+    {"id":"stat_number","type":"string","label":"Stat","default":"10x"},
+    {"id":"stat_label","type":"string","label":"Stat caption","default":"faster shipping with AI as your back-end team."},
     {"id":"accent_color","type":"color","label":"Accent color","default":"#e3151e"}
   ]'>
 <head>
 <meta charset="utf-8" />
-<title>Stat reveal v1 — Sleek</title>
+<title>Sleek template preview</title>
 <style>
+  /* Critical brand styles inlined first so the iframe always renders
+     on the dark Sleek canvas even if _shared.css is delayed. */
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   html, body {
     width: 100%; height: 100%; overflow: hidden;
@@ -22,27 +24,43 @@
 <link rel="stylesheet" href="/studio-compositions/_shared.css" />
 <style>
   :root {
-    --bg-base: #0a0a0c; --accent: #e3151e; --accent-glow: rgba(227,21,30,0.4);
-    --text-secondary: rgba(255,255,255,0.65); --text-muted: rgba(255,255,255,0.4);
-    --grid-color: rgba(227,21,30,0.15);
+    --bg-base: #0a0a0c;
+    --accent: #e3151e;
+    --accent-glow: rgba(227, 21, 30, 0.4);
+    --text-primary: #ffffff;
+    --text-secondary: rgba(255,255,255,0.65);
+    --text-muted: rgba(255,255,255,0.40);
+    --grid-color: rgba(227, 21, 30, 0.15);
   }
   body { background: var(--bg-base); }
+
+  /* Animated red grid (50px tile, slow drift) — Sleek signature. */
   .frame { position: absolute; inset: 0; overflow: hidden; }
   .frame::before {
-    content: ''; position: absolute; inset: -20%;
+    content: '';
+    position: absolute; inset: -20%;
     background-image:
       linear-gradient(var(--grid-color) 1px, transparent 1px),
       linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
     background-size: 50px 50px;
     animation: drift_slow 30s linear infinite;
-    z-index: 1; pointer-events: none;
+    pointer-events: none;
+    z-index: 1;
   }
-  @keyframes drift_slow { from { transform: translate(0,0); } to { transform: translate(-50px,-50px); } }
+  @keyframes drift_slow {
+    from { transform: translate(0, 0); }
+    to   { transform: translate(-50px, -50px); }
+  }
+  /* Right-side red bloom */
   .frame::after {
-    content: ''; position: absolute;
-    top: -30%; right: -20%; width: 70%; height: 100%;
+    content: '';
+    position: absolute;
+    top: -30%; right: -20%;
+    width: 70%; height: 100%;
     background: radial-gradient(circle, var(--accent-glow) 0%, transparent 60%);
-    z-index: 2; filter: blur(20px); pointer-events: none;
+    pointer-events: none;
+    z-index: 2;
+    filter: blur(20px);
   }
 
   .stat-reveal {
@@ -56,26 +74,42 @@
   .stat-label-top {
     font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: clamp(11px, 1.1vw, 14px);
-    font-weight: 700; letter-spacing: 0.25em; text-transform: uppercase;
+    font-weight: 700;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
     color: var(--text-muted);
     margin-bottom: clamp(20px, 2.6vw, 36px);
     display: flex; align-items: center; gap: 12px;
   }
   .stat-label-top::before, .stat-label-top::after {
-    content: ''; width: 20px; height: 1px; background: var(--text-muted);
+    content: '';
+    width: 20px; height: 1px;
+    background: var(--text-muted);
   }
+
+  /* Wavy chrome gradient — matches Ray's source exactly */
   .stat-number {
     font-weight: 900;
     font-size: clamp(180px, 24vw, 360px);
     line-height: 0.85;
     letter-spacing: -0.05em;
     margin-bottom: 8px;
-    background: linear-gradient(180deg, #ffffff 0%, #f0f0f5 30%, #7a7a82 50%, #d8d8e0 70%, #ffffff 100%);
-    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+    background: linear-gradient(180deg,
+      #ffffff 0%,
+      #f0f0f5 30%,
+      #7a7a82 50%,
+      #d8d8e0 70%,
+      #ffffff 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
     filter: drop-shadow(0 0 40px rgba(227, 21, 30, 0.5))
             drop-shadow(0 0 80px rgba(227, 21, 30, 0.25));
   }
-  .stat-number .unit { font-size: 0.46em; opacity: 0.85; }
+  .stat-number .unit {
+    font-size: 0.46em;
+    opacity: 0.85;
+  }
   .stat-divider {
     width: 60px; height: 1.5px;
     background: var(--accent);
@@ -94,10 +128,10 @@
 <body>
   <div class="frame"></div>
   <div class="stat-reveal">
-    <div class="stat-label-top" id="label">The Shift</div>
-    <div class="stat-number" id="number">10<span class="unit">x</span></div>
+    <div class="stat-label-top" id="eyebrow">The Shift</div>
+    <div class="stat-number" id="stat-number">10<span class="unit">x</span></div>
     <div class="stat-divider"></div>
-    <div class="stat-description" id="caption">faster shipping with AI as your back-end team.</div>
+    <div class="stat-description" id="stat-description">faster shipping with AI as your back-end team.</div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
@@ -117,14 +151,16 @@
       root.style.setProperty('--grid-color', hexToRgba(accent, 0.15))
       root.style.setProperty('--accent-glow', hexToRgba(accent, 0.4))
 
-      if (v.stat_label) document.getElementById('label').textContent = v.stat_label
-      if (v.stat_caption != null) document.getElementById('caption').textContent = v.stat_caption
+      if (v.label) document.getElementById('eyebrow').textContent = v.label
+      if (v.stat_label != null) document.getElementById('stat-description').textContent = v.stat_label
       if (v.stat_number) {
         const raw = String(v.stat_number).trim()
         const m = raw.match(/^([\d,.\s$+%]+)([a-zA-Z]+)?$/)
         const num = m ? m[1] : raw
         const unit = m && m[2] ? m[2] : ''
-        document.getElementById('number').innerHTML = unit ? `${num}<span class="unit">${unit}</span>` : num
+        document.getElementById('stat-number').innerHTML = unit
+          ? `${num}<span class="unit">${unit}</span>`
+          : num
       }
 
       const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } })
