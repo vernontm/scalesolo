@@ -240,6 +240,33 @@ async function closeBrowserSafe() {
 async function renderHyperFramesChunk(seg, paths, dim, durationSecs, fontPath) {
   const browser = await getBrowser()
   const page = await browser.newPage()
+
+  // Vercel preview deployments default to SSO-protected. Puppeteer
+  // running INSIDE the function has no Vercel auth cookies, so without
+  // bypass headers it gets redirected to vercel.com/login and the
+  // composition never loads (every motion segment fell back here).
+  //
+  // VERCEL_AUTOMATION_BYPASS_SECRET is auto-injected by Vercel when
+  // "Protection Bypass for Automation" is enabled on the project
+  // (Settings → Deployment Protection → Protection Bypass for
+  // Automation). Sending this as a header lets the function's own
+  // Puppeteer instance through the auth wall.
+  //
+  // If the env var isn't set (Protection Bypass not enabled), we
+  // skip the header — works fine for production deployments which
+  // aren't behind SSO, and the user sees the redirect-to-login
+  // diagnostic in the fallback reason if it's a problem.
+  const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET
+  if (bypassSecret) {
+    await page.setExtraHTTPHeaders({
+      'x-vercel-protection-bypass': bypassSecret,
+      // Tells Vercel to set a bypass cookie on the response so
+      // subsequent requests from the same Chrome page (e.g. the
+      // CSS, JS, and font subresources) also get through without
+      // each needing the header.
+      'x-vercel-set-bypass-cookie': 'samesitenone',
+    })
+  }
   // Capture page console + uncaught errors so when waitForFunction
   // times out we can include them in the thrown error. Without this
   // the failure is just "10000ms exceeded" — useless for diagnosis.
