@@ -38,6 +38,11 @@ const LandingPages  = lazy(() => import('./pages/LandingPages.jsx'))
 const Spaces        = lazy(() => import('./pages/Spaces.jsx'))
 const Library       = lazy(() => import('./pages/Library.jsx'))
 const Admin         = lazy(() => import('./pages/Admin.jsx'))
+// Studio (long-form video gen) — private beta. Behind StudioGate which
+// hits /api/studio/check; non-allowlisted users get redirected to
+// /dashboard so the route appears not to exist.
+const Studio        = lazy(() => import('./pages/Studio.jsx'))
+import StudioGate from './components/StudioGate.jsx'
 
 // GlobalAgent (bottom-right AI chat FAB) was removed. The bottom-right
 // slot is now a Spaces-only workflow-guide toggle rendered inside
@@ -198,6 +203,14 @@ function AppShell() {
                 <Admin/>. Service-role API endpoints under /api/admin/*
                 also gate via requireAdmin() server-side. */}
             <Route path="/admin/*"   element={<Admin />} />
+            {/* Studio (private beta) — gated by STUDIO_BETA_USER_IDS env var.
+                Non-allowlisted users get redirected to /dashboard so the
+                route appears to not exist. Not linked from the sidebar. */}
+            <Route path="/studio" element={
+              <StudioGate fallback={<Navigate to="/dashboard" replace />}>
+                <Studio />
+              </StudioGate>
+            } />
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
