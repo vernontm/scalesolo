@@ -216,6 +216,14 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
       const data = await r.json()
       if (!r.ok) throw new Error(data.error || 'Could not create video')
       toast({ message: 'Draft created. Generating the video map…', kind: 'success' })
+      // Kick off segmentation in the background — the per-video page
+      // polls for status and renders the map when it transitions to
+      // 'mapped'. Don't await: navigate immediately so the user sees
+      // a "mapping…" state instead of staring at the form.
+      authedFetch('/api/studio/generate-map', session.access_token, {
+        method: 'POST',
+        body: JSON.stringify({ studio_video_id: data.video.id }),
+      }).catch(() => { /* failures surface on the per-video page via status='failed' */ })
       onCreated(data.video)
     } catch (e2) {
       setError(e2.message)
@@ -373,26 +381,58 @@ function Empty({ msg }) {
   )
 }
 
-// ── Per-video editor (placeholder until task #7 lands the video map) ─────────
+// ── Per-video editor ────────────────────────────────────────────────────────
+// While task #7 (full editable video map table) is in flight, this view
+// already loads the segments and renders a read-only preview so we can
+// confirm the segmentation pass is producing sane output end-to-end.
 function StudioVideoEditor({ videoId }) {
   const { session } = useAuth()
   const navigate = useNavigate()
   const [video, setVideo] = useState(null)
   const [error, setError] = useState(null)
 
+  // Load + poll. Polls every 2s while status is 'mapping' or
+  // 'rendering', stops on terminal states. Realtime subscription
+  // arrives in task #7; polling is fine for now.
   useEffect(() => {
     if (!session?.access_token) return
     let cancelled = false
-    authedFetch(`/api/studio/videos?id=${videoId}`, session.access_token)
-      .then(async (r) => {
+    let timer = null
+
+    const tick = async () => {
+      try {
+        const r = await authedFetch(`/api/studio/videos?id=${videoId}`, session.access_token)
         const b = await r.json()
         if (cancelled) return
         if (!r.ok) { setError(b.error || 'Could not load video'); return }
         setVideo(b.video)
-      })
-      .catch((e) => { if (!cancelled) setError(e.message) })
-    return () => { cancelled = true }
+        if (['mapping', 'rendering'].includes(b.video?.status)) {
+          timer = setTimeout(tick, 2000)
+        }
+      } catch (e) {
+        if (!cancelled) setError(e.message)
+      }
+    }
+    tick()
+    return () => { cancelled = true; if (timer) clearTimeout(timer) }
   }, [videoId, session?.access_token])
+
+  const regenerate = async () => {
+    if (!session?.access_token || !video) return
+    setVideo({ ...video, status: 'mapping', error: null })
+    try {
+      const r = await authedFetch('/api/studio/generate-map', session.access_token, {
+        method: 'POST', body: JSON.stringify({ studio_video_id: video.id }),
+      })
+      const b = await r.json()
+      if (!r.ok) throw new Error(b.error || 'Could not regenerate')
+      setVideo(b.video)
+      toast({ message: 'Map regenerated.', kind: 'success' })
+    } catch (e) {
+      setVideo({ ...video, status: 'failed', error: e.message })
+      toast({ message: e.message, kind: 'error' })
+    }
+  }
 
   return (
     <div className="fade-up" style={{ maxWidth: 1080, margin: '0 auto', padding: '32px 24px' }}>
@@ -409,26 +449,136 @@ function StudioVideoEditor({ videoId }) {
           <Header
             title={video.title || video.topic_prompt?.slice(0, 80) || 'Untitled video'}
             subtitle={`${fmtStatus(video.status)} · ${video.target_duration_secs}s · ${video.aspect_ratio}`}
+            action={['mapped', 'failed', 'editing'].includes(video.status) && (
+              <button className="btn-secondary" onClick={regenerate}>
+                <Wand2 size={13} /> Regenerate map
+              </button>
+            )}
           />
-          <div className="card" style={{ padding: 28 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--red)', fontSize: 12, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 12 }}>
-              <Sparkles size={13} />
-              Coming next
+
+          {video.status === 'mapping' && (
+            <div className="card" style={{ padding: 28, textAlign: 'center' }}>
+              <Loader2 size={24} className="spin" style={{ color: 'var(--red)' }} />
+              <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, margin: '12px 0 4px' }}>
+                Drafting your video map…
+              </h2>
+              <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+                Claude is beating the script into segments in your brand voice. Usually 10 to 30 seconds.
+              </div>
             </div>
-            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, margin: '0 0 8px' }}>
-              The video map lives here.
-            </h2>
-            <p style={{ fontSize: 13.5, lineHeight: 1.55, color: 'var(--text-soft)', margin: 0 }}>
-              Topic: <strong style={{ color: 'var(--text)' }}>{video.topic_prompt}</strong>
-              <br />Status: <strong style={{ color: 'var(--text)' }}>{video.status}</strong>
-              <br />Segments: <strong style={{ color: 'var(--text)' }}>{video.studio_segments?.length || 0}</strong>
-            </p>
-            <div style={{ marginTop: 16, fontSize: 12, color: 'var(--muted)' }}>
-              The Claude segmentation pass + video map table arrive in the next iteration.
+          )}
+
+          {video.status === 'failed' && (
+            <div className="card" style={{ padding: 24, borderColor: 'rgba(239,68,68,0.45)' }}>
+              <div style={{ color: 'var(--red)', fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>Mapping failed</div>
+              <div style={{ fontSize: 13, color: 'var(--text-soft)' }}>{video.error || 'Unknown error'}</div>
+              <button className="btn-primary" style={{ marginTop: 12 }} onClick={regenerate}>
+                <Wand2 size={13} /> Try again
+              </button>
             </div>
-          </div>
+          )}
+
+          {(['mapped', 'editing', 'rendering', 'rendered'].includes(video.status)) && (
+            <SegmentList video={video} />
+          )}
+
+          {video.status === 'draft' && (
+            <Empty msg="Draft created but mapping has not been kicked off yet. Hit Regenerate map to start." />
+          )}
         </>
       )}
     </div>
+  )
+}
+
+function SegmentList({ video }) {
+  const segments = (video.studio_segments || []).slice().sort((a, b) => a.segment_index - b.segment_index)
+  return (
+    <div>
+      {video.script_full_text && (
+        <div className="card" style={{ padding: 16, marginBottom: 16, background: 'var(--surface-2)' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8 }}>
+            Full script
+          </div>
+          <div style={{ fontSize: 13.5, lineHeight: 1.6, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>
+            {video.script_full_text}
+          </div>
+        </div>
+      )}
+
+      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8 }}>
+        {segments.length} segments · read-only preview
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {segments.map((s) => (
+          <div key={s.id} className="card-flat" style={{ padding: 14, background: 'var(--surface-2)' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+              <div style={{
+                width: 32, height: 32, borderRadius: 8,
+                background: 'var(--surface)', border: '1px solid var(--border)',
+                display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 700,
+                color: 'var(--muted)', flexShrink: 0,
+              }}>
+                {s.segment_index + 1}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+                  <SegmentTypeBadge type={s.segment_type} />
+                  {s.hyperframes_composition_id && (
+                    <span style={{ fontSize: 10.5, color: 'var(--muted)', background: 'var(--surface)', border: '1px solid var(--border)', padding: '2px 6px', borderRadius: 4 }}>
+                      {s.hyperframes_composition_id}
+                    </span>
+                  )}
+                  {s.transition_in && s.transition_in !== 'cut' && (
+                    <span style={{ fontSize: 10.5, color: 'var(--muted)' }}>↪ {s.transition_in}</span>
+                  )}
+                  {s.sound_effect && (
+                    <span style={{ fontSize: 10.5, color: 'var(--muted)' }}>♪ {s.sound_effect}</span>
+                  )}
+                </div>
+                {s.script_text && (
+                  <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--text)', marginBottom: 4 }}>
+                    {s.script_text}
+                  </div>
+                )}
+                {s.image_prompt && (
+                  <div style={{ fontSize: 11.5, color: 'var(--text-soft)', fontStyle: 'italic' }}>
+                    B-roll: {s.image_prompt}
+                  </div>
+                )}
+                {s.motion_gesture_prompt && (
+                  <div style={{ fontSize: 11.5, color: 'var(--text-soft)' }}>
+                    Direction: {s.motion_gesture_prompt}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ marginTop: 16, fontSize: 11.5, color: 'var(--muted)', textAlign: 'center' }}>
+        Editable table + HyperFrames previews land in the next iterations.
+      </div>
+    </div>
+  )
+}
+
+function SegmentTypeBadge({ type }) {
+  const palette = {
+    avatar:                     { label: 'Avatar',    bg: 'rgba(239,68,68,0.16)',   fg: 'var(--red)' },
+    voiceover_broll:            { label: 'B-roll',    bg: 'rgba(99,102,241,0.16)',  fg: '#818cf8'    },
+    voiceover_motion_graphics:  { label: 'Motion',    bg: 'rgba(245,158,11,0.16)',  fg: '#fbbf24'    },
+    pure_motion_graphics:       { label: 'Sting',     bg: 'rgba(46,204,113,0.16)',  fg: '#2ecc71'    },
+  }
+  const p = palette[type] || { label: type, bg: 'var(--surface)', fg: 'var(--text-soft)' }
+  return (
+    <span style={{
+      fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 4,
+      background: p.bg, color: p.fg, letterSpacing: '0.02em',
+    }}>
+      {p.label}
+    </span>
   )
 }
