@@ -426,7 +426,7 @@ function RenderComposer({ avatar, models, onClose, onSubmitted }) {
 // Inline, expandable. Cover thumb + name + image count. Click header to
 // collapse / expand. Inside: image grid + drop zone for more images +
 // inline rename.
-function LookFolder({ look, index, onAddImages, onDeleteImage, onRename, onReorderImage, busy }) {
+function LookFolder({ look, index, onAddImages, onDeleteImage, onRename, onSetOrientation, onReorderImage, busy }) {
   const [open, setOpen] = useState(true)
   const [editingName, setEditingName] = useState(false)
   const [draftName, setDraftName] = useState(look.name || '')
@@ -508,8 +508,46 @@ function LookFolder({ look, index, onAddImages, onDeleteImage, onRename, onReord
           )}
           <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
             {images.length} {images.length === 1 ? 'image' : 'images'}
+            {look.orientation && (
+              <span style={{
+                marginLeft: 8, padding: '1px 7px', borderRadius: 4,
+                background: 'rgba(99,102,241,0.16)', color: '#a5b4fc',
+                fontSize: 10, fontWeight: 700, letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+              }}>{look.orientation}</span>
+            )}
           </div>
         </div>
+        {/* Orientation pill picker — click-through-safe (stops the row
+            collapse). Studio reads avatar_looks.orientation to surface a
+            badge per look and warn when the chosen look doesn't match
+            the video's aspect ratio. */}
+        {onSetOrientation && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ display: 'flex', gap: 4, alignItems: 'center' }}
+          >
+            {[
+              { v: 'portrait',  label: 'P', title: 'Portrait' },
+              { v: 'landscape', label: 'L', title: 'Landscape' },
+              { v: 'square',    label: 'S', title: 'Square' },
+            ].map((opt) => (
+              <button
+                key={opt.v}
+                type="button"
+                onClick={() => onSetOrientation(look.orientation === opt.v ? null : opt.v)}
+                disabled={busy}
+                className={look.orientation === opt.v ? 'btn-primary' : 'btn-secondary'}
+                title={`${opt.title}${look.orientation === opt.v ? ' (click to clear)' : ''}`}
+                style={{
+                  width: 28, height: 24, padding: 0,
+                  fontSize: 11, fontWeight: 800,
+                  display: 'grid', placeItems: 'center',
+                }}
+              >{opt.label}</button>
+            ))}
+          </div>
+        )}
         <ChevronRight size={16} style={{ color: 'var(--muted)', transform: open ? 'rotate(90deg)' : 'rotate(0)', transition: 'transform 0.15s' }} />
       </div>
 
@@ -708,11 +746,36 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
   }
 
   const renameLook = async (lookId, name) => {
-    // avatar_looks API doesn't have a generic PATCH yet — use Supabase REST via /api/avatars passthrough.
-    // For now, write to the same upload-look endpoint as a no-op; rename via direct supabase client below.
+    // Small-edit PATCH endpoint added in 0036. Replaces the earlier
+    // direct-Supabase-client write; this one is RLS-authorized server-side.
     try {
-      const { supabase } = await import('../lib/supabase.js')
-      await supabase.from('avatar_looks').update({ name }).eq('id', lookId)
+      const r = await fetch(`/api/avatars/looks?id=${lookId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ name }),
+      })
+      if (!r.ok) {
+        const b = await r.json().catch(() => ({}))
+        throw new Error(b.error || 'Rename failed')
+      }
+      onChange()
+    } catch (e) { setError(e.message) }
+  }
+
+  // Tag a look's orientation (portrait/landscape/square/null). Studio's
+  // Look picker reads this to surface a badge per look + a soft warning
+  // when the chosen look doesn't match the video's aspect ratio.
+  const setLookOrientation = async (lookId, orientation) => {
+    try {
+      const r = await fetch(`/api/avatars/looks?id=${lookId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ orientation: orientation || null }),
+      })
+      if (!r.ok) {
+        const b = await r.json().catch(() => ({}))
+        throw new Error(b.error || 'Could not tag orientation')
+      }
       onChange()
     } catch (e) { setError(e.message) }
   }
@@ -838,6 +901,7 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
                     onAddImages={(files) => addImagesToLook(l.id, files)}
                     onDeleteImage={deleteLookImage}
                     onRename={(name) => renameLook(l.id, name)}
+                    onSetOrientation={(orientation) => setLookOrientation(l.id, orientation)}
                     onReorderImage={(imageId, targetIdx) => reorderImageInLook(l.id, imageId, targetIdx)}
                     busy={busy}
                   />
