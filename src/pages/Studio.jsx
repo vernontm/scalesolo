@@ -748,7 +748,10 @@ function StudioVideoEditor({ videoId }) {
           )}
 
           {(['mapped', 'editing', 'rendering', 'rendered'].includes(video.status)) && (
-            <SegmentList video={video} />
+            <>
+              <SegmentList video={video} />
+              <StudioChat videoId={video.id} />
+            </>
           )}
 
           {video.status === 'draft' && (
@@ -1124,6 +1127,207 @@ function FailedCard({ video, onRegenerate }) {
     </div>
   )
 }
+
+// Studio chat editor. Sits between the video map and the sticky action
+// bar. User types natural-language edits ("swap segment 4's B-roll to a
+// beach sunset", "make all title cards use red accent"); the server-side
+// chat agent translates into structured patch / swap / insert / delete
+// ops against studio_segments. Realtime delivers the resulting mutations
+// to the table above so the user sees the edits land live.
+//
+// History is local-only for v1 — no persistence between page loads.
+// Last 12 turns get sent along on each call so multi-step "ok now do X"
+// follow-ups work coherently.
+function StudioChat({ videoId }) {
+  const { session } = useAuth()
+  const [open, setOpen] = useState(false)
+  const [history, setHistory] = useState([])
+  const [draft, setDraft] = useState('')
+  const [busy, setBusy] = useState(false)
+  const scrollRef = useRef(null)
+
+  // Scroll the transcript to the bottom whenever a new turn lands.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  }, [history, busy])
+
+  const send = async () => {
+    const msg = draft.trim()
+    if (!msg || busy || !session?.access_token) return
+    setDraft('')
+    setBusy(true)
+    // Optimistically render the user turn so the input clears
+    // immediately and the user sees their message in the transcript.
+    setHistory((h) => [...h, { role: 'user', content: msg }])
+    try {
+      const r = await authedFetch('/api/studio/chat', session.access_token, {
+        method: 'POST',
+        body: JSON.stringify({
+          studio_video_id: videoId,
+          message: msg,
+          // Only send role+content. The server doesn't replay tool_use
+          // blocks from prior turns; it just needs the conversational
+          // shape so multi-turn follow-ups make sense.
+          history: history.map((h) => ({ role: h.role, content: h.content })),
+        }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(body.error || 'Chat failed')
+      setHistory((h) => [...h, {
+        role: 'assistant',
+        content: body.assistant_message || 'Done.',
+        ops: body.applied_ops || [],
+        errors: body.errors || [],
+      }])
+      if (body.applied_ops?.length) {
+        toast({
+          message: `Applied ${body.applied_ops.length} edit${body.applied_ops.length === 1 ? '' : 's'} from chat.`,
+          kind: 'success',
+        })
+      }
+    } catch (e) {
+      setHistory((h) => [...h, { role: 'assistant', content: `Error: ${e.message}`, error: true }])
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const onKeyDown = (e) => {
+    // Enter sends; Shift+Enter inserts newline for multi-line requests.
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      send()
+    }
+  }
+
+  return (
+    <div className="card" style={{ marginTop: 20, padding: 0, overflow: 'hidden' }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+          padding: '12px 16px', background: 'transparent', border: 'none',
+          color: 'var(--text)', textAlign: 'left', cursor: 'pointer',
+        }}
+      >
+        <div style={{
+          width: 28, height: 28, borderRadius: 8,
+          background: 'rgba(239,68,68,0.16)', color: 'var(--red)',
+          display: 'grid', placeItems: 'center', flexShrink: 0,
+        }}>
+          <Sparkles size={14} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13.5 }}>
+            Chat editor
+          </div>
+          <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 2 }}>
+            Tell Claude what to change. Example: "Swap segment 4's B-roll to a sunset beach scene." Edits apply instantly to the map above.
+          </div>
+        </div>
+        <ChevronRight size={14} style={{ color: 'var(--muted)', transform: open ? 'rotate(90deg)' : 'rotate(0)', transition: 'transform 0.15s' }} />
+      </button>
+
+      {open && (
+        <div style={{ borderTop: '1px solid var(--border)' }}>
+          {history.length > 0 && (
+            <div
+              ref={scrollRef}
+              style={{
+                maxHeight: 320, overflowY: 'auto',
+                padding: 14, display: 'flex', flexDirection: 'column', gap: 10,
+                background: 'var(--surface-2)',
+              }}
+            >
+              {history.map((m, i) => (
+                <ChatTurn key={i} turn={m} />
+              ))}
+              {busy && (
+                <div style={{ fontSize: 12, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Loader2 size={12} className="spin" /> Thinking…
+                </div>
+              )}
+            </div>
+          )}
+
+          <div style={{ padding: 12, display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+            <textarea
+              className="input"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={onKeyDown}
+              placeholder='Try: "Change segment 5 to a stat-reveal showing 403K views" or "Make all motion graphics use accent color #ff9b26".'
+              rows={2}
+              style={{ flex: 1, resize: 'vertical', fontSize: 13 }}
+              disabled={busy}
+              maxLength={4000}
+            />
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={send}
+              disabled={busy || !draft.trim()}
+              style={{ alignSelf: 'stretch', padding: '0 16px' }}
+            >
+              {busy ? <Loader2 size={14} className="spin" /> : <Wand2 size={14} />}
+              Send
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ChatTurn({ turn }) {
+  const isUser = turn.role === 'user'
+  return (
+    <div style={{
+      alignSelf: isUser ? 'flex-end' : 'flex-start',
+      maxWidth: '85%',
+      padding: '8px 12px', borderRadius: 10,
+      background: isUser ? 'rgba(239,68,68,0.16)' : 'var(--surface)',
+      border: `1px solid ${turn.error ? 'rgba(239,68,68,0.45)' : 'var(--border)'}`,
+      color: turn.error ? 'var(--red)' : 'var(--text)',
+    }}>
+      <div style={{ fontSize: 13, lineHeight: 1.45, whiteSpace: 'pre-wrap' }}>{turn.content}</div>
+      {!isUser && Array.isArray(turn.ops) && turn.ops.length > 0 && (
+        <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px dashed var(--border)' }}>
+          <div style={{ fontSize: 10.5, color: 'var(--muted)', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 4 }}>
+            Applied {turn.ops.length} {turn.ops.length === 1 ? 'edit' : 'edits'}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-soft)', lineHeight: 1.4 }}>
+            {turn.ops.slice(0, 6).map((op, i) => (
+              <div key={i}>· {opSummary(op)}</div>
+            ))}
+            {turn.ops.length > 6 && (
+              <div style={{ color: 'var(--muted)' }}>… and {turn.ops.length - 6} more.</div>
+            )}
+          </div>
+        </div>
+      )}
+      {!isUser && Array.isArray(turn.errors) && turn.errors.length > 0 && (
+        <div style={{ marginTop: 6, fontSize: 11, color: 'var(--red)' }}>
+          {turn.errors.length} op{turn.errors.length === 1 ? '' : 's'} failed: {turn.errors.map((e) => e.error).join('; ')}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function opSummary(op) {
+  switch (op?.kind) {
+    case 'patch_segment':     return `Patched segment ${shortId(op.segment_id)} (${(op.changed || []).join(', ')})`
+    case 'delete_segment':    return `Deleted segment ${shortId(op.segment_id)}`
+    case 'insert_segment':    return `Inserted new segment at index ${op.at_index}`
+    case 'swap_composition':  return `Swapped segment ${shortId(op.segment_id)} → ${op.composition_id}`
+    default: return op?.kind || 'unknown op'
+  }
+}
+function shortId(id) { return id ? String(id).slice(0, 8) : '?' }
 
 function StickyActionBar({ video, approvedCount, totalCount, segments }) {
   const { session } = useAuth()
