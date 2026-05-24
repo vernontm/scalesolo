@@ -845,12 +845,29 @@ function StudioVideoEditor({ videoId }) {
         <>
           <Header
             title={video.title || video.topic_prompt?.slice(0, 80) || 'Untitled video'}
-            subtitle={`${fmtStatus(video.status)} · ${video.target_duration_secs}s · ${video.aspect_ratio}`}
-            action={['mapped', 'failed', 'editing'].includes(video.status) && (
-              <button className="btn-secondary" onClick={regenerate}>
-                <Wand2 size={13} /> Regenerate map
-              </button>
-            )}
+            subtitle={`${fmtStatus(video.status)} · ${video.target_duration_secs}s · ${video.aspect_ratio}${video.template_id ? ` · ${video.template_id}` : ''}`}
+            action={
+              <div style={{ display: 'flex', gap: 8 }}>
+                {['mapped', 'editing', 'rendered'].includes(video.status) && (
+                  <TemplateChangeButton video={video} onApplied={() => {
+                    // Re-poll the video immediately so the new
+                    // template_id + brand_color show up in the header
+                    // and the sticky bar.
+                    if (session?.access_token) {
+                      authedFetch(`/api/studio/videos?id=${video.id}`, session.access_token)
+                        .then((r) => r.ok ? r.json() : null)
+                        .then((b) => { if (b?.video) setVideo(b.video) })
+                        .catch(() => {})
+                    }
+                  }} />
+                )}
+                {['mapped', 'failed', 'editing'].includes(video.status) && (
+                  <button className="btn-secondary" onClick={regenerate}>
+                    <Wand2 size={13} /> Regenerate map
+                  </button>
+                )}
+              </div>
+            }
           />
 
           {video.status === 'mapping' && (
@@ -1178,6 +1195,188 @@ function SegmentList({ video }) {
         segments={segments}
       />
     </div>
+  )
+}
+
+// Per-video template switcher. Opens a modal showing the template
+// gallery + color picker + two action buttons:
+//   "Update styling only"  — patches template_id + brand_color and
+//                            cascades the color into every motion
+//                            segment's accent_color. Cheap, fast,
+//                            preserves all content. User then clicks
+//                            Re-render to bake the new look.
+//   "Re-segment with template" — wipes the map and runs generate-map
+//                                with the new template. Expensive but
+//                                produces a video that fully reflects
+//                                the new template's pacing / pool.
+function TemplateChangeButton({ video, onApplied }) {
+  const { session } = useAuth()
+  const [open, setOpen] = useState(false)
+  const [templates, setTemplates] = useState([])
+  const [templateId, setTemplateId] = useState(video.template_id || 'sleek')
+  const [brandColor, setBrandColor] = useState(video.brand_color || '')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (!open || !session?.access_token) return
+    authedFetch('/api/studio/templates', session.access_token)
+      .then((r) => r.ok ? r.json() : { templates: [] })
+      .then((b) => {
+        setTemplates(b.templates || [])
+        // Seed brand color from the currently-selected template if the
+        // video doesn't already have a custom color set.
+        if (!brandColor) {
+          const cur = (b.templates || []).find((t) => t.id === templateId)
+          if (cur?.primary_accent) setBrandColor(cur.primary_accent)
+        }
+      })
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, session?.access_token])
+
+  const selected = templates.find((t) => t.id === templateId)
+
+  const apply = async (deep) => {
+    if (!session?.access_token) return
+    if (deep) {
+      const ok = await confirmDialog({
+        title: 'Wipe the map and re-segment?',
+        message: `Re-segmenting with "${selected?.name || templateId}" will replace every segment in the map with a fresh draft Claude writes against the new template's pacing and composition pool. Your voice, B-roll, and avatar URLs will be lost — you'll need to regenerate assets after.\n\nThe existing rendered MP4 stays in storage and remains playable until you bake a new one.`,
+        confirmText: 'Wipe and re-segment',
+        cancelText: 'Cancel',
+        destructive: true,
+      })
+      if (!ok) return
+    }
+    setBusy(true)
+    try {
+      const r = await authedFetch('/api/studio/apply-template', session.access_token, {
+        method: 'POST',
+        body: JSON.stringify({
+          studio_video_id: video.id,
+          template_id: templateId,
+          brand_color: brandColor || null,
+          deep,
+        }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(body.error || 'Could not apply template')
+      toast({
+        message: deep
+          ? `Re-segmenting with ${selected?.name || templateId}…`
+          : `Applied ${selected?.name || templateId}. Hit Re-render to bake the new look.`,
+        kind: 'success',
+      })
+      setOpen(false)
+      onApplied?.()
+    } catch (e) {
+      toast({ message: e.message, kind: 'error' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <button type="button" className="btn-secondary" onClick={() => setOpen(true)} title="Switch the visual template for this video">
+        <Sparkles size={13} /> Change template
+      </button>
+      {open && (
+        <div
+          role="dialog" aria-modal="true"
+          onClick={(e) => { if (e.target === e.currentTarget) setOpen(false) }}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 250,
+            background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)',
+            display: 'grid', placeItems: 'center', padding: 20,
+          }}
+        >
+          <div
+            style={{
+              width: 'min(720px, 100%)', maxHeight: '90vh', overflowY: 'auto',
+              background: 'var(--surface)', border: '1px solid var(--border)',
+              borderRadius: 14, padding: 24, boxShadow: '0 20px 60px rgba(0,0,0,0.6)',
+            }}
+          >
+            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, margin: '0 0 6px' }}>
+              Change visual template
+            </h2>
+            <p style={{ fontSize: 12.5, color: 'var(--muted)', margin: '0 0 18px', lineHeight: 1.5 }}>
+              Pick a new look. <strong>Update styling only</strong> keeps your script, B-roll, and avatar segments — just swaps the visual identity and brand color. <strong>Re-segment</strong> rebuilds the entire map with the new template's pacing.
+            </p>
+
+            <div style={{ marginBottom: 16 }}>
+              <Label>Template</Label>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                gap: 8,
+              }}>
+                {templates.map((t) => (
+                  <TemplateCard
+                    key={t.id}
+                    template={t}
+                    selected={templateId === t.id}
+                    onClick={() => {
+                      setTemplateId(t.id)
+                      // Reset brand color to the new template's default
+                      if (t.primary_accent) setBrandColor(t.primary_accent)
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 20 }}>
+              <Label>Brand color</Label>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <input
+                  type="color"
+                  value={brandColor || selected?.primary_accent || '#e3151e'}
+                  onChange={(e) => setBrandColor(e.target.value)}
+                  style={{ width: 56, height: 36, border: '1px solid var(--border)', borderRadius: 6, background: 'transparent', padding: 0, cursor: 'pointer' }}
+                />
+                <input
+                  type="text"
+                  className="input"
+                  value={brandColor || selected?.primary_accent || '#e3151e'}
+                  onChange={(e) => setBrandColor(e.target.value)}
+                  style={{ width: 130, fontSize: 12 }}
+                  maxLength={9}
+                />
+                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                  Cascades into every motion graphic.
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button type="button" className="btn-secondary" onClick={() => setOpen(false)} disabled={busy}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => apply(true)}
+                disabled={busy}
+                title="Wipe the map and re-run Claude with the new template's pacing + composition pool. Slow + expensive (Claude tokens + lost assets)."
+              >
+                Re-segment
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => apply(false)}
+                disabled={busy}
+              >
+                {busy ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
+                Update styling only
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 
