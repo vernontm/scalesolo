@@ -17,6 +17,34 @@
 //   3. Provides studioPlay(timeline) which the composition calls once
 //      it has built its GSAP timeline. Handles play / loop / render-mode
 //      registration based on (2).
+//
+//   4. Injects a fallback brand stylesheet inline at the very top of the
+//      document so even if /studio-compositions/_shared.css fails to
+//      load (rewrite race, Network blip, cache poison), the iframe
+//      still renders on the dark brand canvas with Plus Jakarta Sans.
+
+;(function injectBrandFallback() {
+  // Idempotent — if shared.css already loaded, our !important rules
+  // here are the same so there's no conflict.
+  const style = document.createElement('style')
+  style.setAttribute('data-studio-fallback', '1')
+  style.textContent = `
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800;900&display=swap');
+    html, body {
+      width: 100% !important;
+      height: 100% !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      overflow: hidden !important;
+      background: #000 !important;
+      color: #fff !important;
+      font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif !important;
+      -webkit-font-smoothing: antialiased;
+    }
+    * { box-sizing: border-box; }
+  `
+  document.head.insertBefore(style, document.head.firstChild)
+})()
 
 window.__studioVars = (function () {
   try {

@@ -10,6 +10,19 @@
 <head>
 <meta charset="utf-8" />
 <title>Stat reveal v1</title>
+<!-- Critical brand styles inlined first so the iframe renders on the
+     dark brand canvas with Plus Jakarta Sans even if _shared.css fails
+     to load (Vercel rewrite race, network blip, cache poison). -->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800;900&display=swap');
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: #000; color: #fff;
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+</style>
 <link rel="stylesheet" href="/studio-compositions/_shared.css" />
 <style>
   .stage { text-align: center; max-width: 90%; }

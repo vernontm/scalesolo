@@ -226,6 +226,21 @@ export default async function handler(req, res) {
     if (!video) return res.status(404).json({ error: 'Video not found' })
     await assertProfileAccess(auth.user.id, video.profile_id)
 
+    // Guard: re-mapping a video that already has a final_video_url is
+    // destructive — it wipes every segment (and therefore every voice/
+    // image/avatar URL on those segments). The final MP4 stays around
+    // in storage but the editing pipeline loses its memory of how it
+    // was made. Require an explicit { confirm_wipe_render: true } flag
+    // on the body so the UI can show a "Are you sure?" prompt before
+    // clicking through.
+    if (video.final_video_url && req.body?.confirm_wipe_render !== true) {
+      return res.status(409).json({
+        error: 'This video has already been rendered. Re-mapping will wipe all segments and their generated assets (voices, B-roll images, avatar videos). The final MP4 is preserved in storage but you will lose the editable map. Pass { confirm_wipe_render: true } to proceed.',
+        code: 'render_exists',
+        final_video_url: video.final_video_url,
+      })
+    }
+
     // Flip status → mapping so Realtime subscribers see we're working
     await supaFetch(`studio_videos?id=eq.${video.id}`, {
       method: 'PATCH',

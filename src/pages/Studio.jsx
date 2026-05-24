@@ -513,19 +513,38 @@ function StudioVideoEditor({ videoId }) {
     return () => { try { channel.unsubscribe() } catch { /* noop */ } }
   }, [videoId])
 
-  const regenerate = async () => {
+  const regenerate = async (opts = {}) => {
     if (!session?.access_token || !video) return
+    const previousVideo = video
     setVideo({ ...video, status: 'mapping', error: null })
     try {
+      const body = { studio_video_id: video.id }
+      if (opts.confirmWipeRender) body.confirm_wipe_render = true
       const r = await authedFetch('/api/studio/generate-map', session.access_token, {
-        method: 'POST', body: JSON.stringify({ studio_video_id: video.id }),
+        method: 'POST', body: JSON.stringify(body),
       })
       const b = await r.json()
+      if (r.status === 409 && b.code === 'render_exists') {
+        // Server is asking "are you sure?" before wiping a rendered video.
+        // Restore state, then prompt the user. If they confirm, re-fire
+        // with the flag set; otherwise leave the video untouched.
+        setVideo(previousVideo)
+        const ok = await confirmDialog({
+          title: 'Wipe the existing render?',
+          message:
+            'This video has already been rendered. Regenerating the map will replace every segment and you will lose the voice, B-roll, and avatar URLs they reference. The rendered MP4 itself stays in storage and remains playable. Continue?',
+          confirmText: 'Wipe and regenerate',
+          cancelText: 'Keep render',
+          destructive: true,
+        })
+        if (ok) await regenerate({ confirmWipeRender: true })
+        return
+      }
       if (!r.ok) throw new Error(b.error || 'Could not regenerate')
       setVideo(b.video)
       toast({ message: 'Map regenerated.', kind: 'success' })
     } catch (e) {
-      setVideo({ ...video, status: 'failed', error: e.message })
+      setVideo({ ...previousVideo, status: 'failed', error: e.message })
       toast({ message: e.message, kind: 'error' })
     }
   }
