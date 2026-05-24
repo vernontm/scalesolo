@@ -271,12 +271,16 @@ export default async function handler(req, res) {
       prefer: 'return=minimal',
     }).catch(() => {})
 
-    // Insert in one batch
+    // Insert in one batch. Default approved=true so the user starts
+    // from "everything in" and only flips off the segments they want
+    // to drop. UX-wise this is much faster than approving 20+ rows
+    // one at a time after every map regeneration.
     const insertRows = segments.map((s) => ({
       ...s,
       studio_video_id: video.id,
       profile_id: video.profile_id,
       status: 'pending',
+      approved: true,
     }))
     await supaFetch('studio_segments', {
       method: 'POST',

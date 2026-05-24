@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en"
+  data-composition-id="quote-card-v1"
+  data-composition-variables='[
+    {"id":"quote","type":"string","label":"Quote","default":"I went from 56 to 900 followers in 20 days. Without ever showing my face."},
+    {"id":"attribution","type":"string","label":"Attribution","default":"Ava, faceless brand operator"},
+    {"id":"accent_color","type":"color","label":"Accent color","default":"#e3151e"}
+  ]'>
+<head>
+<meta charset="utf-8" />
+<title>Quote card v1</title>
+<link rel="stylesheet" href="/studio-compositions/_shared.css" />
+<style>
+  .stage { max-width: 84%; text-align: left; position: relative; }
+  .quote-mark {
+    position: absolute;
+    top: -0.4em; left: -0.05em;
+    font-size: clamp(140px, 22vw, 380px);
+    line-height: 1;
+    font-weight: 900;
+    color: #e3151e;
+    opacity: 0.18;
+    font-family: Georgia, 'Times New Roman', serif;
+    pointer-events: none;
+  }
+  .quote {
+    font-size: clamp(28px, 4.2vw, 64px);
+    font-weight: 700;
+    line-height: 1.18;
+    margin-bottom: clamp(20px, 2.4vw, 36px);
+    position: relative;
+    letter-spacing: -0.01em;
+  }
+  .attribution {
+    font-size: clamp(16px, 1.8vw, 24px);
+    color: rgba(255,255,255,0.6);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    display: inline-flex; align-items: center; gap: 14px;
+  }
+  .attribution::before {
+    content: '';
+    width: clamp(28px, 4vw, 60px);
+    height: 2px;
+    background: #e3151e;
+  }
+  .glow {
+    width: 55%;
+    height: 55%;
+    bottom: 10%;
+    right: -15%;
+    background: #e3151e;
+    opacity: 0;
+  }
+</style>
+</head>
+<body>
+  <div class="studio-grid"></div>
+  <div class="studio-glow glow"></div>
+  <div class="studio-stage" style="place-items: center stretch;">
+    <div class="stage">
+      <div class="quote-mark" id="qmark">“</div>
+      <p class="studio-chrome quote" id="quote">I went from 56 to 900 followers in 20 days. Without ever showing my face.</p>
+      <div class="attribution" id="attribution">Ava, faceless brand operator</div>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <script src="/studio-compositions/_runtime.js"></script>
+  <script>
+    (function () {
+      window.studioApply({
+        quote:       { var: 'quote',       prop: 'textContent' },
+        attribution: { var: 'attribution', prop: 'textContent' },
+      })
+      const accent = window.__studioVars.accent_color || '#e3151e'
+      document.querySelector('.glow').style.background = accent
+      document.querySelector('.quote-mark').style.color = accent
+      document.querySelector('.attribution::before')
+      // attribution ::before color via injected style
+      const s = document.createElement('style')
+      s.textContent = `.attribution::before { background: ${accent}; }`
+      document.head.appendChild(s)
+
+      const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } })
+      tl.from('.quote-mark', { scale: 0.4, opacity: 0, duration: 0.8, ease: 'back.out(1.6)' }, 0)
+        .from('.quote',       { y: 40, opacity: 0, duration: 0.7 }, 0.2)
+        .from('.attribution', { x: -30, opacity: 0, duration: 0.5 }, 0.5)
+        .to('.glow',          { opacity: 0.55, duration: 1.2, ease: 'power2.out' }, 0)
+        .to({}, { duration: 1.6 })
+      window.studioPlay(tl)
+    })()
+  </script>
+</body>
+</html>

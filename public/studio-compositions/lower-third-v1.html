@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en"
+  data-composition-id="lower-third-v1"
+  data-composition-variables='[
+    {"id":"name","type":"string","label":"Name","default":"Rayvaughn Vernon"},
+    {"id":"role","type":"string","label":"Role / handle","default":"Founder, ScaleSolo"},
+    {"id":"accent_color","type":"color","label":"Accent color","default":"#e3151e"}
+  ]'>
+<head>
+<meta charset="utf-8" />
+<title>Lower third v1</title>
+<link rel="stylesheet" href="/studio-compositions/_shared.css" />
+<style>
+  html, body { background: transparent; }
+  /* Lower-third is intended to overlay other footage. Transparent
+     background so the renderer can composite it on top of the avatar
+     video. The studio_grid is opt-out here. */
+  .studio-grid { display: none; }
+  .studio-stage {
+    place-items: end start;
+    padding: 0 0 6% 6%;
+  }
+  .lower {
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(12px);
+    border-left: 4px solid #e3151e;
+    padding: clamp(14px, 1.6vw, 22px) clamp(20px, 2.4vw, 32px);
+    border-radius: 0 12px 12px 0;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.45);
+  }
+  .name {
+    font-size: clamp(22px, 3.2vw, 42px);
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    color: #fff;
+    line-height: 1.1;
+  }
+  .role {
+    font-size: clamp(13px, 1.4vw, 20px);
+    color: rgba(255,255,255,0.7);
+    font-weight: 600;
+    margin-top: 4px;
+    letter-spacing: 0.04em;
+  }
+</style>
+</head>
+<body>
+  <div class="studio-stage">
+    <div class="lower" id="lower">
+      <div class="name" id="name">Rayvaughn Vernon</div>
+      <div class="role" id="role">Founder, ScaleSolo</div>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <script src="/studio-compositions/_runtime.js"></script>
+  <script>
+    (function () {
+      window.studioApply({
+        name: { var: 'name', prop: 'textContent' },
+        role: { var: 'role', prop: 'textContent' },
+      })
+      const accent = window.__studioVars.accent_color || '#e3151e'
+      document.querySelector('.lower').style.borderLeftColor = accent
+
+      const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } })
+      tl.from('.lower', { x: -80, opacity: 0, duration: 0.6 }, 0)
+        .from('.name',  { y: 12, opacity: 0, duration: 0.4 }, 0.2)
+        .from('.role',  { y: 10, opacity: 0, duration: 0.4 }, 0.3)
+        .to({}, { duration: 1.6 })
+        .to('.lower', { x: -80, opacity: 0, duration: 0.4, ease: 'power2.in' })
+      window.studioPlay(tl)
+    })()
+  </script>
+</body>
+</html>

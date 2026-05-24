@@ -545,6 +545,182 @@ function StudioVideoEditor({ videoId }) {
   )
 }
 
+// ── HyperFrames preview ─────────────────────────────────────────────────────
+// Browser-side preview of a HyperFrames composition. Iframes the static
+// HTML in public/studio-compositions/<id>.html and passes the segment's
+// variables via the URL hash (base64'd JSON). Zero server cost — every
+// chat-driven tweak just reloads the iframe with new vars.
+//
+// Schema for each composition is declared inline on its <html> tag as
+// data-composition-variables. The mini editor below renders one input
+// per declared variable so the user (or chat) can tweak without writing JSON.
+
+const COMPOSITION_SCHEMAS = {
+  'title-card-v1': [
+    { id: 'title', label: 'Title', default: 'Faceless brands are quietly winning' },
+    { id: 'subtitle', label: 'Subtitle', default: '' },
+    { id: 'accent_word', label: 'Accent word in title', default: 'winning' },
+    { id: 'accent_color', label: 'Accent color', type: 'color', default: '#e3151e' },
+  ],
+  'stat-reveal-v1': [
+    { id: 'stat_number', label: 'Number', default: '403,840' },
+    { id: 'stat_label', label: 'Label', default: 'VIEWS IN 20 DAYS' },
+    { id: 'stat_caption', label: 'Caption', default: '' },
+    { id: 'accent_color', label: 'Accent color', type: 'color', default: '#e3151e' },
+  ],
+  'list-overlay-v1': [
+    { id: 'title', label: 'Headline', default: 'Three things faceless brands do right' },
+    { id: 'bullets', label: 'Bullets (one per line)', type: 'textarea', default: '' },
+    { id: 'accent_color', label: 'Accent color', type: 'color', default: '#e3151e' },
+  ],
+  'quote-card-v1': [
+    { id: 'quote', label: 'Quote', type: 'textarea', default: '' },
+    { id: 'attribution', label: 'Attribution', default: '' },
+    { id: 'accent_color', label: 'Accent color', type: 'color', default: '#e3151e' },
+  ],
+  'lower-third-v1': [
+    { id: 'name', label: 'Name', default: '' },
+    { id: 'role', label: 'Role / handle', default: '' },
+    { id: 'accent_color', label: 'Accent color', type: 'color', default: '#e3151e' },
+  ],
+  'comparison-v1': [
+    { id: 'left_label', label: 'Left label', default: 'PERSONAL BRAND' },
+    { id: 'left_text', label: 'Left description', type: 'textarea', default: '' },
+    { id: 'right_label', label: 'Right label', default: 'FACELESS BRAND' },
+    { id: 'right_text', label: 'Right description', type: 'textarea', default: '' },
+    { id: 'accent_color', label: 'Accent color', type: 'color', default: '#e3151e' },
+  ],
+  'end-card-v1': [
+    { id: 'title', label: 'Headline', default: 'Try ScaleSolo for $1.' },
+    { id: 'subtitle', label: 'Subtitle', default: 'Three days. Every feature. No commitment.' },
+    { id: 'cta', label: 'CTA', default: 'scalesolo.ai' },
+    { id: 'accent_color', label: 'Accent color', type: 'color', default: '#e3151e' },
+  ],
+}
+
+function encodeVars(vars) {
+  try {
+    return encodeURIComponent(btoa(unescape(encodeURIComponent(JSON.stringify(vars || {})))))
+  } catch {
+    return ''
+  }
+}
+
+function HyperFramesPreview({ compositionId, variables, height = 200, aspectRatio = '16:9' }) {
+  // Bump a key when the variables change so the iframe fully reloads
+  // (rather than only updating the hash, which can leave stale GSAP state).
+  const [reloadKey, setReloadKey] = useState(0)
+  const lastVarsRef = useRef('')
+
+  useEffect(() => {
+    const serialized = JSON.stringify(variables || {})
+    if (serialized !== lastVarsRef.current) {
+      lastVarsRef.current = serialized
+      setReloadKey((k) => k + 1)
+    }
+  }, [variables])
+
+  if (!compositionId) return null
+  const src = `/studio-compositions/${compositionId}.html#vars=${encodeVars(variables)}`
+  // Aspect ratio styling: 16:9 default, 9:16 vertical, 1:1 square
+  const aspect = aspectRatio === '9:16' ? '9 / 16' : aspectRatio === '1:1' ? '1 / 1' : '16 / 9'
+  return (
+    <div style={{ background: '#000', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)' }}>
+      <iframe
+        key={reloadKey}
+        src={src}
+        title={compositionId}
+        sandbox="allow-scripts"
+        style={{
+          width: '100%',
+          aspectRatio: aspect,
+          height: height ? undefined : 'auto',
+          maxHeight: height,
+          border: 'none',
+          display: 'block',
+          background: '#000',
+        }}
+      />
+    </div>
+  )
+}
+
+// Per-variable editor inline under a motion-graphics row's preview.
+// Reads the schema for the row's composition_id and renders simple
+// inputs. Saves on blur to studio_segments.hyperframes_variables.
+function CompositionVariableEditor({ compositionId, variables, onPatch }) {
+  const schema = COMPOSITION_SCHEMAS[compositionId]
+  if (!schema || !schema.length) return null
+  const vars = variables || {}
+  const setVar = (id, value) => {
+    const next = { ...vars }
+    if (value === '' || value == null) delete next[id]
+    else next[id] = value
+    onPatch({ hyperframes_variables: next })
+  }
+  return (
+    <div style={{
+      marginTop: 8, padding: 10,
+      background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6,
+      display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8,
+    }}>
+      {schema.map((f) => (
+        <CompositionVarField key={f.id} field={f} value={vars[f.id]} onCommit={(v) => setVar(f.id, v)} />
+      ))}
+    </div>
+  )
+}
+
+function CompositionVarField({ field, value, onCommit }) {
+  if (field.type === 'color') {
+    return (
+      <div>
+        <Label>{field.label}</Label>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <input
+            type="color"
+            value={value || field.default || '#e3151e'}
+            onChange={(e) => onCommit(e.target.value)}
+            style={{ width: 36, height: 28, border: '1px solid var(--border)', borderRadius: 4, background: 'transparent', padding: 0 }}
+          />
+          <code style={{ fontSize: 11, color: 'var(--muted)' }}>{value || field.default || '#e3151e'}</code>
+        </div>
+      </div>
+    )
+  }
+  if (field.type === 'textarea') {
+    return (
+      <div style={{ gridColumn: '1 / -1' }}>
+        <Label>{field.label}</Label>
+        <DebouncedTextarea
+          initialValue={value || ''}
+          onCommit={onCommit}
+          placeholder={field.default || ''}
+          rows={3}
+        />
+      </div>
+    )
+  }
+  return (
+    <div>
+      <Label>{field.label}</Label>
+      <DebouncedInput
+        initialValue={value || ''}
+        onCommit={onCommit}
+        placeholder={field.default || ''}
+      />
+    </div>
+  )
+}
+
+function Label({ children }) {
+  return (
+    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 4 }}>
+      {children}
+    </div>
+  )
+}
+
 // ── Video map table (editable) ──────────────────────────────────────────────
 // Allowlists mirror the server's CHECK constraints + Claude's tool schema.
 // Keep these in sync with api/studio/generate-map.js.
@@ -630,9 +806,92 @@ function SegmentList({ video }) {
             segment={s}
             onPatch={(patch) => patchSegment(s.id, patch)}
             onDelete={() => deleteSegment(s.id)}
+            aspectRatio={video.aspect_ratio}
           />
         ))}
       </div>
+
+      {/* Sticky footer action bar — always visible so the user always
+          has a clear next step. The "Continue" button kicks off asset
+          generation (task #9). Until that lands it transitions status
+          to 'editing' as a sentinel that the user has reviewed. */}
+      <StickyActionBar
+        video={video}
+        approvedCount={approvedCount}
+        totalCount={segments.length}
+      />
+    </div>
+  )
+}
+
+function StickyActionBar({ video, approvedCount, totalCount }) {
+  const { session } = useAuth()
+  const [busy, setBusy] = useState(false)
+  const canContinue = approvedCount > 0 && ['mapped', 'editing'].includes(video.status)
+
+  const onContinue = async () => {
+    if (!canContinue || !session?.access_token) return
+    setBusy(true)
+    try {
+      // For now: flip parent video status to 'editing' as a "user
+      // reviewed, ready for assets" sentinel. Task #9 swaps this for
+      // the real asset orchestration kickoff.
+      const r = await authedFetch(`/api/studio/videos?id=${video.id}`, session.access_token, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'editing' }),
+      })
+      if (!r.ok) {
+        const b = await r.json().catch(() => ({}))
+        throw new Error(b.error || 'Could not continue')
+      }
+      toast({
+        message: 'Map approved. Asset generation (voice, B-roll, avatar) lands in the next iteration.',
+        kind: 'success',
+        ttl: 6000,
+      })
+    } catch (e) {
+      toast({ message: e.message, kind: 'error' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div style={{
+      position: 'sticky',
+      bottom: 16,
+      marginTop: 24,
+      padding: '12px 16px',
+      background: 'var(--surface)',
+      border: '1px solid var(--border)',
+      borderRadius: 12,
+      boxShadow: '0 12px 32px rgba(0,0,0,0.4)',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 14,
+      zIndex: 10,
+    }}>
+      <div style={{ flex: 1, fontSize: 12.5, color: 'var(--text-soft)' }}>
+        <strong style={{ color: 'var(--text)' }}>{approvedCount} of {totalCount}</strong> segments approved.
+        {approvedCount < totalCount && (
+          <span style={{ color: 'var(--muted)', marginLeft: 8 }}>
+            Unapproved segments will be skipped on render.
+          </span>
+        )}
+        {approvedCount === totalCount && totalCount > 0 && (
+          <span style={{ color: '#2ecc71', marginLeft: 8 }}>All set.</span>
+        )}
+      </div>
+      <button
+        type="button"
+        className="btn-primary"
+        disabled={!canContinue || busy}
+        onClick={onContinue}
+        style={{ fontSize: 13, padding: '10px 18px' }}
+      >
+        {busy ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
+        {video.status === 'editing' ? 'Re-confirm' : 'Continue to render'}
+      </button>
     </div>
   )
 }
@@ -640,11 +899,12 @@ function SegmentList({ video }) {
 // One row of the video map. Cards are dense but legible — Studio is
 // desktop-first. Each editable field debounces text-input PATCHes and
 // fires select/checkbox PATCHes on change.
-function SegmentRow({ segment, onPatch, onDelete }) {
+function SegmentRow({ segment, onPatch, onDelete, aspectRatio }) {
   const isAvatar = segment.segment_type === 'avatar'
   const isBroll = segment.segment_type === 'voiceover_broll'
   const isMotion = segment.segment_type === 'voiceover_motion_graphics' || segment.segment_type === 'pure_motion_graphics'
   const isPureMotion = segment.segment_type === 'pure_motion_graphics'
+  const [showVarsEditor, setShowVarsEditor] = useState(false)
 
   const borderColor = segment.approved
     ? 'rgba(46,204,113,0.45)'
@@ -775,6 +1035,33 @@ function SegmentRow({ segment, onPatch, onDelete }) {
               onCommit={(v) => onPatch({ motion_gesture_prompt: v })}
               placeholder="Avatar direction (optional): expression, gesture, energy"
             />
+          )}
+
+          {/* Motion graphics live preview + variable editor */}
+          {isMotion && segment.hyperframes_composition_id && (
+            <div style={{ marginTop: 10 }}>
+              <HyperFramesPreview
+                compositionId={segment.hyperframes_composition_id}
+                variables={segment.hyperframes_variables}
+                height={200}
+                aspectRatio={aspectRatio}
+              />
+              <button
+                type="button"
+                onClick={() => setShowVarsEditor((v) => !v)}
+                className="btn-ghost"
+                style={{ fontSize: 11, padding: '4px 8px', marginTop: 6, color: 'var(--muted)' }}
+              >
+                {showVarsEditor ? 'Hide variables' : 'Edit variables'}
+              </button>
+              {showVarsEditor && (
+                <CompositionVariableEditor
+                  compositionId={segment.hyperframes_composition_id}
+                  variables={segment.hyperframes_variables}
+                  onPatch={onPatch}
+                />
+              )}
+            </div>
           )}
 
           {/* Generated assets preview (read-only thumbnails) */}

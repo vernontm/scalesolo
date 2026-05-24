@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en"
+  data-composition-id="end-card-v1"
+  data-composition-variables='[
+    {"id":"title","type":"string","label":"Headline","default":"Try ScaleSolo for $1."},
+    {"id":"subtitle","type":"string","label":"Subtitle","default":"Three days. Every feature. No commitment."},
+    {"id":"cta","type":"string","label":"CTA","default":"scalesolo.ai"},
+    {"id":"accent_color","type":"color","label":"Accent color","default":"#e3151e"}
+  ]'>
+<head>
+<meta charset="utf-8" />
+<title>End card v1</title>
+<link rel="stylesheet" href="/studio-compositions/_shared.css" />
+<style>
+  .stage { text-align: center; max-width: 90%; }
+  .title {
+    font-size: clamp(48px, 8vw, 130px);
+    margin-bottom: clamp(14px, 1.6vw, 24px);
+  }
+  .subtitle {
+    font-size: clamp(18px, 2.4vw, 32px);
+    color: rgba(255,255,255,0.7);
+    font-weight: 600;
+    margin-bottom: clamp(28px, 4vw, 56px);
+    letter-spacing: 0.02em;
+  }
+  .cta-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 14px;
+    padding: clamp(18px, 2vw, 28px) clamp(36px, 4vw, 56px);
+    background: #e3151e;
+    color: #fff;
+    font-weight: 800;
+    font-size: clamp(22px, 2.8vw, 38px);
+    border-radius: 999px;
+    box-shadow: 0 16px 48px rgba(227,21,30,0.45);
+    letter-spacing: -0.01em;
+  }
+  .cta-arrow {
+    width: 1em; height: 1em; display: grid; place-items: center;
+  }
+  .glow {
+    width: 80%;
+    height: 80%;
+    top: 10%;
+    left: 10%;
+    background: #e3151e;
+    opacity: 0;
+  }
+</style>
+</head>
+<body>
+  <div class="studio-grid"></div>
+  <div class="studio-glow glow"></div>
+  <div class="studio-stage">
+    <div class="stage">
+      <h1 class="studio-display title" id="title">
+        <span class="studio-chrome">Try ScaleSolo for</span>
+        <span class="studio-accent">$1.</span>
+      </h1>
+      <p class="subtitle" id="subtitle">Three days. Every feature. No commitment.</p>
+      <div class="cta-pill" id="cta">
+        scalesolo.ai
+        <span class="cta-arrow">→</span>
+      </div>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <script src="/studio-compositions/_runtime.js"></script>
+  <script>
+    (function () {
+      // If a custom title is supplied, replace the whole title (we
+      // can't easily split it without an accent_word var, so default
+      // to the static layout).
+      const v = window.__studioVars
+      if (v.title) {
+        document.getElementById('title').innerHTML = `<span class="studio-chrome">${v.title}</span>`
+      }
+      window.studioApply({
+        subtitle: { var: 'subtitle', prop: 'textContent' },
+      })
+      if (v.cta) {
+        const cta = document.getElementById('cta')
+        cta.innerHTML = `${v.cta}<span class="cta-arrow">→</span>`
+      }
+      const accent = v.accent_color || '#e3151e'
+      document.querySelector('.glow').style.background = accent
+      const pill = document.getElementById('cta')
+      pill.style.background = accent
+      pill.style.boxShadow = `0 16px 48px ${accent}73`
+
+      const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } })
+      tl.from('.title',    { y: 60, opacity: 0, duration: 0.7 }, 0)
+        .from('.subtitle', { y: 30, opacity: 0, duration: 0.55 }, 0.2)
+        .from('.cta-pill', { scale: 0.7, opacity: 0, duration: 0.6, ease: 'back.out(1.4)' }, 0.4)
+        .to('.glow', { opacity: 0.55, duration: 1.3, ease: 'power2.out' }, 0)
+        .to('.cta-pill', { scale: 1.04, duration: 0.6, ease: 'sine.inOut', yoyo: true, repeat: 1 }, 1.2)
+        .to({}, { duration: 1.4 })
+      window.studioPlay(tl)
+    })()
+  </script>
+</body>
+</html>

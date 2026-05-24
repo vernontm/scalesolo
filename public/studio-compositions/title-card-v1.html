@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en"
+  data-composition-id="title-card-v1"
+  data-composition-variables='[
+    {"id":"title","type":"string","label":"Title","default":"Faceless brands are quietly winning"},
+    {"id":"subtitle","type":"string","label":"Subtitle","default":"And why personal brands are slowing down"},
+    {"id":"accent_word","type":"string","label":"Accent word in title (orange/red)","default":"winning"},
+    {"id":"accent_color","type":"color","label":"Accent color","default":"#e3151e"}
+  ]'>
+<head>
+<meta charset="utf-8" />
+<title>Title card v1</title>
+<link rel="stylesheet" href="/studio-compositions/_shared.css" />
+<style>
+  .stage { text-align: center; max-width: 88%; }
+  .eyebrow { margin-bottom: clamp(14px, 1.5vw, 22px); }
+  .title {
+    font-size: clamp(56px, 9vw, 140px);
+    margin-bottom: clamp(14px, 1.6vw, 26px);
+  }
+  .subtitle {
+    font-size: clamp(20px, 2.6vw, 36px);
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.7);
+    letter-spacing: 0.02em;
+  }
+  .glow {
+    width: 50%;
+    height: 50%;
+    top: 25%;
+    left: 25%;
+    background: #e3151e;
+    opacity: 0;
+  }
+</style>
+</head>
+<body>
+  <div class="studio-grid"></div>
+  <div class="studio-glow glow"></div>
+  <div class="studio-stage">
+    <div class="stage">
+      <div class="studio-eyebrow eyebrow" id="eyebrow">SCALESOLO</div>
+      <h1 class="studio-display title" id="title">
+        <span class="studio-chrome" id="title-base">Faceless brands are quietly</span>
+        <span class="studio-accent" id="title-accent">winning</span>
+      </h1>
+      <p class="subtitle" id="subtitle">And why personal brands are slowing down</p>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <script src="/studio-compositions/_runtime.js"></script>
+  <script>
+    (function () {
+      const v = window.__studioVars
+      const title = v.title || 'Faceless brands are quietly winning'
+      const accentWord = (v.accent_word || '').trim()
+      const accentColor = v.accent_color || '#e3151e'
+
+      const titleEl = document.getElementById('title')
+      // Split title around the accent word if it appears in the title.
+      if (accentWord && title.toLowerCase().includes(accentWord.toLowerCase())) {
+        const idx = title.toLowerCase().indexOf(accentWord.toLowerCase())
+        const before = title.slice(0, idx)
+        const match = title.slice(idx, idx + accentWord.length)
+        const after = title.slice(idx + accentWord.length)
+        titleEl.innerHTML =
+          (before ? `<span class="studio-chrome">${before.trim()}</span> ` : '') +
+          `<span class="studio-accent">${match}</span>` +
+          (after ? ` <span class="studio-chrome">${after.trim()}</span>` : '')
+      } else {
+        titleEl.innerHTML = `<span class="studio-chrome">${title}</span>`
+      }
+
+      window.studioApply({
+        subtitle: { var: 'subtitle', prop: 'textContent' },
+      })
+      document.querySelector('.glow').style.background = accentColor
+
+      const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } })
+      tl.from('.eyebrow', { y: -20, opacity: 0, duration: 0.5 }, 0)
+        .from('.title', { y: 80, opacity: 0, duration: 0.85 }, 0.1)
+        .from('.subtitle', { y: 30, opacity: 0, duration: 0.6 }, 0.35)
+        .to('.glow', { opacity: 0.55, duration: 1.2, ease: 'power2.out' }, 0)
+        .to({}, { duration: 1.6 })
+      window.studioPlay(tl)
+    })()
+  </script>
+</body>
+</html>
