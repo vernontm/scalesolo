@@ -63,6 +63,48 @@ export function useGoogleAnalytics(pathname) {
   }, [pathname])
 }
 
+// Generic event sender. Drops silently if GA isn't configured / hasn't
+// loaded yet (preview builds, ad-blocked sessions, etc).
+export function trackEvent(name, params = {}) {
+  if (!GA_ID || typeof window === 'undefined' || !window.gtag) return
+  try { window.gtag('event', name, params) } catch {}
+}
+
+// GA4 "purchase" event — the conversion that powers GA's reporting
+// for ad spend and funnel attribution. Called from Login.jsx when a
+// user lands with ?stripe_session=cs_... after a successful Stripe
+// checkout. transaction_id should be the Stripe session id so GA
+// dedupes if the page is reloaded.
+export function trackPurchase({ transactionId, value, currency = 'USD', itemName = 'Faceless Brand Trial', itemId = 'faceless_trial_1usd' }) {
+  if (!GA_ID || typeof window === 'undefined' || !window.gtag) return
+  try {
+    window.gtag('event', 'purchase', {
+      transaction_id: transactionId,
+      value: Number.isFinite(value) ? value : 1,
+      currency,
+      items: [
+        { item_id: itemId, item_name: itemName, price: Number.isFinite(value) ? value : 1, quantity: 1 },
+      ],
+    })
+  } catch {}
+}
+
+// GA4 "begin_checkout" — fires the moment the user clicks the $1 CTA
+// on the landing page (before Stripe). Lets GA show the full funnel
+// page_view → begin_checkout → purchase so we can see drop-off.
+export function trackBeginCheckout({ value = 1, currency = 'USD', itemName = 'Faceless Brand Trial', itemId = 'faceless_trial_1usd' } = {}) {
+  if (!GA_ID || typeof window === 'undefined' || !window.gtag) return
+  try {
+    window.gtag('event', 'begin_checkout', {
+      value,
+      currency,
+      items: [
+        { item_id: itemId, item_name: itemName, price: value, quantity: 1 },
+      ],
+    })
+  } catch {}
+}
+
 // Per-browser session id. Generated once on first visit and persisted
 // in localStorage so a single visitor's heartbeats roll up against
 // the same row no matter how many tabs they open or how often they

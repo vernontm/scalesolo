@@ -164,6 +164,19 @@ export default function Login() {
         source: 'stripe_checkout_return',
       })
     }).catch(() => {})
+    // GA4 purchase event — companion to the Meta Pixel one above so
+    // Google Ads / GA4 attribution sees the conversion too. We pass
+    // value: 1 because the tripwire price is $1; GA4 still counts the
+    // conversion event for funnel reporting even though the dollar
+    // value is small. Recurring revenue from the subscription is
+    // captured separately via the Stripe webhook → CAPI flow.
+    import('../lib/analytics.js').then(({ trackPurchase: gaPurchase }) => {
+      gaPurchase({
+        transactionId: stripeSessionId,
+        value: 1,
+        currency: 'USD',
+      })
+    }).catch(() => {})
     ;(async () => {
       try {
         const r = await fetch(`/api/stripe-resolve-session?id=${encodeURIComponent(stripeSessionId)}`)

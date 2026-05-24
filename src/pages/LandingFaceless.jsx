@@ -28,6 +28,7 @@ import {
   ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { trackViewContent, trackInitiateCheckout } from '../lib/meta-pixel.js'
+import { trackBeginCheckout } from '../lib/analytics.js'
 
 const HERO_VIDEO = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/Scalesolo%20ad.mp4'
 
@@ -236,6 +237,10 @@ export default function LandingFaceless() {
     // (browser-side) + server-side via api/stripe-webhook (CAPI),
     // deduped on the Stripe session id.
     trackInitiateCheckout({ source: 'faceless_brand_landing' })
+    // GA4 companion event so Google Analytics shows the full funnel:
+    // page_view (/faceless-brand) → begin_checkout (CTA click) →
+    // purchase (post-Stripe /login return).
+    trackBeginCheckout({ value: 1, currency: 'USD' })
     try {
       const r = await fetch('/api/stripe-trial-checkout', { method: 'POST' })
       const body = await r.json().catch(() => ({}))
