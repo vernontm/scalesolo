@@ -984,6 +984,7 @@ function FailedCard({ video, onRegenerate }) {
 function StickyActionBar({ video, approvedCount, totalCount, segments }) {
   const { session } = useAuth()
   const [busy, setBusy] = useState(false)
+  const [showRegenOptions, setShowRegenOptions] = useState(false)
   // Local "we just clicked render-final" flag. Set on click, cleared
   // when Realtime delivers final_video_url. Decoupled from video.status
   // because that's also 'rendering' during asset gen.
@@ -1030,19 +1031,22 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
                 ? 'ready-for-assets'
                 : 'pre-approval'
 
-  const onAssets = async () => {
+  const onAssets = async (only_types = null) => {
     if (!session?.access_token) return
     setBusy(true)
     try {
+      const body = { studio_video_id: video.id }
+      if (Array.isArray(only_types) && only_types.length) body.only_types = only_types
       const r = await authedFetch('/api/studio/generate-assets', session.access_token, {
-        method: 'POST',
-        body: JSON.stringify({ studio_video_id: video.id }),
+        method: 'POST', body: JSON.stringify(body),
       })
       if (!r.ok) {
         const b = await r.json().catch(() => ({}))
         throw new Error(b.error || 'Could not start asset generation')
       }
-      toast({ message: 'Asset generation started.', kind: 'success' })
+      const label = !only_types ? 'Asset generation started.'
+        : `${only_types.join(' + ')} regen started.`
+      toast({ message: label, kind: 'success' })
     } catch (e) {
       toast({ message: e.message, kind: 'error' })
     } finally {
@@ -1078,11 +1082,32 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
   //   anything else → asset gen
   const onContinue = (phase === 'ready-to-bake' || phase === 'done') ? onRender : onAssets
 
+  // Per-type cost hints shown next to each regen option. Real costs
+  // depend on segment count + provider pricing; these are rough guides
+  // so users know what they're committing to before they click.
+  const broll = segments.filter((s) => s.approved && s.segment_type === 'voiceover_broll').length
+  const avatar = segments.filter((s) => s.approved && s.segment_type === 'avatar').length
+
   return (
     <div style={{
       position: 'sticky',
       bottom: 16,
       marginTop: 24,
+      zIndex: 10,
+    }}>
+    {showRegenOptions && (
+      <RegenOptionsPanel
+        broll={broll}
+        avatar={avatar}
+        busy={busy}
+        onPick={async (types) => {
+          await onAssets(types)
+          setShowRegenOptions(false)
+        }}
+        onClose={() => setShowRegenOptions(false)}
+      />
+    )}
+    <div style={{
       padding: '12px 16px',
       background: 'var(--surface)',
       border: '1px solid var(--border)',
@@ -1091,7 +1116,6 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
       display: 'flex',
       alignItems: 'center',
       gap: 14,
-      zIndex: 10,
     }}>
       <div style={{ flex: 1, fontSize: 12.5, color: 'var(--text-soft)' }}>
         {phase === 'done' && video.final_video_url ? (
@@ -1159,6 +1183,18 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
           </>
         )}
       </div>
+      {(phase === 'rendered-needs-assets' || phase === 'ready-for-assets') && (
+        <button
+          type="button"
+          className="btn-secondary"
+          disabled={busy}
+          onClick={() => setShowRegenOptions((v) => !v)}
+          style={{ fontSize: 12, padding: '8px 12px' }}
+          title="Pick which asset classes to regenerate. Skip the expensive ones (avatar, B-roll) when you just want to test voice or motion graphics."
+        >
+          Choose…
+        </button>
+      )}
       <button
         type="button"
         className="btn-primary"
@@ -1176,10 +1212,119 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
               : phase === 'done'
                 ? 'Re-render'
                 : phase === 'rendered-needs-assets'
-                  ? 'Regenerate assets'
+                  ? 'Regen all missing'
                   : 'Generate assets'}
       </button>
     </div>
+    </div>
+  )
+}
+
+// Expandable per-class regen picker. Hangs off the sticky action bar
+// when phase suggests asset generation. Three checkboxes (voice / image /
+// avatar) with rough cost hints so the user knows what they're spending
+// on before they click.
+function RegenOptionsPanel({ broll, avatar, busy, onPick, onClose }) {
+  const [voice, setVoice] = useState(true)
+  const [image, setImage] = useState(false)
+  const [avatarChecked, setAvatarChecked] = useState(false)
+  const chosen = []
+  if (voice) chosen.push('voice')
+  if (image) chosen.push('image')
+  if (avatarChecked) chosen.push('avatar')
+
+  return (
+    <div style={{
+      marginBottom: 8,
+      padding: '14px 16px',
+      background: 'var(--surface)',
+      border: '1px solid var(--border)',
+      borderRadius: 12,
+      boxShadow: '0 12px 32px rgba(0,0,0,0.4)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
+        <strong style={{ fontFamily: 'var(--font-display)', fontSize: 13, color: 'var(--text)' }}>
+          Choose what to regenerate
+        </strong>
+        <button type="button" className="btn-ghost" onClick={onClose} style={{ marginLeft: 'auto', fontSize: 11, padding: '4px 8px', color: 'var(--muted)' }}>
+          Close
+        </button>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+        <RegenOption
+          label="Voice"
+          checked={voice}
+          onChange={setVoice}
+          hint="ElevenLabs. Cheapest. Rerun this when you change script text or want to check alignment."
+          cost="≈ free at your volume"
+        />
+        <RegenOption
+          label="B-roll images"
+          checked={image}
+          onChange={setImage}
+          hint={`Nano Banana via Kie.ai. ~$0.04 per image. ${broll} B-roll segment${broll === 1 ? '' : 's'} in this video.`}
+          cost={broll ? `≈ $${(broll * 0.04).toFixed(2)} estimated` : 'no B-roll rows'}
+          disabled={broll === 0}
+        />
+        <RegenOption
+          label="Avatar videos"
+          checked={avatarChecked}
+          onChange={setAvatarChecked}
+          hint={`HeyGen V3. Most expensive class. ${avatar} avatar segment${avatar === 1 ? '' : 's'} in this video.`}
+          cost={avatar ? `${avatar} HeyGen render${avatar === 1 ? '' : 's'}` : 'no avatar rows'}
+          disabled={avatar === 0}
+        />
+      </div>
+      <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ flex: 1, fontSize: 11.5, color: 'var(--muted)' }}>
+          {chosen.length === 0
+            ? 'Pick at least one class.'
+            : chosen.length === 3
+              ? 'All three — same as the main "Regen all missing" button.'
+              : `Will only regenerate: ${chosen.join(', ')}. Other classes will be left alone.`}
+        </div>
+        <button
+          type="button"
+          className="btn-primary"
+          disabled={busy || chosen.length === 0}
+          onClick={() => onPick(chosen)}
+          style={{ fontSize: 12.5, padding: '8px 14px' }}
+        >
+          {busy ? <Loader2 size={12} className="spin" /> : <Sparkles size={12} />}
+          Regenerate selected
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function RegenOption({ label, checked, onChange, hint, cost, disabled }) {
+  return (
+    <label style={{
+      display: 'flex', alignItems: 'flex-start', gap: 8,
+      padding: 10, borderRadius: 8,
+      background: checked && !disabled ? 'rgba(239,68,68,0.06)' : 'var(--surface-2)',
+      border: `1px solid ${checked && !disabled ? 'rgba(239,68,68,0.45)' : 'var(--border)'}`,
+      cursor: disabled ? 'not-allowed' : 'pointer',
+      opacity: disabled ? 0.5 : 1,
+    }}>
+      <input
+        type="checkbox"
+        checked={checked && !disabled}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+        style={{ marginTop: 2, accentColor: 'var(--red)' }}
+      />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 6 }}>
+          <strong style={{ fontFamily: 'var(--font-display)', fontSize: 12.5 }}>{label}</strong>
+          <span style={{ fontSize: 10.5, color: 'var(--muted)' }}>{cost}</span>
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.4, marginTop: 3 }}>
+          {hint}
+        </div>
+      </div>
+    </label>
   )
 }
 

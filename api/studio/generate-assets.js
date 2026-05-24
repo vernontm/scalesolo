@@ -158,8 +158,21 @@ async function dispatchAvatar(segment, heygenAvatarId, voiceUrl, aspectRatio) {
 // Single-segment orchestrator. Determines what jobs this segment needs based
 // on its type, runs them in the right order, and patches its row at every
 // state transition so Realtime subscribers see live progress.
+//
+// ctx.only_types: optional whitelist of asset classes to (re)generate.
+//   undefined / empty array → smart default: fill in whatever's missing
+//   ['voice']               → only synthesize voice, never touch image/avatar
+//   ['image']               → only generate B-roll images
+//   ['avatar']              → only render avatar videos
+//   any combination         → only the listed classes are touched
+//
+// Used by the UI to let users pay only for what they actually want to
+// regenerate (e.g. "I just want to re-test the voice alignment" should
+// not re-spend HeyGen credits on the same avatar segments).
 async function orchestrateSegment(segment, ctx) {
-  const { videoId: parentId, profileId, voiceId, avatarId, aspectRatio, kieKey, force } = ctx
+  const { videoId: parentId, profileId, voiceId, avatarId, aspectRatio, kieKey, force, only_types } = ctx
+  const wants = (cls) => !only_types || only_types.length === 0 || only_types.includes(cls)
+
   const patch = async (body) => {
     await supaFetch(`studio_segments?id=eq.${segment.id}`, {
       method: 'PATCH', body, prefer: 'return=minimal',
@@ -188,7 +201,7 @@ async function orchestrateSegment(segment, ctx) {
   try {
     // Step 1 — voice (every non-pure-motion segment needs it)
     let voiceUrl = segment.voice_url
-    if (!voiceUrl) {
+    if (!voiceUrl && wants('voice')) {
       await patch({ status: 'generating_audio', error: null })
       voiceUrl = await dispatchVoice(segment, voiceId, profileId)
       if (voiceUrl) await patch({ voice_url: voiceUrl })
@@ -196,32 +209,29 @@ async function orchestrateSegment(segment, ctx) {
 
     // Step 2 — type-specific async job
     if (segment.segment_type === 'voiceover_broll') {
-      if (!segment.image_url) {
+      if (!segment.image_url && wants('image')) {
         await patch({ status: 'generating_image' })
         const taskId = await dispatchImage(segment, kieKey, aspectRatio)
         await patch({ kie_task_id: taskId })
         // status stays 'generating_image' until the poller fills image_url + flips to 'ready'
-      } else {
+      } else if (segment.voice_url && segment.image_url) {
         await patch({ status: 'ready', error: null })
       }
       return
     }
     if (segment.segment_type === 'avatar') {
-      if (!segment.avatar_video_url) {
+      if (!segment.avatar_video_url && wants('avatar') && voiceUrl) {
         await patch({ status: 'generating_avatar' })
-        // heygenAvatarId is pre-resolved once at the top of the handler
-        // and threaded through ctx so we don't refetch the avatars row
-        // for every segment.
         const videoId = await dispatchAvatar(segment, ctx.heygenAvatarId, voiceUrl, aspectRatio)
         await patch({ heygen_video_id: videoId })
-      } else {
+      } else if (segment.voice_url && segment.avatar_video_url) {
         await patch({ status: 'ready', error: null })
       }
       return
     }
     if (segment.segment_type === 'voiceover_motion_graphics') {
       // Voice is the only async asset; HF comp renders at bake time.
-      await patch({ status: 'ready', error: null })
+      if (segment.voice_url || voiceUrl) await patch({ status: 'ready', error: null })
       return
     }
   } catch (e) {
@@ -269,14 +279,27 @@ export default async function handler(req, res) {
       method: 'PATCH', body: { status: 'rendering', error: null }, prefer: 'return=minimal',
     })
 
-    // Resolve the HeyGen-renderable avatar id ONCE up front. The video's
-    // avatar_id column is a ScaleSolo row id (or pub:/default: prefix);
-    // HeyGen's /v3/videos endpoint wants the actual talking_photo_id /
-    // avatar id. Failing here surfaces a clear error before we burn voice
-    // synth on a render that's destined to fail.
+    // only_types: optional whitelist of asset classes to (re)generate. If
+    // present, segments only get jobs for the listed classes; missing
+    // assets in other classes are left alone. UI uses this to let users
+    // pay only for what they actually want to refresh (e.g. "voice only"
+    // for alignment checks, "avatar only" to refresh HeyGen renders).
+    const ALLOWED_TYPES = new Set(['voice', 'image', 'avatar'])
+    const onlyTypesRaw = Array.isArray(req.body?.only_types) ? req.body.only_types : null
+    const only_types = onlyTypesRaw
+      ? onlyTypesRaw.filter((t) => ALLOWED_TYPES.has(t))
+      : null
+    const wantAvatar = !only_types || only_types.includes('avatar')
+
+    // Resolve the HeyGen-renderable avatar id ONCE up front (only if we
+    // actually intend to dispatch avatar jobs). The video's avatar_id
+    // column is a ScaleSolo row id (or pub:/default: prefix); HeyGen's
+    // /v3/videos endpoint wants the actual talking_photo_id / avatar id.
+    // Failing here surfaces a clear error before we burn voice synth on
+    // a render that's destined to fail.
     let heygenAvatarId = null
     const hasAvatarSegments = segments.some((s) => s.approved && s.segment_type === 'avatar')
-    if (hasAvatarSegments) {
+    if (hasAvatarSegments && wantAvatar) {
       if (!video.avatar_id) {
         return res.status(400).json({ error: 'This video has avatar segments but no avatar selected. Pick one in the form or change the avatar segments to voiceover.' })
       }
@@ -297,6 +320,7 @@ export default async function handler(req, res) {
       aspectRatio: video.aspect_ratio || '16:9',
       kieKey,
       force: req.body?.force === true,
+      only_types,
     }
 
     // Fan out per-segment work. Each call has its own try/catch inside; one
