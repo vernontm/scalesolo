@@ -2,17 +2,27 @@
 //
 // Two views:
 //   /studio       — list of recent videos + "Create new video" form
-//   /studio/:id   — per-video editor (StudioVideoEditor below) — placeholder
-//                   until the video map UI lands in task #7.
+//   /studio/:id   — per-video editor with editable video map table
+//
+// The video map table is the central editing surface. Each row is a
+// studio_segment. Edits PATCH through /api/studio/segments on blur (text
+// fields) or on change (selects, checkboxes). Realtime subscription on
+// public.studio_segments streams server-side asset-generation updates
+// (status changes, image_url / voice_url / avatar_video_url fills)
+// back into the table without a refetch.
 //
 // Visible only to users on STUDIO_BETA_USER_IDS (gate enforced in App.jsx).
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Film, Sparkles, Plus, ArrowLeft, Wand2, Loader2 } from 'lucide-react'
+import {
+  Film, Sparkles, Plus, ArrowLeft, Wand2, Loader2, Trash2, RefreshCw,
+  CheckCircle2, Circle, AlertCircle, Image as ImageIcon, MoreVertical,
+} from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
-import { toast } from '../components/Toast.jsx'
+import { toast, confirmDialog } from '../components/Toast.jsx'
+import { supabase } from '../lib/supabase.js'
 
 async function authedFetch(path, token, init = {}) {
   return fetch(path, {
@@ -382,40 +392,84 @@ function Empty({ msg }) {
 }
 
 // ── Per-video editor ────────────────────────────────────────────────────────
-// While task #7 (full editable video map table) is in flight, this view
-// already loads the segments and renders a read-only preview so we can
-// confirm the segmentation pass is producing sane output end-to-end.
+// Loads the video + segments, subscribes to Realtime so asset generation
+// updates flow into the table without a refetch, and renders the
+// editable video map. While status='mapping' a loading card replaces the
+// table (segments don't exist yet). Once mapped, the table is live.
 function StudioVideoEditor({ videoId }) {
   const { session } = useAuth()
   const navigate = useNavigate()
   const [video, setVideo] = useState(null)
   const [error, setError] = useState(null)
 
-  // Load + poll. Polls every 2s while status is 'mapping' or
-  // 'rendering', stops on terminal states. Realtime subscription
-  // arrives in task #7; polling is fine for now.
+  // Initial load + lightweight refresh on focus. The Realtime channel
+  // below handles ongoing updates; this is just the cold load.
   useEffect(() => {
     if (!session?.access_token) return
     let cancelled = false
-    let timer = null
-
-    const tick = async () => {
-      try {
-        const r = await authedFetch(`/api/studio/videos?id=${videoId}`, session.access_token)
+    authedFetch(`/api/studio/videos?id=${videoId}`, session.access_token)
+      .then(async (r) => {
         const b = await r.json()
         if (cancelled) return
         if (!r.ok) { setError(b.error || 'Could not load video'); return }
         setVideo(b.video)
-        if (['mapping', 'rendering'].includes(b.video?.status)) {
-          timer = setTimeout(tick, 2000)
-        }
-      } catch (e) {
-        if (!cancelled) setError(e.message)
-      }
-    }
-    tick()
-    return () => { cancelled = true; if (timer) clearTimeout(timer) }
+      })
+      .catch((e) => { if (!cancelled) setError(e.message) })
+    return () => { cancelled = true }
   }, [videoId, session?.access_token])
+
+  // Realtime subscription: video status changes + per-segment updates
+  // stream in without polling. Used for the mapping → mapped transition
+  // and for live asset-generation status (pending → generating_image →
+  // ready) once task #9 (orchestrator) is wired.
+  useEffect(() => {
+    if (!videoId) return
+    const channel = supabase
+      .channel(`studio_video:${videoId}`)
+      .on('postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'studio_videos', filter: `id=eq.${videoId}` },
+        (payload) => {
+          const row = payload.new
+          if (!row) return
+          // Preserve the inlined segments array, which doesn't exist on
+          // the bare studio_videos row coming through Realtime.
+          setVideo((prev) => prev ? { ...prev, ...row, studio_segments: prev.studio_segments } : row)
+        })
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'studio_segments', filter: `studio_video_id=eq.${videoId}` },
+        (payload) => {
+          const row = payload.new
+          if (!row) return
+          setVideo((prev) => {
+            if (!prev) return prev
+            const segs = prev.studio_segments || []
+            if (segs.some((s) => s.id === row.id)) return prev
+            return { ...prev, studio_segments: [...segs, row] }
+          })
+        })
+      .on('postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'studio_segments', filter: `studio_video_id=eq.${videoId}` },
+        (payload) => {
+          const row = payload.new
+          if (!row) return
+          setVideo((prev) => prev ? {
+            ...prev,
+            studio_segments: (prev.studio_segments || []).map((s) => s.id === row.id ? { ...s, ...row } : s),
+          } : prev)
+        })
+      .on('postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'studio_segments', filter: `studio_video_id=eq.${videoId}` },
+        (payload) => {
+          const id = payload.old?.id
+          if (!id) return
+          setVideo((prev) => prev ? {
+            ...prev,
+            studio_segments: (prev.studio_segments || []).filter((s) => s.id !== id),
+          } : prev)
+        })
+      .subscribe()
+    return () => { try { channel.unsubscribe() } catch { /* noop */ } }
+  }, [videoId])
 
   const regenerate = async () => {
     if (!session?.access_token || !video) return
@@ -491,94 +545,393 @@ function StudioVideoEditor({ videoId }) {
   )
 }
 
+// ── Video map table (editable) ──────────────────────────────────────────────
+// Allowlists mirror the server's CHECK constraints + Claude's tool schema.
+// Keep these in sync with api/studio/generate-map.js.
+const SEGMENT_TYPE_OPTIONS = [
+  { value: 'avatar',                     label: 'Avatar on camera' },
+  { value: 'voiceover_broll',            label: 'Voiceover + B-roll' },
+  { value: 'voiceover_motion_graphics',  label: 'Voiceover + Motion graphics' },
+  { value: 'pure_motion_graphics',       label: 'Motion graphics only (no VO)' },
+]
+const HF_COMPOSITION_OPTIONS = [
+  '', 'title-card-v1', 'stat-reveal-v1', 'list-overlay-v1',
+  'quote-card-v1', 'lower-third-v1', 'comparison-v1', 'end-card-v1',
+]
+const TRANSITION_OPTIONS = ['cut', 'fade', 'crossfade', 'whip', 'zoom', 'wipe', 'dip_to_black']
+const SFX_OPTIONS = ['', 'swoosh', 'whoosh', 'ding', 'pop', 'click', 'impact', 'subtle_chime']
+
 function SegmentList({ video }) {
-  const segments = (video.studio_segments || []).slice().sort((a, b) => a.segment_index - b.segment_index)
+  const { session } = useAuth()
+  const segments = useMemo(
+    () => (video.studio_segments || []).slice().sort((a, b) => a.segment_index - b.segment_index),
+    [video.studio_segments]
+  )
+
+  // Optimistic patch helper. Mutates state immediately, fires PATCH
+  // in the background. Realtime UPDATE for the same row will overwrite
+  // the optimistic value with the server's canonical version.
+  const patchSegment = async (id, patch) => {
+    if (!session?.access_token) return
+    try {
+      const r = await authedFetch(`/api/studio/segments?id=${id}`, session.access_token, {
+        method: 'PATCH', body: JSON.stringify(patch),
+      })
+      if (!r.ok) {
+        const b = await r.json().catch(() => ({}))
+        toast({ message: b.error || 'Save failed', kind: 'error' })
+      }
+    } catch (e) {
+      toast({ message: e.message, kind: 'error' })
+    }
+  }
+
+  const deleteSegment = async (id) => {
+    const ok = await confirmDialog({ title: 'Delete this segment?', destructive: true, confirmText: 'Delete' })
+    if (!ok) return
+    await authedFetch(`/api/studio/segments?id=${id}`, session.access_token, { method: 'DELETE' })
+  }
+
+  const approvedCount = segments.filter((s) => s.approved).length
+
   return (
     <div>
       {video.script_full_text && (
-        <div className="card" style={{ padding: 16, marginBottom: 16, background: 'var(--surface-2)' }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8 }}>
-            Full script
-          </div>
-          <div style={{ fontSize: 13.5, lineHeight: 1.6, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>
+        <details className="card" style={{ padding: 12, marginBottom: 16, background: 'var(--surface-2)' }}>
+          <summary style={{ cursor: 'pointer', fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+            Full script ({video.script_full_text.length} chars)
+          </summary>
+          <div style={{ fontSize: 13.5, lineHeight: 1.6, color: 'var(--text)', whiteSpace: 'pre-wrap', marginTop: 10 }}>
             {video.script_full_text}
           </div>
-        </div>
+        </details>
       )}
 
-      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8 }}>
-        {segments.length} segments · read-only preview
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 12,
+        marginBottom: 12, padding: '8px 12px',
+        background: 'var(--surface-2)', border: '1px solid var(--border)',
+        borderRadius: 8, fontSize: 12,
+      }}>
+        <strong style={{ color: 'var(--text)' }}>{segments.length}</strong>
+        <span style={{ color: 'var(--muted)' }}>segments</span>
+        <span style={{ color: 'var(--border)' }}>·</span>
+        <strong style={{ color: 'var(--text)' }}>{approvedCount}</strong>
+        <span style={{ color: 'var(--muted)' }}>approved</span>
+        <span style={{ marginLeft: 'auto', color: 'var(--muted)', fontSize: 11 }}>
+          Edits save on blur. Status updates stream live.
+        </span>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {segments.map((s) => (
-          <div key={s.id} className="card-flat" style={{ padding: 14, background: 'var(--surface-2)' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-              <div style={{
-                width: 32, height: 32, borderRadius: 8,
-                background: 'var(--surface)', border: '1px solid var(--border)',
-                display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 700,
-                color: 'var(--muted)', flexShrink: 0,
-              }}>
-                {s.segment_index + 1}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-                  <SegmentTypeBadge type={s.segment_type} />
-                  {s.hyperframes_composition_id && (
-                    <span style={{ fontSize: 10.5, color: 'var(--muted)', background: 'var(--surface)', border: '1px solid var(--border)', padding: '2px 6px', borderRadius: 4 }}>
-                      {s.hyperframes_composition_id}
-                    </span>
-                  )}
-                  {s.transition_in && s.transition_in !== 'cut' && (
-                    <span style={{ fontSize: 10.5, color: 'var(--muted)' }}>↪ {s.transition_in}</span>
-                  )}
-                  {s.sound_effect && (
-                    <span style={{ fontSize: 10.5, color: 'var(--muted)' }}>♪ {s.sound_effect}</span>
-                  )}
-                </div>
-                {s.script_text && (
-                  <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--text)', marginBottom: 4 }}>
-                    {s.script_text}
-                  </div>
-                )}
-                {s.image_prompt && (
-                  <div style={{ fontSize: 11.5, color: 'var(--text-soft)', fontStyle: 'italic' }}>
-                    B-roll: {s.image_prompt}
-                  </div>
-                )}
-                {s.motion_gesture_prompt && (
-                  <div style={{ fontSize: 11.5, color: 'var(--text-soft)' }}>
-                    Direction: {s.motion_gesture_prompt}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
+          <SegmentRow
+            key={s.id}
+            segment={s}
+            onPatch={(patch) => patchSegment(s.id, patch)}
+            onDelete={() => deleteSegment(s.id)}
+          />
         ))}
-      </div>
-
-      <div style={{ marginTop: 16, fontSize: 11.5, color: 'var(--muted)', textAlign: 'center' }}>
-        Editable table + HyperFrames previews land in the next iterations.
       </div>
     </div>
   )
 }
 
-function SegmentTypeBadge({ type }) {
-  const palette = {
-    avatar:                     { label: 'Avatar',    bg: 'rgba(239,68,68,0.16)',   fg: 'var(--red)' },
-    voiceover_broll:            { label: 'B-roll',    bg: 'rgba(99,102,241,0.16)',  fg: '#818cf8'    },
-    voiceover_motion_graphics:  { label: 'Motion',    bg: 'rgba(245,158,11,0.16)',  fg: '#fbbf24'    },
-    pure_motion_graphics:       { label: 'Sting',     bg: 'rgba(46,204,113,0.16)',  fg: '#2ecc71'    },
-  }
-  const p = palette[type] || { label: type, bg: 'var(--surface)', fg: 'var(--text-soft)' }
+// One row of the video map. Cards are dense but legible — Studio is
+// desktop-first. Each editable field debounces text-input PATCHes and
+// fires select/checkbox PATCHes on change.
+function SegmentRow({ segment, onPatch, onDelete }) {
+  const isAvatar = segment.segment_type === 'avatar'
+  const isBroll = segment.segment_type === 'voiceover_broll'
+  const isMotion = segment.segment_type === 'voiceover_motion_graphics' || segment.segment_type === 'pure_motion_graphics'
+  const isPureMotion = segment.segment_type === 'pure_motion_graphics'
+
+  const borderColor = segment.approved
+    ? 'rgba(46,204,113,0.45)'
+    : segment.status === 'error'
+      ? 'rgba(239,68,68,0.45)'
+      : 'var(--border)'
+
   return (
-    <span style={{
-      fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 4,
-      background: p.bg, color: p.fg, letterSpacing: '0.02em',
+    <div className="card-flat" style={{
+      padding: 14, background: 'var(--surface-2)',
+      border: `1px solid ${borderColor}`, transition: 'border-color 0.15s',
     }}>
-      {p.label}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+        {/* Index + approve toggle */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          <div style={{
+            width: 32, height: 32, borderRadius: 8,
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 700,
+            color: 'var(--muted)',
+          }}>
+            {segment.segment_index + 1}
+          </div>
+          <button
+            type="button"
+            onClick={() => onPatch({ approved: !segment.approved })}
+            title={segment.approved ? 'Approved' : 'Approve'}
+            style={{
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              color: segment.approved ? '#2ecc71' : 'var(--muted)',
+              padding: 0, display: 'grid', placeItems: 'center',
+            }}
+          >
+            {segment.approved ? <CheckCircle2 size={20} /> : <Circle size={20} />}
+          </button>
+        </div>
+
+        {/* Main content column */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {/* Top row: type select + composition + transition + SFX + status + actions */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+            <select
+              className="input"
+              value={segment.segment_type}
+              onChange={(e) => onPatch({ segment_type: e.target.value })}
+              style={{ fontSize: 11.5, padding: '4px 6px', height: 'auto', width: 'auto', minWidth: 160 }}
+            >
+              {SEGMENT_TYPE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+
+            {isMotion && (
+              <select
+                className="input"
+                value={segment.hyperframes_composition_id || ''}
+                onChange={(e) => onPatch({ hyperframes_composition_id: e.target.value || null })}
+                style={{ fontSize: 11.5, padding: '4px 6px', height: 'auto', width: 'auto', minWidth: 140 }}
+              >
+                {HF_COMPOSITION_OPTIONS.map((c) => (
+                  <option key={c} value={c}>{c || 'No template'}</option>
+                ))}
+              </select>
+            )}
+
+            <select
+              className="input"
+              value={segment.transition_in}
+              onChange={(e) => onPatch({ transition_in: e.target.value })}
+              style={{ fontSize: 11.5, padding: '4px 6px', height: 'auto', width: 'auto' }}
+              title="Transition in"
+            >
+              {TRANSITION_OPTIONS.map((t) => (
+                <option key={t} value={t}>↪ {t}</option>
+              ))}
+            </select>
+
+            <select
+              className="input"
+              value={segment.sound_effect || ''}
+              onChange={(e) => onPatch({ sound_effect: e.target.value || null })}
+              style={{ fontSize: 11.5, padding: '4px 6px', height: 'auto', width: 'auto' }}
+              title="Sound effect"
+            >
+              {SFX_OPTIONS.map((sfx) => (
+                <option key={sfx} value={sfx}>♪ {sfx || 'none'}</option>
+              ))}
+            </select>
+
+            <StatusBadge status={segment.status} error={segment.error} />
+
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+              <button
+                type="button"
+                onClick={onDelete}
+                className="btn-ghost"
+                style={{ padding: 4, color: 'var(--muted)' }}
+                title="Delete segment"
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+          </div>
+
+          {/* Script text (skip for pure motion graphics) */}
+          {!isPureMotion && (
+            <DebouncedTextarea
+              initialValue={segment.script_text || ''}
+              onCommit={(v) => onPatch({ script_text: v })}
+              placeholder={isAvatar ? 'What the avatar says…' : 'What the voiceover says…'}
+              rows={2}
+              style={{ marginBottom: 8 }}
+            />
+          )}
+
+          {/* Type-specific prompt field */}
+          {isBroll && (
+            <DebouncedInput
+              initialValue={segment.image_prompt || ''}
+              onCommit={(v) => onPatch({ image_prompt: v })}
+              placeholder="B-roll image prompt — be specific (subject, lighting, mood)"
+              icon={<ImageIcon size={12} />}
+            />
+          )}
+          {isAvatar && (
+            <DebouncedInput
+              initialValue={segment.motion_gesture_prompt || ''}
+              onCommit={(v) => onPatch({ motion_gesture_prompt: v })}
+              placeholder="Avatar direction (optional): expression, gesture, energy"
+            />
+          )}
+
+          {/* Generated assets preview (read-only thumbnails) */}
+          {(segment.image_url || segment.voice_url || segment.avatar_video_url) && (
+            <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              {segment.image_url && (
+                <a href={segment.image_url} target="_blank" rel="noopener noreferrer" style={{ display: 'block' }}>
+                  <img
+                    src={segment.image_url} alt="B-roll preview"
+                    style={{ width: 96, height: 54, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--border)' }}
+                  />
+                </a>
+              )}
+              {segment.voice_url && (
+                <audio src={segment.voice_url} controls style={{ height: 28 }} />
+              )}
+              {segment.avatar_video_url && (
+                <a href={segment.avatar_video_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: 'var(--muted)' }}>
+                  Avatar clip ↗
+                </a>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function StatusBadge({ status, error }) {
+  if (status === 'ready') {
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, fontWeight: 700, color: '#2ecc71' }}>
+        <CheckCircle2 size={11} /> Ready
+      </span>
+    )
+  }
+  if (status === 'error') {
+    return (
+      <span title={error || ''} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, fontWeight: 700, color: 'var(--red)' }}>
+        <AlertCircle size={11} /> Error
+      </span>
+    )
+  }
+  if (status?.startsWith('generating_') || status === 'rendering_chunk') {
+    const label = ({
+      generating_image:   'Image…',
+      generating_audio:   'Voice…',
+      generating_avatar:  'Avatar…',
+      rendering_chunk:    'Rendering…',
+    })[status] || 'Working…'
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, fontWeight: 700, color: '#fbbf24' }}>
+        <Loader2 size={11} className="spin" /> {label}
+      </span>
+    )
+  }
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, color: 'var(--muted)' }}>
+      Pending
     </span>
+  )
+}
+
+// Debounced input: commits to onCommit() ~600ms after the user stops
+// typing, or immediately on blur. Local state holds the in-flight value
+// so the field stays responsive during PATCH round-trips. Realtime
+// UPDATE events for the same row replace local state when the field is
+// not focused (avoids stomping mid-edit).
+function DebouncedInput({ initialValue, onCommit, placeholder, icon }) {
+  const [value, setValue] = useState(initialValue || '')
+  const [focused, setFocused] = useState(false)
+  const lastCommittedRef = useRef(initialValue || '')
+  const timerRef = useRef(null)
+
+  useEffect(() => {
+    if (!focused && initialValue !== value && initialValue !== lastCommittedRef.current) {
+      setValue(initialValue || '')
+      lastCommittedRef.current = initialValue || ''
+    }
+  }, [initialValue, focused, value])
+
+  const commit = (v) => {
+    if (v === lastCommittedRef.current) return
+    lastCommittedRef.current = v
+    onCommit(v)
+  }
+  const onChange = (e) => {
+    const v = e.target.value
+    setValue(v)
+    if (timerRef.current) clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(() => commit(v), 600)
+  }
+  const onBlur = () => {
+    setFocused(false)
+    if (timerRef.current) clearTimeout(timerRef.current)
+    commit(value)
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, padding: '0 8px' }}>
+      {icon && <span style={{ color: 'var(--muted)', display: 'grid', placeItems: 'center' }}>{icon}</span>}
+      <input
+        value={value}
+        onChange={onChange}
+        onFocus={() => setFocused(true)}
+        onBlur={onBlur}
+        placeholder={placeholder}
+        style={{
+          flex: 1, background: 'transparent', border: 'none', outline: 'none',
+          color: 'var(--text)', fontSize: 12, padding: '8px 0',
+        }}
+      />
+    </div>
+  )
+}
+
+function DebouncedTextarea({ initialValue, onCommit, placeholder, rows = 2, style }) {
+  const [value, setValue] = useState(initialValue || '')
+  const [focused, setFocused] = useState(false)
+  const lastCommittedRef = useRef(initialValue || '')
+  const timerRef = useRef(null)
+
+  useEffect(() => {
+    if (!focused && initialValue !== value && initialValue !== lastCommittedRef.current) {
+      setValue(initialValue || '')
+      lastCommittedRef.current = initialValue || ''
+    }
+  }, [initialValue, focused, value])
+
+  const commit = (v) => {
+    if (v === lastCommittedRef.current) return
+    lastCommittedRef.current = v
+    onCommit(v)
+  }
+  const onChange = (e) => {
+    const v = e.target.value
+    setValue(v)
+    if (timerRef.current) clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(() => commit(v), 600)
+  }
+  const onBlur = () => {
+    setFocused(false)
+    if (timerRef.current) clearTimeout(timerRef.current)
+    commit(value)
+  }
+
+  return (
+    <textarea
+      value={value}
+      onChange={onChange}
+      onFocus={() => setFocused(true)}
+      onBlur={onBlur}
+      placeholder={placeholder}
+      rows={rows}
+      className="input"
+      style={{ fontSize: 13, lineHeight: 1.5, resize: 'vertical', ...style }}
+    />
   )
 }
