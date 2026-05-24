@@ -884,6 +884,7 @@ function StudioVideoEditor({ videoId }) {
                   Download MP4 ↓
                 </a>
               </div>
+              <RenderQualityNote video={video} />
             </div>
           )}
 
@@ -1871,6 +1872,108 @@ function opSummary(op) {
 }
 function shortId(id) { return id ? String(id).slice(0, 8) : '?' }
 
+// Real progress bar driven by studio_videos.render_progress. Realtime
+// pushes incremental updates as render-final.js writes per-chunk
+// progress, so the user sees the fill animate as the bake progresses.
+// Falls back to an indeterminate spinner if render_progress isn't set
+// yet (first second of the bake, or videos rendered before this column
+// existed).
+function RenderProgressBar({ video }) {
+  const rp = video.render_progress || null
+  const stage = rp?.stage || 'baking'
+  const current = Number(rp?.current ?? 0)
+  const total = Number(rp?.total ?? 0)
+  const pct = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : null
+  const stageLabel = ({
+    baking: 'Rendering segments…',
+    concat: 'Stitching final video…',
+    upload: 'Uploading to storage…',
+    done:   'Done',
+  })[stage] || 'Rendering…'
+
+  return (
+    <div style={{ width: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+        <Loader2 size={12} className="spin" style={{ color: '#fbbf24' }} />
+        <strong style={{ color: 'var(--text)' }}>{stageLabel}</strong>
+        {pct != null && (
+          <span style={{ color: 'var(--muted)', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>
+            {current} / {total} ({pct}%)
+          </span>
+        )}
+      </div>
+      <div style={{
+        position: 'relative',
+        width: '100%', height: 6,
+        background: 'rgba(255,255,255,0.08)',
+        borderRadius: 999,
+        overflow: 'hidden',
+      }}>
+        {pct != null ? (
+          <div style={{
+            width: `${pct}%`, height: '100%',
+            background: 'linear-gradient(90deg, #fbbf24, var(--red))',
+            transition: 'width 0.4s ease-out',
+            borderRadius: 999,
+          }} />
+        ) : (
+          <div style={{
+            width: '30%', height: '100%',
+            background: 'linear-gradient(90deg, transparent, var(--red), transparent)',
+            borderRadius: 999,
+            animation: 'studioProgressIndet 1.4s linear infinite',
+          }} />
+        )}
+      </div>
+      <style>{`
+        @keyframes studioProgressIndet {
+          0%   { transform: translateX(-100%); }
+          100% { transform: translateX(400%); }
+        }
+      `}</style>
+    </div>
+  )
+}
+
+// Inline summary that shows after a successful render when not every
+// motion-graphics segment rendered with the full HyperFrames template.
+// Without this, a user gets a video where the motion graphics are
+// text-on-black drawtext stubs and has no signal as to why.
+function RenderQualityNote({ video }) {
+  const rp = video.render_progress
+  if (!rp || rp.stage !== 'done') return null
+  const fb = Array.isArray(rp.hf_fallback) ? rp.hf_fallback : []
+  if (fb.length === 0) return null
+  const hfOk = Array.isArray(rp.hf_rendered) ? rp.hf_rendered.length : 0
+  const total = hfOk + fb.length
+  const firstReason = fb[0]?.reason || 'unknown'
+  return (
+    <details style={{
+      marginTop: 8, padding: 10,
+      background: 'rgba(245,158,11,0.08)',
+      border: '1px solid rgba(245,158,11,0.3)',
+      borderRadius: 8,
+      fontSize: 12,
+    }}>
+      <summary style={{ cursor: 'pointer', color: '#fbbf24' }}>
+        <AlertCircle size={11} style={{ verticalAlign: 'middle', marginRight: 6 }} />
+        <strong>{hfOk} of {total}</strong> motion graphics rendered with the full template ({fb.length} used the text fallback)
+      </summary>
+      <div style={{ marginTop: 8, color: 'var(--text-soft)' }}>
+        First fallback reason: <code style={{ background: 'var(--surface)', padding: '1px 6px', borderRadius: 4, fontSize: 11 }}>{firstReason}</code>
+        {fb[0]?.launch_err && (
+          <div style={{ marginTop: 4, color: 'var(--muted)', fontSize: 11 }}>
+            Browser launch error: {fb[0].launch_err}
+          </div>
+        )}
+        <div style={{ marginTop: 8, color: 'var(--muted)', fontSize: 11 }}>
+          Hit Re-render after the next deploy to retry with the full template.
+        </div>
+      </div>
+    </details>
+  )
+}
+
 function StickyActionBar({ video, approvedCount, totalCount, segments }) {
   const { session } = useAuth()
   const [busy, setBusy] = useState(false)
@@ -2018,13 +2121,7 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
             >Watch ↗</a>
           </>
         ) : phase === 'baking' ? (
-          <>
-            <Loader2 size={12} className="spin" style={{ verticalAlign: 'middle', marginRight: 6, color: '#fbbf24' }} />
-            <strong style={{ color: 'var(--text)' }}>Stitching final video…</strong>
-            <span style={{ color: 'var(--muted)', marginLeft: 8 }}>
-              Concatenating segments into a single MP4. ~30s to 2 min for a 5min video.
-            </span>
-          </>
+          <RenderProgressBar video={video} />
         ) : phase === 'rendering' ? (
           <>
             <Loader2 size={12} className="spin" style={{ verticalAlign: 'middle', marginRight: 6, color: '#fbbf24' }} />

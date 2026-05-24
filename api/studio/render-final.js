@@ -169,23 +169,49 @@ function wrapText(text, perLine = 38) {
 // is ~2-3s; subsequent compositions reuse the same browser process so
 // we only pay it once per render.
 let _browserPromise = null
+let _browserLaunchErr = null  // captured so handler can include in render_progress diag
 async function getBrowser() {
   if (_browserPromise) return _browserPromise
   _browserPromise = (async () => {
     // sparticuz/chromium bundles a serverless-optimized Chromium and the
-    // matching launch args. Locally we still need puppeteer-core to use
-    // an installed Chrome (sparticuz works on Vercel/Lambda).
-    const executablePath = await chromium.executablePath()
-    return puppeteer.launch({
-      args: [
-        ...chromium.args,
-        '--hide-scrollbars',
-        '--disable-web-security',
-      ],
-      defaultViewport: { width: 1920, height: 1080 },
-      executablePath,
-      headless: chromium.headless,
-    })
+    // matching launch args. We log the executablePath up-front so any
+    // "binary not bundled" silent failure shows up in Vercel logs.
+    let executablePath
+    try {
+      executablePath = await chromium.executablePath()
+    } catch (e) {
+      _browserLaunchErr = `chromium.executablePath() threw: ${e.message}`
+      throw new Error(_browserLaunchErr)
+    }
+    if (!executablePath) {
+      _browserLaunchErr = 'chromium.executablePath() returned empty — binary not bundled into the Vercel function. Check vercel.json includeFiles.'
+      throw new Error(_browserLaunchErr)
+    }
+    console.log(`[studio puppeteer] launching chromium at ${executablePath}`)
+
+    try {
+      return await puppeteer.launch({
+        args: [
+          ...chromium.args,
+          '--hide-scrollbars',
+          '--disable-web-security',
+          // Compose-friendly: avoids the rasterizer crash some Vercel
+          // Lambda images hit on initial paint.
+          '--disable-dev-shm-usage',
+          '--no-sandbox',
+        ],
+        defaultViewport: { width: 1920, height: 1080 },
+        executablePath,
+        // Hardcode headless=true. chromium.headless can return a string
+        // ('new') on some sparticuz versions, which older puppeteer-core
+        // builds reject silently.
+        headless: true,
+        ignoreHTTPSErrors: true,
+      })
+    } catch (e) {
+      _browserLaunchErr = `puppeteer.launch threw: ${e.message}`
+      throw e
+    }
   })()
   return _browserPromise
 }
@@ -531,15 +557,38 @@ export default async function handler(req, res) {
       })
     }
 
-    // Mark parent as rendering so the UI shows progress.
+    // Initial progress write: stage=baking, current=0, total=N. The
+    // frontend reads this via Realtime so the sticky bar can show a
+    // real progress bar instead of a spinner. hf_rendered tracks
+    // segments that successfully rendered with the full HyperFrames
+    // composition; hf_fallback tracks segments that had to use the
+    // drawtext stub (with the reason so we can debug).
+    const progress = {
+      stage: 'baking',
+      current: 0,
+      total: segments.length,
+      started_at: new Date().toISOString(),
+      hf_rendered: [],
+      hf_fallback: [],
+    }
     await supaFetch(`studio_videos?id=eq.${videoId}`, {
-      method: 'PATCH', body: { status: 'rendering', error: null }, prefer: 'return=minimal',
+      method: 'PATCH',
+      body: { status: 'rendering', error: null, render_progress: progress },
+      prefer: 'return=minimal',
     })
 
     workdir = await mkdtemp(join(tmpdir(), `studio-render-${videoId.slice(0, 8)}-`))
     const dim = dimensions(video.aspect_ratio)
     const fontPath = await resolveFont()
     const chunkPaths = []
+
+    const writeProgress = async () => {
+      await supaFetch(`studio_videos?id=eq.${videoId}`, {
+        method: 'PATCH',
+        body: { render_progress: progress },
+        prefer: 'return=minimal',
+      }).catch(() => { /* progress is best-effort, don't fail bake on a stat write */ })
+    }
 
     // Render each segment to an intermediate MP4
     for (let i = 0; i < segments.length; i++) {
@@ -577,32 +626,45 @@ export default async function handler(req, res) {
         // Falls back to the ffmpeg drawtext stub if Chromium fails for
         // any reason — composition not found, timeline registration
         // timeout, etc. — so the bake never blocks on a single bad
-        // composition.
+        // composition. We track WHY each fallback fired so the UI can
+        // show the user which segments rendered with the full template
+        // vs the text stub.
         const wantDuration = seg.segment_type === 'pure_motion_graphics'
           ? 2.5
           : Math.max(2, voiceDuration || 4)
         const hasComp = !!seg.hyperframes_composition_id
+        let usedHF = false
         if (hasComp) {
           try {
             await renderHyperFramesChunk(seg, paths, dim, wantDuration, fontPath)
+            usedHF = true
+            progress.hf_rendered.push(seg.id)
           } catch (e) {
-            console.warn(`[studio-render] HyperFrames render failed for ${seg.hyperframes_composition_id}, falling back to drawtext:`, e?.message || e)
+            const reason = e?.message || String(e)
+            const launchErr = _browserLaunchErr
+            console.warn(`[studio-render] HyperFrames render failed for ${seg.hyperframes_composition_id} on segment ${seg.id}: ${reason}${launchErr ? ` (browser launch err: ${launchErr})` : ''}`)
+            progress.hf_fallback.push({
+              seg_id: seg.id,
+              composition_id: seg.hyperframes_composition_id,
+              reason: reason.slice(0, 240),
+              launch_err: launchErr ? launchErr.slice(0, 240) : null,
+            })
             await renderMotionChunk(seg, paths, dim, wantDuration, fontPath)
           }
         } else {
+          progress.hf_fallback.push({
+            seg_id: seg.id,
+            composition_id: null,
+            reason: 'no composition_id set on segment',
+          })
           await renderMotionChunk(seg, paths, dim, wantDuration, fontPath)
         }
       } else {
         continue
       }
       chunkPaths.push(paths.outChunk)
-
-      // Realtime ping so the UI sees per-chunk progress. We don't have a
-      // per-segment status to set here ('ready' is from asset gen), so we
-      // touch the parent's updated_at by patching status to itself.
-      await supaFetch(`studio_videos?id=eq.${videoId}`, {
-        method: 'PATCH', body: { status: 'rendering' }, prefer: 'return=minimal',
-      }).catch(() => {})
+      progress.current = i + 1
+      await writeProgress()
     }
 
     // Concat all chunks via filter_complex re-encode. We intentionally
@@ -614,6 +676,9 @@ export default async function handler(req, res) {
     // chunk 3 worse, etc. — visible as drifting lip-sync after the first
     // segment. Filter_complex re-encodes everything and resets timestamps,
     // eliminating drift at the cost of ~30-60s extra render time.
+    progress.stage = 'concat'
+    await writeProgress()
+
     const listFile = join(workdir, 'concat.txt')
     const listText = chunkPaths.map((p) => `file '${p}'`).join('\n') + '\n'
     await writeFile(listFile, listText, 'utf8')
@@ -636,6 +701,9 @@ export default async function handler(req, res) {
       '-movflags', '+faststart', finalPath,
     ], 240_000)
 
+    progress.stage = 'upload'
+    await writeProgress()
+
     // Upload to studio-media bucket
     const buf = await readFile(finalPath)
     const path = `${video.profile_id}/studio/final/${videoId}-${Date.now()}.mp4`
@@ -657,10 +725,20 @@ export default async function handler(req, res) {
     }
     const finalUrl = `${SUPABASE_URL}/storage/v1/object/public/${STUDIO_BUCKET}/${path}`
 
-    // Finalize parent video
+    // Finalize parent video. Keep render_progress around (with stage='done')
+    // so the UI can show "X of Y motion graphics rendered with template, Z
+    // fell back" after the render completes, instead of dropping the diag
+    // info on success.
+    progress.stage = 'done'
+    progress.current = segments.length
     await supaFetch(`studio_videos?id=eq.${videoId}`, {
       method: 'PATCH',
-      body: { status: 'rendered', final_video_url: finalUrl, error: null },
+      body: {
+        status: 'rendered',
+        final_video_url: finalUrl,
+        error: null,
+        render_progress: progress,
+      },
       prefer: 'return=minimal',
     })
 
