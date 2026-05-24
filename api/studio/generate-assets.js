@@ -105,7 +105,23 @@ async function pickFirstLookFromGroup(groupId) {
   }
 }
 
-async function resolveHeygenAvatarId(rawAvatarId) {
+// lookId (optional): user-picked avatar_looks row. When present, its
+// heygen_look_id WINS over the avatar's primary talking_photo_id. This
+// is how a user with portrait + landscape variants of the same avatar
+// chooses which to render with — pick the look that matches the
+// video's aspect ratio.
+async function resolveHeygenAvatarId(rawAvatarId, lookId) {
+  // Explicit look pick takes priority. We still load the look row even
+  // if avatar_id isn't set, since the look has its own heygen_look_id.
+  if (lookId) {
+    const lkRows = await supaFetch(`avatar_looks?id=eq.${lookId}&select=heygen_look_id&limit=1`).catch(() => [])
+    const heygenLookId = lkRows?.[0]?.heygen_look_id
+    if (heygenLookId) return heygenLookId
+    // Look row exists but no heygen_look_id yet (training failed / not
+    // synced). Fall through to the avatar-level resolution rather than
+    // erroring — user gets the next-best avatar instead of a hard block.
+  }
+
   if (!rawAvatarId) return null
   if (typeof rawAvatarId === 'string' && rawAvatarId.startsWith('pub:')) {
     const groupId = rawAvatarId.slice(4)
@@ -304,7 +320,7 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'This video has avatar segments but no avatar selected. Pick one in the form or change the avatar segments to voiceover.' })
       }
       try {
-        heygenAvatarId = await resolveHeygenAvatarId(video.avatar_id)
+        heygenAvatarId = await resolveHeygenAvatarId(video.avatar_id, video.look_id)
         if (!heygenAvatarId) throw new Error('Could not resolve HeyGen avatar id from the selected avatar')
       } catch (e) {
         return res.status(400).json({ error: e.message })

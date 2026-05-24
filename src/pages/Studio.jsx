@@ -175,11 +175,37 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
     reference_url: '',
     reference_text: '',
     avatar_id: '',
+    look_id: '',
     voice_id: '',
     target_duration_secs: 120,
     aspect_ratio: '16:9',
   })
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
+
+  // Looks for the selected avatar. Avatar rows come back with a `looks`
+  // array (avatar_looks joined in /api/avatars). When the user picks
+  // an avatar, we surface its looks for selection so they can pin a
+  // specific framing (portrait / landscape / square).
+  const selectedAvatar = avatars.find((a) => a.id === form.avatar_id)
+  const looks = selectedAvatar?.looks || []
+  const selectedLook = looks.find((l) => l.id === form.look_id)
+
+  // Clear look_id if the user picks a different avatar.
+  useEffect(() => {
+    if (!selectedAvatar || !form.look_id) return
+    if (!looks.some((l) => l.id === form.look_id)) {
+      setForm((f) => ({ ...f, look_id: '' }))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.avatar_id])
+
+  // Aspect/orientation mismatch warning. If the user picks a portrait
+  // look but a 16:9 video, HeyGen will letterbox with white pillarbox
+  // (the exact bug Ray hit on his first render). Surface this clearly.
+  const aspectToOrientation = { '16:9': 'landscape', '9:16': 'portrait', '1:1': 'square' }
+  const wantOrient = aspectToOrientation[form.aspect_ratio]
+  const lookMismatch = selectedLook?.orientation && wantOrient && selectedLook.orientation !== wantOrient
+  const lookUnspecified = selectedLook && !selectedLook.orientation
 
   // Pull avatars + voices for the active profile so the dropdowns have
   // something to show. Both endpoints are tolerant of empty responses.
@@ -216,6 +242,7 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
         reference_url: form.reference_url.trim() || null,
         reference_text: form.reference_text.trim() || null,
         avatar_id: form.avatar_id || null,
+        look_id: form.look_id || null,
         voice_id: form.voice_id || null,
         target_duration_secs: Number(form.target_duration_secs) || 120,
         aspect_ratio: form.aspect_ratio,
@@ -289,6 +316,27 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
           </select>
         </Field>
 
+        {/* Look picker — only shows when an avatar with looks is selected.
+            Each look can be tagged portrait/landscape/square so the user
+            sees orientation at a glance. Mismatch with video aspect ratio
+            triggers a warning below the form. */}
+        {selectedAvatar && looks.length > 0 && (
+          <Field label="Look" hint="Which trained look/framing of this avatar to render with.">
+            <select className="input" value={form.look_id} onChange={(e) => set('look_id', e.target.value)}>
+              <option value="">Default (first look)</option>
+              {looks.map((l) => {
+                const o = l.orientation
+                const tag = o ? ` · ${o}` : ''
+                return (
+                  <option key={l.id} value={l.id}>
+                    {(l.name || `Look ${(l.angle_order ?? 0) + 1}`) + tag}
+                  </option>
+                )
+              })}
+            </select>
+          </Field>
+        )}
+
         <Field label="Voice">
           <select className="input" value={form.voice_id} onChange={(e) => set('voice_id', e.target.value)}>
             <option value="">Brand default</option>
@@ -346,6 +394,17 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
         />
       </Field>
 
+      {/* Inline orientation tagger for the selected look. Saves to the
+          avatar_looks row so every future video sees the right tag. */}
+      {selectedLook && (
+        <LookOrientationInlineEditor
+          look={selectedLook}
+          token={session?.access_token}
+          mismatch={lookMismatch ? wantOrient : null}
+          unspecified={lookUnspecified}
+        />
+      )}
+
       {error && (
         <div style={{
           background: 'rgba(239,68,68,0.12)', color: 'var(--red)',
@@ -366,6 +425,91 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
         </button>
       </div>
     </form>
+  )
+}
+
+// Inline editor for the selected look's orientation. Renders a small
+// row with three buttons (portrait / landscape / square) right under
+// the form when a look is chosen. Saves directly via PATCH on
+// /api/avatars/looks. When the look's tag doesn't match the video's
+// aspect ratio, a soft warning explains why (HeyGen letterboxes).
+function LookOrientationInlineEditor({ look, token, mismatch, unspecified }) {
+  const [orientation, setOrientation] = useState(look.orientation || '')
+  const [busy, setBusy] = useState(false)
+  // Resync if the user switches looks
+  useEffect(() => { setOrientation(look.orientation || '') }, [look.id, look.orientation])
+
+  const save = async (newVal) => {
+    setBusy(true)
+    setOrientation(newVal)
+    try {
+      const r = await fetch(`/api/avatars/looks?id=${look.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token || ''}` },
+        body: JSON.stringify({ orientation: newVal || null }),
+      })
+      if (!r.ok) {
+        const b = await r.json().catch(() => ({}))
+        throw new Error(b.error || 'Could not save orientation')
+      }
+      // Best-effort: also mutate the local look object so the parent
+      // re-renders without a full refetch. The next form open picks up
+      // the new value from the avatars endpoint.
+      look.orientation = newVal || null
+      toast({ message: `Look tagged as ${newVal || 'unspecified'}.`, kind: 'success' })
+    } catch (e) {
+      setOrientation(look.orientation || '')
+      toast({ message: e.message, kind: 'error' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const showWarning = !!mismatch || unspecified
+  const warningKind = mismatch ? 'mismatch' : 'unspecified'
+
+  return (
+    <div style={{
+      marginTop: 6, marginBottom: 14, padding: 12,
+      background: showWarning ? 'rgba(245,158,11,0.10)' : 'var(--surface-2)',
+      border: `1px solid ${showWarning ? 'rgba(245,158,11,0.35)' : 'var(--border)'}`,
+      borderRadius: 8, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+    }}>
+      <div style={{ fontSize: 11.5, color: 'var(--text-soft)', fontWeight: 700 }}>
+        Look orientation:
+      </div>
+      <div style={{ display: 'flex', gap: 4 }}>
+        {[
+          { v: 'portrait',  label: 'Portrait' },
+          { v: 'landscape', label: 'Landscape' },
+          { v: 'square',    label: 'Square' },
+        ].map((opt) => (
+          <button
+            key={opt.v}
+            type="button"
+            onClick={() => save(opt.v)}
+            disabled={busy}
+            className={orientation === opt.v ? 'btn-primary' : 'btn-secondary'}
+            style={{ fontSize: 11, padding: '5px 10px' }}
+          >{opt.label}</button>
+        ))}
+        {orientation && (
+          <button type="button" onClick={() => save('')} disabled={busy}
+            className="btn-ghost" style={{ fontSize: 11, padding: '5px 10px', color: 'var(--muted)' }}
+          >Clear</button>
+        )}
+      </div>
+      {warningKind === 'mismatch' && (
+        <div style={{ fontSize: 11, color: '#fbbf24', marginLeft: 'auto', maxWidth: '50%' }}>
+          ⚠ This look is tagged <strong>{look.orientation}</strong> but the video is <strong>{mismatch}</strong>. HeyGen will letterbox with white bars. Pick a {mismatch} look or change the video aspect ratio.
+        </div>
+      )}
+      {warningKind === 'unspecified' && (
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginLeft: 'auto', maxWidth: '50%' }}>
+          This look hasn't been tagged yet. Tag it once and Studio will warn you on every future video that doesn't match.
+        </div>
+      )}
+    </div>
   )
 }
 

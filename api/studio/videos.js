@@ -20,14 +20,14 @@ import { gateStudio } from './_lib/gate.js'
 // shape; anything outside this set is silently dropped.
 const ALLOWED_CREATE = new Set([
   'profile_id', 'title', 'topic_prompt', 'reference_url', 'reference_text',
-  'avatar_id', 'voice_id', 'target_duration_secs', 'aspect_ratio',
+  'avatar_id', 'look_id', 'voice_id', 'target_duration_secs', 'aspect_ratio',
 ])
 // Columns the client is allowed to PATCH. Status transitions are
 // allowed here too because the canvas UI flips status as the user
 // moves through the editor (draft → mapping → mapped → editing → …).
 const ALLOWED_PATCH = new Set([
   'title', 'topic_prompt', 'reference_url', 'reference_text',
-  'avatar_id', 'voice_id', 'target_duration_secs', 'aspect_ratio',
+  'avatar_id', 'look_id', 'voice_id', 'target_duration_secs', 'aspect_ratio',
   'status', 'script_full_text', 'final_video_url', 'error',
 ])
 
