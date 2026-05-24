@@ -418,14 +418,19 @@ function StudioVideoEditor({ videoId }) {
     return () => { cancelled = true }
   }, [videoId, session?.access_token])
 
-  // Asset polling loop. While status='rendering', hit /api/studio/poll-assets
-  // every 6s so Kie.ai and HeyGen job completions get pulled in. Realtime
-  // also pushes the segment UPDATE events, so this is just the trigger that
-  // makes the server-side check happen — the UI updates come through the
-  // Realtime channel below.
+  // Asset polling loop. Gates on segment-level state (any row currently
+  // in generating_*) rather than parent video status, because the parent
+  // stays in 'rendering' for both asset gen AND the final bake phase.
+  // Using segment state avoids two bugs:
+  //   (a) Loop never stopping after asset gen finishes (parent never gets
+  //       flipped back to 'editing')
+  //   (b) Loop firing during the final bake when there's nothing to poll
+  const anyGenerating = (video?.studio_segments || []).some(
+    (s) => s.status === 'generating_image' || s.status === 'generating_audio' || s.status === 'generating_avatar'
+  )
   useEffect(() => {
     if (!session?.access_token || !videoId) return
-    if (video?.status !== 'rendering') return
+    if (!anyGenerating) return
     let cancelled = false
     let timer = null
 
@@ -439,7 +444,7 @@ function StudioVideoEditor({ videoId }) {
     // the first poll starts hitting the DB.
     timer = setTimeout(tick, 2000)
     return () => { cancelled = true; if (timer) clearTimeout(timer) }
-  }, [video?.status, videoId, session?.access_token])
+  }, [anyGenerating, videoId, session?.access_token])
 
   // Realtime subscription: video status changes + per-segment updates
   // stream in without polling. Used for the mapping → mapped transition
@@ -868,26 +873,42 @@ function SegmentList({ video }) {
 function StickyActionBar({ video, approvedCount, totalCount, segments }) {
   const { session } = useAuth()
   const [busy, setBusy] = useState(false)
+  // Local "we just clicked render-final" flag. Set on click, cleared
+  // when Realtime delivers final_video_url. Decoupled from video.status
+  // because that's also 'rendering' during asset gen.
+  const [baking, setBaking] = useState(false)
+  useEffect(() => {
+    if (video.status === 'rendered' || video.final_video_url) setBaking(false)
+    if (video.status === 'failed') setBaking(false)
+  }, [video.status, video.final_video_url])
 
-  const isRendering = video.status === 'rendering'
   const isRendered = video.status === 'rendered'
   const isFailed = video.status === 'failed'
 
-  // "All assets ready" = every approved non-pure-motion segment has
-  // status='ready'. When true, the next Continue press kicks off the
-  // final HyperFrames bake (task #10) instead of asset gen.
+  // Segment-level signals — far more reliable than parent video.status
+  // for telling us where we actually are in the pipeline.
   const approvedSegs = segments.filter((s) => s.approved)
+  const anyGenerating = approvedSegs.some((s) =>
+    s.status === 'generating_image' || s.status === 'generating_audio' || s.status === 'generating_avatar'
+  )
   const allAssetsReady = approvedSegs.length > 0 && approvedSegs.every((s) => s.status === 'ready')
 
+  // Phase priority: terminal states → bake-in-progress → asset-gen → ready
+  // states. Critically, allAssetsReady takes precedence over the parent
+  // status='rendering' since the parent doesn't get reset after asset gen.
   const phase = isRendered
     ? 'done'
-    : isRendering
-      ? 'rendering'  // could be asset gen OR final bake — we lean on segment state to disambiguate
-      : allAssetsReady
-        ? 'ready-to-bake'
-        : approvedCount > 0 && ['mapped', 'editing'].includes(video.status)
-          ? 'ready-for-assets'
-          : 'pre-approval'
+    : isFailed
+      ? 'failed'
+      : baking
+        ? 'baking'
+        : anyGenerating
+          ? 'rendering'
+          : allAssetsReady
+            ? 'ready-to-bake'
+            : approvedCount > 0 && ['mapped', 'editing', 'rendering'].includes(video.status)
+              ? 'ready-for-assets'
+              : 'pre-approval'
 
   const onAssets = async () => {
     if (!session?.access_token) return
@@ -912,6 +933,7 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
   const onRender = async () => {
     if (!session?.access_token) return
     setBusy(true)
+    setBaking(true)  // local flag drives phase='baking' until final_video_url lands
     try {
       const r = await authedFetch('/api/studio/render-final', session.access_token, {
         method: 'POST',
@@ -921,13 +943,17 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
       if (!r.ok) throw new Error(b.error || 'Render failed')
       toast({ message: 'Final video rendered.', kind: 'success' })
     } catch (e) {
+      setBaking(false)
       toast({ message: e.message, kind: 'error' })
     } finally {
       setBusy(false)
     }
   }
 
-  const onContinue = phase === 'ready-to-bake' ? onRender : onAssets
+  // Continue dispatcher: pick the right action based on the current phase.
+  // "Re-render" on a done state goes back through render-final (skips
+  // asset gen — the segments are already ready).
+  const onContinue = (phase === 'ready-to-bake' || phase === 'done') ? onRender : onAssets
 
   return (
     <div style={{
@@ -954,16 +980,20 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
               style={{ marginLeft: 10, color: 'var(--red)', fontWeight: 700 }}
             >Watch ↗</a>
           </>
+        ) : phase === 'baking' ? (
+          <>
+            <Loader2 size={12} className="spin" style={{ verticalAlign: 'middle', marginRight: 6, color: '#fbbf24' }} />
+            <strong style={{ color: 'var(--text)' }}>Stitching final video…</strong>
+            <span style={{ color: 'var(--muted)', marginLeft: 8 }}>
+              Concatenating segments into a single MP4. ~30s to 2 min for a 5min video.
+            </span>
+          </>
         ) : phase === 'rendering' ? (
           <>
             <Loader2 size={12} className="spin" style={{ verticalAlign: 'middle', marginRight: 6, color: '#fbbf24' }} />
-            <strong style={{ color: 'var(--text)' }}>
-              {allAssetsReady ? 'Stitching final video…' : 'Generating assets…'}
-            </strong>
+            <strong style={{ color: 'var(--text)' }}>Generating assets…</strong>
             <span style={{ color: 'var(--muted)', marginLeft: 8 }}>
-              {allAssetsReady
-                ? 'Concatenating segments into a single MP4. ~30s to 2 min for a 5min video.'
-                : 'Voice, B-roll, and avatar segments are filling in below.'}
+              Voice, B-roll, and avatar segments are filling in below.
             </span>
           </>
         ) : phase === 'ready-to-bake' ? (
@@ -997,18 +1027,20 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
       <button
         type="button"
         className="btn-primary"
-        disabled={busy || phase === 'rendering' || phase === 'pre-approval'}
+        disabled={busy || phase === 'rendering' || phase === 'baking' || phase === 'pre-approval'}
         onClick={onContinue}
         style={{ fontSize: 13, padding: '10px 18px' }}
       >
-        {busy || phase === 'rendering' ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
+        {busy || phase === 'rendering' || phase === 'baking' ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
         {phase === 'rendering'
-          ? (allAssetsReady ? 'Rendering…' : 'Generating…')
-          : phase === 'ready-to-bake'
-            ? 'Render final MP4'
-            : phase === 'done'
-              ? 'Re-render'
-              : 'Generate assets'}
+          ? 'Generating…'
+          : phase === 'baking'
+            ? 'Rendering…'
+            : phase === 'ready-to-bake'
+              ? 'Render final MP4'
+              : phase === 'done'
+                ? 'Re-render'
+                : 'Generate assets'}
       </button>
     </div>
   )
