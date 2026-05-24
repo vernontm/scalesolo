@@ -24,12 +24,16 @@
 //      still renders on the dark brand canvas with Plus Jakarta Sans.
 
 ;(function injectBrandFallback() {
-  // Idempotent — if shared.css already loaded, our !important rules
-  // here are the same so there's no conflict.
+  // Last-resort safety net. The composition HTML already inlines these
+  // rules in <head>, and _shared.css repeats them; this JS injection is
+  // pure paranoia for the case where the iframe somehow strips both.
+  // No @import here — we self-host Plus Jakarta Sans via @font-face in
+  // _shared.css. If shared.css fails to load, the iframe falls back to
+  // system-ui which is still sans-serif (not the serif disaster we hit
+  // with the old @import approach).
   const style = document.createElement('style')
   style.setAttribute('data-studio-fallback', '1')
   style.textContent = `
-    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800;900&display=swap');
     html, body {
       width: 100% !important;
       height: 100% !important;
@@ -38,7 +42,7 @@
       overflow: hidden !important;
       background: #000 !important;
       color: #fff !important;
-      font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif !important;
+      font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif !important;
       -webkit-font-smoothing: antialiased;
     }
     * { box-sizing: border-box; }

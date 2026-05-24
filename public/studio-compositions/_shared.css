@@ -9,7 +9,24 @@
  * 1920x1080 (or 1080x1920 / 1080x1080).
  */
 
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800;900&display=swap');
+/* Self-hosted Plus Jakarta Sans variable font.
+ *
+ * @import url('fonts.googleapis.com/...') was silently failing inside the
+ * sandboxed iframe context — either Vercel's CSP blocked the cross-origin
+ * fetch, or @import inside an inline <style> was being treated as invalid
+ * and the browser was discarding the rest of the block. Either way the
+ * fix is the same: ship the .woff2 ourselves and load via @font-face.
+ *
+ * The variable font is one 47KB file that covers weights 500-900.
+ */
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 500 900;
+  font-display: swap;
+  src: url('/fonts/PlusJakartaSans-Variable.woff2') format('woff2-variations'),
+       url('/fonts/PlusJakartaSans-Variable.woff2') format('woff2');
+}
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -19,7 +36,9 @@ html, body {
   overflow: hidden;
   background: #000 !important;
   color: #fff;
-  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif !important;
+  /* Robust system-sans fallback chain — guarantees we never fall back to
+     a serif default even if Plus Jakarta Sans hasn't loaded yet. */
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif !important;
   -webkit-font-smoothing: antialiased;
   font-feature-settings: 'cv11', 'ss01';
 }
