@@ -140,21 +140,40 @@ function wrapText(text, perLine = 38) {
 
 // ── Per-segment chunk renderers ─────────────────────────────────────────────
 async function renderAvatarChunk(seg, paths, dim) {
-  // Avatar mp4 already has voice baked in via HeyGen audio_url path. Just
-  // normalize to our target codec/resolution and re-encode so concat doesn't
-  // hit a timestamp mismatch downstream.
-  const inFile = paths.avatarMp4
+  // HeyGen V3 with audio_url returns a VIDEO-ONLY mp4 (no audio stream).
+  // Earlier wishful comment notwithstanding, they assume you'll mux the
+  // audio yourself at composite time — so we re-add the voice mp3 here.
+  //
+  // Two inputs: the HeyGen video [0:v], the voice mp3 [1:a]. We map
+  // [0:v] + [1:a] explicitly so any phantom audio track in the HeyGen
+  // output is dropped (avoids double-audio if HeyGen ever changes).
+  //
+  // -shortest keeps the chunk length equal to whichever stream ends
+  // first — usually voice, since HeyGen pads a hold frame at the end.
   const outFile = paths.outChunk
-  await runFFmpeg([
-    '-y', '-i', inFile,
+  const args = ['-y', '-i', paths.avatarMp4]
+  if (paths.voice) args.push('-i', paths.voice)
+  args.push(
     '-vf', `scale=${dim.w}:${dim.h}:force_original_aspect_ratio=increase,crop=${dim.w}:${dim.h}`,
     '-r', '30',
+    '-map', '0:v:0',
+  )
+  if (paths.voice) {
+    args.push('-map', '1:a:0', '-shortest')
+  } else {
+    // No voice — write a silent track so concat doesn't drop the audio
+    // stream entirely when adjacent chunks DO have audio.
+    args.push('-f', 'lavfi', '-t', '6', '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000',
+              '-map', '2:a:0', '-shortest')
+  }
+  args.push(
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
     '-c:a', 'aac', '-b:a', '128k', '-ar', '48000',
     '-pix_fmt', 'yuv420p',
     '-movflags', '+faststart',
     outFile,
-  ], 120_000)
+  )
+  await runFFmpeg(args, 120_000)
   return outFile
 }
 
