@@ -169,6 +169,7 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
   const [error, setError] = useState(null)
   const [avatars, setAvatars] = useState([])
   const [voices, setVoices] = useState([])
+  const [templates, setTemplates] = useState([])
   const [form, setForm] = useState({
     title: '',
     topic_prompt: '',
@@ -179,8 +180,40 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
     voice_id: '',
     target_duration_secs: 120,
     aspect_ratio: '16:9',
+    template_id: 'sleek',
+    brand_color: '',
   })
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
+
+  // Load the visual template gallery. Each template defines the look
+  // (background pattern, typography, motion graphics style, etc.); the
+  // user picks one then optionally overrides the brand color below.
+  useEffect(() => {
+    if (!session?.access_token) return
+    let cancelled = false
+    authedFetch('/api/studio/templates', session.access_token)
+      .then((r) => r.ok ? r.json() : { templates: [] })
+      .then((b) => {
+        if (cancelled) return
+        const list = b.templates || []
+        setTemplates(list)
+        // Default brand_color to the selected template's accent so the
+        // color picker reflects what the segmentation pass will use.
+        const cur = list.find((t) => t.id === 'sleek') || list[0]
+        if (cur && !form.brand_color) {
+          setForm((f) => ({ ...f, brand_color: cur.primary_accent || '' }))
+        }
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.access_token])
+
+  // When the user switches template, sync brand_color to the new
+  // template's default unless they've explicitly tweaked it. We track
+  // "did the user touch the picker" via brand_color !== any template
+  // default — a tiny heuristic that's fine for v1.
+  const selectedTemplate = templates.find((t) => t.id === form.template_id) || templates[0]
 
   // Looks for the selected avatar. Avatar rows come back with a `looks`
   // array (avatar_looks joined in /api/avatars). When the user picks
@@ -246,6 +279,8 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
         voice_id: form.voice_id || null,
         target_duration_secs: Number(form.target_duration_secs) || 120,
         aspect_ratio: form.aspect_ratio,
+        template_id: form.template_id || 'sleek',
+        brand_color: form.brand_color || null,
       }
       const r = await authedFetch('/api/studio/videos', session.access_token, {
         method: 'POST', body: JSON.stringify(body),
@@ -284,6 +319,58 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
       <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 20 }}>
         Tell Claude what to make. We will draft a video map you can edit row by row before rendering.
       </div>
+
+      {templates.length > 0 && (
+        <Field
+          label="Visual template"
+          hint="Pick the look that fits the video. Background, typography, motion graphics, and pacing all cascade from here. You can override the brand color below."
+        >
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+            gap: 10,
+          }}>
+            {templates.map((t) => (
+              <TemplateCard
+                key={t.id}
+                template={t}
+                selected={form.template_id === t.id}
+                onClick={() => {
+                  // Picking a template resets brand_color to its default
+                  // so the picker matches what the user just chose.
+                  setForm((f) => ({
+                    ...f,
+                    template_id: t.id,
+                    brand_color: t.primary_accent || f.brand_color,
+                  }))
+                }}
+              />
+            ))}
+          </div>
+        </Field>
+      )}
+
+      <Field
+        label="Brand color"
+        hint={selectedTemplate ? `Cascades into every motion graphic, B-roll color guidance, and the captions. Defaults to ${selectedTemplate.name}'s accent.` : 'Used as the accent across motion graphics.'}
+      >
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <input
+            type="color"
+            value={form.brand_color || (selectedTemplate?.primary_accent ?? '#e3151e')}
+            onChange={(e) => set('brand_color', e.target.value)}
+            style={{ width: 56, height: 36, border: '1px solid var(--border)', borderRadius: 6, background: 'transparent', padding: 0, cursor: 'pointer' }}
+          />
+          <input
+            type="text"
+            className="input"
+            value={form.brand_color || (selectedTemplate?.primary_accent ?? '#e3151e')}
+            onChange={(e) => set('brand_color', e.target.value)}
+            style={{ width: 130, fontFamily: 'var(--font-mono, monospace)', fontSize: 12 }}
+            maxLength={9}
+          />
+        </div>
+      </Field>
 
       <Field label="Topic" required hint="What is this video about? One or two sentences is fine.">
         <textarea
@@ -510,6 +597,56 @@ function LookOrientationInlineEditor({ look, token, mismatch, unspecified }) {
         </div>
       )}
     </div>
+  )
+}
+
+// Card in the template gallery picker. Shows name + description + a
+// swatch of the template's default accent so the user can scan options
+// quickly. Selected card gets a red border + slight scale-up.
+function TemplateCard({ template, selected, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        textAlign: 'left',
+        padding: 14,
+        borderRadius: 10,
+        background: selected ? 'rgba(239,68,68,0.10)' : 'var(--surface-2)',
+        border: `1px solid ${selected ? 'rgba(239,68,68,0.6)' : 'var(--border)'}`,
+        color: 'var(--text)',
+        cursor: 'pointer',
+        transition: 'border-color 0.15s, background 0.15s',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+        <div style={{
+          width: 14, height: 14, borderRadius: 3,
+          background: template.primary_accent || '#e3151e',
+          border: '1px solid rgba(255,255,255,0.15)',
+        }} />
+        <strong style={{ fontFamily: 'var(--font-display)', fontSize: 13, color: 'var(--text)' }}>
+          {template.name}
+        </strong>
+        {selected && (
+          <CheckCircle2 size={12} style={{ color: '#2ecc71', marginLeft: 'auto' }} />
+        )}
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--muted)', lineHeight: 1.4 }}>
+        {template.description}
+      </div>
+      {Array.isArray(template.tags) && template.tags.length > 0 && (
+        <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {template.tags.slice(0, 4).map((tag) => (
+            <span key={tag} style={{
+              fontSize: 10, color: 'var(--text-soft)',
+              background: 'var(--surface)', padding: '1px 6px', borderRadius: 4,
+              border: '1px solid var(--border)',
+            }}>{tag}</span>
+          ))}
+        </div>
+      )}
+    </button>
   )
 }
 

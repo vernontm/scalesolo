@@ -25,6 +25,7 @@ import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/su
 import { gateStudio } from './_lib/gate.js'
 import { message as anthropicMessage } from '../_lib/anthropic.js'
 import { loadBrandContext, renderBrandContextMarkdown } from '../_lib/brand-context.js'
+import { resolveTemplate } from './_lib/templates.js'
 
 // The composition library the segmentation pass is allowed to pick
 // from. Stable ids — the actual HTML compositions ship in task #8.
@@ -124,8 +125,22 @@ const SEGMENT_TOOL = {
   },
 }
 
-function buildSystem(brandMarkdown) {
-  return `You are Studio's segmentation engine. Your job: turn a topic into a long-form vertical or horizontal video, broken into 4-to-7-second segments that flow like a YouTube short-form-meets-explainer.
+function buildSystem(brandMarkdown, tmpl) {
+  // Template constraints get woven into the prompt so Claude segments
+  // according to the chosen visual preset's pacing + composition pool +
+  // SFX vibe. The resolved template already has {accent} replaced with
+  // the user's brand color (or template default if not overridden).
+  const pacing = tmpl.pacing || {}
+  const audio = tmpl.audio || {}
+  const compositionPool = tmpl.composition_pool || []
+  const motionDensity = pacing.hard_cap_motion_density != null
+    ? `Cap motion-graphics segments at ${Math.round(pacing.hard_cap_motion_density * 100)}% of the total. `
+    : ''
+  const sfxGuidance = audio.sfx_pool?.length
+    ? `When you add a sound_effect to a segment, pick from this pool: ${audio.sfx_pool.join(', ')}. Density target: ${audio.sfx_density || 'medium'}.`
+    : 'Use sound_effect sparingly.'
+
+  return `You are Studio's segmentation engine. Your job: turn a topic into a long-form vertical or horizontal video, broken into segments that flow like a YouTube short-form-meets-explainer.
 
 You will draft a full script in the brand's voice, then beat it into segments. Every segment is one of:
 - avatar: the brand's AI avatar speaks this line on camera
@@ -133,13 +148,27 @@ You will draft a full script in the brand's voice, then beat it into segments. E
 - voiceover_motion_graphics: voiceover plays over an animated HyperFrames composition (title cards, stat reveals, lists, quotes)
 - pure_motion_graphics: no voiceover, just motion graphics with optional SFX/music (transitions, section breaks, stings)
 
-Pacing rules:
-- Average segment duration is 4 to 6 seconds. Hook segments (first 2 seconds) can be 2 to 3.
-- Vary the rhythm: fast-fast-slow-fast keeps retention up.
-- Vary segment types: never put 3 avatar segments in a row, never put 3 broll segments in a row.
+Visual template selected: "${tmpl.name}".
+${tmpl.description}
+${tmpl.when_to_use ? `Best for: ${tmpl.when_to_use}` : ''}
+
+Composition pool you may use (do NOT pick anything outside this list):
+${compositionPool.map((id) => `  - ${id}`).join('\n')}
+
+Pacing for this template:
+- Target average segment duration: ${pacing.segment_duration_avg_secs ?? 4.5} seconds.
+- Hook segment max: ${pacing.hook_segment_max_secs ?? 2.5} seconds.
+- Rhythm: ${pacing.rhythm || 'balanced'}.
+- ${motionDensity}Vary segment types — never put 3 of the same type in a row.
+
+Sound design:
+- ${sfxGuidance}
+
+Other rules:
 - Open with an avatar or motion graphic hook in the first 2 seconds.
-- Close with a clear CTA. Use end-card-v1 for the final visual.
+- Close with a clear CTA. Use end-card-v1 for the final visual (if it's in the composition pool).
 - Total runtime should land within ±15% of the target duration.
+- Default transition between segments: ${tmpl.default_transition || 'cut'}. Per-segment overrides allowed.
 
 Brand context (the brand's voice, do-not-say list, hooks library, etc.) is below. Honor it exactly. Do-not-say words are non-negotiable.
 
@@ -149,8 +178,8 @@ When calling emit_video_map:
 - title: derive from the topic. 8 words max.
 - full_script: the complete narration, top to bottom, in the brand's voice. This is what the user will read in the script editor.
 - segments: the segmented breakdown. script_text on each segment is the slice of full_script that plays during it. Keep them stitchable — concatenating script_text in order should approximate full_script.
-- Use HyperFrames compositions liberally to add visual rhythm. A 2-minute video should have 6 to 10 motion-graphics segments mixed with avatar and broll.
-- For voiceover_broll image_prompt: be specific. "Woman in early-30s at a desk, side-lit window light, looking at laptop, warm cinematic tone" beats "office scene."
+- For voiceover_broll image_prompt: be specific. "Woman in early-30s at a desk, side-lit window light, looking at laptop, warm cinematic tone" beats "office scene." Match the visual template's color palette when relevant.
+- For motion-graphics segments, set hyperframes_variables to drive the composition. Pass accent_color: "${tmpl.colors.primary_accent}" by default.
 
 Call emit_video_map exactly once. Do not include any text outside the tool call.`
 }
@@ -257,8 +286,15 @@ export default async function handler(req, res) {
       const ctx = await loadBrandContext(video.profile_id)
       const brandMarkdown = renderBrandContextMarkdown(ctx)
 
+      // Resolve the visual template + brand color override. {accent}
+      // placeholders inside the template get interpolated with the
+      // user's chosen color (or template default if not overridden).
+      // The resolved spec gets woven into the system prompt so Claude
+      // segments according to template pacing + composition pool.
+      const resolvedTemplate = resolveTemplate(video.template_id || 'sleek', video.brand_color)
+
       const claudeResp = await anthropicMessage({
-        system: buildSystem(brandMarkdown),
+        system: buildSystem(brandMarkdown, resolvedTemplate),
         messages: [{ role: 'user', content: buildUser(video) }],
         tools: [SEGMENT_TOOL],
         tool_choice: { type: 'tool', name: 'emit_video_map' },
