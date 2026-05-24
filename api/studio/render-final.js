@@ -240,6 +240,21 @@ async function closeBrowserSafe() {
 async function renderHyperFramesChunk(seg, paths, dim, durationSecs, fontPath) {
   const browser = await getBrowser()
   const page = await browser.newPage()
+  // Capture page console + uncaught errors so when waitForFunction
+  // times out we can include them in the thrown error. Without this
+  // the failure is just "10000ms exceeded" — useless for diagnosis.
+  const pageLogs = []
+  const pageErrors = []
+  page.on('console', (msg) => {
+    pageLogs.push(`[${msg.type()}] ${msg.text()}`)
+  })
+  page.on('pageerror', (err) => {
+    pageErrors.push(err.message)
+  })
+  page.on('requestfailed', (req) => {
+    pageErrors.push(`requestfailed ${req.url()}: ${req.failure()?.errorText || 'unknown'}`)
+  })
+
   try {
     await page.setViewport({ width: dim.w, height: dim.h, deviceScaleFactor: 1 })
 
@@ -252,14 +267,41 @@ async function renderHyperFramesChunk(seg, paths, dim, durationSecs, fontPath) {
 
     // Wait for the timeline to register. In render mode, the composition's
     // script calls studioPlay(tl) which stashes the timeline on
-    // window.__timelines[compositionId] but does NOT auto-play. If the
-    // composition fails to register, we fall through to the drawtext
-    // renderer (caller catches the throw).
-    await page.waitForFunction(
-      (id) => window.__timelines && window.__timelines[id],
-      { timeout: 10_000 },
-      compId,
-    )
+    // window.__timelines[compositionId] but does NOT auto-play. Bumped
+    // timeout from 10s to 20s — Lambda cold starts can stretch GSAP +
+    // _runtime.js script execution.
+    try {
+      await page.waitForFunction(
+        (id) => window.__timelines && window.__timelines[id],
+        { timeout: 20_000 },
+        compId,
+      )
+    } catch (timeoutErr) {
+      // Dump the page's state so we can diagnose remotely. Includes
+      // whether the runtime script ran, what mode it detected, what
+      // vars it parsed, whether GSAP loaded, and any console / pageerror
+      // events captured during the page lifecycle.
+      const diag = await page.evaluate(() => ({
+        url: location.href,
+        hash: location.hash,
+        search: location.search,
+        gsap_loaded: typeof window.gsap !== 'undefined',
+        studio_mode: window.__studioMode,
+        studio_vars_keys: window.__studioVars ? Object.keys(window.__studioVars) : null,
+        studio_composition_id: window.__studioCompositionId,
+        studio_play_defined: typeof window.studioPlay === 'function',
+        timelines_keys: window.__timelines ? Object.keys(window.__timelines) : null,
+        body_innerHTML_preview: (document.body?.innerHTML || '').slice(0, 200),
+        script_count: document.querySelectorAll('script').length,
+      })).catch((e) => ({ eval_err: e.message }))
+      const summary = JSON.stringify({
+        timeout: timeoutErr.message,
+        diag,
+        page_errors: pageErrors.slice(-5),
+        page_logs: pageLogs.slice(-10),
+      })
+      throw new Error(`HyperFrames timeline never registered: ${summary}`)
+    }
 
     // Pull the timeline's actual duration so we can map render time to
     // timeline time. Useful when the composition is shorter than the
@@ -646,7 +688,8 @@ export default async function handler(req, res) {
             progress.hf_fallback.push({
               seg_id: seg.id,
               composition_id: seg.hyperframes_composition_id,
-              reason: reason.slice(0, 240),
+              // Bumped from 240 → 1200 so the diag-JSON survives.
+              reason: reason.slice(0, 1200),
               launch_err: launchErr ? launchErr.slice(0, 240) : null,
             })
             await renderMotionChunk(seg, paths, dim, wantDuration, fontPath)

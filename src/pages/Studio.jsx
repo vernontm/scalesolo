@@ -2005,6 +2005,16 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
   // to drive asset regen first, not the bake.
   const renderedButAssetsGone = isRendered && approvedSegs.length > 0 && !allAssetsReady
 
+  // Server-side baking signal. The local `baking` flag only flips when
+  // THIS browser tab fires render-final, so it drops to false on a page
+  // reload mid-bake. video.status='rendering' + render_progress.stage in
+  // {baking,concat,upload} means the server is actively working —
+  // honor that regardless of local state so the progress bar stays up
+  // across reloads / multiple tabs.
+  const serverBaking = video.status === 'rendering'
+    && video.render_progress?.stage
+    && video.render_progress.stage !== 'done'
+
   // Phase priority: terminal states → bake-in-progress → asset-gen → ready
   // states. Critically, allAssetsReady takes precedence over the parent
   // status='rendering' since the parent doesn't get reset after asset gen.
@@ -2014,7 +2024,7 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
       ? 'rendered-needs-assets'
       : isFailed
         ? 'failed'
-        : baking
+        : (baking || serverBaking)
           ? 'baking'
           : anyGenerating
             ? 'rendering'
