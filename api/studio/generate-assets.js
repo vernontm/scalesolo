@@ -1,0 +1,249 @@
+// POST /api/studio/generate-assets — kick off asset generation for an approved
+// video map. Fans out per-segment jobs to ElevenLabs (voice), Kie.ai (B-roll
+// images), and HeyGen (avatar lip-sync) in parallel and updates segment rows
+// as each completes (or kicks off async polling via task ids).
+//
+// Three job classes per segment:
+//
+//   Voice  — every segment with script_text. Synchronous: we get the mp3 bytes
+//            back in-line, upload to Supabase storage, fill voice_url. Studio
+//            needs the audio to drive segment duration and to lip-sync HeyGen.
+//
+//   Image  — voiceover_broll only. Async via Kie.ai's createTask + recordInfo
+//            pattern. We submit, store kie_task_id, and let the poller pick
+//            up the URL when ready.
+//
+//   Avatar — avatar segments only. Requires voice_url to already exist (we
+//            lip-sync the HeyGen avatar to our ElevenLabs audio so we get
+//            ElevenLabs voice quality + HeyGen face motion). We submit
+//            HeyGen V3 with audio_url, store heygen_video_id, poller picks
+//            up video_url when ready.
+//
+// Skipped segments (approved=false or pure_motion_graphics) get marked
+// status='ready' immediately — pure motion graphics needs no pre-render
+// assets; the HyperFrames bake handles their visuals at task #10.
+//
+// This endpoint is idempotent: calling it again on the same video is safe
+// (re-runs failed segments, leaves successful ones alone unless force=1).
+
+import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { gateStudio } from './_lib/gate.js'
+import { synthesizeToPublicUrl } from '../_lib/elevenlabs.js'
+import { generateVideoV3 } from '../_lib/heygen.js'
+
+export const config = {
+  maxDuration: 300,
+  memory: 1024,
+}
+
+// Each segment gets its own try/catch so one failure doesn't poison the rest.
+async function dispatchVoice(segment, voiceId, profileId) {
+  if (!segment.script_text?.trim()) return null
+  if (!voiceId) throw new Error('No voice configured on the video')
+  const url = await synthesizeToPublicUrl(voiceId, segment.script_text, profileId, {
+    // Modest defaults; the brand voice's saved settings live on the avatar/
+    // voice library row and aren't piped through Studio yet. v2 of asset gen
+    // resolves the voice config from the brand profile.
+    model_id: 'eleven_turbo_v2_5',
+  })
+  return url
+}
+
+async function dispatchImage(segment, apiKey) {
+  if (!segment.image_prompt?.trim()) throw new Error('Image prompt is empty')
+  const body = {
+    model: 'nano-banana-2',
+    input: {
+      prompt: segment.image_prompt,
+      output_format: 'jpeg',
+      image_size: 'auto',  // let Kie auto-pick based on aspect from the prompt
+    },
+  }
+  const submit = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const text = await submit.text()
+  let respBody = {}
+  try { respBody = JSON.parse(text) } catch { respBody = { raw: text } }
+  if (!submit.ok || (respBody?.code && respBody.code !== 200)) {
+    throw new Error(`Kie.ai submit failed (${submit.status}): ${respBody?.msg || respBody?.message || text.slice(0, 200)}`)
+  }
+  const taskId = respBody?.data?.taskId || respBody?.data?.task_id || respBody?.taskId
+  if (!taskId) throw new Error('Kie.ai returned no taskId')
+  return taskId
+}
+
+async function dispatchAvatar(segment, avatarId, voiceUrl, aspectRatio) {
+  if (!avatarId) throw new Error('No avatar configured on the video — set one in the form')
+  if (!voiceUrl) throw new Error('Voice must be generated first (sequencing bug)')
+  const dimensionMap = { '16:9': '16:9', '9:16': '9:16', '1:1': '1:1' }
+  const resp = await generateVideoV3({
+    avatarId,
+    audioUrl: voiceUrl,
+    modelKey: 'v4',
+    extras: {
+      title: `Studio segment ${segment.segment_index + 1}`,
+      aspect_ratio: dimensionMap[aspectRatio] || '16:9',
+      resolution: '1080p',
+      motion_prompt: segment.motion_gesture_prompt || '',
+    },
+  })
+  const videoId = resp?.data?.video_id || resp?.video_id || resp?.id
+  if (!videoId) throw new Error('HeyGen returned no video_id')
+  return videoId
+}
+
+// Single-segment orchestrator. Determines what jobs this segment needs based
+// on its type, runs them in the right order, and patches its row at every
+// state transition so Realtime subscribers see live progress.
+async function orchestrateSegment(segment, ctx) {
+  const { videoId: parentId, profileId, voiceId, avatarId, aspectRatio, kieKey, force } = ctx
+  const patch = async (body) => {
+    await supaFetch(`studio_segments?id=eq.${segment.id}`, {
+      method: 'PATCH', body, prefer: 'return=minimal',
+    }).catch(() => {})
+  }
+  const fail = async (msg) => { await patch({ status: 'error', error: msg.slice(0, 500) }) }
+
+  // Bail-outs that mean "nothing to do for this row"
+  if (!segment.approved) {
+    if (segment.status !== 'pending') await patch({ status: 'pending' })
+    return
+  }
+  if (segment.segment_type === 'pure_motion_graphics') {
+    // No assets needed; final bake renders the HF composition directly.
+    if (segment.status !== 'ready') await patch({ status: 'ready', error: null })
+    return
+  }
+
+  // Skip rows that are already done unless force=1 (used by "regenerate this row")
+  if (!force && segment.status === 'ready' && segment.voice_url &&
+      (segment.segment_type !== 'voiceover_broll' || segment.image_url) &&
+      (segment.segment_type !== 'avatar' || segment.avatar_video_url)) {
+    return
+  }
+
+  try {
+    // Step 1 — voice (every non-pure-motion segment needs it)
+    let voiceUrl = segment.voice_url
+    if (!voiceUrl) {
+      await patch({ status: 'generating_audio', error: null })
+      voiceUrl = await dispatchVoice(segment, voiceId, profileId)
+      if (voiceUrl) await patch({ voice_url: voiceUrl })
+    }
+
+    // Step 2 — type-specific async job
+    if (segment.segment_type === 'voiceover_broll') {
+      if (!segment.image_url) {
+        await patch({ status: 'generating_image' })
+        const taskId = await dispatchImage(segment, kieKey)
+        await patch({ kie_task_id: taskId })
+        // status stays 'generating_image' until the poller fills image_url + flips to 'ready'
+      } else {
+        await patch({ status: 'ready', error: null })
+      }
+      return
+    }
+    if (segment.segment_type === 'avatar') {
+      if (!segment.avatar_video_url) {
+        await patch({ status: 'generating_avatar' })
+        const videoId = await dispatchAvatar(segment, avatarId, voiceUrl, aspectRatio)
+        await patch({ heygen_video_id: videoId })
+      } else {
+        await patch({ status: 'ready', error: null })
+      }
+      return
+    }
+    if (segment.segment_type === 'voiceover_motion_graphics') {
+      // Voice is the only async asset; HF comp renders at bake time.
+      await patch({ status: 'ready', error: null })
+      return
+    }
+  } catch (e) {
+    await fail(e.message)
+  }
+}
+
+export default async function handler(req, res) {
+  setCors(req, res)
+  if (req.method === 'OPTIONS') return res.status(204).end()
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
+  const auth = await requireUser(req, res)
+  if (!auth) return
+  try {
+    gateStudio(auth.user.id)
+
+    const videoId = req.body?.studio_video_id
+    if (!videoId) return res.status(400).json({ error: 'studio_video_id required' })
+
+    // Load video + verify access
+    const vRows = await supaFetch(`studio_videos?id=eq.${videoId}&select=*&limit=1`)
+    const video = vRows?.[0]
+    if (!video) return res.status(404).json({ error: 'Video not found' })
+    await assertProfileAccess(auth.user.id, video.profile_id)
+
+    // Resolve voice/avatar — fall back to brand profile defaults when the
+    // video's own ids are blank. For now we only read the video's columns;
+    // proper resolution against the brand-default-avatar/voice library
+    // arrives with the next polish pass.
+    if (!video.voice_id) {
+      return res.status(400).json({ error: 'No voice selected. Set a voice on the video before continuing.' })
+    }
+
+    const kieKey = process.env.KIE_API_KEY
+    if (!kieKey) return res.status(500).json({ error: 'KIE_API_KEY not configured on the server.' })
+
+    // Load all approved segments. Pure motion graphics rows are included so
+    // we can flip their status to 'ready' (they need no assets pre-rendered).
+    const segments = await supaFetch(
+      `studio_segments?studio_video_id=eq.${videoId}&select=*&order=segment_index.asc&limit=500`
+    )
+
+    // Flip parent status to 'rendering' so the UI shows progress immediately.
+    await supaFetch(`studio_videos?id=eq.${videoId}`, {
+      method: 'PATCH', body: { status: 'rendering', error: null }, prefer: 'return=minimal',
+    })
+
+    const ctx = {
+      videoId,
+      profileId: video.profile_id,
+      voiceId: video.voice_id,
+      avatarId: video.avatar_id || null,
+      aspectRatio: video.aspect_ratio || '16:9',
+      kieKey,
+      force: req.body?.force === true,
+    }
+
+    // Fan out per-segment work. Each call has its own try/catch inside; one
+    // failure doesn't block siblings. Concurrency-cap at 6 in flight to keep
+    // ElevenLabs from rate-limiting on a 30-segment video.
+    const CONCURRENCY = 6
+    const queue = segments.slice()
+    const running = []
+    const runNext = () => {
+      const seg = queue.shift()
+      if (!seg) return null
+      const p = orchestrateSegment(seg, ctx).then(() => {
+        const idx = running.indexOf(p)
+        if (idx >= 0) running.splice(idx, 1)
+      })
+      running.push(p)
+      return p
+    }
+    while (queue.length || running.length) {
+      while (running.length < CONCURRENCY && queue.length) runNext()
+      if (running.length) await Promise.race(running)
+    }
+
+    // Return the current state. Async jobs (image, avatar) may still be in
+    // flight; the poller endpoint picks them up from here.
+    const fresh = await supaFetch(
+      `studio_videos?id=eq.${videoId}&select=*,studio_segments(*)&studio_segments.order=segment_index.asc&limit=1`
+    )
+    return res.status(200).json({ video: fresh?.[0] || null })
+  } catch (err) {
+    return res.status(err.status || 500).json({ error: err.message })
+  }
+}

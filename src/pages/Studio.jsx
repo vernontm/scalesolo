@@ -418,10 +418,34 @@ function StudioVideoEditor({ videoId }) {
     return () => { cancelled = true }
   }, [videoId, session?.access_token])
 
+  // Asset polling loop. While status='rendering', hit /api/studio/poll-assets
+  // every 6s so Kie.ai and HeyGen job completions get pulled in. Realtime
+  // also pushes the segment UPDATE events, so this is just the trigger that
+  // makes the server-side check happen — the UI updates come through the
+  // Realtime channel below.
+  useEffect(() => {
+    if (!session?.access_token || !videoId) return
+    if (video?.status !== 'rendering') return
+    let cancelled = false
+    let timer = null
+
+    const tick = async () => {
+      try {
+        await authedFetch(`/api/studio/poll-assets?studio_video_id=${videoId}`, session.access_token)
+      } catch { /* network blip, just try again on the next tick */ }
+      if (!cancelled) timer = setTimeout(tick, 6000)
+    }
+    // First tick after 2s so the initial dispatcher response renders before
+    // the first poll starts hitting the DB.
+    timer = setTimeout(tick, 2000)
+    return () => { cancelled = true; if (timer) clearTimeout(timer) }
+  }, [video?.status, videoId, session?.access_token])
+
   // Realtime subscription: video status changes + per-segment updates
   // stream in without polling. Used for the mapping → mapped transition
   // and for live asset-generation status (pending → generating_image →
-  // ready) once task #9 (orchestrator) is wired.
+  // ready) — segment UPDATE events from /api/studio/poll-assets flow
+  // through here.
   useEffect(() => {
     if (!videoId) return
     const channel = supabase
@@ -827,28 +851,30 @@ function SegmentList({ video }) {
 function StickyActionBar({ video, approvedCount, totalCount }) {
   const { session } = useAuth()
   const [busy, setBusy] = useState(false)
-  const canContinue = approvedCount > 0 && ['mapped', 'editing'].includes(video.status)
+  const canContinue =
+    approvedCount > 0 &&
+    ['mapped', 'editing'].includes(video.status)
+
+  const isRendering = video.status === 'rendering'
+  const isRendered = video.status === 'rendered'
 
   const onContinue = async () => {
     if (!canContinue || !session?.access_token) return
     setBusy(true)
     try {
-      // For now: flip parent video status to 'editing' as a "user
-      // reviewed, ready for assets" sentinel. Task #9 swaps this for
-      // the real asset orchestration kickoff.
-      const r = await authedFetch(`/api/studio/videos?id=${video.id}`, session.access_token, {
-        method: 'PATCH',
-        body: JSON.stringify({ status: 'editing' }),
+      // Kicks off ElevenLabs voice for every approved segment, plus
+      // Kie.ai image jobs for B-roll rows and HeyGen V3 jobs for avatar
+      // rows. Async jobs are picked up by /api/studio/poll-assets,
+      // which the per-video page polls every 6s while status='rendering'.
+      const r = await authedFetch('/api/studio/generate-assets', session.access_token, {
+        method: 'POST',
+        body: JSON.stringify({ studio_video_id: video.id }),
       })
       if (!r.ok) {
         const b = await r.json().catch(() => ({}))
-        throw new Error(b.error || 'Could not continue')
+        throw new Error(b.error || 'Could not start asset generation')
       }
-      toast({
-        message: 'Map approved. Asset generation (voice, B-roll, avatar) lands in the next iteration.',
-        kind: 'success',
-        ttl: 6000,
-      })
+      toast({ message: 'Asset generation started.', kind: 'success' })
     } catch (e) {
       toast({ message: e.message, kind: 'error' })
     } finally {
@@ -872,25 +898,46 @@ function StickyActionBar({ video, approvedCount, totalCount }) {
       zIndex: 10,
     }}>
       <div style={{ flex: 1, fontSize: 12.5, color: 'var(--text-soft)' }}>
-        <strong style={{ color: 'var(--text)' }}>{approvedCount} of {totalCount}</strong> segments approved.
-        {approvedCount < totalCount && (
-          <span style={{ color: 'var(--muted)', marginLeft: 8 }}>
-            Unapproved segments will be skipped on render.
-          </span>
-        )}
-        {approvedCount === totalCount && totalCount > 0 && (
-          <span style={{ color: '#2ecc71', marginLeft: 8 }}>All set.</span>
+        {isRendering ? (
+          <>
+            <Loader2 size={12} className="spin" style={{ verticalAlign: 'middle', marginRight: 6, color: '#fbbf24' }} />
+            <strong style={{ color: 'var(--text)' }}>Generating assets…</strong>
+            <span style={{ color: 'var(--muted)', marginLeft: 8 }}>
+              Voice, B-roll, and avatar segments are filling in below.
+            </span>
+          </>
+        ) : isRendered ? (
+          <>
+            <CheckCircle2 size={12} style={{ verticalAlign: 'middle', marginRight: 6, color: '#2ecc71' }} />
+            <strong style={{ color: 'var(--text)' }}>Render complete.</strong>
+          </>
+        ) : (
+          <>
+            <strong style={{ color: 'var(--text)' }}>{approvedCount} of {totalCount}</strong> segments approved.
+            {approvedCount < totalCount && (
+              <span style={{ color: 'var(--muted)', marginLeft: 8 }}>
+                Unapproved segments will be skipped on render.
+              </span>
+            )}
+            {approvedCount === totalCount && totalCount > 0 && (
+              <span style={{ color: '#2ecc71', marginLeft: 8 }}>All set.</span>
+            )}
+          </>
         )}
       </div>
       <button
         type="button"
         className="btn-primary"
-        disabled={!canContinue || busy}
+        disabled={!canContinue || busy || isRendering}
         onClick={onContinue}
         style={{ fontSize: 13, padding: '10px 18px' }}
       >
-        {busy ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
-        {video.status === 'editing' ? 'Re-confirm' : 'Continue to render'}
+        {busy || isRendering ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
+        {isRendering
+          ? 'Generating…'
+          : video.status === 'editing'
+            ? 'Generate assets'
+            : 'Continue to render'}
       </button>
     </div>
   )
@@ -994,7 +1041,12 @@ function SegmentRow({ segment, onPatch, onDelete, aspectRatio }) {
               ))}
             </select>
 
-            <StatusBadge status={segment.status} error={segment.error} />
+            <StatusBadge
+              status={segment.status}
+              error={segment.error}
+              segmentType={segment.segment_type}
+              approved={segment.approved}
+            />
 
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
               <button
@@ -1091,7 +1143,7 @@ function SegmentRow({ segment, onPatch, onDelete, aspectRatio }) {
   )
 }
 
-function StatusBadge({ status, error }) {
+function StatusBadge({ status, error, segmentType, approved }) {
   if (status === 'ready') {
     return (
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, fontWeight: 700, color: '#2ecc71' }}>
@@ -1119,9 +1171,25 @@ function StatusBadge({ status, error }) {
       </span>
     )
   }
+  // 'pending' state. Spell out what's actually missing per segment type so
+  // the user knows it's a "needs generating" state, not a "blocked on you"
+  // state.
+  if (!approved) {
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, color: 'var(--muted)' }}>
+        Skipped
+      </span>
+    )
+  }
+  const tip = ({
+    avatar:                     'Needs voice + avatar render',
+    voiceover_broll:            'Needs voice + B-roll image',
+    voiceover_motion_graphics:  'Needs voice (motion graphics render at bake time)',
+    pure_motion_graphics:       'Nothing to generate (renders at bake time)',
+  })[segmentType] || ''
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, color: 'var(--muted)' }}>
-      Pending
+    <span title={tip} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, color: 'var(--muted)' }}>
+      Awaiting generate
     </span>
   )
 }
