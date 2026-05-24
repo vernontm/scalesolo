@@ -18,6 +18,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   Film, Sparkles, Plus, ArrowLeft, Wand2, Loader2, Trash2, RefreshCw,
   CheckCircle2, Circle, AlertCircle, Image as ImageIcon, MoreVertical,
+  ChevronRight,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
