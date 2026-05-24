@@ -211,6 +211,11 @@ function AppShell() {
                 <Studio />
               </StudioGate>
             } />
+            <Route path="/studio/:id" element={
+              <StudioGate fallback={<Navigate to="/dashboard" replace />}>
+                <Studio />
+              </StudioGate>
+            } />
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
