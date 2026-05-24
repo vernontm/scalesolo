@@ -31,6 +31,14 @@
       "maxDuration": 300,
       "memory": 3008
     },
+    "api/studio/render-final.js": {
+      "includeFiles": "{node_modules/@ffmpeg-installer/**,api/_fonts/**}",
+      "maxDuration": 300,
+      "memory": 3008
+    },
+    "api/studio/generate-assets.js": {
+      "maxDuration": 300
+    },
     "api/social/upload-post.js": {
       "maxDuration": 60
     }

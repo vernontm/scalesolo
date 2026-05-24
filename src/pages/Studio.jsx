@@ -556,6 +556,22 @@ function StudioVideoEditor({ videoId }) {
             </div>
           )}
 
+          {video.status === 'rendered' && video.final_video_url && (
+            <div className="card" style={{ padding: 12, marginBottom: 16, background: 'var(--surface-2)' }}>
+              <video
+                src={video.final_video_url}
+                controls
+                style={{ width: '100%', borderRadius: 8, display: 'block', background: '#000' }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, fontSize: 12, color: 'var(--muted)' }}>
+                <span>Final render</span>
+                <a href={video.final_video_url} download style={{ color: 'var(--red)', fontWeight: 700 }}>
+                  Download MP4 ↓
+                </a>
+              </div>
+            </div>
+          )}
+
           {(['mapped', 'editing', 'rendering', 'rendered'].includes(video.status)) && (
             <SegmentList video={video} />
           )}
@@ -843,29 +859,40 @@ function SegmentList({ video }) {
         video={video}
         approvedCount={approvedCount}
         totalCount={segments.length}
+        segments={segments}
       />
     </div>
   )
 }
 
-function StickyActionBar({ video, approvedCount, totalCount }) {
+function StickyActionBar({ video, approvedCount, totalCount, segments }) {
   const { session } = useAuth()
   const [busy, setBusy] = useState(false)
-  const canContinue =
-    approvedCount > 0 &&
-    ['mapped', 'editing'].includes(video.status)
 
   const isRendering = video.status === 'rendering'
   const isRendered = video.status === 'rendered'
+  const isFailed = video.status === 'failed'
 
-  const onContinue = async () => {
-    if (!canContinue || !session?.access_token) return
+  // "All assets ready" = every approved non-pure-motion segment has
+  // status='ready'. When true, the next Continue press kicks off the
+  // final HyperFrames bake (task #10) instead of asset gen.
+  const approvedSegs = segments.filter((s) => s.approved)
+  const allAssetsReady = approvedSegs.length > 0 && approvedSegs.every((s) => s.status === 'ready')
+
+  const phase = isRendered
+    ? 'done'
+    : isRendering
+      ? 'rendering'  // could be asset gen OR final bake — we lean on segment state to disambiguate
+      : allAssetsReady
+        ? 'ready-to-bake'
+        : approvedCount > 0 && ['mapped', 'editing'].includes(video.status)
+          ? 'ready-for-assets'
+          : 'pre-approval'
+
+  const onAssets = async () => {
+    if (!session?.access_token) return
     setBusy(true)
     try {
-      // Kicks off ElevenLabs voice for every approved segment, plus
-      // Kie.ai image jobs for B-roll rows and HeyGen V3 jobs for avatar
-      // rows. Async jobs are picked up by /api/studio/poll-assets,
-      // which the per-video page polls every 6s while status='rendering'.
       const r = await authedFetch('/api/studio/generate-assets', session.access_token, {
         method: 'POST',
         body: JSON.stringify({ studio_video_id: video.id }),
@@ -881,6 +908,26 @@ function StickyActionBar({ video, approvedCount, totalCount }) {
       setBusy(false)
     }
   }
+
+  const onRender = async () => {
+    if (!session?.access_token) return
+    setBusy(true)
+    try {
+      const r = await authedFetch('/api/studio/render-final', session.access_token, {
+        method: 'POST',
+        body: JSON.stringify({ studio_video_id: video.id }),
+      })
+      const b = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(b.error || 'Render failed')
+      toast({ message: 'Final video rendered.', kind: 'success' })
+    } catch (e) {
+      toast({ message: e.message, kind: 'error' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const onContinue = phase === 'ready-to-bake' ? onRender : onAssets
 
   return (
     <div style={{
@@ -898,18 +945,40 @@ function StickyActionBar({ video, approvedCount, totalCount }) {
       zIndex: 10,
     }}>
       <div style={{ flex: 1, fontSize: 12.5, color: 'var(--text-soft)' }}>
-        {isRendering ? (
-          <>
-            <Loader2 size={12} className="spin" style={{ verticalAlign: 'middle', marginRight: 6, color: '#fbbf24' }} />
-            <strong style={{ color: 'var(--text)' }}>Generating assets…</strong>
-            <span style={{ color: 'var(--muted)', marginLeft: 8 }}>
-              Voice, B-roll, and avatar segments are filling in below.
-            </span>
-          </>
-        ) : isRendered ? (
+        {phase === 'done' && video.final_video_url ? (
           <>
             <CheckCircle2 size={12} style={{ verticalAlign: 'middle', marginRight: 6, color: '#2ecc71' }} />
             <strong style={{ color: 'var(--text)' }}>Render complete.</strong>
+            <a
+              href={video.final_video_url} target="_blank" rel="noopener noreferrer"
+              style={{ marginLeft: 10, color: 'var(--red)', fontWeight: 700 }}
+            >Watch ↗</a>
+          </>
+        ) : phase === 'rendering' ? (
+          <>
+            <Loader2 size={12} className="spin" style={{ verticalAlign: 'middle', marginRight: 6, color: '#fbbf24' }} />
+            <strong style={{ color: 'var(--text)' }}>
+              {allAssetsReady ? 'Stitching final video…' : 'Generating assets…'}
+            </strong>
+            <span style={{ color: 'var(--muted)', marginLeft: 8 }}>
+              {allAssetsReady
+                ? 'Concatenating segments into a single MP4. ~30s to 2 min for a 5min video.'
+                : 'Voice, B-roll, and avatar segments are filling in below.'}
+            </span>
+          </>
+        ) : phase === 'ready-to-bake' ? (
+          <>
+            <CheckCircle2 size={12} style={{ verticalAlign: 'middle', marginRight: 6, color: '#2ecc71' }} />
+            <strong style={{ color: 'var(--text)' }}>All assets ready.</strong>
+            <span style={{ color: 'var(--muted)', marginLeft: 8 }}>
+              Hit Render to stitch them into the final MP4.
+            </span>
+          </>
+        ) : isFailed ? (
+          <>
+            <AlertCircle size={12} style={{ verticalAlign: 'middle', marginRight: 6, color: 'var(--red)' }} />
+            <strong style={{ color: 'var(--red)' }}>Failed:</strong>
+            <span style={{ color: 'var(--muted)', marginLeft: 8 }}>{video.error || 'Unknown error'}</span>
           </>
         ) : (
           <>
@@ -928,16 +997,18 @@ function StickyActionBar({ video, approvedCount, totalCount }) {
       <button
         type="button"
         className="btn-primary"
-        disabled={!canContinue || busy || isRendering}
+        disabled={busy || phase === 'rendering' || phase === 'pre-approval'}
         onClick={onContinue}
         style={{ fontSize: 13, padding: '10px 18px' }}
       >
-        {busy || isRendering ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
-        {isRendering
-          ? 'Generating…'
-          : video.status === 'editing'
-            ? 'Generate assets'
-            : 'Continue to render'}
+        {busy || phase === 'rendering' ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
+        {phase === 'rendering'
+          ? (allAssetsReady ? 'Rendering…' : 'Generating…')
+          : phase === 'ready-to-bake'
+            ? 'Render final MP4'
+            : phase === 'done'
+              ? 'Re-render'
+              : 'Generate assets'}
       </button>
     </div>
   )
