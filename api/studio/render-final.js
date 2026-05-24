@@ -139,37 +139,46 @@ function wrapText(text, perLine = 38) {
 }
 
 // ── Per-segment chunk renderers ─────────────────────────────────────────────
-async function renderAvatarChunk(seg, paths, dim) {
-  // HeyGen V3 with audio_url returns a VIDEO-ONLY mp4 (no audio stream).
-  // Earlier wishful comment notwithstanding, they assume you'll mux the
-  // audio yourself at composite time — so we re-add the voice mp3 here.
+async function renderAvatarChunk(seg, paths, dim, durationSecs) {
+  // HeyGen V3 with audio_url returns a VIDEO-ONLY mp4. We re-mux the
+  // voice on top here. Two inputs: HeyGen video [0:v], voice mp3 [1:a].
+  // Explicit -map drops any phantom audio in the HeyGen output (no
+  // double-audio risk if they ever start returning a track).
   //
-  // Two inputs: the HeyGen video [0:v], the voice mp3 [1:a]. We map
-  // [0:v] + [1:a] explicitly so any phantom audio track in the HeyGen
-  // output is dropped (avoids double-audio if HeyGen ever changes).
+  // -t <durationSecs> forces an exact chunk length matching the voice
+  // duration. This is critical: -shortest alone leaves sub-frame
+  // mismatches between video container length and audio length, which
+  // compound across many chunks during concat and show up as drifting
+  // lip-sync. Computing duration upstream + forcing it here keeps every
+  // chunk dimensionally consistent.
   //
-  // -shortest keeps the chunk length equal to whichever stream ends
-  // first — usually voice, since HeyGen pads a hold frame at the end.
+  // -avoid_negative_ts make_zero resets timestamps so the concat filter
+  // doesn't have to renormalize them later.
   const outFile = paths.outChunk
+  // Default to the voice duration; HeyGen often pads a brief hold at the
+  // end of the avatar clip past where the speech ends. We trim to voice.
+  const trim = durationSecs > 0 ? durationSecs : 6
   const args = ['-y', '-i', paths.avatarMp4]
   if (paths.voice) args.push('-i', paths.voice)
   args.push(
+    '-t', String(trim.toFixed(3)),
     '-vf', `scale=${dim.w}:${dim.h}:force_original_aspect_ratio=increase,crop=${dim.w}:${dim.h}`,
     '-r', '30',
     '-map', '0:v:0',
   )
   if (paths.voice) {
-    args.push('-map', '1:a:0', '-shortest')
+    args.push('-map', '1:a:0')
   } else {
-    // No voice — write a silent track so concat doesn't drop the audio
-    // stream entirely when adjacent chunks DO have audio.
-    args.push('-f', 'lavfi', '-t', '6', '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000',
-              '-map', '2:a:0', '-shortest')
+    args.push('-f', 'lavfi', '-t', String(trim.toFixed(3)),
+              '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000',
+              '-map', '2:a:0')
   }
   args.push(
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
     '-c:a', 'aac', '-b:a', '128k', '-ar', '48000',
+    '-af', 'aresample=async=1:first_pts=0',
     '-pix_fmt', 'yuv420p',
+    '-avoid_negative_ts', 'make_zero',
     '-movflags', '+faststart',
     outFile,
   )
@@ -358,7 +367,9 @@ export default async function handler(req, res) {
 
       if (seg.segment_type === 'avatar') {
         await downloadTo(seg.avatar_video_url, paths.avatarMp4)
-        await renderAvatarChunk(seg, paths, dim)
+        // Pass voiceDuration so the chunk gets trimmed to an exact
+        // length — critical for lip-sync across many chunks.
+        await renderAvatarChunk(seg, paths, dim, Math.max(0.5, voiceDuration || 0))
       } else if (seg.segment_type === 'voiceover_broll') {
         await downloadTo(seg.image_url, paths.image)
         await renderBrollChunk(seg, paths, dim, Math.max(2, voiceDuration || 4))
@@ -379,37 +390,36 @@ export default async function handler(req, res) {
       }).catch(() => {})
     }
 
-    // Concat all chunks. Every chunk shares the same codec/dimensions, so
-    // the concat demuxer with stream copy is the fast path.
+    // Concat all chunks via filter_complex re-encode. We intentionally
+    // skip the concat-demuxer stream-copy fast path because Studio renders
+    // need exact lip-sync across many chunks, and each chunk's container
+    // length can be off by a frame or two from where its audio actually
+    // ends (a known -shortest quirk). Stream copy preserves those off-by-N
+    // durations, which compound: chunk 1 fine, chunk 2 slightly off,
+    // chunk 3 worse, etc. — visible as drifting lip-sync after the first
+    // segment. Filter_complex re-encodes everything and resets timestamps,
+    // eliminating drift at the cost of ~30-60s extra render time.
     const listFile = join(workdir, 'concat.txt')
     const listText = chunkPaths.map((p) => `file '${p}'`).join('\n') + '\n'
     await writeFile(listFile, listText, 'utf8')
     const finalPath = join(workdir, 'final.mp4')
 
-    try {
-      await runFFmpeg([
-        '-y', '-f', 'concat', '-safe', '0', '-i', listFile,
-        '-c', 'copy', '-movflags', '+faststart', finalPath,
-      ], 90_000)
-    } catch {
-      // Fast path failed → re-encode concat.
-      const inputs = []
-      let filter = ''
-      for (let i = 0; i < chunkPaths.length; i++) {
-        inputs.push('-i', chunkPaths[i])
-        filter += `[${i}:v:0][${i}:a:0]`
-      }
-      filter += `concat=n=${chunkPaths.length}:v=1:a=1[v][a]`
-      await runFFmpeg([
-        '-y', ...inputs,
-        '-filter_complex', filter,
-        '-map', '[v]', '-map', '[a]',
-        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
-        '-c:a', 'aac', '-b:a', '128k',
-        '-pix_fmt', 'yuv420p',
-        '-movflags', '+faststart', finalPath,
-      ], 180_000)
+    const inputs = []
+    let filter = ''
+    for (let i = 0; i < chunkPaths.length; i++) {
+      inputs.push('-i', chunkPaths[i])
+      filter += `[${i}:v:0][${i}:a:0]`
     }
+    filter += `concat=n=${chunkPaths.length}:v=1:a=1[v][a]`
+    await runFFmpeg([
+      '-y', ...inputs,
+      '-filter_complex', filter,
+      '-map', '[v]', '-map', '[a]',
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
+      '-c:a', 'aac', '-b:a', '128k', '-ar', '48000',
+      '-pix_fmt', 'yuv420p',
+      '-movflags', '+faststart', finalPath,
+    ], 240_000)
 
     // Upload to studio-media bucket
     const buf = await readFile(finalPath)
