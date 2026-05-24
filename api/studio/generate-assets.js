@@ -29,7 +29,7 @@
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { gateStudio } from './_lib/gate.js'
 import { synthesizeToPublicUrl } from '../_lib/elevenlabs.js'
-import { generateVideoV3 } from '../_lib/heygen.js'
+import { generateVideoV3, listLooksForGroup } from '../_lib/heygen.js'
 
 export const config = {
   maxDuration: 300,
@@ -49,14 +49,23 @@ async function dispatchVoice(segment, voiceId, profileId) {
   return url
 }
 
-async function dispatchImage(segment, apiKey) {
+// Match the input shape api/images/generate.js uses for nano-banana-2. The
+// keys here are not what you'd guess from the model name; missing any of
+// num_images/resolution/output_format is a silent 400 from Kie.
+async function dispatchImage(segment, apiKey, aspectRatio) {
   if (!segment.image_prompt?.trim()) throw new Error('Image prompt is empty')
+  // Project aspect ratio → Kie's expected aspect_ratio string. nano-banana-2
+  // accepts 16:9 / 9:16 / 1:1 / 'auto'. Pass-through.
+  const aspect = ['16:9', '9:16', '1:1'].includes(aspectRatio) ? aspectRatio : 'auto'
   const body = {
     model: 'nano-banana-2',
     input: {
       prompt: segment.image_prompt,
-      output_format: 'jpeg',
-      image_size: 'auto',  // let Kie auto-pick based on aspect from the prompt
+      image_input: [],
+      aspect_ratio: aspect,
+      resolution: '1K',
+      output_format: 'png',
+      num_images: 1,
     },
   }
   const submit = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
@@ -68,19 +77,66 @@ async function dispatchImage(segment, apiKey) {
   let respBody = {}
   try { respBody = JSON.parse(text) } catch { respBody = { raw: text } }
   if (!submit.ok || (respBody?.code && respBody.code !== 200)) {
-    throw new Error(`Kie.ai submit failed (${submit.status}): ${respBody?.msg || respBody?.message || text.slice(0, 200)}`)
+    throw new Error(`Kie.ai submit failed (${submit.status}): ${respBody?.msg || respBody?.message || respBody?.error || text.slice(0, 200)}`)
   }
   const taskId = respBody?.data?.taskId || respBody?.data?.task_id || respBody?.taskId
   if (!taskId) throw new Error('Kie.ai returned no taskId')
   return taskId
 }
 
-async function dispatchAvatar(segment, avatarId, voiceUrl, aspectRatio) {
-  if (!avatarId) throw new Error('No avatar configured on the video — set one in the form')
+// Resolve the actual HeyGen avatar id to pass on /v3/videos. The video's
+// avatar_id column can be one of:
+//   • a row id from public.avatars (the common case — custom avatars
+//     trained via /api/avatars). The renderable id lives on
+//     talking_photo_id.
+//   • "pub:<heygen_group_id>" — public library entry. Group ids aren't
+//     directly renderable; we list the group's looks and pick the first.
+//   • "default:<default_avatar_id>" — system defaults table. Schema has
+//     heygen_group_id (not talking_photo_id), so we treat these like pub:
+//     and resolve through listLooksForGroup.
+async function pickFirstLookFromGroup(groupId) {
+  try {
+    const looksResp = await listLooksForGroup(groupId)
+    const looks = looksResp?.data?.avatar_list || looksResp?.data || []
+    const first = Array.isArray(looks) ? looks[0] : null
+    return first?.avatar_id || first?.id || first?.avatar_v3_id || null
+  } catch {
+    return null
+  }
+}
+
+async function resolveHeygenAvatarId(rawAvatarId) {
+  if (!rawAvatarId) return null
+  if (typeof rawAvatarId === 'string' && rawAvatarId.startsWith('pub:')) {
+    const groupId = rawAvatarId.slice(4)
+    return (await pickFirstLookFromGroup(groupId)) || groupId
+  }
+  if (typeof rawAvatarId === 'string' && rawAvatarId.startsWith('default:')) {
+    const defId = rawAvatarId.slice('default:'.length)
+    const rows = await supaFetch(`default_avatars?id=eq.${defId}&select=heygen_group_id,is_active&limit=1`).catch(() => [])
+    const groupId = rows?.[0]?.heygen_group_id
+    if (!groupId) throw new Error(`Default avatar ${defId} has no heygen_group_id`)
+    return (await pickFirstLookFromGroup(groupId)) || groupId
+  }
+  // Custom avatar row in public.avatars. talking_photo_id is the only id
+  // HeyGen knows about for this row; heygen_avatar_id doesn't exist on
+  // this table.
+  const rows = await supaFetch(`avatars?id=eq.${rawAvatarId}&select=talking_photo_id,training_status&limit=1`).catch(() => [])
+  const row = rows?.[0]
+  if (!row) throw new Error(`Avatar ${rawAvatarId} not found in ScaleSolo's avatars table`)
+  if (row.training_status && !['ready', 'completed', 'success'].includes(row.training_status)) {
+    throw new Error(`Avatar training is not complete (status: ${row.training_status})`)
+  }
+  if (!row.talking_photo_id) throw new Error(`Avatar ${rawAvatarId} has no talking_photo_id — re-create it from the Avatars page`)
+  return row.talking_photo_id
+}
+
+async function dispatchAvatar(segment, heygenAvatarId, voiceUrl, aspectRatio) {
+  if (!heygenAvatarId) throw new Error('No avatar configured on the video — set one in the form')
   if (!voiceUrl) throw new Error('Voice must be generated first (sequencing bug)')
   const dimensionMap = { '16:9': '16:9', '9:16': '9:16', '1:1': '1:1' }
   const resp = await generateVideoV3({
-    avatarId,
+    avatarId: heygenAvatarId,
     audioUrl: voiceUrl,
     modelKey: 'v4',
     extras: {
@@ -91,7 +147,11 @@ async function dispatchAvatar(segment, avatarId, voiceUrl, aspectRatio) {
     },
   })
   const videoId = resp?.data?.video_id || resp?.video_id || resp?.id
-  if (!videoId) throw new Error('HeyGen returned no video_id')
+  if (!videoId) {
+    // Surface HeyGen's actual error so users see what's wrong instead of a generic message.
+    const msg = resp?.data?.error?.message || resp?.error?.message || resp?.message || JSON.stringify(resp).slice(0, 300)
+    throw new Error(`HeyGen rejected the avatar render: ${msg}`)
+  }
   return videoId
 }
 
@@ -138,7 +198,7 @@ async function orchestrateSegment(segment, ctx) {
     if (segment.segment_type === 'voiceover_broll') {
       if (!segment.image_url) {
         await patch({ status: 'generating_image' })
-        const taskId = await dispatchImage(segment, kieKey)
+        const taskId = await dispatchImage(segment, kieKey, aspectRatio)
         await patch({ kie_task_id: taskId })
         // status stays 'generating_image' until the poller fills image_url + flips to 'ready'
       } else {
@@ -149,7 +209,10 @@ async function orchestrateSegment(segment, ctx) {
     if (segment.segment_type === 'avatar') {
       if (!segment.avatar_video_url) {
         await patch({ status: 'generating_avatar' })
-        const videoId = await dispatchAvatar(segment, avatarId, voiceUrl, aspectRatio)
+        // heygenAvatarId is pre-resolved once at the top of the handler
+        // and threaded through ctx so we don't refetch the avatars row
+        // for every segment.
+        const videoId = await dispatchAvatar(segment, ctx.heygenAvatarId, voiceUrl, aspectRatio)
         await patch({ heygen_video_id: videoId })
       } else {
         await patch({ status: 'ready', error: null })
@@ -206,11 +269,31 @@ export default async function handler(req, res) {
       method: 'PATCH', body: { status: 'rendering', error: null }, prefer: 'return=minimal',
     })
 
+    // Resolve the HeyGen-renderable avatar id ONCE up front. The video's
+    // avatar_id column is a ScaleSolo row id (or pub:/default: prefix);
+    // HeyGen's /v3/videos endpoint wants the actual talking_photo_id /
+    // avatar id. Failing here surfaces a clear error before we burn voice
+    // synth on a render that's destined to fail.
+    let heygenAvatarId = null
+    const hasAvatarSegments = segments.some((s) => s.approved && s.segment_type === 'avatar')
+    if (hasAvatarSegments) {
+      if (!video.avatar_id) {
+        return res.status(400).json({ error: 'This video has avatar segments but no avatar selected. Pick one in the form or change the avatar segments to voiceover.' })
+      }
+      try {
+        heygenAvatarId = await resolveHeygenAvatarId(video.avatar_id)
+        if (!heygenAvatarId) throw new Error('Could not resolve HeyGen avatar id from the selected avatar')
+      } catch (e) {
+        return res.status(400).json({ error: e.message })
+      }
+    }
+
     const ctx = {
       videoId,
       profileId: video.profile_id,
       voiceId: video.voice_id,
       avatarId: video.avatar_id || null,
+      heygenAvatarId,
       aspectRatio: video.aspect_ratio || '16:9',
       kieKey,
       force: req.body?.force === true,
