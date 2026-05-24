@@ -290,17 +290,21 @@ async function renderHyperFramesChunk(seg, paths, dim, durationSecs, fontPath) {
     const varsHash = encodeVarsForUrl(seg.hyperframes_variables || {})
     const url = `${baseUrl}/studio-compositions/${compId}.html?mode=render#vars=${varsHash}`
 
-    await page.goto(url, { waitUntil: 'networkidle0', timeout: 30_000 })
+    // 'load' waits for all sync scripts to finish (including our inline
+    // composition script that calls studioPlay). networkidle0 isn't
+    // strictly needed since we don't depend on lazy-loaded resources.
+    await page.goto(url, { waitUntil: 'load', timeout: 30_000 })
 
-    // Wait for the timeline to register. In render mode, the composition's
-    // script calls studioPlay(tl) which stashes the timeline on
-    // window.__timelines[compositionId] but does NOT auto-play. Bumped
-    // timeout from 10s to 20s — Lambda cold starts can stretch GSAP +
-    // _runtime.js script execution.
+    // Wait for the timeline to register. CRITICAL: polling: 100ms
+    // (NOT the default 'raf'). Headless Chrome on Lambda throttles
+    // requestAnimationFrame for background tabs, so 'raf' polling can
+    // run once every several seconds — by the time it ticks, the
+    // 20-second wall fires even though the timeline registered within
+    // the first frame. Polling on a fixed interval bypasses RAF entirely.
     try {
       await page.waitForFunction(
         (id) => window.__timelines && window.__timelines[id],
-        { timeout: 20_000 },
+        { timeout: 15_000, polling: 100 },
         compId,
       )
     } catch (timeoutErr) {
