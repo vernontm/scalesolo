@@ -295,18 +295,33 @@ async function renderHyperFramesChunk(seg, paths, dim, durationSecs, fontPath) {
     // strictly needed since we don't depend on lazy-loaded resources.
     await page.goto(url, { waitUntil: 'load', timeout: 30_000 })
 
-    // Wait for the timeline to register. CRITICAL: polling: 100ms
-    // (NOT the default 'raf'). Headless Chrome on Lambda throttles
-    // requestAnimationFrame for background tabs, so 'raf' polling can
-    // run once every several seconds — by the time it ticks, the
-    // 20-second wall fires even though the timeline registered within
-    // the first frame. Polling on a fixed interval bypasses RAF entirely.
+    // Check timeline registration. Previous version used Puppeteer's
+    // waitForFunction with polling: 'raf' (default) AND then polling:
+    // 100 — both timed out at 15-20s even though the timeline was
+    // registered immediately. Headless Chrome on Lambda throttles
+    // BOTH requestAnimationFrame AND setTimeout polling for background
+    // tabs, defeating waitForFunction entirely.
+    //
+    // New approach: skip Puppeteer polling entirely. Use a single
+    // page.evaluate that runs inside the page context (where setTimeout
+    // works) to wait+check directly. The page-context loop runs at the
+    // page's own JS clock, not Puppeteer's throttled poll. Since the
+    // load event has already fired, the timeline IS registered — we
+    // just need to read it.
     try {
-      await page.waitForFunction(
-        (id) => window.__timelines && window.__timelines[id],
-        { timeout: 15_000, polling: 100 },
-        compId,
-      )
+      const ready = await Promise.race([
+        page.evaluate(async (id) => {
+          const start = Date.now()
+          while (Date.now() - start < 15000) {
+            if (window.__timelines && window.__timelines[id]) return true
+            await new Promise((r) => setTimeout(r, 80))
+          }
+          return false
+        }, compId),
+        // External safety: if the evaluate itself hangs, kill it.
+        new Promise((_, rej) => setTimeout(() => rej(new Error('page.evaluate hung')), 20000)),
+      ])
+      if (!ready) throw new Error('Waiting failed: 15000ms exceeded')
     } catch (timeoutErr) {
       // Dump the page's state so we can diagnose remotely. Includes
       // whether the runtime script ran, what mode it detected, what
