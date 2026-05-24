@@ -70,18 +70,116 @@ export const SLEEK = {
     speed: 'smooth',
   },
   default_transition: 'fade',
+  // v1 full-screen composition pool. Expanded from the original 7 to 10
+  // per the new architecture brief. Three are new and don't have HTML
+  // files yet (hook-card-v1, caption-card-v1, subscribe-cta-v1) — the
+  // renderer should fall back to the drawtext stub for them until the
+  // compositions ship. Three more (process-timeline-v1, chapter-card-v1,
+  // diagram-card-v1) are v2 and intentionally NOT in this pool.
   composition_pool: [
+    'hook-card-v1',          // NEW — punchy opener, full-screen
     'title-card-v1',
+    'caption-card-v1',       // NEW — full-screen variant of the caption overlay
     'stat-reveal-v1',
     'list-overlay-v1',
     'quote-card-v1',
     'lower-third-v1',
     'comparison-v1',
+    'subscribe-cta-v1',      // NEW — engagement card before end
     'end-card-v1',
   ],
   composition_overrides: {
     'stat-reveal-v1': { number_treatment: 'chrome_with_red_glow' },
     'quote-card-v1':  { quote_mark_color: '{accent}', quote_mark_opacity: 0.18 },
+  },
+
+  // ─── ZONE SYSTEM ─────────────────────────────────────
+  // Per-orientation overlay placement grid. The center column /
+  // center rows are never touched here — those are reserved for the
+  // avatar. The zone-resolver enforces those rules; this block just
+  // declares the geometry for the renderer to position cards.
+  zone_system: {
+    landscape: {
+      side_column_width_pct: 27,
+      side_column_inset_pct: 3,
+      side_slot_positions: { top: 5, mid: 38, bot: 60 },
+      lower_third:      { bottom_pct: 5, side_inset_pct: 3 },
+      corners_inset_pct: 3,
+    },
+    vertical: {
+      side_column_width_pct: 28,
+      side_column_inset_pct: 3,
+      side_slot_positions: { top: 14, mid: 40, bot: 62 },
+      top_strip:        { top_pct: 3, side_inset_pct: 3 },
+      lower_third:      { bottom_pct: 5, side_inset_pct: 3 },
+      corners_inset_pct: 3,
+    },
+  },
+
+  // ─── OVERLAY POOL ────────────────────────────────────
+  // All 8 v1 overlays enabled for Sleek. Subset templates may opt
+  // out of some (e.g. a minimalist preset might drop tool-logo +
+  // chapter-marker for cleaner look).
+  overlay_pool: [
+    'stat-callout-v1',
+    'word-emphasis-v1',
+    'caption-overlay-v1',
+    'tool-logo-v1',
+    'watermark-v1',
+    'action-prompt-v1',
+    'source-citation-v1',
+    'chapter-marker-v1',
+  ],
+
+  // ─── OVERLAY OVERRIDES ──────────────────────────────
+  // Per-overlay style tweaks for Sleek. Values match the existing
+  // composition styling: chrome + red accent, glass-morphism cards,
+  // red glow on accent characters.
+  //
+  // When the showcase HTML at /outputs/sleek-overlays.html lands,
+  // tighten these to match its exact tokens. Reasonable defaults now
+  // so the data layer can ship + the renderer has something to read.
+  overlay_overrides: {
+    'stat-callout-v1': {
+      background_style: 'glass_morphism',
+      number_treatment: 'chrome_with_glow',
+      accent_color: '{accent}',
+      border_treatment: 'subtle_red',
+    },
+    'word-emphasis-v1': {
+      highlight_color: '{accent}',
+      background_style: 'glass_morphism',
+      animation: 'pop_in',
+    },
+    'caption-overlay-v1': {
+      highlight_color: '{accent}',
+      background_style: 'glass_morphism',
+      animation: 'word_by_word',
+      font_scale: 'large',
+    },
+    'tool-logo-v1': {
+      background_style: 'glass_morphism',
+      border_treatment: 'subtle_red',
+      label_position: 'below',
+    },
+    'watermark-v1': {
+      logo_variant: 'mark_only',
+      opacity: 0.8,
+    },
+    'action-prompt-v1': {
+      background_style: 'solid',
+      accent_color: '{accent}',
+      pulse: true,
+    },
+    'source-citation-v1': {
+      background_style: 'hairline',
+      text_color: 'rgba(255,255,255,0.55)',
+    },
+    'chapter-marker-v1': {
+      background_style: 'glass_morphism',
+      number_treatment: 'mono_caps',
+      accent_color: '{accent}',
+    },
   },
   audio: {
     sfx_pool: ['swoosh', 'subtle_chime', 'impact'],
