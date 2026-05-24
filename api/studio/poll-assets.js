@@ -25,31 +25,69 @@ const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
 const STUDIO_BUCKET = 'studio-media'
 
+// Mirror a remote asset URL into our studio-media Supabase bucket. The
+// expensive case: HeyGen avatar MP4s. HeyGen's CDN URLs expire in
+// 7-30 days, so we MUST own the bytes — otherwise an "update styling
+// only" template swap a month from now is a re-bake against a dead
+// URL and silently produces a broken video.
+//
+// Previously this returned `remoteUrl` on any failure, which silently
+// poisoned the DB with an expiring URL. New behavior: retry once on
+// transient failures, and on persistent failure THROW. Callers handle
+// the throw by setting the segment to status='error' so the user sees
+// it instead of silently shipping a fragile URL.
+class MirrorError extends Error {
+  constructor(msg, cause) {
+    super(msg)
+    this.name = 'MirrorError'
+    if (cause) this.cause = cause
+  }
+}
+
+async function mirrorOnce(remoteUrl, profileId, kind) {
+  const r = await fetch(remoteUrl)
+  if (!r.ok) throw new MirrorError(`download ${r.status} for ${remoteUrl.slice(0, 80)}`)
+  const buf = Buffer.from(await r.arrayBuffer())
+  if (buf.byteLength === 0) throw new MirrorError(`empty body downloading ${kind}`)
+  const ext = kind === 'image' ? 'jpg' : kind === 'video' ? 'mp4' : 'bin'
+  const ct = kind === 'image' ? 'image/jpeg' : kind === 'video' ? 'video/mp4' : 'application/octet-stream'
+  const path = `${profileId || 'shared'}/studio/${kind}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+  const up = await fetch(
+    `${SUPABASE_URL}/storage/v1/object/${STUDIO_BUCKET}/${encodeURI(path)}`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+        'Content-Type': ct,
+        'x-upsert': 'true',
+      },
+      body: buf,
+    }
+  )
+  if (!up.ok) {
+    let detail = ''
+    try { detail = (await up.text())?.slice(0, 200) } catch {}
+    throw new MirrorError(`upload ${up.status}: ${detail}`)
+  }
+  return `${SUPABASE_URL}/storage/v1/object/public/${STUDIO_BUCKET}/${path}`
+}
+
 async function mirrorToStorage(remoteUrl, profileId, kind) {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) return remoteUrl
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+    throw new MirrorError('Supabase storage not configured (missing SUPABASE_URL or SUPABASE_SERVICE_KEY)')
+  }
   try {
-    const r = await fetch(remoteUrl)
-    if (!r.ok) return remoteUrl
-    const buf = Buffer.from(await r.arrayBuffer())
-    const ext = kind === 'image' ? 'jpg' : kind === 'video' ? 'mp4' : 'bin'
-    const ct = kind === 'image' ? 'image/jpeg' : kind === 'video' ? 'video/mp4' : 'application/octet-stream'
-    const path = `${profileId || 'shared'}/studio/${kind}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
-    const up = await fetch(
-      `${SUPABASE_URL}/storage/v1/object/${STUDIO_BUCKET}/${encodeURI(path)}`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
-          'Content-Type': ct,
-          'x-upsert': 'true',
-        },
-        body: buf,
-      }
-    )
-    if (!up.ok) return remoteUrl
-    return `${SUPABASE_URL}/storage/v1/object/public/${STUDIO_BUCKET}/${path}`
-  } catch {
-    return remoteUrl
+    return await mirrorOnce(remoteUrl, profileId, kind)
+  } catch (firstErr) {
+    // One retry after a short backoff covers the vast majority of
+    // transient blips (rate limit, brief network hiccup, S3 503).
+    await new Promise((r) => setTimeout(r, 1500))
+    try {
+      return await mirrorOnce(remoteUrl, profileId, kind)
+    } catch (secondErr) {
+      console.error('[studio mirror] failed twice:', secondErr.message, 'first:', firstErr.message)
+      throw secondErr
+    }
   }
 }
 
@@ -93,7 +131,19 @@ async function pollKieTask(segment, kieKey, profileId) {
     return true
   }
   if (url && (state === 'success' || state === 'completed' || state === 'done' || state === 'finished' || true)) {
-    const mirrored = await mirrorToStorage(url, profileId, 'image')
+    let mirrored
+    try {
+      mirrored = await mirrorToStorage(url, profileId, 'image')
+    } catch (e) {
+      // Persistent mirror failure → DO NOT write the expiring Kie URL
+      // to image_url. Mark the segment errored so the user sees it.
+      await supaFetch(`studio_segments?id=eq.${segment.id}`, {
+        method: 'PATCH',
+        body: { status: 'error', error: `Could not save B-roll image to storage: ${e.message}`.slice(0, 500) },
+        prefer: 'return=minimal',
+      })
+      return true
+    }
     // image_url + ready iff voice_url is also already there (the orchestrator
     // sequences voice before image, so this should always be true; double-check
     // anyway so a partial state doesn't claim ready prematurely).
@@ -133,8 +183,22 @@ async function pollHeygenVideo(segment, profileId) {
     return true
   }
   if (status === 'completed' || (videoUrl && status !== 'processing' && status !== 'pending')) {
-    const mirrored = videoUrl ? await mirrorToStorage(videoUrl, profileId, 'video') : null
-    if (!mirrored) return false
+    if (!videoUrl) return false
+    let mirrored
+    try {
+      mirrored = await mirrorToStorage(videoUrl, profileId, 'video')
+    } catch (e) {
+      // HeyGen URLs expire — never write them straight to the row. If
+      // mirroring fails persistently we surface an error so the user
+      // can retry rather than silently shipping a fragile URL into a
+      // template-swap or final-bake months from now.
+      await supaFetch(`studio_segments?id=eq.${segment.id}`, {
+        method: 'PATCH',
+        body: { status: 'error', error: `Could not save avatar video to storage: ${e.message}`.slice(0, 500) },
+        prefer: 'return=minimal',
+      })
+      return true
+    }
     const isReady = !!segment.voice_url
     await supaFetch(`studio_segments?id=eq.${segment.id}`, {
       method: 'PATCH',
