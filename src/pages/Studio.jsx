@@ -847,26 +847,11 @@ function StudioVideoEditor({ videoId }) {
             title={video.title || video.topic_prompt?.slice(0, 80) || 'Untitled video'}
             subtitle={`${fmtStatus(video.status)} · ${video.target_duration_secs}s · ${video.aspect_ratio}${video.template_id ? ` · ${video.template_id}` : ''}`}
             action={
-              <div style={{ display: 'flex', gap: 8 }}>
-                {['mapped', 'editing', 'rendered'].includes(video.status) && (
-                  <TemplateChangeButton video={video} onApplied={() => {
-                    // Re-poll the video immediately so the new
-                    // template_id + brand_color show up in the header
-                    // and the sticky bar.
-                    if (session?.access_token) {
-                      authedFetch(`/api/studio/videos?id=${video.id}`, session.access_token)
-                        .then((r) => r.ok ? r.json() : null)
-                        .then((b) => { if (b?.video) setVideo(b.video) })
-                        .catch(() => {})
-                    }
-                  }} />
-                )}
-                {['mapped', 'failed', 'editing'].includes(video.status) && (
-                  <button className="btn-secondary" onClick={regenerate}>
-                    <Wand2 size={13} /> Regenerate map
-                  </button>
-                )}
-              </div>
+              ['mapped', 'failed', 'editing'].includes(video.status) ? (
+                <button className="btn-secondary" onClick={regenerate}>
+                  <Wand2 size={13} /> Regenerate map
+                </button>
+              ) : null
             }
           />
 
@@ -1199,17 +1184,232 @@ function SegmentList({ video }) {
   )
 }
 
-// Per-video template switcher. Opens a modal showing the template
-// gallery + color picker + two action buttons:
-//   "Update styling only"  — patches template_id + brand_color and
-//                            cascades the color into every motion
-//                            segment's accent_color. Cheap, fast,
-//                            preserves all content. User then clicks
-//                            Re-render to bake the new look.
-//   "Re-segment with template" — wipes the map and runs generate-map
-//                                with the new template. Expensive but
-//                                produces a video that fully reflects
-//                                the new template's pacing / pool.
+// Inline template selector. Sits between the rendered-video player
+// and the segment list on the per-video page. Shows the current
+// template, an animated HyperFrames preview iframe of how the
+// template looks, a brand-color picker, and a single "Use this
+// template" button that applies the shallow swap (template_id +
+// brand_color + cascade to motion segments) AND immediately fires
+// render-final so the user gets a new MP4 without two clicks.
+//
+// Defaults to collapsed when the current template/color matches the
+// video's saved values (nothing to apply). Expands automatically the
+// moment the user picks a different template or color, exposing the
+// "Use this template" button.
+function TemplateSelector({ video, onApplied }) {
+  const { session } = useAuth()
+  const [templates, setTemplates] = useState([])
+  const [templateId, setTemplateId] = useState(video.template_id || 'sleek')
+  const [brandColor, setBrandColor] = useState(video.brand_color || '')
+  const [busy, setBusy] = useState(false)
+
+  // Load the template list on mount.
+  useEffect(() => {
+    if (!session?.access_token) return
+    authedFetch('/api/studio/templates', session.access_token)
+      .then((r) => r.ok ? r.json() : { templates: [] })
+      .then((b) => {
+        const list = b.templates || []
+        setTemplates(list)
+        // If the video doesn't have a brand_color stored, seed from
+        // the selected template's accent so the preview iframe shows
+        // something meaningful.
+        if (!brandColor) {
+          const cur = list.find((t) => t.id === (video.template_id || 'sleek'))
+          if (cur?.primary_accent) setBrandColor(cur.primary_accent)
+        }
+      })
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.access_token])
+
+  // Resync local state when the video row changes (e.g. after onApplied).
+  useEffect(() => {
+    setTemplateId(video.template_id || 'sleek')
+    if (video.brand_color) setBrandColor(video.brand_color)
+  }, [video.template_id, video.brand_color])
+
+  const selected = templates.find((t) => t.id === templateId)
+  const savedTemplate = video.template_id || 'sleek'
+  const savedColor = video.brand_color || (templates.find((t) => t.id === savedTemplate)?.primary_accent ?? '')
+  const dirty = templateId !== savedTemplate || (brandColor || '') !== (savedColor || '')
+
+  // Preview iframe vars. Cascade the chosen brand color into every
+  // {accent}-shaped value the composition reads.
+  const previewVars = useMemo(() => {
+    if (!selected?.preview) return null
+    const vars = { ...(selected.preview.variables || {}) }
+    const accent = brandColor || selected.primary_accent || '#e3151e'
+    for (const k of Object.keys(vars)) {
+      if (typeof vars[k] === 'string' && vars[k] === '{accent}') vars[k] = accent
+    }
+    vars.accent_color = accent
+    return vars
+  }, [selected?.preview, brandColor])
+
+  const apply = async () => {
+    if (!session?.access_token || busy || !dirty) return
+    setBusy(true)
+    try {
+      // Step 1 — patch template + cascade color to motion segments.
+      const r1 = await authedFetch('/api/studio/apply-template', session.access_token, {
+        method: 'POST',
+        body: JSON.stringify({
+          studio_video_id: video.id,
+          template_id: templateId,
+          brand_color: brandColor || null,
+          deep: false,
+        }),
+      })
+      const b1 = await r1.json().catch(() => ({}))
+      if (!r1.ok) throw new Error(b1.error || 'Could not apply template')
+
+      // Step 2 — kick off the final bake immediately. Asset URLs are
+      // preserved through the shallow apply, so this is essentially a
+      // free re-render: just ffmpeg pulling existing audio/avatar/
+      // image bytes from Supabase storage with the new HyperFrames
+      // CSS vars baked into the motion segments.
+      const r2 = await authedFetch('/api/studio/render-final', session.access_token, {
+        method: 'POST',
+        body: JSON.stringify({ studio_video_id: video.id }),
+      })
+      const b2 = await r2.json().catch(() => ({}))
+      if (!r2.ok) throw new Error(b2.error || 'Re-render failed')
+      toast({ message: `Applied ${selected?.name || templateId}. New render is ready.`, kind: 'success' })
+
+      // Refresh the video row in the parent.
+      const r3 = await authedFetch(`/api/studio/videos?id=${video.id}`, session.access_token)
+      const b3 = await r3.json().catch(() => ({}))
+      onApplied?.(b3?.video)
+    } catch (e) {
+      toast({ message: e.message, kind: 'error' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (templates.length === 0) return null
+
+  const aspect = video.aspect_ratio === '9:16' ? '9 / 16'
+    : video.aspect_ratio === '1:1' ? '1 / 1'
+    : '16 / 9'
+
+  return (
+    <div className="card" style={{ marginBottom: 16, padding: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+        {/* Left column: dropdown + color picker + apply button */}
+        <div style={{ flex: '1 1 280px', minWidth: 240, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>
+              Visual template
+            </div>
+            <select
+              className="input"
+              value={templateId}
+              onChange={(e) => {
+                const next = e.target.value
+                setTemplateId(next)
+                const t = templates.find((x) => x.id === next)
+                if (t?.primary_accent) setBrandColor(t.primary_accent)
+              }}
+              disabled={busy}
+              style={{ width: '100%', fontWeight: 700 }}
+            >
+              {templates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}{t.id === savedTemplate ? ' · currently used' : ''}
+                </option>
+              ))}
+            </select>
+            {selected?.description && (
+              <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6, lineHeight: 1.4 }}>
+                {selected.description}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>
+              Brand color
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                type="color"
+                value={brandColor || selected?.primary_accent || '#e3151e'}
+                onChange={(e) => setBrandColor(e.target.value)}
+                disabled={busy}
+                style={{ width: 44, height: 32, border: '1px solid var(--border)', borderRadius: 6, background: 'transparent', padding: 0, cursor: 'pointer' }}
+              />
+              <input
+                type="text"
+                className="input"
+                value={brandColor || selected?.primary_accent || '#e3151e'}
+                onChange={(e) => setBrandColor(e.target.value)}
+                disabled={busy}
+                style={{ flex: 1, fontFamily: 'ui-monospace, monospace', fontSize: 12 }}
+                maxLength={9}
+              />
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+              Cascades into every motion graphic in the video.
+            </div>
+          </div>
+
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={!dirty || busy}
+            onClick={apply}
+            style={{ fontSize: 13, padding: '10px 16px' }}
+            title={dirty
+              ? `Apply ${selected?.name || templateId} and re-render the final MP4 (avatar/voice/B-roll assets are reused — no extra cost).`
+              : 'Pick a different template or color first.'}
+          >
+            {busy ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
+            {busy ? 'Applying + re-rendering…' : 'Use this template'}
+          </button>
+          {!dirty && (
+            <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+              No changes. Pick a different template or brand color to enable.
+            </div>
+          )}
+        </div>
+
+        {/* Right column: live preview iframe */}
+        <div style={{ flex: '2 1 360px', minWidth: 280 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>
+            Preview
+          </div>
+          {selected?.preview?.composition_id && previewVars ? (
+            <HyperFramesPreview
+              compositionId={selected.preview.composition_id}
+              variables={previewVars}
+              height={null}
+              aspectRatio={video.aspect_ratio}
+            />
+          ) : (
+            <div style={{
+              aspectRatio: aspect,
+              background: 'var(--surface-2)',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              display: 'grid',
+              placeItems: 'center',
+              color: 'var(--muted)',
+              fontSize: 12,
+            }}>
+              No preview available for this template.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Old modal-based template switcher — kept only for reference, no
+// longer rendered. Inline TemplateSelector above replaces it.
+// eslint-disable-next-line no-unused-vars
 function TemplateChangeButton({ video, onApplied }) {
   const { session } = useAuth()
   const [open, setOpen] = useState(false)
