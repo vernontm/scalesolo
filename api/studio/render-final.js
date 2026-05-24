@@ -356,31 +356,42 @@ async function renderAvatarChunk(seg, paths, dim, durationSecs) {
 }
 
 async function renderBrollChunk(seg, paths, dim, durationSecs) {
-  // Still image looped for the voice duration with ONE continuous
-  // Ken-Burns zoom-in across the whole chunk. The previous version
-  // used the zoompan filter which restarts its zoom counter on every
-  // looped input frame — produces a visible re-zoom every couple
-  // seconds. New approach: scale the image up to 1.2x the canvas,
-  // then use a crop with TIME-VARYING dimensions that shrinks
-  // linearly from 1.0 to ~1.12x zoom across the segment, then scale
-  // back to canvas size. Crop's `t` is real time in seconds, so the
-  // zoom is one continuous push regardless of how the input loops.
+  // Still image with ONE continuous Ken-Burns zoom-in across the
+  // whole chunk. Took two tries to get right:
+  //
+  // Attempt 1 used zoompan with z='min(zoom+0.0006,1.06)':d=totalFrames.
+  // Bug: with -loop 1, ffmpeg treats each repeated frame as a new
+  // "input image" for zoompan, so the zoom counter restarted every
+  // input frame — visible re-zoom every couple seconds.
+  //
+  // Attempt 2 used the crop filter with t-based width/height
+  // expressions. Bug: crop's w/h are evaluated ONCE at filter
+  // configure time, not per frame, so the time variable t collapsed
+  // to 0 and the configure step errored out with "Failed to configure
+  // input pad".
+  //
+  // Working approach: zoompan with `d=1` (one output frame per input
+  // frame) and zoom expression keyed on `on` (output frame counter,
+  // monotonically increasing across the whole filter run — NOT per
+  // input frame). Gives one continuous zoom from 1.0 to 1.12 across
+  // every frame in the segment regardless of how the input loops.
   const outFile = paths.outChunk
   const dur = durationSecs.toFixed(3)
-  // Zoom amount over the whole segment. Subtle on short clips so it
-  // doesn't feel rushed; the formula caps the per-second zoom.
-  const ZOOM_MAX = 0.12        // ends at 1.12x
-  const startW = dim.w * 1.3   // headroom so crop never falls outside the scaled image
-  const startH = dim.h * 1.3
-  // crop width/height shrink linearly with t. cw(t) = startW / (1 + ZOOM_MAX*t/dur)
-  const cw = `${startW}/(1+${ZOOM_MAX}*t/${dur})`
-  const ch = `${startH}/(1+${ZOOM_MAX}*t/${dur})`
+  const totalFrames = Math.max(30, Math.ceil(durationSecs * 30))
+  const ZOOM_MAX = 0.12  // ends at 1.12x
+  // 1.3x prep scale gives headroom so the crop never reads pixels
+  // outside the source as the image zooms in.
+  const prepW = Math.round(dim.w * 1.3)
+  const prepH = Math.round(dim.h * 1.3)
   const vf = [
-    `scale=${Math.round(startW)}:${Math.round(startH)}:force_original_aspect_ratio=increase`,
-    `crop=${Math.round(startW)}:${Math.round(startH)}`, // center-crop to the scaled-up canvas
+    `scale=${prepW}:${prepH}:force_original_aspect_ratio=increase`,
+    `crop=${prepW}:${prepH}`,            // exact prep-canvas size
     `fps=30`,
-    `crop='${cw}':'${ch}':'(iw-ow)/2':'(ih-oh)/2'`,
-    `scale=${dim.w}:${dim.h}:flags=lanczos`,
+    // zoompan operates at the prep-canvas resolution, outputting at
+    // canvas resolution. `on` is the output frame index (0..N-1).
+    `zoompan=z='1+${ZOOM_MAX}*on/${totalFrames}':d=1` +
+      `:s=${dim.w}x${dim.h}:fps=30` +
+      `:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'`,
     `setsar=1`,
   ].join(',')
   await runFFmpeg([

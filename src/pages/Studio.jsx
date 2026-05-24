@@ -1594,10 +1594,14 @@ function FailedCard({ video, onRegenerate }) {
   const approvedSegs = segs.filter((s) => s.approved)
   const anyAssetUrl = approvedSegs.some((s) => s.voice_url || s.image_url || s.avatar_video_url)
 
+  // Stage inference. When segments + assets + a final_video_url all
+  // exist, the failure must have been a re-bake attempt (the old
+  // final MP4 stays in storage on a failed re-bake, intentionally,
+  // so the user keeps a playable version while they retry). So that
+  // case is also a 'bake' failure, NOT a mapping fallback.
   const stage = segs.length === 0 ? 'mapping'
     : !anyAssetUrl ? 'asset-gen'
-    : !video.final_video_url ? 'bake'
-    : 'mapping'  // shouldn't reach here, fall back
+    : 'bake'
 
   const label = ({
     mapping:    'Mapping failed',
