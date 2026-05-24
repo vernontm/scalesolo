@@ -30,6 +30,7 @@ import { Resvg } from '@resvg/resvg-js'
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg'
 import { zapcapAddVideoByUrl, zapcapCreateTask, zapcapPollTask } from './zapcap.js'
 import { runWorkflow } from './workflow-runner.js'
+import { runStudioRender } from './studio-render.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -56,7 +57,7 @@ if (!SECRET) {
     const { readdir, rm: rmAsync } = await import('node:fs/promises')
     const tmp = tmpdir()
     const entries = await readdir(tmp).catch(() => [])
-    const prefixes = ['polish-', 'av-', 'audio-', 'norm-']
+    const prefixes = ['polish-', 'av-', 'audio-', 'norm-', 'studio-render-']
     let cleaned = 0
     for (const name of entries) {
       if (!prefixes.some((p) => name.startsWith(p))) continue
@@ -1696,6 +1697,43 @@ async function extractAudioCore(body) {
     if (workdir) { try { await rm(workdir, { recursive: true, force: true }) } catch {} }
   }
 }
+
+// ── Studio render-final ────────────────────────────────────────────────────
+// Long-running HyperFrames bake. Replaces the Vercel /api/studio/render-final
+// path that was hitting the 300s function ceiling and the headless-Chrome
+// RAF throttling on Lambda. Fly machines have no time cap and run real Chrome.
+//
+// Body: { studio_video_id }
+// Response: { ok, final_video_url, hf_rendered, hf_fallback }
+// Auth: x-worker-secret. The dispatcher (api/studio/render-final.js) signs
+// every request with WORKER_SHARED_SECRET — anyone else is rejected.
+app.post('/jobs/studio-render', requireSecret, async (req, res) => {
+  const videoId = req.body?.studio_video_id
+  if (!videoId) return res.status(400).json({ error: 'studio_video_id required' })
+  if (!SUPABASE_URL || !SERVICE_KEY) {
+    return res.status(500).json({ error: 'SUPABASE_URL / SUPABASE_SERVICE_KEY not configured' })
+  }
+
+  jobStart()
+  try {
+    const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
+    const result = await runStudioRender({ supabase, env: process.env, studio_video_id: videoId })
+    res.json(result)
+  } catch (err) {
+    console.error('studio-render job error:', err?.stack || err)
+    // Mark video as failed so the UI doesn't sit on "rendering" forever.
+    try {
+      const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
+      await supabase.from('studio_videos').update({
+        status: 'failed',
+        error: String(err?.message || err).slice(0, 1000),
+      }).eq('id', videoId)
+    } catch {}
+    res.status(500).json({ error: err?.message || String(err) })
+  } finally {
+    jobEnd()
+  }
+})
 
 app.post('/jobs/extract-audio', requireSecret, async (req, res) => {
   try {
