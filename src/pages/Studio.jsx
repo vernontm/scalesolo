@@ -404,17 +404,30 @@ function StudioVideoEditor({ videoId }) {
 
   // Initial load + lightweight refresh on focus. The Realtime channel
   // below handles ongoing updates; this is just the cold load.
+  // Hardened so a non-JSON 401 / 5xx page from Vercel can't silently
+  // wedge the UI on an infinite spinner — we surface whatever text we
+  // got as an error instead.
   useEffect(() => {
     if (!session?.access_token) return
     let cancelled = false
-    authedFetch(`/api/studio/videos?id=${videoId}`, session.access_token)
-      .then(async (r) => {
+    ;(async () => {
+      try {
+        const r = await authedFetch(`/api/studio/videos?id=${videoId}`, session.access_token)
+        const ct = r.headers.get('content-type') || ''
+        if (!ct.includes('application/json')) {
+          const text = await r.text().catch(() => '')
+          if (!cancelled) setError(`Server returned ${r.status} (${ct || 'unknown'}). ${text.slice(0, 200)}`)
+          return
+        }
         const b = await r.json()
         if (cancelled) return
-        if (!r.ok) { setError(b.error || 'Could not load video'); return }
+        if (!r.ok) { setError(b.error || `HTTP ${r.status}`); return }
+        if (!b.video) { setError('Server returned an empty video record.'); return }
         setVideo(b.video)
-      })
-      .catch((e) => { if (!cancelled) setError(e.message) })
+      } catch (e) {
+        if (!cancelled) setError(e?.message || 'Network error loading video')
+      }
+    })()
     return () => { cancelled = true }
   }, [videoId, session?.access_token])
 
