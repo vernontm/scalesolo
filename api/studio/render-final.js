@@ -33,7 +33,8 @@
 // Falls back to filter_complex re-encode if the fast path errors.
 
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { spawn } from 'node:child_process'
 
@@ -42,6 +43,7 @@ import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/su
 import { gateStudio } from './_lib/gate.js'
 
 const ffmpegPath = ffmpegInstaller.path
+const __dirname = dirname(fileURLToPath(import.meta.url))
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
 const STUDIO_BUCKET = 'studio-media'
@@ -231,23 +233,31 @@ async function renderMotionChunk(seg, paths, dim, durationSecs, fontPath) {
 }
 
 // ── Font resolution ─────────────────────────────────────────────────────────
-// Look for a TTF/OTF bundled under api/_fonts/ (same convention polish.js uses).
-// Falls back to a system DejaVu if no project font is shipped.
+// Resolve to an absolute path inside the bundled function. Uses
+// __dirname (matching api/videos/polish.js's pattern) so the path is
+// valid at runtime on Vercel Lambda, not just the relative-to-cwd
+// "api/_fonts/..." that doesn't exist there. We pin to Inter ExtraBold
+// since it's the closest match to Studio's brand display weight; falls
+// through the bundled file list in case the preferred file is missing.
+const FONT_CANDIDATES = [
+  'Inter-ExtraBold.ttf',
+  'Montserrat-ExtraBold.ttf',
+  'Poppins-ExtraBold.ttf',
+  'Anton-Regular.ttf',
+  'Sans-Bold.ttf',  // Always-present last-resort sans
+]
+let _fontPathCached = null
 async function resolveFont() {
-  const candidates = [
-    'api/_fonts/PlusJakartaSans-Black.ttf',
-    'api/_fonts/PlusJakartaSans-ExtraBold.ttf',
-    'api/_fonts/PlusJakartaSans-Bold.ttf',
-    'api/_fonts/Inter-Bold.ttf',
-  ]
-  for (const c of candidates) {
+  if (_fontPathCached) return _fontPathCached
+  for (const filename of FONT_CANDIDATES) {
+    const p = join(__dirname, '..', '_fonts', filename)
     try {
-      await readFile(c)
-      return c
+      await readFile(p)
+      _fontPathCached = p
+      return p
     } catch { /* try next */ }
   }
-  // System fallback. DejaVu is on the Vercel Lambda image.
-  return '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+  throw new Error('No bundled font found in api/_fonts/. Add one to the repo.')
 }
 
 // ── Main handler ────────────────────────────────────────────────────────────

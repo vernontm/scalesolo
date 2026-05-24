@@ -552,13 +552,7 @@ function StudioVideoEditor({ videoId }) {
           )}
 
           {video.status === 'failed' && (
-            <div className="card" style={{ padding: 24, borderColor: 'rgba(239,68,68,0.45)' }}>
-              <div style={{ color: 'var(--red)', fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>Mapping failed</div>
-              <div style={{ fontSize: 13, color: 'var(--text-soft)' }}>{video.error || 'Unknown error'}</div>
-              <button className="btn-primary" style={{ marginTop: 12 }} onClick={regenerate}>
-                <Wand2 size={13} /> Try again
-              </button>
-            </div>
+            <FailedCard video={video} onRegenerate={regenerate} />
           )}
 
           {video.status === 'rendered' && video.final_video_url && (
@@ -866,6 +860,91 @@ function SegmentList({ video }) {
         totalCount={segments.length}
         segments={segments}
       />
+    </div>
+  )
+}
+
+// Context-aware failure card. Failures bubble up to status='failed' from
+// any of three pipeline stages; the recovery action depends on which
+// stage actually broke. We infer from segment + final_video_url state:
+//   • No segments        → mapping failed → safe to Regenerate map
+//   • Segments, no assets → asset gen failed → Generate assets (no map loss)
+//   • Segments + assets, no final → bake failed → Render final (preserves all work)
+function FailedCard({ video, onRegenerate }) {
+  const { session } = useAuth()
+  const [busy, setBusy] = useState(false)
+  const segs = video.studio_segments || []
+  const approvedSegs = segs.filter((s) => s.approved)
+  const anyAssetUrl = approvedSegs.some((s) => s.voice_url || s.image_url || s.avatar_video_url)
+
+  const stage = segs.length === 0 ? 'mapping'
+    : !anyAssetUrl ? 'asset-gen'
+    : !video.final_video_url ? 'bake'
+    : 'mapping'  // shouldn't reach here, fall back
+
+  const label = ({
+    mapping:    'Mapping failed',
+    'asset-gen': 'Asset generation failed',
+    bake:       'Render failed',
+  })[stage]
+
+  const hint = ({
+    mapping:    'Hit "Regenerate map" to re-run Claude. Your topic and references are preserved.',
+    'asset-gen': 'Hit "Retry assets" to re-run failed segments. The map and any completed segments are kept.',
+    bake:       'Hit "Retry render" to re-stitch the final MP4. All segments and generated assets are kept.',
+  })[stage]
+
+  const retry = async () => {
+    if (!session?.access_token) return
+    setBusy(true)
+    try {
+      if (stage === 'mapping') {
+        await onRegenerate()
+        return
+      }
+      const endpoint = stage === 'asset-gen' ? '/api/studio/generate-assets' : '/api/studio/render-final'
+      const r = await authedFetch(endpoint, session.access_token, {
+        method: 'POST', body: JSON.stringify({ studio_video_id: video.id }),
+      })
+      const b = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(b.error || 'Retry failed')
+      toast({ message: stage === 'asset-gen' ? 'Re-running asset generation.' : 'Re-running final render.', kind: 'success' })
+    } catch (e) {
+      toast({ message: e.message, kind: 'error' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="card" style={{ padding: 24, borderColor: 'rgba(239,68,68,0.45)', marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--red)', fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>
+        <AlertCircle size={14} /> {label}
+      </div>
+      {hint && <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10 }}>{hint}</div>}
+      <details style={{ marginBottom: 12 }}>
+        <summary style={{ fontSize: 11.5, color: 'var(--muted)', cursor: 'pointer', marginBottom: 6 }}>
+          Show error detail
+        </summary>
+        <pre style={{
+          fontSize: 11, lineHeight: 1.4, color: 'var(--text-soft)',
+          background: 'var(--surface)', padding: 10, borderRadius: 6,
+          border: '1px solid var(--border)',
+          whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+          maxHeight: 220, overflowY: 'auto', margin: 0,
+        }}>{video.error || 'No detail provided.'}</pre>
+      </details>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button className="btn-primary" disabled={busy} onClick={retry}>
+          {busy ? <Loader2 size={13} className="spin" /> : <Wand2 size={13} />}
+          {stage === 'mapping' ? 'Regenerate map' : stage === 'asset-gen' ? 'Retry assets' : 'Retry render'}
+        </button>
+        {stage !== 'mapping' && (
+          <button className="btn-secondary" disabled={busy} onClick={onRegenerate} title="Wipe the map and re-run Claude. Use only if the script itself is the problem.">
+            Regenerate map
+          </button>
+        )}
+      </div>
     </div>
   )
 }
