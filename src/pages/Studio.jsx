@@ -1004,22 +1004,31 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
   )
   const allAssetsReady = approvedSegs.length > 0 && approvedSegs.every((s) => s.status === 'ready')
 
+  // For rendered videos: check whether their segments still have the
+  // assets that built them. If the segments were wiped (e.g. user hit
+  // Regenerate map after a successful render), Re-render would fail
+  // because there's nothing to stitch. In that case, the button needs
+  // to drive asset regen first, not the bake.
+  const renderedButAssetsGone = isRendered && approvedSegs.length > 0 && !allAssetsReady
+
   // Phase priority: terminal states → bake-in-progress → asset-gen → ready
   // states. Critically, allAssetsReady takes precedence over the parent
   // status='rendering' since the parent doesn't get reset after asset gen.
-  const phase = isRendered
+  const phase = isRendered && allAssetsReady
     ? 'done'
-    : isFailed
-      ? 'failed'
-      : baking
-        ? 'baking'
-        : anyGenerating
-          ? 'rendering'
-          : allAssetsReady
-            ? 'ready-to-bake'
-            : approvedCount > 0 && ['mapped', 'editing', 'rendering'].includes(video.status)
-              ? 'ready-for-assets'
-              : 'pre-approval'
+    : renderedButAssetsGone
+      ? 'rendered-needs-assets'
+      : isFailed
+        ? 'failed'
+        : baking
+          ? 'baking'
+          : anyGenerating
+            ? 'rendering'
+            : allAssetsReady
+              ? 'ready-to-bake'
+              : approvedCount > 0 && ['mapped', 'editing', 'rendering', 'rendered'].includes(video.status)
+                ? 'ready-for-assets'
+                : 'pre-approval'
 
   const onAssets = async () => {
     if (!session?.access_token) return
@@ -1062,8 +1071,11 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
   }
 
   // Continue dispatcher: pick the right action based on the current phase.
-  // "Re-render" on a done state goes back through render-final (skips
-  // asset gen — the segments are already ready).
+  //   ready-to-bake / done → bake (segments already have assets)
+  //   rendered-needs-assets → regen assets first (the existing render
+  //     is preserved on the row, so the player keeps working until the
+  //     new bake replaces it)
+  //   anything else → asset gen
   const onContinue = (phase === 'ready-to-bake' || phase === 'done') ? onRender : onAssets
 
   return (
@@ -1115,6 +1127,18 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
               Hit Render to stitch them into the final MP4.
             </span>
           </>
+        ) : phase === 'rendered-needs-assets' ? (
+          <>
+            <AlertCircle size={12} style={{ verticalAlign: 'middle', marginRight: 6, color: '#fbbf24' }} />
+            <strong style={{ color: 'var(--text)' }}>Your render is saved, but the editable assets are missing.</strong>
+            <span style={{ color: 'var(--muted)', marginLeft: 8 }}>
+              The final MP4 still plays above. To re-render with edits, regenerate the segment assets first.
+              {video.final_video_url && (
+                <a href={video.final_video_url} target="_blank" rel="noopener noreferrer"
+                  style={{ marginLeft: 8, color: 'var(--red)', fontWeight: 700 }}>Watch the existing render ↗</a>
+              )}
+            </span>
+          </>
         ) : isFailed ? (
           <>
             <AlertCircle size={12} style={{ verticalAlign: 'middle', marginRight: 6, color: 'var(--red)' }} />
@@ -1151,7 +1175,9 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
               ? 'Render final MP4'
               : phase === 'done'
                 ? 'Re-render'
-                : 'Generate assets'}
+                : phase === 'rendered-needs-assets'
+                  ? 'Regenerate assets'
+                  : 'Generate assets'}
       </button>
     </div>
   )
