@@ -85,14 +85,47 @@
 
   border: 1px solid rgba(255, 255, 255, 0.10);
 
-  /* The 4-layer shadow stack. All four are required — removing any one
-     collapses the dimensional feel. */
-  box-shadow:
-    0 20px 50px rgba(0, 0, 0, 0.5),
-    0 0 80px color-mix(in srgb, var(--ov-accent) 18%, transparent),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.3);
+  /* Compound animation: a one-time scale+fade entrance, then a
+     looping accent-color glow pulse. Both play forever-on-load; the
+     entrance only animates once (forwards keeps the end state) and
+     the glow loops indefinitely so the card breathes against the
+     footage in both preview and rendered video. */
+  animation:
+    ov_card_enter 600ms cubic-bezier(0.34, 1.4, 0.64, 1) both,
+    ov_card_glow  3400ms ease-in-out 600ms infinite;
 }
+
+/* Entrance: scale up from 92% with a tiny overshoot + fade in. */
+@keyframes ov_card_enter {
+  0%   { opacity: 0; transform: scale(0.92) translateY(8px); }
+  60%  { opacity: 1; transform: scale(1.015) translateY(0); }
+  100% { opacity: 1; transform: scale(1)     translateY(0); }
+}
+
+/* Loop: breathes the accent halo. The box-shadow base stack stays;
+   we just animate the outer accent layer's spread + alpha for the
+   "alive on screen" feeling. */
+@keyframes ov_card_glow {
+  0%, 100% {
+    box-shadow:
+      0 20px 50px rgba(0, 0, 0, 0.5),
+      0 0 60px color-mix(in srgb, var(--ov-accent) 22%, transparent),
+      inset 0 1px 0 rgba(255, 255, 255, 0.08),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.3);
+  }
+  50% {
+    box-shadow:
+      0 20px 50px rgba(0, 0, 0, 0.5),
+      0 0 110px color-mix(in srgb, var(--ov-accent) 45%, transparent),
+      inset 0 1px 0 rgba(255, 255, 255, 0.08),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.3);
+  }
+}
+
+/* Watermark + caption opt out of the entrance / glow loop because
+   they're persistent / lower-third elements that shouldn't pulse. */
+.ov-watermark,
+.ov-caption { animation: none; }
 
 /* Top hairline accent — appears on every card */
 .ov-card::before,
@@ -117,7 +150,10 @@
   pointer-events: none;
 }
 
-/* Top-right corner sheen — adds "polished glass" character */
+/* Top-right corner sheen — adds "polished glass" character. The base
+   sits at top-right; brand-gradient variants (.ov-stat / .ov-chapter)
+   then animate a diagonal sweep across this same layer via the
+   ov_card_sheen keyframes. */
 .ov-card::after,
 .ov-stat::after,
 .ov-chapter::after,
@@ -137,6 +173,41 @@
     transparent 70%
   );
   pointer-events: none;
+}
+
+/* Diagonal sheen sweep for the brand-gradient cards. A 45° highlight
+   slides from off-card-left, across the surface, and off to the
+   right every ~5 seconds. Only fires on .ov-stat / .ov-chapter /
+   .ov-tool — the dark glass variants stay static. */
+.ov-stat::after,
+.ov-chapter::after,
+.ov-tool::after {
+  /* Cover the whole card so the sweep can travel left → right. */
+  width: 220%;
+  height: 220%;
+  top: -60%;
+  right: auto;
+  left: -160%;
+  background:
+    radial-gradient(
+      ellipse at top right,
+      rgba(255, 255, 255, 0.04) 0%,
+      transparent 70%
+    ),
+    linear-gradient(115deg,
+      transparent 30%,
+      rgba(255, 255, 255, 0.12) 47%,
+      rgba(255, 255, 255, 0.22) 50%,
+      rgba(255, 255, 255, 0.12) 53%,
+      transparent 70%
+    );
+  animation: ov_card_sheen 5200ms ease-in-out infinite;
+}
+@keyframes ov_card_sheen {
+  0%, 18%   { transform: translateX(0%);   opacity: 0; }
+  22%       { opacity: 1; }
+  68%       { opacity: 1; transform: translateX(60%); }
+  72%, 100% { opacity: 0; transform: translateX(60%); }
 }
 
 /* ---------- STAT variant ---------- */
