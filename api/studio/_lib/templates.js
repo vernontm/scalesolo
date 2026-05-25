@@ -81,15 +81,16 @@ export const SLEEK = {
   // compositions ship. Three more (process-timeline-v1, chapter-card-v1,
   // diagram-card-v1) are v2 and intentionally NOT in this pool.
   composition_pool: [
-    'hook-card-v1',          // NEW — punchy opener, full-screen
+    // Only IDs with a real HTML file in public/studio-compositions/.
+    // hook-card-v1, caption-card-v1, subscribe-cta-v1 are intentionally
+    // commented out until their HTML ships — otherwise auto-fit picks
+    // them and the worker falls back to drawtext.
     'title-card-v1',
-    'caption-card-v1',       // NEW — full-screen variant of the caption overlay
     'stat-reveal-v1',
     'list-overlay-v1',
     'quote-card-v1',
     'lower-third-v1',
     'comparison-v1',
-    'subscribe-cta-v1',      // NEW — engagement card before end
     'end-card-v1',
   ],
   composition_overrides: {
