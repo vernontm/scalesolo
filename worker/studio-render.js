@@ -181,14 +181,16 @@ async function fetchResolvedTemplate(baseUrl, env, templateId, accent) {
   const bypassSecret = env.VERCEL_AUTOMATION_BYPASS_SECRET
   if (bypassSecret) {
     headers['x-vercel-protection-bypass'] = bypassSecret
-    headers['x-vercel-set-bypass-cookie'] = 'samesitenone'
+    // NOTE: do NOT send x-vercel-set-bypass-cookie here. With that
+    // header, Vercel returns 307 + Set-Cookie expecting the client
+    // to follow the redirect and use the cookie on subsequent
+    // requests. Browsers handle that flow. Node's fetch with
+    // redirect:'manual' bails on the 307 instead, and Vercel never
+    // sees the bypass on the followed-up request. For one-off API
+    // calls without a session, omit the cookie header and Vercel
+    // returns 200 directly on the first hit.
   }
   try {
-    // redirect:'manual' stops Node's fetch from following the SSO
-    // redirect loop when the bypass header doesn't match Vercel's
-    // expected token — we'd rather error fast with the real response
-    // code than burn 20 redirects and bail with "redirect count
-    // exceeded". A 308/307 response here means the bypass failed.
     const r = await fetch(url, { headers, redirect: 'manual' })
     if (r.status >= 300 && r.status < 400) {
       console.warn(`[studio-render] template fetch got redirect ${r.status} for ${templateId}. ` +
@@ -363,9 +365,9 @@ async function downloadSfxAssets(cues, baseUrl, bypassSecret, workdir) {
       const headers = {}
       if (bypassSecret) {
         headers['x-vercel-protection-bypass'] = bypassSecret
-        headers['x-vercel-set-bypass-cookie'] = 'samesitenone'
+        // No x-vercel-set-bypass-cookie — see fetchResolvedTemplate.
       }
-      const r = await fetch(url, { headers })
+      const r = await fetch(url, { headers, redirect: 'manual' })
       if (!r.ok) { missing.push({ sfx_id: cue.sfx_id, status: r.status }); continue }
       const buf = Buffer.from(await r.arrayBuffer())
       await writeFile(dest, buf)
