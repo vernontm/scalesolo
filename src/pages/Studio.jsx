@@ -26,8 +26,22 @@ import { toast, confirmDialog } from '../components/Toast.jsx'
 import { supabase } from '../lib/supabase.js'
 
 async function authedFetch(path, token, init = {}) {
+  // Auto-serialize plain-object bodies. fetch() doesn't do this for
+  // you — passing { foo: 'bar' } directly results in the body being
+  // String({...}) === '[object Object]', which the server then rejects
+  // as malformed JSON ("Invalid JSON" toast). FormData/Blob/string
+  // bodies are pass-through.
+  let body = init.body
+  if (body && typeof body === 'object'
+      && !(body instanceof FormData)
+      && !(body instanceof Blob)
+      && !(body instanceof ArrayBuffer)
+      && !(body instanceof URLSearchParams)) {
+    body = JSON.stringify(body)
+  }
   return fetch(path, {
     ...init,
+    body,
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token || ''}`,
