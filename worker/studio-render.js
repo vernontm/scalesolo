@@ -184,7 +184,19 @@ async function fetchResolvedTemplate(baseUrl, env, templateId, accent) {
     headers['x-vercel-set-bypass-cookie'] = 'samesitenone'
   }
   try {
-    const r = await fetch(url, { headers })
+    // redirect:'manual' stops Node's fetch from following the SSO
+    // redirect loop when the bypass header doesn't match Vercel's
+    // expected token — we'd rather error fast with the real response
+    // code than burn 20 redirects and bail with "redirect count
+    // exceeded". A 308/307 response here means the bypass failed.
+    const r = await fetch(url, { headers, redirect: 'manual' })
+    if (r.status >= 300 && r.status < 400) {
+      console.warn(`[studio-render] template fetch got redirect ${r.status} for ${templateId}. ` +
+        `Likely VERCEL_AUTOMATION_BYPASS_SECRET does not match Vercel's Protection Bypass token. ` +
+        `Get the token from Vercel → Settings → Deployment Protection → Protection Bypass for Automation, ` +
+        `then: fly secrets set VERCEL_AUTOMATION_BYPASS_SECRET=<token> -a scalesolo-worker`)
+      return null
+    }
     if (!r.ok) {
       console.warn(`[studio-render] template fetch returned ${r.status} for ${templateId}; overlays + SFX will be skipped.`)
       return null
