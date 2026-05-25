@@ -1118,9 +1118,28 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
         inputs.push('-i', chunkPaths[i])
       }
 
+      // Per-chunk audio is silence-padded at its tail by the duration
+      // of the xfade that follows it. Without this, acrossfade=d=X
+      // blends the LAST X seconds of voice A with the FIRST X seconds
+      // of voice B → audible voice overlap on the longer transitions
+      // (0.8s swipes, 1.2s flare). With the pad, the crossfade window
+      // blends silence-into-voice instead of voice-into-voice. Audio
+      // timeline length is preserved because the pad we add (+X) is
+      // eaten right back by the acrossfade compression (−X) at the
+      // same boundary — so audio and video stay perfectly in sync.
+      const audioLabel = (i) => {
+        if (i >= chunkPaths.length - 1) return `[${i}:a]`  // last chunk, no following xfade
+        const padDur = (boundaryPlan[i].xf || XFADE_MAP.cut_transition).duration
+        if (padDur <= 0.05) return `[${i}:a]`  // imperceptible — skip the pad
+        const pdStr = padDur.toFixed(3)
+        filter.push(`anullsrc=channel_layout=stereo:sample_rate=48000,atrim=0:${pdStr},asetpts=N/SR/TB[sil${i}]`)
+        filter.push(`[${i}:a][sil${i}]concat=n=2:v=0:a=1[pa${i}]`)
+        return `[pa${i}]`
+      }
+
       let runningOffset = 0  // running concat time before the current xfade boundary
       let prevVideoLabel = '[0:v]'
-      let prevAudioLabel = '[0:a]'
+      let prevAudioLabel = audioLabel(0)
       for (let i = 1; i < chunkPaths.length; i++) {
         const prevDur = chunkDurations[i - 1] || 4
         // Per-boundary xfade. If this boundary's primitive has no xfade
@@ -1134,7 +1153,8 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
         const vOut = `[v${i}]`
         const aOut = `[a${i}]`
         filter.push(`${prevVideoLabel}[${i}:v]xfade=transition=${b.name}:duration=${durStr}:offset=${offsetStr}${vOut}`)
-        filter.push(`${prevAudioLabel}[${i}:a]acrossfade=d=${durStr}${aOut}`)
+        const curAudio = audioLabel(i)
+        filter.push(`${prevAudioLabel}${curAudio}acrossfade=d=${durStr}${aOut}`)
         prevVideoLabel = vOut
         prevAudioLabel = aOut
       }

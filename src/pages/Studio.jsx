@@ -1098,7 +1098,7 @@ function StudioVideoEditor({ videoId }) {
                   graphics are forced on every render — those toggles
                   are gone from the editor. */}
               <TemplateSelector video={video} onApplied={(updated) => setVideo(updated || video)} />
-              <SegmentList video={video} />
+              <SegmentList video={video} manualMode={manualMode} />
               <StudioChat videoId={video.id} />
             </>
           )}
@@ -1304,7 +1304,7 @@ const HF_COMPOSITION_OPTIONS = [
 const TRANSITION_OPTIONS = ['cut', 'fade', 'crossfade', 'whip', 'zoom', 'wipe', 'dip_to_black']
 const SFX_OPTIONS = ['', 'swoosh', 'whoosh', 'ding', 'pop', 'click', 'impact', 'subtle_chime']
 
-function SegmentList({ video }) {
+function SegmentList({ video, manualMode = false }) {
   const { session } = useAuth()
   const segments = useMemo(
     () => (video.studio_segments || []).slice().sort((a, b) => a.segment_index - b.segment_index),
