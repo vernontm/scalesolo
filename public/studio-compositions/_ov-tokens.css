@@ -19,7 +19,7 @@
   --ov-font-display: 'Plus Jakarta Sans', sans-serif;
   --ov-font-mono: 'JetBrains Mono', monospace;
   --ov-font-italic-style: italic;
-  --ov-radius: 20px;
+  --ov-radius: 36px;
 }
 
 .tokens-atlas {
@@ -29,7 +29,7 @@
   --ov-font-display: 'Plus Jakarta Sans', sans-serif;
   --ov-font-mono: 'JetBrains Mono', monospace;
   --ov-font-italic-style: italic;
-  --ov-radius: 24px;
+  --ov-radius: 40px;
 }
 
 /* Stubs for future templates. Adding the class makes the token block
@@ -41,7 +41,7 @@
   --ov-font-display: 'Fraunces', serif;
   --ov-font-mono: 'JetBrains Mono', monospace;
   --ov-font-italic-style: italic;
-  --ov-radius: 16px;
+  --ov-radius: 32px;
 }
 
 .tokens-retrovhs {
@@ -51,5 +51,5 @@
   --ov-font-display: 'VT323', monospace;
   --ov-font-mono: 'VT323', monospace;
   --ov-font-italic-style: normal;
-  --ov-radius: 4px;
+  --ov-radius: 8px;
 }
