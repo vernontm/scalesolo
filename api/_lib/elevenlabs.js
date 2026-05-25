@@ -124,34 +124,49 @@ export async function synthesizeMp3(voiceId, text, opts = {}) {
   if (!apiKey) throw new Error('ELEVENLABS_API_KEY not configured')
   if (!voiceId) throw new Error('voiceId required')
   if (!text) throw new Error('text required')
-  const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`, {
-    method: 'POST',
-    headers: {
-      'xi-api-key': apiKey,
-      'Accept': 'audio/mpeg',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      text,
-      model_id: opts.model_id || 'eleven_turbo_v2_5',
-      // Pin the language so the model doesn't auto-detect per chunk
-      // and drift mid-script (we've seen English avatars flip to
-      // Spanish on ambiguous tokens like brand names + numbers).
-      // BCP-47 ('en', 'es', 'fr', etc). Caller passes whatever the
-      // avatar has stored on voice_language.
-      ...(opts.language_code ? { language_code: String(opts.language_code).slice(0, 8) } : {}),
-      voice_settings: opts.voice_settings || {
-        stability: 0.5,
-        similarity_boost: 0.85,
-        style: 0.2,
-        // 0.95× slight slow-down reads more naturally on long-form
-        // voiceover than the 1.0× default — copy that's already tight
-        // sounds rushed at full speed. ElevenLabs supports 0.7–1.2.
-        speed: 0.95,
-        use_speaker_boost: true,
+  // Per-request 60s timeout via AbortController. Without this,
+  // ElevenLabs hangs would burn the whole 300s Vercel budget and leave
+  // siblings stranded "pending". 60s is generous — most synths land
+  // in 5-15s; anything over 60s is almost certainly a stuck connection.
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 60_000)
+  let r
+  try {
+    r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'xi-api-key': apiKey,
+        'Accept': 'audio/mpeg',
+        'Content-Type': 'application/json',
       },
-    }),
-  })
+      body: JSON.stringify({
+        text,
+        model_id: opts.model_id || 'eleven_turbo_v2_5',
+        // Pin the language so the model doesn't auto-detect per chunk
+        // and drift mid-script (we've seen English avatars flip to
+        // Spanish on ambiguous tokens like brand names + numbers).
+        // BCP-47 ('en', 'es', 'fr', etc). Caller passes whatever the
+        // avatar has stored on voice_language.
+        ...(opts.language_code ? { language_code: String(opts.language_code).slice(0, 8) } : {}),
+        voice_settings: opts.voice_settings || {
+          stability: 0.5,
+          similarity_boost: 0.85,
+          style: 0.2,
+          // 0.95× slight slow-down reads more naturally on long-form
+          // voiceover than the 1.0× default — copy that's already tight
+          // sounds rushed at full speed. ElevenLabs supports 0.7–1.2.
+          speed: 0.95,
+          use_speaker_boost: true,
+        },
+      }),
+    })
+  } catch (e) {
+    if (e?.name === 'AbortError') throw new Error('ElevenLabs request timed out after 60s')
+    throw e
+  } finally {
+    clearTimeout(timeout)
+  }
   if (!r.ok) {
     let detail = ''
     try { detail = (await r.text())?.slice(0, 500) } catch {}

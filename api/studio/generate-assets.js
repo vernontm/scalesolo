@@ -111,11 +111,25 @@ async function dispatchImage(segment, apiKey, aspectRatio) {
       num_images: 1,
     },
   }
-  const submit = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
+  // 30s timeout — Kie just queues the task; the actual image gen runs
+  // async and we poll it separately. The submit call should land in
+  // 1-3s; anything over 30s means Kie is wedged.
+  const kieController = new AbortController()
+  const kieTimeout = setTimeout(() => kieController.abort(), 30_000)
+  let submit
+  try {
+    submit = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
+      method: 'POST',
+      signal: kieController.signal,
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  } catch (e) {
+    if (e?.name === 'AbortError') throw new Error('Kie.ai submit timed out after 30s')
+    throw e
+  } finally {
+    clearTimeout(kieTimeout)
+  }
   const text = await submit.text()
   let respBody = {}
   try { respBody = JSON.parse(text) } catch { respBody = { raw: text } }
@@ -435,9 +449,12 @@ export default async function handler(req, res) {
     }
 
     // Fan out per-segment work. Each call has its own try/catch inside; one
-    // failure doesn't block siblings. Concurrency-cap at 6 in flight to keep
-    // ElevenLabs from rate-limiting on a 30-segment video.
-    const CONCURRENCY = 6
+    // failure doesn't block siblings. Concurrency cap dropped from 6 → 4 —
+    // 6 parallel ElevenLabs streams was causing the rate-limit queue to
+    // serialize requests behind the scenes, surfacing as "stuck pending"
+    // segments after 300s. With 4 in flight, the API responds smoothly
+    // and the orchestrator finishes within budget on 10-segment videos.
+    const CONCURRENCY = 4
     const queue = segments.slice()
     const running = []
     const runNext = () => {
