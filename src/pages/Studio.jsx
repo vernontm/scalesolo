@@ -862,14 +862,12 @@ function StudioVideoEditor({ videoId }) {
 
           {(['mapped', 'editing', 'rendering', 'rendered'].includes(video.status)) && (
             <>
+              {/* Template selector now owns: template pick + captions
+                  toggle. Both apply with a single "Use this template"
+                  button + re-render. Overlays + auto-fit motion-
+                  graphics are forced on every render — those toggles
+                  are gone from the editor. */}
               <TemplateSelector video={video} onApplied={(updated) => setVideo(updated || video)} />
-              <CaptionsToggle video={video} onChanged={(updated) => setVideo(updated || video)} />
-              {/* Overlays + auto-fit motion-graphics are forced on
-                  every render now — the toggles were redundant. The
-                  underlying columns (overlays_enabled,
-                  motion_graphics_enabled) stay in the DB so a future
-                  admin tool can flip them if needed, but the editor
-                  no longer surfaces them. */}
               <SegmentList video={video} />
               <StudioChat videoId={video.id} />
             </>
@@ -1435,11 +1433,17 @@ function MotionGraphicsToggle({ video, onChanged }) {
   )
 }
 
+// Visual template panel — phase-2 layout per the Scale Solo Updates PDF.
+// Scrollable list of template cards on the left, live preview on the
+// right, single "Use this template" button at the bottom. Brand color
+// is no longer a picker here (synced from brand profile). Captions
+// toggle moved into this panel so all visual settings live in one
+// place.
 function TemplateSelector({ video, onApplied }) {
   const { session } = useAuth()
   const [templates, setTemplates] = useState([])
   const [templateId, setTemplateId] = useState(video.template_id || 'sleek')
-  const [brandColor, setBrandColor] = useState(video.brand_color || '')
+  const [captionsOn, setCaptionsOn] = useState(video.captions_enabled !== false)
   const [busy, setBusy] = useState(false)
 
   // Load the template list on mount.
@@ -1447,76 +1451,77 @@ function TemplateSelector({ video, onApplied }) {
     if (!session?.access_token) return
     authedFetch('/api/studio/templates', session.access_token)
       .then((r) => r.ok ? r.json() : { templates: [] })
-      .then((b) => {
-        const list = b.templates || []
-        setTemplates(list)
-        // If the video doesn't have a brand_color stored, seed from
-        // the selected template's accent so the preview iframe shows
-        // something meaningful.
-        if (!brandColor) {
-          const cur = list.find((t) => t.id === (video.template_id || 'sleek'))
-          if (cur?.primary_accent) setBrandColor(cur.primary_accent)
-        }
-      })
+      .then((b) => setTemplates(b.templates || []))
       .catch(() => {})
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.access_token])
 
-  // Resync local state when the video row changes (e.g. after onApplied).
-  useEffect(() => {
-    setTemplateId(video.template_id || 'sleek')
-    if (video.brand_color) setBrandColor(video.brand_color)
-  }, [video.template_id, video.brand_color])
+  // Resync when the video row mutates from Realtime / re-render.
+  useEffect(() => { setTemplateId(video.template_id || 'sleek') }, [video.template_id])
+  useEffect(() => { setCaptionsOn(video.captions_enabled !== false) }, [video.captions_enabled])
 
   const selected = templates.find((t) => t.id === templateId)
   const savedTemplate = video.template_id || 'sleek'
-  const savedColor = video.brand_color || (templates.find((t) => t.id === savedTemplate)?.primary_accent ?? '')
-  const dirty = templateId !== savedTemplate || (brandColor || '') !== (savedColor || '')
+  const savedCaptions = video.captions_enabled !== false
+  const dirty = templateId !== savedTemplate || captionsOn !== savedCaptions
 
-  // Preview iframe vars. Cascade the chosen brand color into every
-  // {accent}-shaped value the composition reads.
+  // Preview iframe vars. Cascade the brand profile's accent (already
+  // baked into the template by the server-side resolver) so the
+  // composition shows the correct color without a separate picker.
   const previewVars = useMemo(() => {
     if (!selected?.preview) return null
     const vars = { ...(selected.preview.variables || {}) }
-    const accent = brandColor || selected.primary_accent || '#e3151e'
+    const accent = selected.primary_accent || '#e3151e'
     for (const k of Object.keys(vars)) {
       if (typeof vars[k] === 'string' && vars[k] === '{accent}') vars[k] = accent
     }
     vars.accent_color = accent
     return vars
-  }, [selected?.preview, brandColor])
+  }, [selected?.preview, selected?.primary_accent])
 
   const apply = async () => {
     if (!session?.access_token || busy || !dirty) return
     setBusy(true)
     try {
-      // Step 1 — patch template + cascade color to motion segments.
-      const r1 = await authedFetch('/api/studio/apply-template', session.access_token, {
-        method: 'POST',
-        body: JSON.stringify({
-          studio_video_id: video.id,
-          template_id: templateId,
-          brand_color: brandColor || null,
-          deep: false,
-        }),
-      })
-      const b1 = await r1.json().catch(() => ({}))
-      if (!r1.ok) throw new Error(b1.error || 'Could not apply template')
+      // Patch template + captions toggle in one round-trip when both
+      // changed, OR two parallel round-trips when only one did.
+      const patches = []
+      if (templateId !== savedTemplate) {
+        patches.push(authedFetch('/api/studio/apply-template', session.access_token, {
+          method: 'POST',
+          body: JSON.stringify({
+            studio_video_id: video.id,
+            template_id: templateId,
+            deep: false,
+          }),
+        }))
+      }
+      if (captionsOn !== savedCaptions) {
+        patches.push(authedFetch(`/api/studio/videos?id=${video.id}`, session.access_token, {
+          method: 'PATCH',
+          body: { captions_enabled: captionsOn },
+        }))
+      }
+      const results = await Promise.all(patches)
+      for (const r of results) {
+        if (!r.ok) {
+          const b = await r.json().catch(() => ({}))
+          throw new Error(b.error || 'Could not apply changes')
+        }
+      }
 
-      // Step 2 — kick off the final bake immediately. Asset URLs are
-      // preserved through the shallow apply, so this is essentially a
-      // free re-render: just ffmpeg pulling existing audio/avatar/
-      // image bytes from Supabase storage with the new HyperFrames
-      // CSS vars baked into the motion segments.
+      // Kick off the final bake. Asset URLs are preserved through the
+      // shallow apply, so this is essentially a free re-render: just
+      // ffmpeg pulling existing audio/avatar/image bytes from Supabase
+      // with the new HyperFrames CSS vars + caption toggle baked in.
       const r2 = await authedFetch('/api/studio/render-final', session.access_token, {
         method: 'POST',
         body: JSON.stringify({ studio_video_id: video.id }),
       })
       const b2 = await r2.json().catch(() => ({}))
       if (!r2.ok) throw new Error(b2.error || 'Re-render failed')
-      toast({ message: `Applied ${selected?.name || templateId}. New render is ready.`, kind: 'success' })
+      toast({ message: `Applied ${selected?.name || templateId}. New render is on the way.`, kind: 'success' })
 
-      // Refresh the video row in the parent.
+      // Refresh the parent's video row.
       const r3 = await authedFetch(`/api/studio/videos?id=${video.id}`, session.access_token)
       const b3 = await r3.json().catch(() => ({}))
       onApplied?.(b3?.video)
@@ -1529,95 +1534,74 @@ function TemplateSelector({ video, onApplied }) {
 
   if (templates.length === 0) return null
 
-  const aspect = video.aspect_ratio === '9:16' ? '9 / 16'
-    : video.aspect_ratio === '1:1' ? '1 / 1'
-    : '16 / 9'
-
   return (
-    <div className="card" style={{ marginBottom: 16, padding: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
-        {/* Left column: dropdown + color picker + apply button */}
-        <div style={{ flex: '1 1 280px', minWidth: 240, display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>
-              Visual template
-            </div>
-            <select
-              className="input"
-              value={templateId}
-              onChange={(e) => {
-                const next = e.target.value
-                setTemplateId(next)
-                const t = templates.find((x) => x.id === next)
-                if (t?.primary_accent) setBrandColor(t.primary_accent)
-              }}
-              disabled={busy}
-              style={{ width: '100%', fontWeight: 700 }}
-            >
-              {templates.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}{t.id === savedTemplate ? ' · currently used' : ''}
-                </option>
-              ))}
-            </select>
-            {selected?.description && (
-              <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6, lineHeight: 1.4 }}>
-                {selected.description}
-              </div>
-            )}
+    <div className="card" style={{ marginBottom: 16, padding: 0, overflow: 'hidden' }}>
+      <div style={{
+        display: 'grid',
+        // Left = scrollable list. Right = bigger preview + caption +
+        // apply button. minmax keeps the list at a usable width while
+        // letting the preview fill remaining space.
+        gridTemplateColumns: 'minmax(220px, 280px) 1fr',
+      }}>
+        {/* Left: scrollable template list */}
+        <div style={{
+          borderRight: '1px solid var(--border)',
+          maxHeight: 420, overflowY: 'auto',
+          padding: 12,
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 10 }}>
+            Visual template
           </div>
-
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>
-              Brand color
-            </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <input
-                type="color"
-                value={brandColor || selected?.primary_accent || '#e3151e'}
-                onChange={(e) => setBrandColor(e.target.value)}
-                disabled={busy}
-                style={{ width: 44, height: 32, border: '1px solid var(--border)', borderRadius: 6, background: 'transparent', padding: 0, cursor: 'pointer' }}
-              />
-              <input
-                type="text"
-                className="input"
-                value={brandColor || selected?.primary_accent || '#e3151e'}
-                onChange={(e) => setBrandColor(e.target.value)}
-                disabled={busy}
-                style={{ flex: 1, fontFamily: 'ui-monospace, monospace', fontSize: 12 }}
-                maxLength={9}
-              />
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-              Cascades into every motion graphic in the video.
-            </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {templates.map((t) => {
+              const isPicked = t.id === templateId
+              const isSaved = t.id === savedTemplate
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => !busy && setTemplateId(t.id)}
+                  disabled={busy}
+                  style={{
+                    textAlign: 'left',
+                    padding: '12px 14px',
+                    border: `1px solid ${isPicked ? 'var(--red)' : 'var(--border)'}`,
+                    borderRadius: 10,
+                    background: isPicked ? 'rgba(239,68,68,0.10)' : 'var(--surface-2)',
+                    cursor: busy ? 'wait' : 'pointer',
+                    transition: 'border-color 0.15s, background 0.15s',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                    <span style={{
+                      width: 12, height: 12, borderRadius: 3,
+                      background: t.primary_accent || '#e3151e',
+                      boxShadow: `0 0 8px ${t.primary_accent || '#e3151e'}66`,
+                    }} />
+                    <strong style={{ fontSize: 13, color: 'var(--text)' }}>{t.name}</strong>
+                    {isSaved && (
+                      <span style={{
+                        fontSize: 9.5, fontWeight: 700, color: 'var(--muted)',
+                        letterSpacing: '0.08em', textTransform: 'uppercase',
+                        marginLeft: 'auto',
+                      }}>In use</span>
+                    )}
+                  </div>
+                  {t.description && (
+                    <div style={{ fontSize: 11.5, color: 'var(--muted)', lineHeight: 1.4 }}>
+                      {t.description}
+                    </div>
+                  )}
+                </button>
+              )
+            })}
           </div>
-
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={!dirty || busy}
-            onClick={apply}
-            style={{ fontSize: 13, padding: '10px 16px' }}
-            title={dirty
-              ? `Apply ${selected?.name || templateId} and re-render the final MP4 (avatar/voice/B-roll assets are reused — no extra cost).`
-              : 'Pick a different template or color first.'}
-          >
-            {busy ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
-            {busy ? 'Applying + re-rendering…' : 'Use this template'}
-          </button>
-          {!dirty && (
-            <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-              No changes. Pick a different template or brand color to enable.
-            </div>
-          )}
         </div>
 
-        {/* Right column: live preview iframe */}
-        <div style={{ flex: '2 1 360px', minWidth: 280 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>
-            Preview
+        {/* Right: preview + captions + apply */}
+        <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+            Preview · {selected?.name || templateId}
           </div>
           {selected?.preview?.composition_id && previewVars ? (
             <HyperFramesPreview
@@ -1628,7 +1612,7 @@ function TemplateSelector({ video, onApplied }) {
             />
           ) : (
             <div style={{
-              aspectRatio: aspect,
+              aspectRatio: video.aspect_ratio === '9:16' ? '9 / 16' : video.aspect_ratio === '1:1' ? '1 / 1' : '16 / 9',
               background: 'var(--surface-2)',
               border: '1px solid var(--border)',
               borderRadius: 8,
@@ -1640,6 +1624,51 @@ function TemplateSelector({ video, onApplied }) {
               No preview available for this template.
             </div>
           )}
+
+          {/* Captions toggle — moved here from the standalone CaptionsToggle
+              component. The single "Use this template" button below
+              applies both template change AND captions change in one bake. */}
+          <label style={{
+            display: 'inline-flex', alignItems: 'center', gap: 10,
+            cursor: busy ? 'wait' : 'pointer', userSelect: 'none',
+            padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 8,
+            background: 'var(--surface-2)',
+          }}>
+            <input
+              type="checkbox"
+              checked={captionsOn}
+              disabled={busy}
+              onChange={(e) => setCaptionsOn(e.target.checked)}
+              style={{ width: 16, height: 16 }}
+            />
+            <span style={{ fontSize: 13, fontWeight: 600 }}>
+              Captions {captionsOn ? 'on' : 'off'}
+            </span>
+            <span style={{ fontSize: 11.5, color: 'var(--muted)', marginLeft: 4 }}>
+              Word-by-word lower-third on every voiceover segment.
+            </span>
+          </label>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={!dirty || busy}
+              onClick={apply}
+              style={{ fontSize: 13, padding: '10px 18px' }}
+              title={dirty
+                ? `Apply ${selected?.name || templateId} and re-render the final MP4 (avatar/voice/B-roll assets are reused — no extra cost).`
+                : 'No changes to apply.'}
+            >
+              {busy ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
+              {busy ? 'Applying + re-rendering…' : 'Use this template'}
+            </button>
+            {!dirty && (
+              <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+                No changes. Pick a different template or flip captions to enable.
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </div>
