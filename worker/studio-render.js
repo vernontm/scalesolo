@@ -1166,6 +1166,47 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
       render_progress: progress,
     }).eq('id', studio_video_id)
 
+    // 7.5. Upsert a Library row so the rendered MP4 shows up in the
+    // user's Library tab. Idempotent: re-renders find the existing
+    // row via studio_video_id and update media_urls in place instead
+    // of creating duplicates. Errors here are non-fatal — render is
+    // already done; missing Library entry is recoverable later.
+    try {
+      const libTitle = (video.title && video.title.trim())
+        || (video.topic_prompt || '').slice(0, 80).trim()
+        || 'Untitled Studio video'
+
+      const { data: existing } = await supabase
+        .from('content_scripts')
+        .select('id')
+        .eq('studio_video_id', studio_video_id)
+        .limit(1)
+        .maybeSingle()
+
+      const libRow = {
+        profile_id: video.profile_id,
+        studio_video_id,
+        title: libTitle,
+        full_script: video.script_full_text || '',
+        media_urls: [finalUrl],
+        media_type: 'video',
+        status: 'draft',
+        generated_by: 'studio',
+        generation_prompt: (video.topic_prompt || '').slice(0, 4000) || null,
+      }
+
+      if (existing?.id) {
+        await supabase.from('content_scripts').update({
+          ...libRow,
+          updated_at: new Date().toISOString(),
+        }).eq('id', existing.id)
+      } else {
+        await supabase.from('content_scripts').insert(libRow)
+      }
+    } catch (libErr) {
+      console.warn(`[studio-render] Library upsert failed (non-fatal): ${libErr.message}`)
+    }
+
     return {
       ok: true,
       final_video_url: finalUrl,
