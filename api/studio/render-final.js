@@ -63,28 +63,44 @@ export default async function handler(req, res) {
     const workerUrl = `${WORKER_URL.replace(/\/$/, '')}/jobs/studio-render`
     const dispatchedAt = new Date().toISOString()
 
-    // Fire the request but only WAIT for the worker to acknowledge
-    // accepting it (Vercel still has to return within its budget).
-    // We use Promise.race so the worker has up to 10s to acknowledge —
-    // beyond that we assume it's running and return success.
-    const fetchPromise = fetch(workerUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(WORKER_SECRET ? { 'x-worker-secret': WORKER_SECRET } : {}),
-      },
-      body: JSON.stringify({ studio_video_id: videoId }),
-    })
-
-    // Don't await the worker's full response — kick off in background.
-    fetchPromise.then(async (workerRes) => {
-      if (!workerRes.ok) {
-        const body = await workerRes.text().catch(() => '')
-        console.warn(`[studio-render dispatch] worker returned ${workerRes.status}: ${body.slice(0, 300)}`)
+    // Send the dispatch. The worker's /jobs/studio-render handler holds
+    // the connection open for the entire bake (minutes), so we use
+    // AbortController to cut the connection after ~4s — long enough
+    // for TCP handshake + Node to start processing the body, short
+    // enough that Vercel returns inside its function budget. The
+    // worker keeps running in the background after we abort.
+    //
+    // The previous fire-and-forget pattern (fetchPromise.then(...))
+    // didn't work reliably: Vercel kills the process the moment the
+    // handler returns, which can cancel the underlying TCP connection
+    // BEFORE it's even opened. That's how the runtime log showed zero
+    // outbound calls to the Fly worker even though dispatch "succeeded".
+    const dispatchAbort = new AbortController()
+    const dispatchTimeout = setTimeout(() => dispatchAbort.abort(), 4000)
+    try {
+      await fetch(workerUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(WORKER_SECRET ? { 'x-worker-secret': WORKER_SECRET } : {}),
+        },
+        body: JSON.stringify({ studio_video_id: videoId }),
+        signal: dispatchAbort.signal,
+      })
+    } catch (err) {
+      // AbortError is the EXPECTED case — the worker is now processing
+      // the request. Any other error means dispatch genuinely failed
+      // (DNS, refused, 401 before body sent, etc.).
+      if (err.name !== 'AbortError') {
+        clearTimeout(dispatchTimeout)
+        console.warn('[studio-render dispatch] worker call failed:', err.message)
+        return res.status(502).json({
+          error: `Dispatch to worker failed: ${err.message}. Check WORKER_URL on Vercel + worker availability.`,
+        })
       }
-    }).catch((err) => {
-      console.warn('[studio-render dispatch] worker call failed:', err.message)
-    })
+    } finally {
+      clearTimeout(dispatchTimeout)
+    }
 
     // Mark the video as rendering so the UI updates immediately.
     // (The worker will overwrite this with its own status writes as
