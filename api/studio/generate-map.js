@@ -33,12 +33,16 @@ import { OVERLAY_DEFINITIONS, ALL_ZONES, isValidZoneForOrientation } from './_li
 // Keeping this allowlist server-side prevents Claude from hallucinating
 // composition ids the renderer can't honor.
 const HF_COMPOSITION_IDS = [
-  // Sleek v2 pool — four full-screen scenes.
-  'sleek-scene-headline-v1',     // any "big text" moment — titles, quotes,
-                                  // stat reveals, single-line punchlines
-  'sleek-scene-list-v1',          // enumerated lists, 3-5 items
-  'sleek-scene-claude-chat-v1',   // speaker references asking/telling Claude
-  'sleek-scene-cta-v1',           // final segment CTA only
+  // Sleek pool
+  'sleek-scene-headline-v1',
+  'sleek-scene-list-v1',
+  'sleek-scene-claude-chat-v1',
+  'sleek-scene-cta-v1',
+  // Atlas pool (indigo + purple, dot-pattern background)
+  'atlas-scene-headline-v1',
+  'atlas-scene-list-v1',
+  'atlas-scene-claude-chat-v1',
+  'atlas-scene-cta-v1',
 ]
 
 const SFX_LIBRARY = [

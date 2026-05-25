@@ -237,6 +237,15 @@ const COMPOSITION_EVENTS = {
     { event: 'end_card',      at_secs: 0.3 },
     { event: 'subscribe_cta', at_secs: 1.1 },
   ],
+  // Atlas — similar beat structure, slightly later landings since
+  // highlight_sweep takes 2s vs Sleek's 0.6s slide-up-fade.
+  'atlas-scene-headline-v1':    [{ event: 'title_hero',     at_secs: 0.6 }],
+  'atlas-scene-list-v1':        [{ event: 'chapter_change', at_secs: 0.5 }],
+  'atlas-scene-claude-chat-v1': [{ event: 'title_hero',     at_secs: 1.0 }],
+  'atlas-scene-cta-v1':         [
+    { event: 'end_card',      at_secs: 0.3 },
+    { event: 'subscribe_cta', at_secs: 1.2 },
+  ],
 }
 
 // Build the SFX cue list. Each cue is { sfx_id, file, volume, at_secs,

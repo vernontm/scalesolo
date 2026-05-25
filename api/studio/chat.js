@@ -33,9 +33,13 @@ import { OVERLAY_DEFINITIONS, ALL_ZONES, isValidZoneForOrientation } from './_li
 // Mirror the allowlists in generate-map.js so the chat can't pick a
 // composition_id / transition the renderer doesn't honor.
 const HF_COMPOSITION_IDS = [
-  // Sleek v2 — four full-screen scenes.
+  // Sleek + Atlas pools — eight compositions total. Each template's
+  // composition_pool field gates which ones Claude can pick for a
+  // given video; this allowlist is the union for downstream validation.
   'sleek-scene-headline-v1', 'sleek-scene-list-v1',
   'sleek-scene-claude-chat-v1', 'sleek-scene-cta-v1',
+  'atlas-scene-headline-v1', 'atlas-scene-list-v1',
+  'atlas-scene-claude-chat-v1', 'atlas-scene-cta-v1',
 ]
 const SEGMENT_TYPES = [
   'avatar', 'voiceover_broll', 'voiceover_motion_graphics', 'pure_motion_graphics',

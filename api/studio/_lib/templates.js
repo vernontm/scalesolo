@@ -349,8 +349,109 @@ export const SLEEK = {
   },
 }
 
+// ─── ATLAS ─────────────────────────────────────────────────────────────
+// Atlas is the second first-class template. Indigo + purple gradient,
+// dot-pattern background with an orbiting spotlight, "highlight sweep"
+// effect on accent text. Designed for vertical (9:16) but also picks
+// fine for any aspect — the scene scales to fit. Mirror structure to
+// SLEEK so the resolver, prompts, worker etc. can read it the same way.
+export const ATLAS = {
+  id: 'atlas',
+  name: 'Atlas',
+  description: 'Indigo-to-purple gradient, dot-pattern background, "highlight sweep" accents. Refined, modern, premium.',
+  when_to_use: 'Tech founder / SaaS / AI content. When you want something more "designed editorial" and less "dark cinematic."',
+  tags: ['tech', 'ai', 'modern', 'premium', 'editorial'],
+  recommended_for: ['explainers', 'product walkthroughs', 'founder content'],
+
+  background: {
+    base_color: '#0a0a0f',
+    pattern: 'dots',
+    pattern_color: 'rgba(255,255,255,0.07)',
+    pattern_motion: 'spotlight_orbit',
+    glow: { color: '{accent}', position: 'top_center', intensity: 0.18 },
+  },
+  colors: {
+    primary_accent: '#818cf8',     // indigo-soft (matches the dot bright + handle gradient start)
+    secondary_accent: '#a855f7',   // purple
+    text_primary: '#ffffff',
+    text_secondary: 'rgba(255,255,255,0.7)',
+    text_muted: 'rgba(255,255,255,0.42)',
+    surface_card: 'rgba(255,255,255,0.04)',
+    surface_border: 'rgba(255,255,255,0.08)',
+  },
+  typography: {
+    display_font: 'Plus Jakarta Sans',
+    display_weight: 800,
+    display_treatment: 'highlight_sweep',
+    body_font: 'Plus Jakarta Sans',
+    body_weight: 500,
+    mono_font: 'JetBrains Mono',
+  },
+
+  composition_pool: [
+    'atlas-scene-headline-v1',
+    'atlas-scene-list-v1',
+    'atlas-scene-claude-chat-v1',
+    'atlas-scene-cta-v1',
+  ],
+
+  // Atlas uses the same overlay set as Sleek — the renderer reads
+  // overlay_overrides per-template. Inherited from SLEEK's tokens but
+  // with the indigo accent baked in. The renderer's {accent} resolver
+  // will interpolate the user's brand color over this default.
+  overlay_pool: SLEEK.overlay_pool,
+  overlay_overrides: {
+    ...SLEEK.overlay_overrides,
+    // Re-tint chapter-marker side-strip + caption highlight in indigo
+    // so cards feel native to Atlas instead of "Sleek with a different
+    // background." The {accent} resolver handles the rest.
+  },
+
+  // Motion + sfx — same vocabulary as Sleek, slightly different feel.
+  // Highlight sweep ≈ pulse_glow. Use ux_swipe for entrance/exit so the
+  // dot-pattern transitions don't fight with a heavier whoosh.
+  motion: {
+    entrance: 'slide_up_fade',
+    exit: 'fade_out',
+    emphasis: 'pulse_glow',
+    transition: 'fade_transition',
+  },
+  sfx: {
+    density: 'medium',
+    master_volume: 0.5,
+    pack: 'default',
+    overrides: {
+      entrance: 'ux_swipe',
+      exit: 'ux_swipe',
+      transition: 'ux_zoom',
+    },
+    standalone_triggers: [
+      { event: 'title_hero',     sfx: 'ux_ding' },
+      { event: 'chapter_change', sfx: 'ux_click' },
+      { event: 'subscribe_cta',  sfx: 'ux_ding' },
+      { event: 'end_card',       sfx: 'ux_ding' },
+    ],
+  },
+
+  audio: SLEEK.audio,  // legacy block, kept for backwards compat
+  pacing: SLEEK.pacing,
+  zone_system: SLEEK.zone_system,
+  default_transition: 'fade',
+
+  preview: {
+    // The picker shows this composition in a live iframe. We reuse the
+    // actual headline composition so what you see is what bakes.
+    composition_id: 'atlas-scene-headline-v1',
+    variables: {
+      title_pre: 'Ship faster with',
+      title_highlight: 'AI as your team',
+      accent_color: '{accent}',
+    },
+  },
+}
+
 // Add more templates here as Ray finishes spec'ing them.
-export const TEMPLATES = [SLEEK]
+export const TEMPLATES = [SLEEK, ATLAS]
 export const TEMPLATE_BY_ID = Object.fromEntries(TEMPLATES.map((t) => [t.id, t]))
 
 export function getTemplate(id) {

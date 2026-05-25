@@ -1,0 +1,245 @@
+<!doctype html>
+<html
+  lang="en"
+  data-composition-id="atlas-scene-claude-chat-v1"
+  data-composition-variables='[
+    {"id":"user_message","type":"string","label":"User message","default":"Build me a CRM in React with Supabase as the backend."},
+    {"id":"claude_response","type":"string","label":"Claude response (typed word by word)","default":"I will set up a clean React + Supabase CRM with auth, contact management, and a deal pipeline. Let me start with the project structure."},
+    {"id":"url_bar","type":"string","label":"URL bar","default":"claude.ai/chat"},
+    {"id":"meta_label","type":"string","label":"Meta label","default":"Atlas"},
+    {"id":"meta_subtitle","type":"string","label":"Meta subtitle","default":"Claude"},
+    {"id":"handle","type":"string","label":"Handle","default":"raytheaiguy"},
+    {"id":"accent_color","type":"color","label":"Accent","default":"#818cf8"}
+  ]'>
+<head>
+<meta charset="UTF-8">
+<title>Atlas Scene Vertical — Claude Chat</title>
+<link rel="stylesheet" href="/studio-compositions/_shared.css">
+<style>
+  :root {
+    --bg-base: #0a0a0f;
+    --indigo: #6366f1; --indigo-soft: #818cf8;
+    --purple: #a855f7; --purple-soft: #c084fc;
+    --text-primary: #ffffff;
+    --text-secondary: rgba(255,255,255,0.7);
+    --text-muted: rgba(255,255,255,0.42);
+    --surface-card: rgba(255,255,255,0.04);
+    --surface-border: rgba(255,255,255,0.08);
+    --dot-color: rgba(255,255,255,0.07);
+    --dot-color-bright: rgba(129,140,248,0.65);
+    --claude-bg: #f5f1e8;
+    --claude-orange: #cc785c;
+    --claude-text: #2a2a2a;
+    --claude-text-muted: #6b6b6b;
+    --claude-border: rgba(0,0,0,0.08);
+    --claude-user-bg: #ebe4d4;
+  }
+  html, body { width:100%; height:100%; overflow:hidden; background:#000; margin:0; }
+  body { display:flex; align-items:center; justify-content:center; font-family:'Plus Jakarta Sans',sans-serif; }
+
+  .scene { position:relative; width:1080px; height:1920px; background: var(--bg-base); overflow:hidden; color: var(--text-primary); transform-origin:center center; }
+  @media (max-width:1080px) { .scene { transform: scale(calc(100vw / 1080)); } }
+  @media (max-height:1920px) { .scene { transform: scale(calc(100vh / 1920)); } }
+
+  .dots-base { position:absolute; inset:0; background-image: radial-gradient(circle, var(--dot-color) 1.5px, transparent 1.5px); background-size:28px 28px; pointer-events:none; z-index:1; }
+  .dots-bright {
+    position:absolute; inset:0;
+    background-image: radial-gradient(circle, var(--dot-color-bright) 1.5px, transparent 1.5px);
+    background-size:28px 28px; pointer-events:none; z-index:2;
+    -webkit-mask-image: radial-gradient(400px circle at 50% 50%, black 0%, transparent 100%);
+            mask-image: radial-gradient(400px circle at 50% 50%, black 0%, transparent 100%);
+    animation: spotlight_orbit 18s ease-in-out infinite;
+  }
+  @keyframes spotlight_orbit {
+    0%   { mask-position: 0% 0%;     -webkit-mask-position: 0% 0%; }
+    20%  { mask-position: 25% -15%;  -webkit-mask-position: 25% -15%; }
+    40%  { mask-position: 35% 20%;   -webkit-mask-position: 35% 20%; }
+    60%  { mask-position: 5% 35%;    -webkit-mask-position: 5% 35%; }
+    80%  { mask-position: -25% 15%;  -webkit-mask-position: -25% 15%; }
+    100% { mask-position: 0% 0%;     -webkit-mask-position: 0% 0%; }
+  }
+  .scene::before {
+    content:''; position:absolute; top:-20%; left:-10%; right:-10%; height:70%;
+    background:
+      radial-gradient(ellipse at 30% 40%, rgba(99,102,241,0.18) 0%, transparent 55%),
+      radial-gradient(ellipse at 70% 30%, rgba(168,85,247,0.15) 0%, transparent 55%);
+    pointer-events:none; z-index:3;
+    filter: blur(40px);
+  }
+
+  .scene-meta {
+    position:absolute; top:70px; left:50%; transform:translateX(-50%); z-index:6;
+    display:flex; align-items:center; gap:14px; padding:10px 20px;
+    background: var(--surface-card); border:1px solid var(--surface-border);
+    backdrop-filter: blur(12px); border-radius:999px;
+    font-family:'JetBrains Mono', monospace; font-size:14px; color: var(--text-muted);
+    letter-spacing:0.18em; text-transform:uppercase; font-weight:500;
+  }
+  .scene-meta .dot { width:8px; height:8px; background:var(--indigo-soft); border-radius:50%; box-shadow:0 0 12px var(--indigo-soft); }
+  .scene-meta .divider { width:1px; height:12px; background:var(--surface-border); }
+
+  .scene-handle {
+    position:absolute; bottom:80px; left:50%; transform:translateX(-50%); z-index:6;
+    font-family:'JetBrains Mono', monospace; font-size:20px;
+    color: var(--text-secondary); letter-spacing:0.1em; font-weight:500;
+  }
+  .scene-handle::before {
+    content:'@';
+    background: linear-gradient(to right, var(--indigo), var(--purple));
+    -webkit-background-clip:text; background-clip:text;
+    -webkit-text-fill-color:transparent;
+    margin-right:4px; font-weight:700;
+  }
+
+  .chat-panel {
+    position:relative; z-index:4;
+    width:920px; margin: 200px auto 0;
+    background: var(--claude-bg);
+    border-radius:28px; overflow:hidden;
+    box-shadow:
+      0 30px 100px rgba(0,0,0,0.6),
+      0 0 100px rgba(129,140,248,0.2),
+      0 0 0 1px rgba(255,255,255,0.04);
+    color: var(--claude-text);
+  }
+  .chat-header {
+    display:flex; align-items:center; gap:14px;
+    padding:20px 26px;
+    background: rgba(0,0,0,0.03);
+    border-bottom: 1px solid var(--claude-border);
+  }
+  .chat-header .traffic-lights { display:flex; gap:10px; }
+  .chat-header .traffic-lights .light { width:16px; height:16px; border-radius:50%; }
+  .chat-header .traffic-lights .light.red { background:#ff5f57; }
+  .chat-header .traffic-lights .light.yellow { background:#febc2e; }
+  .chat-header .traffic-lights .light.green { background:#28c840; }
+  .chat-header .url-bar {
+    flex:1;
+    background: rgba(0,0,0,0.06);
+    border-radius:10px; padding:8px 16px;
+    font-size:16px; color: var(--claude-text-muted);
+    text-align:center; letter-spacing:0.01em;
+  }
+
+  .chat-body { padding: 60px 70px 70px; min-height: 950px; }
+
+  .message-user { display:flex; justify-content:flex-end; margin-bottom:50px; }
+  .message-user .bubble {
+    background: var(--claude-user-bg);
+    border-radius:22px; padding:22px 28px;
+    font-size:28px; line-height:1.45;
+    color: var(--claude-text);
+    max-width:640px; font-weight:400;
+    letter-spacing:-0.005em;
+  }
+
+  .message-claude { display:flex; gap:22px; align-items:flex-start; }
+  .claude-avatar {
+    flex-shrink:0;
+    width:56px; height:56px; border-radius:50%;
+    background: var(--claude-orange);
+    display:flex; align-items:center; justify-content:center;
+    box-shadow: 0 2px 8px rgba(204,120,92,0.3);
+    margin-top:4px;
+  }
+  .claude-avatar svg { width:30px; height:30px; }
+  .claude-response { flex:1; padding-top:8px; }
+  .claude-response .author { font-weight:600; font-size:19px; color: var(--claude-text); margin-bottom:16px; letter-spacing:-0.01em; }
+  .claude-response .content { font-size:28px; line-height:1.55; color: var(--claude-text); letter-spacing:-0.005em; }
+  .claude-response .content .word { display: inline-block; opacity: 0; }
+
+  .typing-cursor {
+    display:inline-block; width:11px; height:30px;
+    background: var(--claude-text);
+    margin-left:3px; vertical-align:text-bottom;
+    animation: blink_cursor 0.9s steps(1) infinite;
+  }
+  @keyframes blink_cursor { 0%, 50% { opacity:1; } 50.01%, 100% { opacity:0; } }
+</style>
+</head>
+<body>
+
+<div class="scene">
+  <div class="dots-base"></div>
+  <div class="dots-bright"></div>
+
+  <div class="scene-meta">
+    <span class="dot"></span>
+    <span id="meta-label">Atlas</span>
+    <span class="divider"></span>
+    <span id="meta-subtitle">Claude</span>
+  </div>
+  <div class="scene-handle" id="handle">raytheaiguy</div>
+
+  <div class="chat-panel">
+    <div class="chat-header">
+      <div class="traffic-lights">
+        <span class="light red"></span>
+        <span class="light yellow"></span>
+        <span class="light green"></span>
+      </div>
+      <div class="url-bar">🔒 <span id="url-bar-text">claude.ai/chat</span></div>
+    </div>
+    <div class="chat-body">
+      <div class="message-user">
+        <div class="bubble" id="user-message">Build me a CRM in React with Supabase as the backend.</div>
+      </div>
+      <div class="message-claude">
+        <div class="claude-avatar">
+          <svg viewBox="0 0 24 24" fill="white">
+            <path d="M12 2 L13 9 L20 10 L13 11 L12 18 L11 11 L4 10 L11 9 Z M12 18 L12.5 22 L11.5 22 Z"/>
+          </svg>
+        </div>
+        <div class="claude-response">
+          <div class="author">Claude</div>
+          <div class="content" id="response-content">
+            <span id="response-text"></span>
+            <span class="typing-cursor" id="typing-cursor"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script src="/studio-compositions/_runtime.js"></script>
+<script>
+  (function () {
+    const v = window.__studioVars || {}
+    if (v.user_message) document.getElementById('user-message').textContent = v.user_message
+    if (v.url_bar) document.getElementById('url-bar-text').textContent = v.url_bar
+    if (v.handle) document.getElementById('handle').textContent = v.handle
+    if (v.meta_label) document.getElementById('meta-label').textContent = v.meta_label
+    if (v.meta_subtitle) document.getElementById('meta-subtitle').textContent = v.meta_subtitle
+
+    const responseText = String(v.claude_response || "I'll set up a clean React + Supabase CRM with auth, contact management, and a deal pipeline. Let me start with the project structure.")
+    const responseEl = document.getElementById('response-text')
+    const words = responseText.trim().split(/\s+/)
+    responseEl.innerHTML = words.map((w) => `<span class="word">${w}</span>`).join(' ')
+
+    window.__hyperframes?.recordEvent?.('title_hero', 1.0)
+
+    const wordIntervalSecs = 0.07
+    const wordsRevealStart = 1.8
+    const wordsRevealEnd = wordsRevealStart + words.length * wordIntervalSecs
+
+    const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } })
+    tl.from('.chat-panel', { y: 20, opacity: 0, duration: 0.8 }, 0.2)
+      .from('.scene-meta', { opacity: 0, duration: 0.6 }, 0.5)
+      .from('.scene-handle', { opacity: 0, duration: 0.6 }, 0.7)
+      .from('.message-user', { y: 20, opacity: 0, duration: 0.5 }, 0.8)
+      .from('.claude-avatar', { opacity: 0, duration: 0.4 }, 1.4)
+      .from('.claude-response .author', { opacity: 0, duration: 0.4 }, 1.6)
+      .to('.claude-response .content .word',
+          { opacity: 1, y: 0, duration: 0.25, stagger: wordIntervalSecs },
+          wordsRevealStart)
+      .set('#typing-cursor', { display: 'none' }, wordsRevealEnd + 0.6)
+      .to({}, { duration: 1.5 })
+    gsap.set('.claude-response .content .word', { y: 4 })
+    window.studioPlay(tl)
+  })()
+</script>
+
+</body>
+</html>

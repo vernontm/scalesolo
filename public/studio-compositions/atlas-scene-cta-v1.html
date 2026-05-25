@@ -1,0 +1,211 @@
+<!doctype html>
+<html
+  lang="en"
+  data-composition-id="atlas-scene-cta-v1"
+  data-composition-variables='[
+    {"id":"cta_headline_pre","type":"string","label":"Headline (lead-in)","default":"Learn how to use"},
+    {"id":"cta_headline_highlight","type":"string","label":"Headline (highlighted)","default":"AI"},
+    {"id":"cta_subhead","type":"string","label":"Subhead","default":"Download over 100+ free guides on how to use AI and Claude."},
+    {"id":"cta_button_text","type":"string","label":"Button text","default":"Link In Description"},
+    {"id":"hero_handle","type":"string","label":"Hero handle","default":"raytheaiguy"},
+    {"id":"meta_label","type":"string","label":"Meta label","default":"Atlas"},
+    {"id":"meta_subtitle","type":"string","label":"Meta subtitle","default":"End"},
+    {"id":"accent_color","type":"color","label":"Accent","default":"#818cf8"}
+  ]'>
+<head>
+<meta charset="UTF-8">
+<title>Atlas Scene Vertical — CTA</title>
+<link rel="stylesheet" href="/studio-compositions/_shared.css">
+<style>
+  :root {
+    --bg-base: #0a0a0f;
+    --indigo: #6366f1; --indigo-soft: #818cf8;
+    --purple: #a855f7; --purple-soft: #c084fc;
+    --text-primary: #ffffff;
+    --text-secondary: rgba(255,255,255,0.7);
+    --text-muted: rgba(255,255,255,0.42);
+    --surface-card: rgba(255,255,255,0.04);
+    --surface-border: rgba(255,255,255,0.08);
+    --dot-color: rgba(255,255,255,0.07);
+    --dot-color-bright: rgba(129,140,248,0.65);
+  }
+  html, body { width:100%; height:100%; overflow:hidden; background:#000; margin:0; }
+  body { display:flex; align-items:center; justify-content:center; font-family:'Plus Jakarta Sans',sans-serif; }
+
+  .scene { position:relative; width:1080px; height:1920px; background: var(--bg-base); overflow:hidden; color: var(--text-primary); transform-origin:center center; }
+  @media (max-width:1080px) { .scene { transform: scale(calc(100vw / 1080)); } }
+  @media (max-height:1920px) { .scene { transform: scale(calc(100vh / 1920)); } }
+
+  .dots-base { position:absolute; inset:0; background-image: radial-gradient(circle, var(--dot-color) 1.5px, transparent 1.5px); background-size:28px 28px; pointer-events:none; z-index:1; }
+  .dots-bright {
+    position:absolute; inset:0;
+    background-image: radial-gradient(circle, var(--dot-color-bright) 1.5px, transparent 1.5px);
+    background-size:28px 28px; pointer-events:none; z-index:2;
+    -webkit-mask-image: radial-gradient(400px circle at 50% 50%, black 0%, transparent 100%);
+            mask-image: radial-gradient(400px circle at 50% 50%, black 0%, transparent 100%);
+    animation: spotlight_orbit 18s ease-in-out infinite;
+  }
+  @keyframes spotlight_orbit {
+    0%   { mask-position: 0% 0%;     -webkit-mask-position: 0% 0%; }
+    20%  { mask-position: 25% -15%;  -webkit-mask-position: 25% -15%; }
+    40%  { mask-position: 35% 20%;   -webkit-mask-position: 35% 20%; }
+    60%  { mask-position: 5% 35%;    -webkit-mask-position: 5% 35%; }
+    80%  { mask-position: -25% 15%;  -webkit-mask-position: -25% 15%; }
+    100% { mask-position: 0% 0%;     -webkit-mask-position: 0% 0%; }
+  }
+  .scene::before {
+    content:''; position:absolute; top:-20%; left:-10%; right:-10%; height:70%;
+    background:
+      radial-gradient(ellipse at 30% 40%, rgba(99,102,241,0.18) 0%, transparent 55%),
+      radial-gradient(ellipse at 70% 30%, rgba(168,85,247,0.15) 0%, transparent 55%);
+    pointer-events:none; z-index:3;
+    filter: blur(40px);
+  }
+
+  .scene-meta {
+    position:absolute; top:70px; left:50%; transform:translateX(-50%); z-index:6;
+    display:flex; align-items:center; gap:14px; padding:10px 20px;
+    background: var(--surface-card); border:1px solid var(--surface-border);
+    backdrop-filter: blur(12px); border-radius:999px;
+    font-family:'JetBrains Mono', monospace;
+    font-size:14px; color: var(--text-muted);
+    letter-spacing:0.18em; text-transform:uppercase; font-weight:500;
+  }
+  .scene-meta .dot { width:8px; height:8px; background:var(--indigo-soft); border-radius:50%; box-shadow:0 0 12px var(--indigo-soft); }
+  .scene-meta .divider { width:1px; height:12px; background:var(--surface-border); }
+
+  .hero-handle {
+    position:absolute; bottom:80px; left:50%; transform:translateX(-50%); z-index:6;
+    font-family:'JetBrains Mono', monospace;
+    font-size:22px; color: var(--text-primary);
+    letter-spacing:0.15em; font-weight:600;
+  }
+  .hero-handle::before {
+    content:'@';
+    background: linear-gradient(to right, var(--indigo), var(--purple));
+    -webkit-background-clip:text; background-clip:text;
+    -webkit-text-fill-color:transparent;
+    margin-right:4px; font-weight:700;
+  }
+
+  .cta-block {
+    position:relative; z-index:7;
+    width:100%; height:100%;
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:center;
+    text-align:center; padding:0 80px;
+  }
+  .cta-headline {
+    font-family:'Plus Jakarta Sans', sans-serif;
+    font-weight:800; font-size:110px;
+    line-height:1.02; letter-spacing:-0.035em;
+    margin-bottom:36px; max-width:920px;
+  }
+  .cta-headline .highlight {
+    position:relative; display:inline-block;
+    padding:0 14px 6px; border-radius:12px;
+    background-image: linear-gradient(to right, var(--indigo) 0%, var(--purple) 100%);
+    background-repeat:no-repeat; background-position:left center;
+    background-size:0% 100%;
+    animation: highlight_sweep 2000ms ease-out 800ms forwards;
+  }
+  @keyframes highlight_sweep {
+    0%   { background-size:0% 100%; box-shadow: 0 0 0 rgba(129,140,248,0); }
+    100% { background-size:100% 100%; box-shadow: 0 0 60px rgba(129,140,248,0.35); }
+  }
+  .cta-subhead {
+    font-family:'Plus Jakarta Sans', sans-serif;
+    font-weight:500; font-size:30px;
+    line-height:1.4; color: var(--text-secondary);
+    max-width:800px; margin-bottom:80px;
+    letter-spacing:-0.005em;
+  }
+  .cta-button {
+    display:inline-flex; align-items:center; gap:20px;
+    padding:32px 56px;
+    background: linear-gradient(135deg, var(--indigo) 0%, var(--purple) 100%);
+    color:#ffffff;
+    font-family:'Plus Jakarta Sans', sans-serif;
+    font-weight:700; font-size:32px;
+    letter-spacing:-0.01em;
+    border-radius:20px;
+    text-decoration:none;
+    box-shadow:
+      0 16px 50px rgba(129,140,248,0.5),
+      0 0 100px rgba(168,85,247,0.35),
+      inset 0 1px 0 rgba(255,255,255,0.2);
+    border: 1px solid rgba(255,255,255,0.12);
+    position:relative;
+    animation: button_breathe 4000ms ease-in-out infinite;
+  }
+  .cta-button .icon { width:36px; height:36px; display:flex; align-items:center; justify-content:center; animation: arrow_bounce 2000ms ease-in-out infinite; }
+  .cta-button .icon svg { width:100%; height:100%; }
+  @keyframes button_breathe {
+    0%, 100% { box-shadow: 0 16px 50px rgba(129,140,248,0.5), 0 0 100px rgba(168,85,247,0.35), inset 0 1px 0 rgba(255,255,255,0.2); }
+    50%      { box-shadow: 0 20px 60px rgba(129,140,248,0.7), 0 0 130px rgba(168,85,247,0.5), inset 0 1px 0 rgba(255,255,255,0.25); }
+  }
+  @keyframes arrow_bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(6px); } }
+</style>
+</head>
+<body>
+
+<div class="scene">
+  <div class="dots-base"></div>
+  <div class="dots-bright"></div>
+
+  <div class="scene-meta">
+    <span class="dot"></span>
+    <span id="meta-label">Atlas</span>
+    <span class="divider"></span>
+    <span id="meta-subtitle">End</span>
+  </div>
+
+  <div class="cta-block">
+    <h2 class="cta-headline">
+      <span id="headline-pre">Learn how to use</span><br>
+      <span class="highlight" id="headline-highlight">AI</span>
+    </h2>
+    <p class="cta-subhead" id="subhead">Download over 100+ free guides on how to use AI and Claude.</p>
+    <a class="cta-button" href="#" id="cta-button">
+      <span class="icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"/>
+          <polyline points="19 12 12 19 5 12"/>
+        </svg>
+      </span>
+      <span id="button-text">Link In Description</span>
+    </a>
+  </div>
+
+  <div class="hero-handle" id="hero-handle">raytheaiguy</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script src="/studio-compositions/_runtime.js"></script>
+<script>
+  (function () {
+    const v = window.__studioVars || {}
+    if (v.cta_headline_pre != null) document.getElementById('headline-pre').textContent = v.cta_headline_pre
+    if (v.cta_headline_highlight != null) document.getElementById('headline-highlight').textContent = v.cta_headline_highlight
+    if (v.cta_subhead != null) document.getElementById('subhead').textContent = v.cta_subhead
+    if (v.cta_button_text != null) document.getElementById('button-text').textContent = v.cta_button_text
+    if (v.hero_handle) document.getElementById('hero-handle').textContent = v.hero_handle
+    if (v.meta_label) document.getElementById('meta-label').textContent = v.meta_label
+    if (v.meta_subtitle) document.getElementById('meta-subtitle').textContent = v.meta_subtitle
+
+    window.__hyperframes?.recordEvent?.('end_card', 0.3)
+    window.__hyperframes?.recordEvent?.('subscribe_cta', 1.2)
+
+    const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } })
+    tl.from('.cta-headline',          { y: 20, opacity: 0, duration: 0.8 }, 0.2)
+      .from('.cta-subhead',           { y: 20, opacity: 0, duration: 0.7 }, 0.8)
+      .from('.cta-button',            { scale: 0.85, opacity: 0, duration: 0.7, ease: 'back.out(1.5)' }, 1.2)
+      .from('.hero-handle',           { y: 20, opacity: 0, duration: 0.7 }, 1.5)
+      .from('.scene-meta',            { opacity: 0, duration: 0.6 }, 1.7)
+      .to({}, { duration: 1.5 })  // hold the CTA on screen
+    window.studioPlay(tl)
+  })()
+</script>
+
+</body>
+</html>

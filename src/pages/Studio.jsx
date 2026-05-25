@@ -3102,20 +3102,14 @@ function SegmentRow({ segment, onPatch, onDelete, onRegen, onUploadAvatar, aspec
             />
           )}
 
-          {/* Motion graphics live preview + variable editor */}
+          {/* Motion graphics variable editor (preview shown at top via TemplateSelector) */}
           {isMotion && segment.hyperframes_composition_id && (
             <div style={{ marginTop: 10 }}>
-              <HyperFramesPreview
-                compositionId={segment.hyperframes_composition_id}
-                variables={segment.hyperframes_variables}
-                height={200}
-                aspectRatio={aspectRatio}
-              />
               <button
                 type="button"
                 onClick={() => setShowVarsEditor((v) => !v)}
                 className="btn-ghost"
-                style={{ fontSize: 11, padding: '4px 8px', marginTop: 6, color: 'var(--muted)' }}
+                style={{ fontSize: 11, padding: '4px 8px', color: 'var(--muted)' }}
               >
                 {showVarsEditor ? 'Hide variables' : 'Edit variables'}
               </button>
