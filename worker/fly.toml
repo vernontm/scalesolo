@@ -50,11 +50,13 @@ primary_region = 'iad'
     soft_limit = 25
 
 [[vm]]
-  # performance-4x: 4 dedicated vCPUs, 8GB RAM. Roughly 3-4x the
-  # ffmpeg throughput of shared-cpu-2x — a 52s 1080p polish drops
-  # from ~60-120s on shared to ~12-25s. Cost: ~$0.063/hr running,
-  # only billed during active jobs thanks to auto_stop_machines.
-  # 8GB headroom handles 2 concurrent encodes (each ~1.5GB) plus
-  # the node runtime without OOMing.
+  # performance-4x with 16GB RAM (was 8GB). Studio renders combine:
+  # Chrome (Puppeteer) holding pages for HF + overlay capture, ffmpeg
+  # xfade chain that loads all N chunks into the filter graph for
+  # crossfade transitions, and tmpfs-backed /tmp holding intermediate
+  # PNG sequences. 8GB had headroom for 1-2 concurrent ops but
+  # multi-segment bakes OOM during the final xfade-concat pass. 16GB
+  # gives ~3x headroom. Cost only applies while the machine is awake;
+  # auto_stop_machines keeps idle billing flat.
   size = 'performance-4x'
-  memory = '8gb'
+  memory = '16gb'

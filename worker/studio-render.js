@@ -1009,7 +1009,18 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
       zoom_in:         { name: 'zoomin',    duration: 0.6 },
       dip_to_black:    { name: 'fadeblack', duration: 1.0 },
     }
-    const xf = XFADE_MAP[transitionPrim]  // SFX step below reads this for cue offset compensation
+    // Cap xfade at 20 chunks. Each input in an xfade chain holds a
+    // decoded frame buffer for the crossfade window, and memory grows
+    // with N. Past ~20 we OOM during the final concat pass on
+    // performance-4x. Beyond the cap fall back to hard-cut concat so
+    // the bake completes. Lossy trade-off — long videos lose the soft
+    // fade between segments — but completion beats prettiness.
+    const XFADE_CHUNK_LIMIT = 20
+    let xf = XFADE_MAP[transitionPrim]
+    if (xf && chunkPaths.length > XFADE_CHUNK_LIMIT) {
+      console.warn(`[studio-render] ${chunkPaths.length} chunks exceeds xfade limit (${XFADE_CHUNK_LIMIT}); falling back to hard-cut concat.`)
+      xf = null
+    }
 
     if (xf && chunkPaths.length >= 2) {
       // xfade chain. Each step blends current intermediate output with
