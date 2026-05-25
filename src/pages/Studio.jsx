@@ -835,9 +835,34 @@ function Empty({ msg }) {
 // updates flow into the table without a refetch, and renders the
 // editable video map. While status='mapping' a loading card replaces the
 // table (segments don't exist yet). Once mapped, the table is live.
+// Read the user's studio_manual_mode pref. Defaults to isAdmin so
+// admins (testing the full pipeline) see the power-user UI by default
+// while regular users see the straight-through generation flow.
+function useStudioManualMode() {
+  const { session, isAdmin } = useAuth()
+  const [pref, setPref] = useState(null)  // null = still loading
+  useEffect(() => {
+    if (!session?.access_token) return
+    let cancelled = false
+    fetch('/api/notifications?action=prefs', {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    })
+      .then((r) => r.json())
+      .then((b) => { if (!cancelled) setPref(b.prefs?.studio_manual_mode) })
+      .catch(() => { if (!cancelled) setPref(undefined) })
+    return () => { cancelled = true }
+  }, [session?.access_token])
+  // Explicit true/false in prefs wins; otherwise fall back to admin
+  // (treat in-flight load as "use the default" to avoid a flicker).
+  if (pref === true) return true
+  if (pref === false) return false
+  return isAdmin
+}
+
 function StudioVideoEditor({ videoId }) {
   const { session } = useAuth()
   const navigate = useNavigate()
+  const manualMode = useStudioManualMode()
   const [video, setVideo] = useState(null)
   const [error, setError] = useState(null)
 
@@ -1040,6 +1065,7 @@ function StudioVideoEditor({ videoId }) {
               approvedCount={(video.studio_segments || []).filter((s) => s.approved).length}
               totalCount={(video.studio_segments || []).length}
               segments={(video.studio_segments || []).slice().sort((a, b) => a.segment_index - b.segment_index)}
+              manualMode={manualMode}
             />
           )}
 
@@ -1400,6 +1426,7 @@ function SegmentList({ video }) {
             // simplest signal "yes this row supports upload".
             onUploadAvatar={() => { /* realtime handles refresh */ }}
             aspectRatio={video.aspect_ratio}
+            manualMode={manualMode}
           />
         ))}
       </div>
@@ -2569,7 +2596,7 @@ function DownloadAllVoicesButton({ segments }) {
   )
 }
 
-function StickyActionBar({ video, approvedCount, totalCount, segments }) {
+function StickyActionBar({ video, approvedCount, totalCount, segments, manualMode = false }) {
   const { session } = useAuth()
   const [busy, setBusy] = useState(false)
   const [showRegenOptions, setShowRegenOptions] = useState(false)
@@ -2725,8 +2752,10 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
   // shown in the ready-for-assets phase. Returns null when both are
   // checked (= generate everything, no filter) or an array filter
   // otherwise. Returns false when neither box is checked, which the
-  // dispatcher uses to block the click.
+  // dispatcher uses to block the click. When manualMode is OFF the
+  // checkboxes are hidden entirely — always generate everything.
   const onlyTypesFromCheckboxes = () => {
+    if (!manualMode) return null
     if (!genElse && !genAvatar) return false
     if (genElse && genAvatar) return null
     if (genAvatar) return ['avatar']
@@ -2851,11 +2880,13 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
           </>
         )}
       </div>
-      {/* Two-checkbox asset-gen control. Default OFF for avatar so
-          users can export the voice tracks first and render avatars
-          on their own platform (HeyGen, DID, Synthesia, RVC...) then
-          upload back via the per-segment Upload button. */}
-      {(phase === 'ready-for-assets' || phase === 'rendered-needs-assets') && (
+      {/* Two-checkbox asset-gen control — power-user only. Lets the
+          user opt out of HeyGen so they can export the voice tracks
+          and render avatars on their own platform, then upload via
+          the per-segment Upload button. Hidden when manual mode is
+          off (default for normal users) — those users get a single
+          Generate Assets button that does the whole pipeline. */}
+      {manualMode && (phase === 'ready-for-assets' || phase === 'rendered-needs-assets') && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12 }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', color: 'var(--text-soft)' }}>
             <input
@@ -2878,7 +2909,7 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
           </label>
         </div>
       )}
-      <DownloadAllVoicesButton segments={segments} />
+      {manualMode && <DownloadAllVoicesButton segments={segments} />}
       <button
         type="button"
         className="btn-primary"
@@ -3028,7 +3059,7 @@ function RegenOption({ label, checked, onChange, hint, cost, disabled }) {
 // One row of the video map. Cards are dense but legible — Studio is
 // desktop-first. Each editable field debounces text-input PATCHes and
 // fires select/checkbox PATCHes on change.
-function SegmentRow({ segment, onPatch, onDelete, onRegen, onUploadAvatar, aspectRatio }) {
+function SegmentRow({ segment, onPatch, onDelete, onRegen, onUploadAvatar, aspectRatio, manualMode = false }) {
   const isAvatar = segment.segment_type === 'avatar'
   const isBroll = segment.segment_type === 'voiceover_broll'
   const isMotion = segment.segment_type === 'voiceover_motion_graphics' || segment.segment_type === 'pure_motion_graphics'
@@ -3223,18 +3254,20 @@ function SegmentRow({ segment, onPatch, onDelete, onRegen, onUploadAvatar, aspec
               {segment.voice_url && (
                 <>
                   <audio src={segment.voice_url} controls style={{ height: 28 }} />
-                  {/* Download voice MP3 — uses the download attribute so
-                      browsers save instead of stream. Filename includes
-                      the segment index so user can match it to a row
-                      in their own editing tool. */}
-                  <a
-                    href={segment.voice_url}
-                    download={`segment-${String(segment.segment_index + 1).padStart(2, '0')}-voice.mp3`}
-                    style={{ fontSize: 11, color: 'var(--red)', fontWeight: 600 }}
-                    title="Download this segment's voice as MP3"
-                  >
-                    ↓ MP3
-                  </a>
+                  {/* Download voice MP3 — manual-mode only. Lets the
+                      user grab the audio and render avatars elsewhere
+                      with it. Hidden in default mode where everything
+                      is generated on-platform. */}
+                  {manualMode && (
+                    <a
+                      href={segment.voice_url}
+                      download={`segment-${String(segment.segment_index + 1).padStart(2, '0')}-voice.mp3`}
+                      style={{ fontSize: 11, color: 'var(--red)', fontWeight: 600 }}
+                      title="Download this segment's voice as MP3"
+                    >
+                      ↓ MP3
+                    </a>
+                  )}
                 </>
               )}
               {segment.avatar_video_url && (
@@ -3245,11 +3278,12 @@ function SegmentRow({ segment, onPatch, onDelete, onRegen, onUploadAvatar, aspec
             </div>
           )}
 
-          {/* Upload-your-own-avatar — only on avatar segments. Lets
-              users render avatars elsewhere (DID, Synthesia, own RVC
-              tool) and plug the file in here. Skips HeyGen for this
-              segment on the next bake. */}
-          {isAvatar && onUploadAvatar && (
+          {/* Upload-your-own-avatar — only on avatar segments AND only
+              in manual mode. Lets users render avatars elsewhere
+              (DID, Synthesia, own RVC tool) and plug the file in here.
+              Skips HeyGen for this segment on the next bake. Hidden in
+              default mode — those users just let HeyGen handle it. */}
+          {manualMode && isAvatar && onUploadAvatar && (
             <div style={{ marginTop: 8 }}>
               <UploadAvatarButton
                 segmentId={segment.id}

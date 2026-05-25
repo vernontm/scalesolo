@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTheme } from '../context/ThemeContext.jsx'
 import { useAuth } from '../context/AuthContext.jsx'
-import { Sun, Moon, Monitor, Bell, Download, Trash2 } from 'lucide-react'
+import { Sun, Moon, Monitor, Bell, Download, Trash2, Wand2 } from 'lucide-react'
 
 const sectionTitle = {
   fontFamily: 'var(--font-display)',
@@ -144,6 +144,84 @@ function NotificationsSection() {
   )
 }
 
+// Studio "manual mode" toggle. When ON, the Studio editor surfaces
+// power-user affordances: per-asset-class checkboxes (Voice + B-roll /
+// Avatar videos), bulk-download voice MP3s, and per-segment Upload
+// buttons for plugging externally-rendered avatar videos back in.
+// When OFF, those affordances are hidden and the editor runs the
+// straightforward end-to-end gen path. Default OFF for users, ON for
+// admins (since they're testing the full pipeline).
+function StudioManualModeSection() {
+  const { session, isAdmin } = useAuth()
+  const [prefs, setPrefs] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    if (!session?.access_token) return
+    fetch('/api/notifications?action=prefs', {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    })
+      .then((r) => r.json())
+      .then((b) => setPrefs(b.prefs || {}))
+      .catch(() => setPrefs({}))
+  }, [session?.access_token])
+
+  const updatePref = async (key, value) => {
+    if (!session?.access_token) return
+    const next = { ...(prefs || {}), [key]: value }
+    setPrefs(next); setBusy(true); setError(null)
+    try {
+      const r = await fetch('/api/notifications?action=prefs', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify(next),
+      })
+      const b = await r.json()
+      if (!r.ok) throw new Error(b.error || 'Save failed')
+    } catch (e) {
+      setError(e.message)
+      setPrefs((p) => ({ ...p, [key]: !value }))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Resolve the current value: explicit user override beats the
+  // admin default. (false explicitly set by an admin still wins.)
+  const explicit = prefs?.studio_manual_mode
+  const value = explicit === true || explicit === false ? explicit : isAdmin
+
+  return (
+    <div className="card-flat" style={{ marginBottom: 18 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <Wand2 size={13} style={{ color: 'var(--muted)' }} />
+        <div style={sectionTitle}>Studio</div>
+      </div>
+      <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 6 }}>
+        Power-user affordances for the Studio editor.
+      </div>
+      {error && <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, marginBottom: 8 }}>{error}</div>}
+      {prefs === null ? (
+        <div style={{ padding: 12, color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
+      ) : (
+        <div style={{ ...row, borderBottom: 'none' }}>
+          <div>
+            <div style={rowLabel}>Manual mode</div>
+            <div style={rowHint}>
+              Show per-class generation checkboxes (Voice + B-roll / Avatar videos),
+              bulk-download voice MP3s, and per-segment upload buttons for plugging
+              externally-rendered avatar videos back in. When off, Studio just
+              generates everything on the platform.
+            </div>
+          </div>
+          <Toggle on={value} onChange={(v) => updatePref('studio_manual_mode', v)} disabled={busy} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 function DataExportDeleteSection() {
   const { session, signOut } = useAuth()
   const [busy, setBusy] = useState(null) // 'export' | 'delete' | null
@@ -276,6 +354,7 @@ export default function Settings() {
       </div>
 
       <NotificationsSection />
+      <StudioManualModeSection />
 
       <div className="card-flat" style={{ marginBottom: 18 }}>
         <div style={sectionTitle}>Workspace</div>
