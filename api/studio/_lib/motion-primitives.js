@@ -61,16 +61,26 @@ export const EMPHASIS_PRIMITIVES = {
   blink_slow:       { duration_ms: 1200, easing: 'steps(1)',    loop: true, target: 'opacity' },
 }
 
-// ─── TRANSITION (8) ───────────────────────────────────────────────────
+// ─── TRANSITION (16) ──────────────────────────────────────────────────
 export const TRANSITION_PRIMITIVES = {
-  cut_transition:  { duration_ms: 0,    easing: 'linear' },
-  fade_transition: { duration_ms: 600,  easing: 'cubic-bezier(0.4, 0, 0.2, 1)' },
-  dip_to_black:    { duration_ms: 1000, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', phases: ['fade_out_300', 'hold_black_200', 'fade_in_500'] },
-  whip:            { duration_ms: 400,  easing: 'cubic-bezier(0.8, 0, 0.2, 1)', requires_js: true },
-  zoom_in:         { duration_ms: 600,  easing: 'cubic-bezier(0.4, 0, 0.2, 1)' },
-  wipe_right:      { duration_ms: 500,  easing: 'cubic-bezier(0.65, 0, 0.35, 1)' },
-  dissolve_slow:   { duration_ms: 1200, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' },
-  glitch_cut:      { duration_ms: 350,  easing: 'steps(1)', requires_js: true, requires_chromatic_aberration: true },
+  cut_transition:        { duration_ms: 0,    easing: 'linear' },
+  fade_transition:       { duration_ms: 600,  easing: 'cubic-bezier(0.4, 0, 0.2, 1)' },
+  dip_to_black:          { duration_ms: 1000, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', phases: ['fade_out_300', 'hold_black_200', 'fade_in_500'] },
+  whip:                  { duration_ms: 400,  easing: 'cubic-bezier(0.8, 0, 0.2, 1)', requires_js: true },
+  zoom_in:               { duration_ms: 600,  easing: 'cubic-bezier(0.4, 0, 0.2, 1)' },
+  wipe_right:            { duration_ms: 500,  easing: 'cubic-bezier(0.65, 0, 0.35, 1)' },
+  dissolve_slow:         { duration_ms: 1200, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' },
+  glitch_cut:            { duration_ms: 350,  easing: 'steps(1)', requires_js: true, requires_chromatic_aberration: true },
+  // Swipes — scene A exits one direction, scene B enters from the opposite.
+  swipe_right:           { duration_ms: 800,  easing: 'cubic-bezier(0.65, 0, 0.35, 1)' },
+  swipe_left:            { duration_ms: 800,  easing: 'cubic-bezier(0.65, 0, 0.35, 1)' },
+  swipe_up:              { duration_ms: 800,  easing: 'cubic-bezier(0.65, 0, 0.35, 1)' },
+  swipe_down:            { duration_ms: 800,  easing: 'cubic-bezier(0.65, 0, 0.35, 1)' },
+  swipe_right_fast:      { duration_ms: 500,  easing: 'cubic-bezier(0.65, 0, 0.35, 1)' },
+  swipe_left_fast:       { duration_ms: 500,  easing: 'cubic-bezier(0.65, 0, 0.35, 1)' },
+  // Cinematic warm flare — bright bloom hides the cut at peak whiteout.
+  light_flare_wipe:      { duration_ms: 1200, easing: 'cubic-bezier(0.65, 0, 0.35, 1)' },
+  light_flare_wipe_fast: { duration_ms: 600,  easing: 'cubic-bezier(0.65, 0, 0.35, 1)' },
 }
 
 // Membership sets — cheap O(1) lookup for validation.
@@ -105,6 +115,37 @@ export const SLOT_TO_REGISTRY = {
 }
 
 export const ALL_SLOTS = ['entrance', 'exit', 'emphasis', 'transition']
+
+// Default pool used to randomize transitions PER SEGMENT BOUNDARY.
+// Every video gets a deterministic but varied mix of these. Picked
+// because they cover four flavors:
+//   1. hard cut         — punctuation, no flourish
+//   2. horizontal swipe — directional, snappy
+//   3. vertical swipe   — directional, snappy
+//   4. light flare wipe — cinematic warm whiteout
+// The worker reads this list and seeds picks by (studio_video_id, idx)
+// so re-renders are stable. A template can opt out by setting
+// motion.transition_pool: [] or motion.transition_pool: false.
+export const DEFAULT_TRANSITION_POOL = [
+  'swipe_right',
+  'swipe_left',
+  'swipe_up',
+  'swipe_down',
+  'cut_transition',
+  'light_flare_wipe_fast',
+]
+
+// Deterministic pick from a transition pool. Uses a tiny string hash
+// (djb2) so re-rendering the same video produces the same transition
+// sequence. idx is the segment-boundary index (1-based: boundary between
+// segment 0 and 1 is idx=1).
+export function pickTransitionForBoundary(seed, idx, pool = DEFAULT_TRANSITION_POOL) {
+  if (!Array.isArray(pool) || pool.length === 0) return null
+  const key = `${seed || ''}:${idx}`
+  let h = 5381
+  for (let i = 0; i < key.length; i++) h = ((h * 33) ^ key.charCodeAt(i)) >>> 0
+  return pool[h % pool.length]
+}
 
 // Look up a primitive's spec by slot + id. Returns null if not found.
 export function getPrimitive(slot, id) {

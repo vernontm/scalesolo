@@ -17,6 +17,29 @@ import { spawn } from 'node:child_process'
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg'
 import puppeteer from 'puppeteer'
 
+// Mirror of DEFAULT_TRANSITION_POOL in api/studio/_lib/motion-primitives.js.
+// Worker container doesn't ship the api/ dir so we inline. Keep both in
+// sync. Six entries: hard cut, four directional swipes, and the
+// light-flare-wipe-fast warm whiteout for variety.
+const DEFAULT_TRANSITION_POOL = [
+  'swipe_right',
+  'swipe_left',
+  'swipe_up',
+  'swipe_down',
+  'cut_transition',
+  'light_flare_wipe_fast',
+]
+
+// Deterministic djb2 hash pick. Re-renders of the same video produce
+// the same transition sequence; different videos cycle different combos.
+function pickTransitionForBoundary(seed, idx, pool = DEFAULT_TRANSITION_POOL) {
+  if (!Array.isArray(pool) || pool.length === 0) return null
+  const key = `${seed || ''}:${idx}`
+  let h = 5381
+  for (let i = 0; i < key.length; i++) h = ((h * 33) ^ key.charCodeAt(i)) >>> 0
+  return pool[h % pool.length]
+}
+
 // Prefer the system-installed ffmpeg over the bundled @ffmpeg-installer
 // when available. The bundled one ships ffmpeg 4.0 from 2018 and is
 // missing critical filters (xfade, amix normalize=0, acrossfade). On
@@ -261,6 +284,11 @@ const COMPOSITION_EVENTS = {
 //   - standalone (oneshot at composition-event timing, overridden by
 //                 per-segment composition_events if the HF runtime
 //                 emitted any)
+// transitionOverlapSecs can be a number (uniform overlap across all
+// boundaries — legacy behavior) or an array where index i is the
+// overlap at the boundary BETWEEN segment i and i+1. Per-boundary mode
+// is used when the random transition pool produces a different xfade
+// duration per boundary.
 function buildSfxCues(segments, segmentDurations, sfxPlan, compositionEventLog = {}, motionPlan = null, transitionOverlapSecs = 0) {
   if (!sfxPlan || sfxPlan.density === 'off') return []
   const cues = []
@@ -363,8 +391,15 @@ function buildSfxCues(segments, segmentDurations, sfxPlan, compositionEventLog =
     // that the xfade crossfade will eat off the next segment. With
     // overlap=0 this is identity (hard-cut concat). With overlap>0
     // SFX cues for subsequent segments land at the correct visual
-    // position on the final track.
-    cursor += dur - (i < segments.length - 1 ? transitionOverlapSecs : 0)
+    // position on the final track. Supports both scalar (uniform) and
+    // array (per-boundary) overlap.
+    let boundaryOverlap = 0
+    if (i < segments.length - 1) {
+      boundaryOverlap = Array.isArray(transitionOverlapSecs)
+        ? (transitionOverlapSecs[i] || 0)
+        : transitionOverlapSecs
+    }
+    cursor += dur - boundaryOverlap
   }
   return cues
 }
@@ -1008,30 +1043,73 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
     await writeProgress()
     const finalPath = join(workdir, 'final.mp4')
 
-    const transitionPrim = resolvedTemplate?._motion_plan?.resolved?.transition?.id || 'cut_transition'
     // Map of transition primitive → { ffmpeg_xfade_name, duration_secs }.
     // Only entries listed here use xfade; everything else stays hard cut.
     const XFADE_MAP = {
-      fade_transition: { name: 'fade',      duration: 0.6 },
-      dissolve_slow:   { name: 'dissolve',  duration: 1.2 },
-      wipe_right:      { name: 'wiperight', duration: 0.5 },
-      zoom_in:         { name: 'zoomin',    duration: 0.6 },
-      dip_to_black:    { name: 'fadeblack', duration: 1.0 },
+      fade_transition:       { name: 'fade',       duration: 0.6 },
+      dissolve_slow:         { name: 'dissolve',   duration: 1.2 },
+      wipe_right:            { name: 'wiperight',  duration: 0.5 },
+      zoom_in:               { name: 'zoomin',     duration: 0.6 },
+      dip_to_black:          { name: 'fadeblack',  duration: 1.0 },
+      // Swipes — ffmpeg's xfade slide* names: "slideleft" = next slides
+      // in from the right pushing current to the left, etc. So our
+      // semantic "swipe_right" (current exits right, next enters from
+      // left) maps to ffmpeg "slideright".
+      swipe_right:           { name: 'slideright', duration: 0.8 },
+      swipe_left:            { name: 'slideleft',  duration: 0.8 },
+      swipe_up:              { name: 'slideup',    duration: 0.8 },
+      swipe_down:            { name: 'slidedown',  duration: 0.8 },
+      swipe_right_fast:      { name: 'slideright', duration: 0.5 },
+      swipe_left_fast:       { name: 'slideleft',  duration: 0.5 },
+      // Light flare wipe — fadewhite blooms to white at peak then
+      // reveals next clip. Closest ffmpeg approximation of the
+      // warm-bloom whiteout described in TRANSITION-LIGHT-FLARE-WIPE.md.
+      light_flare_wipe:      { name: 'fadewhite',  duration: 1.2 },
+      light_flare_wipe_fast: { name: 'fadewhite',  duration: 0.6 },
+      // cut_transition is special — xfade has no zero-duration mode,
+      // so we treat it as a 1-frame (~0.04s) fade. Visually
+      // indistinguishable from a hard cut, keeps the chain uniform.
+      cut_transition:        { name: 'fade',       duration: 0.04 },
     }
+
+    // ── Per-boundary transition selection ─────────────────────────────
+    // Pool defaults to DEFAULT_TRANSITION_POOL but templates can override
+    // via motion.transition_pool. Empty pool / explicit single transition
+    // (motion.transition_pool: false) → fall back to the template's
+    // resolved transition primitive used uniformly.
+    const motionBlock = resolvedTemplate?.motion || {}
+    const templatePool = motionBlock.transition_pool
+    let pool
+    if (Array.isArray(templatePool)) pool = templatePool
+    else if (templatePool === false) pool = null
+    else pool = DEFAULT_TRANSITION_POOL
+    const fallbackPrim = resolvedTemplate?._motion_plan?.resolved?.transition?.id || 'cut_transition'
+
+    // Build per-boundary plan. boundaryPlan[i] applies to the boundary
+    // BETWEEN chunkPaths[i-1] and chunkPaths[i] (i runs 1..N-1).
+    const boundaryPlan = []
+    for (let i = 1; i < chunkPaths.length; i++) {
+      const prim = (pool && pool.length)
+        ? pickTransitionForBoundary(studio_video_id, i, pool)
+        : fallbackPrim
+      boundaryPlan.push({ prim, xf: XFADE_MAP[prim] || null })
+    }
+
     // Cap xfade at 20 chunks. Each input in an xfade chain holds a
     // decoded frame buffer for the crossfade window, and memory grows
     // with N. Past ~20 we OOM during the final concat pass on
     // performance-4x. Beyond the cap fall back to hard-cut concat so
-    // the bake completes. Lossy trade-off — long videos lose the soft
-    // fade between segments — but completion beats prettiness.
+    // the bake completes.
     const XFADE_CHUNK_LIMIT = 20
-    let xf = XFADE_MAP[transitionPrim]
-    if (xf && chunkPaths.length > XFADE_CHUNK_LIMIT) {
+    const useXfadeChain = chunkPaths.length >= 2
+      && chunkPaths.length <= XFADE_CHUNK_LIMIT
+      && boundaryPlan.some((b) => b.xf)
+    if (chunkPaths.length > XFADE_CHUNK_LIMIT) {
       console.warn(`[studio-render] ${chunkPaths.length} chunks exceeds xfade limit (${XFADE_CHUNK_LIMIT}); falling back to hard-cut concat.`)
-      xf = null
     }
+    console.log(`[studio-render] transitions: ${boundaryPlan.map((b) => b.prim).join(' → ')}`)
 
-    if (xf && chunkPaths.length >= 2) {
+    if (useXfadeChain) {
       // xfade chain. Each step blends current intermediate output with
       // the next chunk, offset by (running total - duration).
       const inputs = []
@@ -1045,12 +1123,17 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
       let prevAudioLabel = '[0:a]'
       for (let i = 1; i < chunkPaths.length; i++) {
         const prevDur = chunkDurations[i - 1] || 4
-        runningOffset += prevDur - xf.duration  // start the xfade `xf.duration` BEFORE end of previous
+        // Per-boundary xfade. If this boundary's primitive has no xfade
+        // mapping (unlikely with the default pool but possible if a
+        // template injects a non-xfadeable id), fall back to the
+        // hard-cut substitute (1-frame fade).
+        const b = boundaryPlan[i - 1].xf || XFADE_MAP.cut_transition
+        runningOffset += prevDur - b.duration  // start the xfade `b.duration` BEFORE end of previous
         const offsetStr = runningOffset.toFixed(3)
-        const durStr = xf.duration.toFixed(3)
+        const durStr = b.duration.toFixed(3)
         const vOut = `[v${i}]`
         const aOut = `[a${i}]`
-        filter.push(`${prevVideoLabel}[${i}:v]xfade=transition=${xf.name}:duration=${durStr}:offset=${offsetStr}${vOut}`)
+        filter.push(`${prevVideoLabel}[${i}:v]xfade=transition=${b.name}:duration=${durStr}:offset=${offsetStr}${vOut}`)
         filter.push(`${prevAudioLabel}[${i}:a]acrossfade=d=${durStr}${aOut}`)
         prevVideoLabel = vOut
         prevAudioLabel = aOut
@@ -1124,9 +1207,12 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
           if (s._hyperframes_events?.length) eventLog[s.id] = s._hyperframes_events
         }
         const motionPlan = resolvedTemplate?._motion_plan
-        // Pass the xfade overlap (if any) so SFX cues stay aligned with
-        // the now-compressed final timeline.
-        const overlapSecs = xf ? xf.duration : 0
+        // Per-boundary xfade overlap array so SFX cues stay aligned
+        // with the now-compressed final timeline. When no xfade chain
+        // was used (hard-cut concat fallback), overlaps are all 0.
+        const overlapSecs = useXfadeChain
+          ? boundaryPlan.map((b) => (b.xf ? b.xf.duration : 0))
+          : 0
         const cues = buildSfxCues(chunkSegments, chunkDurations, sfxPlan, eventLog, motionPlan, overlapSecs)
         if (cues.length) {
           const { localPaths, missing } = await downloadSfxAssets(cues, baseUrl, bypassSecret, workdir)

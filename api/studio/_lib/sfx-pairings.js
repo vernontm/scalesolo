@@ -51,6 +51,16 @@ export const DEFAULT_PAIRINGS = {
     wipe_right:      'swoosh_mid',
     dissolve_slow:   'swell_warm',
     glitch_cut:      'glitch_long',
+    // Horizontal swipes feel mid-paced; vertical swipes read snappier.
+    swipe_right:           'swoosh_mid',
+    swipe_left:            'swoosh_mid',
+    swipe_up:              'swoosh_fast',
+    swipe_down:            'swoosh_fast',
+    swipe_right_fast:      'whip_short',
+    swipe_left_fast:       'whip_short',
+    // Light flare wipe — warm cinematic whoosh under the bloom.
+    light_flare_wipe:      'whoosh_cinematic',
+    light_flare_wipe_fast: 'swoosh_mid',
   },
 }
 
