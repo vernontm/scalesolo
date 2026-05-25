@@ -1105,6 +1105,52 @@ function SegmentList({ video }) {
     await authedFetch(`/api/studio/segments?id=${id}`, session.access_token, { method: 'DELETE' })
   }
 
+  // Per-segment regen. Wipes existing asset URLs + fires generate-assets
+  // with segment_ids filter + force=true so only this one row burns
+  // provider credits. Used by the regen button on avatar / B-roll rows.
+  const regenSegment = async (seg, types) => {
+    if (!session?.access_token) return
+    const kindLabel = types?.length === 1 ? types[0] : 'voice + asset'
+    const ok = await confirmDialog({
+      title: `Regenerate ${kindLabel} for segment ${seg.segment_index + 1}?`,
+      message: `This will re-spend provider credits on this segment. The current ${kindLabel} files will be replaced.`,
+      confirmText: 'Regenerate',
+      destructive: false,
+    })
+    if (!ok) return
+    try {
+      // Clear the columns the orchestrator looks at so it actually does
+      // the work instead of skipping the "already done" check.
+      const clear = {}
+      if (types?.includes('voice')) clear.voice_url = null
+      if (types?.includes('image')) clear.image_url = null
+      if (types?.includes('avatar')) clear.avatar_video_url = null
+      clear.status = 'pending'
+      clear.error = null
+      await authedFetch(`/api/studio/segments?id=${seg.id}`, session.access_token, {
+        method: 'PATCH', body: JSON.stringify(clear),
+      })
+
+      // Kick off generate-assets scoped to just this segment.
+      const r = await authedFetch('/api/studio/generate-assets', session.access_token, {
+        method: 'POST',
+        body: JSON.stringify({
+          studio_video_id: video.id,
+          segment_ids: [seg.id],
+          only_types: types,
+          force: true,
+        }),
+      })
+      if (!r.ok) {
+        const b = await r.json().catch(() => ({}))
+        throw new Error(b.error || 'Regen dispatch failed')
+      }
+      toast({ message: `Regenerating segment ${seg.segment_index + 1}…`, kind: 'info' })
+    } catch (e) {
+      toast({ message: e.message, kind: 'error' })
+    }
+  }
+
   const approvedCount = segments.filter((s) => s.approved).length
 
   return (
@@ -1143,6 +1189,7 @@ function SegmentList({ video }) {
             segment={s}
             onPatch={(patch) => patchSegment(s.id, patch)}
             onDelete={() => deleteSegment(s.id)}
+            onRegen={(types) => regenSegment(s, types)}
             aspectRatio={video.aspect_ratio}
           />
         ))}
@@ -2670,7 +2717,7 @@ function RegenOption({ label, checked, onChange, hint, cost, disabled }) {
 // One row of the video map. Cards are dense but legible — Studio is
 // desktop-first. Each editable field debounces text-input PATCHes and
 // fires select/checkbox PATCHes on change.
-function SegmentRow({ segment, onPatch, onDelete, aspectRatio }) {
+function SegmentRow({ segment, onPatch, onDelete, onRegen, aspectRatio }) {
   const isAvatar = segment.segment_type === 'avatar'
   const isBroll = segment.segment_type === 'voiceover_broll'
   const isMotion = segment.segment_type === 'voiceover_motion_graphics' || segment.segment_type === 'pure_motion_graphics'
@@ -2773,6 +2820,23 @@ function SegmentRow({ segment, onPatch, onDelete, aspectRatio }) {
             />
 
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+              {/* Per-segment regen — only for rows that actually have
+                  an external asset to regenerate (avatar / B-roll).
+                  Voiceover-only motion-graphics regen via the AI chat;
+                  pure-motion has nothing to regen. */}
+              {(isAvatar || isBroll) && onRegen && (
+                <button
+                  type="button"
+                  onClick={() => onRegen(isAvatar ? ['voice', 'avatar'] : ['voice', 'image'])}
+                  className="btn-ghost"
+                  style={{ padding: '4px 8px', fontSize: 11, color: 'var(--red)', fontWeight: 700 }}
+                  title={isAvatar
+                    ? 'Re-synthesize voice + re-render the HeyGen avatar video for this segment only.'
+                    : 'Re-synthesize voice + regenerate the B-roll image for this segment only.'}
+                >
+                  <RefreshCw size={11} /> Regen
+                </button>
+              )}
               <button
                 type="button"
                 onClick={onDelete}

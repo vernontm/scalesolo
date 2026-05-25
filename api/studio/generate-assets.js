@@ -286,9 +286,22 @@ export default async function handler(req, res) {
 
     // Load all approved segments. Pure motion graphics rows are included so
     // we can flip their status to 'ready' (they need no assets pre-rendered).
-    const segments = await supaFetch(
+    let segments = await supaFetch(
       `studio_segments?studio_video_id=eq.${videoId}&select=*&order=segment_index.asc&limit=500`
     )
+
+    // segment_ids: optional whitelist. When the UI fires a per-row
+    // "regenerate" button, it sends just that segment's id so the
+    // orchestrator only burns provider credits on that one. When
+    // omitted, fall through to the original behavior (work the whole
+    // video). Filter against ALL segments — the orchestrator still
+    // gets to see the targeted row + any pure-motion siblings it
+    // wants to flip to ready, but the rest are skipped.
+    const segmentIdsRaw = Array.isArray(req.body?.segment_ids) ? req.body.segment_ids : null
+    if (segmentIdsRaw?.length) {
+      const wanted = new Set(segmentIdsRaw)
+      segments = segments.filter((s) => wanted.has(s.id))
+    }
 
     // Flip parent status to 'rendering' so the UI shows progress immediately.
     await supaFetch(`studio_videos?id=eq.${videoId}`, {
