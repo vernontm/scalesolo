@@ -35,7 +35,20 @@
       "maxDuration": 15
     },
     "api/studio/generate-assets.js": {
-      "maxDuration": 300
+      "maxDuration": 300,
+      "includeFiles": "api/_lib/silence-400ms.mp3"
+    },
+    "api/voices/preview.js": {
+      "includeFiles": "api/_lib/silence-400ms.mp3"
+    },
+    "api/avatars/render.js": {
+      "includeFiles": "api/_lib/silence-400ms.mp3"
+    },
+    "api/avatars/synth-script.js": {
+      "includeFiles": "api/_lib/silence-400ms.mp3"
+    },
+    "api/avatars/photo-render.js": {
+      "includeFiles": "api/_lib/silence-400ms.mp3"
     },
     "api/studio/enrich-overlays.js": {
       "maxDuration": 120

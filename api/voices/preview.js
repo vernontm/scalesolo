@@ -80,7 +80,9 @@ export default async function handler(req, res) {
     } else {
       opts.language_code = 'en'
     }
-    const url = await synthesizeToPublicUrl(voice_id, sample, profile_id || 'previews', opts)
+    // Voice previews are one-off samples; skip the 400ms silence tail
+    // (it'd just add a dead pause to a 5-second preview).
+    const url = await synthesizeToPublicUrl(voice_id, sample, profile_id || 'previews', { ...opts, no_silence_tail: true })
     // Charge tokens for the preview synth, scaled by model. BYOK
     // previews still get charged because we're metering OUR pipeline
     // (synthesis time, storage, bandwidth) — the BYOK key is theirs,

@@ -181,11 +181,43 @@ export async function resolveByoApiKey(profileId) {
   }
 }
 
+// Pre-encoded 400ms silence — 44.1kHz mono 128kbps MP3 to match
+// ElevenLabs's default output. Read once at module load and append
+// to every synthesized clip so each voice file ends with a natural
+// pause. Solves the "ElevenLabs sometimes ends mid-breath" issue and
+// makes sentence boundaries feel less abrupt.
+let SILENCE_TAIL_BUF = null
+async function getSilenceTail() {
+  if (SILENCE_TAIL_BUF) return SILENCE_TAIL_BUF
+  try {
+    const { readFile } = await import('node:fs/promises')
+    const { fileURLToPath } = await import('node:url')
+    const { dirname, join } = await import('node:path')
+    const here = dirname(fileURLToPath(import.meta.url))
+    SILENCE_TAIL_BUF = await readFile(join(here, 'silence-400ms.mp3'))
+    return SILENCE_TAIL_BUF
+  } catch (e) {
+    // If the silence file is missing for any reason we don't want to
+    // break TTS — log a warning and return null so the caller skips
+    // padding.
+    console.warn(`[elevenlabs] silence-400ms.mp3 not found; voice clips will play un-padded: ${e?.message || e}`)
+    return null
+  }
+}
+
 // Synthesize and upload to Supabase storage. Returns a CORS-friendly public
 // URL suitable for HeyGen's audio_url. Throws on any failure.
+//
+// opts.no_silence_tail — set true to skip appending the 400ms silence
+//                        tail (e.g. voice-only previews / SDK callers
+//                        that don't want pacing applied).
 export async function synthesizeToPublicUrl(voiceId, text, profileId, opts = {}) {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) throw new Error('Supabase storage not configured')
-  const buf = await synthesizeMp3(voiceId, text, opts)
+  let buf = await synthesizeMp3(voiceId, text, opts)
+  if (!opts.no_silence_tail) {
+    const tail = await getSilenceTail()
+    if (tail) buf = Buffer.concat([buf, tail])
+  }
   const path = `${profileId || 'shared'}/tts/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`
   const upload = await fetch(
     `${SUPABASE_URL}/storage/v1/object/${TTS_BUCKET}/${encodeURI(path)}`,
