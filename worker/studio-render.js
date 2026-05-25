@@ -245,7 +245,7 @@ const COMPOSITION_EVENTS = {
 //   - standalone (oneshot at composition-event timing, overridden by
 //                 per-segment composition_events if the HF runtime
 //                 emitted any)
-function buildSfxCues(segments, segmentDurations, sfxPlan, compositionEventLog = {}, motionPlan = null) {
+function buildSfxCues(segments, segmentDurations, sfxPlan, compositionEventLog = {}, motionPlan = null, transitionOverlapSecs = 0) {
   if (!sfxPlan || sfxPlan.density === 'off') return []
   const cues = []
   let cursor = 0
@@ -343,7 +343,12 @@ function buildSfxCues(segments, segmentDurations, sfxPlan, compositionEventLog =
       })
     }
 
-    cursor += dur
+    // Advance cursor by this segment's duration, minus the overlap
+    // that the xfade crossfade will eat off the next segment. With
+    // overlap=0 this is identity (hard-cut concat). With overlap>0
+    // SFX cues for subsequent segments land at the correct visual
+    // position on the final track.
+    cursor += dur - (i < segments.length - 1 ? transitionOverlapSecs : 0)
   }
   return cues
 }
@@ -429,12 +434,23 @@ async function mixSfxIntoFinal(finalIn, finalOut, cues, localPaths, masterVolume
   }
 
   const N = mixLabels.length
-  // dropout_transition=0 prevents amix from boosting the voice when
-  // SFX cues end. normalize=0 keeps the voice at unity (otherwise amix
-  // divides everything by N, which destroys speech audibility).
-  const weights = ['4'].concat(usable.map(() => '1')).join(' ')
+  // amix on the bundled ffmpeg (older than 5.0) doesn't support
+  // normalize=0. We use weights + a post-amix volume boost to restore
+  // the voice to ~unity after amix's implicit divide-by-weight-sum.
+  //
+  // With weights "4 1 1 1...": sum = 4 + (N-1). Voice contributes
+  // 4/sum after amix → boost output by sum/4 to land voice at 1.0.
+  // SFX cues end up at (cue.volume * 1/sum * sum/4) = cue.volume/4 in
+  // the final mix — quiet enough to never duck speech, loud enough
+  // to hear.
+  const voiceWeight = 4
+  const sfxWeight = 1
+  const weightSum = voiceWeight + (N - 1) * sfxWeight
+  const outputBoost = weightSum / voiceWeight
+  const weights = [voiceWeight].concat(usable.map(() => sfxWeight)).join(' ')
   filterParts.push(
-    `${mixLabels.join('')}amix=inputs=${N}:duration=first:dropout_transition=0:normalize=0:weights=${weights}[mixed]`,
+    `${mixLabels.join('')}amix=inputs=${N}:duration=first:dropout_transition=0:weights=${weights},` +
+    `volume=${outputBoost.toFixed(3)}[mixed]`,
   )
 
   await runFFmpeg([
@@ -955,26 +971,84 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
       await writeProgress()
     }
 
-    // 5. Concat all chunks via filter_complex
+    // 5. Concat all chunks with optional crossfade between segments.
+    //
+    // For fade_transition (Sleek default — 600ms crossfade), we build
+    // an xfade chain instead of straight concat. Result: every cut
+    // between segments dissolves over 0.6s. For cut_transition (and
+    // when we can't read transition primitive), fall back to straight
+    // concat — hard cut.
     progress.stage = 'concat'
     await writeProgress()
     const finalPath = join(workdir, 'final.mp4')
-    const inputs = []
-    let filter = ''
-    for (let i = 0; i < chunkPaths.length; i++) {
-      inputs.push('-i', chunkPaths[i])
-      filter += `[${i}:v:0][${i}:a:0]`
+
+    const transitionPrim = resolvedTemplate?._motion_plan?.resolved?.transition?.id || 'cut_transition'
+    // Map of transition primitive → { ffmpeg_xfade_name, duration_secs }.
+    // Only entries listed here use xfade; everything else stays hard cut.
+    const XFADE_MAP = {
+      fade_transition: { name: 'fade',      duration: 0.6 },
+      dissolve_slow:   { name: 'dissolve',  duration: 1.2 },
+      wipe_right:      { name: 'wiperight', duration: 0.5 },
+      zoom_in:         { name: 'zoomin',    duration: 0.6 },
+      dip_to_black:    { name: 'fadeblack', duration: 1.0 },
     }
-    filter += `concat=n=${chunkPaths.length}:v=1:a=1[v][a]`
-    await runFFmpeg([
-      '-y', ...inputs,
-      '-filter_complex', filter,
-      '-map', '[v]', '-map', '[a]',
-      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
-      '-c:a', 'aac', '-b:a', '128k', '-ar', '48000',
-      '-pix_fmt', 'yuv420p',
-      '-movflags', '+faststart', finalPath,
-    ], 300_000)
+    const xf = XFADE_MAP[transitionPrim]  // SFX step below reads this for cue offset compensation
+
+    if (xf && chunkPaths.length >= 2) {
+      // xfade chain. Each step blends current intermediate output with
+      // the next chunk, offset by (running total - duration).
+      const inputs = []
+      const filter = []
+      for (let i = 0; i < chunkPaths.length; i++) {
+        inputs.push('-i', chunkPaths[i])
+      }
+
+      let runningOffset = 0  // running concat time before the current xfade boundary
+      let prevVideoLabel = '[0:v]'
+      let prevAudioLabel = '[0:a]'
+      for (let i = 1; i < chunkPaths.length; i++) {
+        const prevDur = chunkDurations[i - 1] || 4
+        runningOffset += prevDur - xf.duration  // start the xfade `xf.duration` BEFORE end of previous
+        const offsetStr = runningOffset.toFixed(3)
+        const durStr = xf.duration.toFixed(3)
+        const vOut = `[v${i}]`
+        const aOut = `[a${i}]`
+        filter.push(`${prevVideoLabel}[${i}:v]xfade=transition=${xf.name}:duration=${durStr}:offset=${offsetStr}${vOut}`)
+        filter.push(`${prevAudioLabel}[${i}:a]acrossfade=d=${durStr}${aOut}`)
+        prevVideoLabel = vOut
+        prevAudioLabel = aOut
+      }
+      // Final outputs map to the last labels
+      const finalV = prevVideoLabel
+      const finalA = prevAudioLabel
+      await runFFmpeg([
+        '-y', ...inputs,
+        '-filter_complex', filter.join(';'),
+        '-map', finalV, '-map', finalA,
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
+        '-c:a', 'aac', '-b:a', '128k', '-ar', '48000',
+        '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart', finalPath,
+      ], 600_000)
+    } else {
+      // Hard cut concat — original behavior.
+      const inputs = []
+      let filter = ''
+      for (let i = 0; i < chunkPaths.length; i++) {
+        inputs.push('-i', chunkPaths[i])
+        filter += `[${i}:v:0][${i}:a:0]`
+      }
+      filter += `concat=n=${chunkPaths.length}:v=1:a=1[v][a]`
+      await runFFmpeg([
+        '-y', ...inputs,
+        '-filter_complex', filter,
+        '-map', '[v]', '-map', '[a]',
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
+        '-c:a', 'aac', '-b:a', '128k', '-ar', '48000',
+        '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart', finalPath,
+      ], 300_000)
+    }
 
     // 5.5. SFX mix pass. Schedules entrance + transition + composition-
     // driven standalone triggers onto the final concat track. v1 skips
@@ -997,7 +1071,10 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
           if (s._hyperframes_events?.length) eventLog[s.id] = s._hyperframes_events
         }
         const motionPlan = resolvedTemplate?._motion_plan
-        const cues = buildSfxCues(chunkSegments, chunkDurations, sfxPlan, eventLog, motionPlan)
+        // Pass the xfade overlap (if any) so SFX cues stay aligned with
+        // the now-compressed final timeline.
+        const overlapSecs = xf ? xf.duration : 0
+        const cues = buildSfxCues(chunkSegments, chunkDurations, sfxPlan, eventLog, motionPlan, overlapSecs)
         if (cues.length) {
           const { localPaths, missing } = await downloadSfxAssets(cues, baseUrl, bypassSecret, workdir)
           if (missing.length) {
