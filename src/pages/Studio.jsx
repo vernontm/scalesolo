@@ -184,23 +184,19 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [avatars, setAvatars] = useState([])
-  const [voices, setVoices] = useState([])
   const [templates, setTemplates] = useState([])
+  // Slimmed-down form per PDF feedback. No title (auto-generated), no
+  // reference URL / text, no brand_color picker (synced from brand
+  // profile), no voice picker (tied to avatar), no overlays / auto-fit
+  // toggles (both always on under the hood).
   const [form, setForm] = useState({
-    title: '',
     topic_prompt: '',
-    reference_url: '',
-    reference_text: '',
-    avatar_id: '',
+    avatar_id: '',  // empty string = "Voiceover only — no avatar"
     look_id: '',
-    voice_id: '',
     target_duration_secs: 120,
     aspect_ratio: '16:9',
     template_id: 'sleek',
-    brand_color: '',
     captions_enabled: true,
-    overlays_enabled: true,
-    motion_graphics_enabled: true,
   })
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
 
@@ -214,14 +210,7 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
       .then((r) => r.ok ? r.json() : { templates: [] })
       .then((b) => {
         if (cancelled) return
-        const list = b.templates || []
-        setTemplates(list)
-        // Default brand_color to the selected template's accent so the
-        // color picker reflects what the segmentation pass will use.
-        const cur = list.find((t) => t.id === 'sleek') || list[0]
-        if (cur && !form.brand_color) {
-          setForm((f) => ({ ...f, brand_color: cur.primary_accent || '' }))
-        }
+        setTemplates(b.templates || [])
       })
       .catch(() => {})
     return () => { cancelled = true }
@@ -259,22 +248,18 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
   const lookMismatch = selectedLook?.orientation && wantOrient && selectedLook.orientation !== wantOrient
   const lookUnspecified = selectedLook && !selectedLook.orientation
 
-  // Pull avatars + voices for the active profile so the dropdowns have
-  // something to show. Both endpoints are tolerant of empty responses.
+  // Pull avatars for the active profile. Voice is tied to the avatar
+  // (or to the brand profile when "no avatar" is selected) so we don't
+  // need a separate voice dropdown anymore.
   useEffect(() => {
     if (!profileId || !session?.access_token) return
     let cancelled = false
     ;(async () => {
       try {
-        const [a, v, vBYO] = await Promise.all([
-          authedFetch(`/api/avatars?profile_id=${profileId}`, session.access_token).then((r) => r.ok ? r.json() : { avatars: [] }),
-          authedFetch(`/api/voices/library`, session.access_token).then((r) => r.ok ? r.json() : { shared: [] }),
-          authedFetch(`/api/voices/library?byo=1&profile_id=${profileId}`, session.access_token).then((r) => r.ok ? r.json() : { byok: [] }),
-        ])
-        if (cancelled) return
-        setAvatars(a.avatars || [])
-        setVoices([...(vBYO.byok || []), ...(v.shared || [])])
-      } catch { /* dropdowns stay empty */ }
+        const r = await authedFetch(`/api/avatars?profile_id=${profileId}`, session.access_token)
+        const a = r.ok ? await r.json() : { avatars: [] }
+        if (!cancelled) setAvatars(a.avatars || [])
+      } catch { /* dropdown stays empty */ }
     })()
     return () => { cancelled = true }
   }, [profileId, session?.access_token])
@@ -289,20 +274,21 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
     try {
       const body = {
         profile_id: profileId,
-        title: form.title.trim() || null,
+        // Title is auto-generated server-side from the topic.
         topic_prompt: form.topic_prompt.trim(),
-        reference_url: form.reference_url.trim() || null,
-        reference_text: form.reference_text.trim() || null,
         avatar_id: form.avatar_id || null,
         look_id: form.look_id || null,
-        voice_id: form.voice_id || null,
+        // Voice is tied to avatar via brand profile — no separate picker.
         target_duration_secs: Number(form.target_duration_secs) || 120,
         aspect_ratio: form.aspect_ratio,
         template_id: form.template_id || 'sleek',
-        brand_color: form.brand_color || null,
+        // Brand color is synced from the brand profile on the server.
         captions_enabled: form.captions_enabled !== false,
-        overlays_enabled: form.overlays_enabled !== false,
-        motion_graphics_enabled: form.motion_graphics_enabled !== false,
+        // Overlays + auto-fit always on. Defaults in DB are true; we
+        // explicitly send so even an admin who flipped the defaults
+        // gets the intended behavior for new videos.
+        overlays_enabled: true,
+        motion_graphics_enabled: true,
       }
       const r = await authedFetch('/api/studio/videos', session.access_token, {
         method: 'POST', body: JSON.stringify(body),
@@ -339,62 +325,69 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
       )}
       <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, margin: '0 0 4px' }}>New long-form video</h2>
       <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 20 }}>
-        Tell Claude what to make. We will draft a video map you can edit row by row before rendering.
+        Six quick choices and Claude drafts your video map. You can edit every segment afterward.
       </div>
 
-      {templates.length > 0 && (
-        <Field
-          label="Visual template"
-          hint="Pick the look that fits the video. Background, typography, motion graphics, and pacing all cascade from here. You can override the brand color below."
-        >
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-            gap: 10,
-          }}>
-            {templates.map((t) => (
-              <TemplateCard
-                key={t.id}
-                template={t}
-                selected={form.template_id === t.id}
-                onClick={() => {
-                  // Picking a template resets brand_color to its default
-                  // so the picker matches what the user just chose.
-                  setForm((f) => ({
-                    ...f,
-                    template_id: t.id,
-                    brand_color: t.primary_accent || f.brand_color,
-                  }))
-                }}
-              />
-            ))}
-          </div>
-        </Field>
-      )}
-
-      <Field
-        label="Brand color"
-        hint={selectedTemplate ? `Cascades into every motion graphic, B-roll color guidance, and the captions. Defaults to ${selectedTemplate.name}'s accent.` : 'Used as the accent across motion graphics.'}
-      >
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <input
-            type="color"
-            value={form.brand_color || (selectedTemplate?.primary_accent ?? '#e3151e')}
-            onChange={(e) => set('brand_color', e.target.value)}
-            style={{ width: 56, height: 36, border: '1px solid var(--border)', borderRadius: 6, background: 'transparent', padding: 0, cursor: 'pointer' }}
-          />
-          <input
-            type="text"
-            className="input"
-            value={form.brand_color || (selectedTemplate?.primary_accent ?? '#e3151e')}
-            onChange={(e) => set('brand_color', e.target.value)}
-            style={{ width: 130, fontFamily: 'var(--font-mono, monospace)', fontSize: 12 }}
-            maxLength={9}
-          />
+      {/* 1. Aspect ratio — vertical / portrait / landscape / square. */}
+      <Field label="1.  Aspect ratio" hint="9:16 for TikTok / Reels / Shorts. 16:9 for YouTube. 1:1 for square posts.">
+        <div style={{ display: 'flex', gap: 6 }}>
+          {[
+            { v: '16:9', label: 'Landscape · 16:9' },
+            { v: '9:16', label: 'Vertical · 9:16' },
+            { v: '1:1',  label: 'Square · 1:1' },
+          ].map((r) => (
+            <button
+              key={r.v}
+              type="button"
+              onClick={() => set('aspect_ratio', r.v)}
+              className={form.aspect_ratio === r.v ? 'btn-primary' : 'btn-secondary'}
+              style={{ flex: 1, padding: '10px 8px', fontSize: 12.5, fontWeight: 700 }}
+            >{r.label}</button>
+          ))}
         </div>
       </Field>
 
-      <Field label="Topic" required hint="What is this video about? One or two sentences is fine.">
+      {/* 2. Avatar — or "Voiceover only" for all motion-graphics + B-roll. */}
+      <Field label="2.  Avatar" hint='Voice is auto-tied to your selected avatar. Choose "Voiceover only" for a video built entirely from motion graphics and B-roll.'>
+        <select className="input" value={form.avatar_id} onChange={(e) => set('avatar_id', e.target.value)}>
+          <option value="">Voiceover only — no avatar (motion graphics + B-roll)</option>
+          {avatars.map((a) => (
+            <option key={a.id} value={a.id}>{a.name || a.id.slice(0, 8)}</option>
+          ))}
+        </select>
+      </Field>
+
+      {/* Look picker — only when an avatar with looks is selected. */}
+      {selectedAvatar && looks.length > 0 && (
+        <Field label="Look" hint="Which trained look/framing of this avatar to render with.">
+          <select className="input" value={form.look_id} onChange={(e) => set('look_id', e.target.value)}>
+            <option value="">Default (first look)</option>
+            {looks.map((l) => {
+              const o = l.orientation
+              const tag = o ? ` · ${o}` : ''
+              return (
+                <option key={l.id} value={l.id}>
+                  {(l.name || `Look ${(l.angle_order ?? 0) + 1}`) + tag}
+                </option>
+              )
+            })}
+          </select>
+        </Field>
+      )}
+
+      {/* 3. Length. */}
+      <Field label={`3.  Length: ${form.target_duration_secs}s`} hint="30 seconds to 5 minutes.">
+        <input
+          type="range"
+          min={30} max={300} step={15}
+          value={form.target_duration_secs}
+          onChange={(e) => set('target_duration_secs', Number(e.target.value))}
+          style={{ width: '100%' }}
+        />
+      </Field>
+
+      {/* 4. Topic. */}
+      <Field label="4.  Topic" required hint="What is this video about? One or two sentences. Title is auto-generated.">
         <textarea
           className="input"
           rows={3}
@@ -405,144 +398,41 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
         />
       </Field>
 
-      <Field label="Title" hint="Optional. We will auto-generate one if you skip.">
-        <input
-          className="input"
-          placeholder="Auto-generated from topic"
-          value={form.title}
-          onChange={(e) => set('title', e.target.value)}
-          maxLength={200}
-        />
-      </Field>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-        <Field label="Avatar">
-          <select className="input" value={form.avatar_id} onChange={(e) => set('avatar_id', e.target.value)}>
-            <option value="">Voiceover only (no avatar)</option>
-            {avatars.map((a) => (
-              <option key={a.id} value={a.id}>{a.name || a.id.slice(0, 8)}</option>
-            ))}
-          </select>
-        </Field>
-
-        {/* Look picker — only shows when an avatar with looks is selected.
-            Each look can be tagged portrait/landscape/square so the user
-            sees orientation at a glance. Mismatch with video aspect ratio
-            triggers a warning below the form. */}
-        {selectedAvatar && looks.length > 0 && (
-          <Field label="Look" hint="Which trained look/framing of this avatar to render with.">
-            <select className="input" value={form.look_id} onChange={(e) => set('look_id', e.target.value)}>
-              <option value="">Default (first look)</option>
-              {looks.map((l) => {
-                const o = l.orientation
-                const tag = o ? ` · ${o}` : ''
-                return (
-                  <option key={l.id} value={l.id}>
-                    {(l.name || `Look ${(l.angle_order ?? 0) + 1}`) + tag}
-                  </option>
-                )
-              })}
-            </select>
-          </Field>
-        )}
-
-        <Field label="Voice">
-          <select className="input" value={form.voice_id} onChange={(e) => set('voice_id', e.target.value)}>
-            <option value="">Brand default</option>
-            {voices.map((v) => (
-              <option key={v.voice_id || v.id} value={v.voice_id || v.id}>
-                {v.label || v.name || (v.voice_id || v.id).slice(0, 12)}
-              </option>
-            ))}
-          </select>
-        </Field>
-
-        <Field label="Aspect ratio">
-          <div style={{ display: 'flex', gap: 6 }}>
-            {['16:9', '9:16', '1:1'].map((r) => (
-              <button
-                key={r}
-                type="button"
-                onClick={() => set('aspect_ratio', r)}
-                className={form.aspect_ratio === r ? 'btn-primary' : 'btn-secondary'}
-                style={{ flex: 1, padding: '8px 6px', fontSize: 12, fontWeight: 700 }}
-              >{r}</button>
+      {/* 5. Visual template — selectable cards. Brand color cascades
+          from the brand profile, so no separate picker here. */}
+      {templates.length > 0 && (
+        <Field label="5.  Visual template" hint="Background pattern, typography, motion graphics, and pacing all cascade from here. Brand color syncs from your brand profile.">
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+            gap: 10,
+          }}>
+            {templates.map((t) => (
+              <TemplateCard
+                key={t.id}
+                template={t}
+                selected={form.template_id === t.id}
+                onClick={() => set('template_id', t.id)}
+              />
             ))}
           </div>
         </Field>
+      )}
 
-        <Field label={`Length: ${form.target_duration_secs}s`} hint="30s to 5min for v1.">
+      {/* 6. Captions — the only post-template toggle. Overlays + auto-fit
+          are always on under the hood; the user doesn't need a knob. */}
+      <Field label="6.  Captions" hint="Word-by-word lower-third captions on every voiceover segment.">
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 10, cursor: 'pointer', userSelect: 'none' }}>
           <input
-            type="range"
-            min={30} max={300} step={15}
-            value={form.target_duration_secs}
-            onChange={(e) => set('target_duration_secs', Number(e.target.value))}
-            style={{ width: '100%' }}
+            type="checkbox"
+            checked={form.captions_enabled !== false}
+            onChange={(e) => set('captions_enabled', e.target.checked)}
+            style={{ width: 18, height: 18 }}
           />
-        </Field>
-
-        <Field label="Captions" hint="Word-by-word lower-third captions on every speaker segment.">
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
-            <input
-              type="checkbox"
-              checked={form.captions_enabled !== false}
-              onChange={(e) => set('captions_enabled', e.target.checked)}
-              style={{ width: 16, height: 16 }}
-            />
-            <span style={{ fontSize: 13, fontWeight: 600 }}>
-              {form.captions_enabled !== false ? 'Captions on' : 'Captions off'}
-            </span>
-          </label>
-        </Field>
-
-        <Field label="Overlays" hint="Stat callouts, tool logos, chapter markers, action prompts. Auto-runs on every render.">
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
-            <input
-              type="checkbox"
-              checked={form.overlays_enabled !== false}
-              onChange={(e) => set('overlays_enabled', e.target.checked)}
-              style={{ width: 16, height: 16 }}
-            />
-            <span style={{ fontSize: 13, fontWeight: 600 }}>
-              {form.overlays_enabled !== false ? 'Overlays on' : 'Overlays off'}
-            </span>
-          </label>
-        </Field>
-
-        <Field label="Auto-fit motion graphics" hint="Claude re-picks composition + content for each motion-graphics segment so it matches the actual script.">
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
-            <input
-              type="checkbox"
-              checked={form.motion_graphics_enabled !== false}
-              onChange={(e) => set('motion_graphics_enabled', e.target.checked)}
-              style={{ width: 16, height: 16 }}
-            />
-            <span style={{ fontSize: 13, fontWeight: 600 }}>
-              {form.motion_graphics_enabled !== false ? 'Auto-fit on' : 'Auto-fit off'}
-            </span>
-          </label>
-        </Field>
-      </div>
-
-      <Field label="Reference video URL" hint="Optional. YouTube or other. We will pull the transcript as source material.">
-        <input
-          className="input"
-          placeholder="https://youtube.com/watch?v=…"
-          value={form.reference_url}
-          onChange={(e) => set('reference_url', e.target.value)}
-          maxLength={500}
-        />
-      </Field>
-
-      <Field label="Reference text" hint="Optional. Paste an outline, data, transcript, or anything Claude should reference verbatim.">
-        <textarea
-          className="input"
-          rows={5}
-          placeholder="Paste your outline, transcript, or notes…"
-          value={form.reference_text}
-          onChange={(e) => set('reference_text', e.target.value)}
-          maxLength={50000}
-        />
+          <span style={{ fontSize: 13.5, fontWeight: 600 }}>
+            {form.captions_enabled !== false ? 'Captions on' : 'Captions off'}
+          </span>
+        </label>
       </Field>
 
       {/* Inline orientation tagger for the selected look. Saves to the
@@ -974,8 +864,12 @@ function StudioVideoEditor({ videoId }) {
             <>
               <TemplateSelector video={video} onApplied={(updated) => setVideo(updated || video)} />
               <CaptionsToggle video={video} onChanged={(updated) => setVideo(updated || video)} />
-              <OverlaysToggle video={video} onChanged={(updated) => setVideo(updated || video)} />
-              <MotionGraphicsToggle video={video} onChanged={(updated) => setVideo(updated || video)} />
+              {/* Overlays + auto-fit motion-graphics are forced on
+                  every render now — the toggles were redundant. The
+                  underlying columns (overlays_enabled,
+                  motion_graphics_enabled) stay in the DB so a future
+                  admin tool can flip them if needed, but the editor
+                  no longer surfaces them. */}
               <SegmentList video={video} />
               <StudioChat videoId={video.id} />
             </>
