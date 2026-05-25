@@ -929,6 +929,19 @@ function StudioVideoEditor({ videoId }) {
             </div>
           )}
 
+          {/* Pinned action bar — Render + progress + status. Sticks to
+              the top of the editor scroll area so the user can hit
+              "Render" from anywhere on the page. Bar lives between the
+              header and the rest of the page so position:sticky works. */}
+          {(['mapped', 'editing', 'rendering', 'rendered'].includes(video.status)) && (
+            <StickyActionBar
+              video={video}
+              approvedCount={(video.studio_segments || []).filter((s) => s.approved).length}
+              totalCount={(video.studio_segments || []).length}
+              segments={(video.studio_segments || []).slice().sort((a, b) => a.segment_index - b.segment_index)}
+            />
+          )}
+
           {video.status === 'failed' && (
             <FailedCard video={video} onRegenerate={regenerate} />
           )}
@@ -1236,16 +1249,6 @@ function SegmentList({ video }) {
         ))}
       </div>
 
-      {/* Sticky footer action bar — always visible so the user always
-          has a clear next step. The "Continue" button kicks off asset
-          generation (task #9). Until that lands it transitions status
-          to 'editing' as a sentinel that the user has reviewed. */}
-      <StickyActionBar
-        video={video}
-        approvedCount={approvedCount}
-        totalCount={segments.length}
-        segments={segments}
-      />
     </div>
   )
 }
@@ -2017,7 +2020,10 @@ function FailedCard({ video, onRegenerate }) {
 // follow-ups work coherently.
 function StudioChat({ videoId }) {
   const { session } = useAuth()
-  const [open, setOpen] = useState(false)
+  // Transcript visibility — opens automatically the moment the user
+  // sends a message OR explicitly toggles via the chevron. The input
+  // bar itself is always visible at the bottom of the page.
+  const [transcriptOpen, setTranscriptOpen] = useState(false)
   const [history, setHistory] = useState([])
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
@@ -2029,6 +2035,11 @@ function StudioChat({ videoId }) {
     if (!el) return
     el.scrollTop = el.scrollHeight
   }, [history, busy])
+
+  // Auto-open the transcript the first time anything lands in it.
+  useEffect(() => {
+    if (history.length > 0) setTranscriptOpen(true)
+  }, [history.length])
 
   const send = async () => {
     const msg = draft.trim()
@@ -2080,65 +2091,73 @@ function StudioChat({ videoId }) {
   }
 
   return (
-    <div className="card" style={{ marginTop: 20, padding: 0, overflow: 'hidden' }}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        style={{
-          width: '100%', display: 'flex', alignItems: 'center', gap: 10,
-          padding: '12px 16px', background: 'transparent', border: 'none',
-          color: 'var(--text)', textAlign: 'left', cursor: 'pointer',
-        }}
-      >
-        <div style={{
-          width: 28, height: 28, borderRadius: 8,
-          background: 'rgba(239,68,68,0.16)', color: 'var(--red)',
-          display: 'grid', placeItems: 'center', flexShrink: 0,
-        }}>
-          <Sparkles size={14} />
-        </div>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13.5 }}>
-            Chat editor
-          </div>
-          <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 2 }}>
-            Tell Claude what to change. Example: "Swap segment 4's B-roll to a sunset beach scene." Edits apply instantly to the map above.
-          </div>
-        </div>
-        <ChevronRight size={14} style={{ color: 'var(--muted)', transform: open ? 'rotate(90deg)' : 'rotate(0)', transition: 'transform 0.15s' }} />
-      </button>
+    <>
+      {/* Spacer so the bottom-fixed chat bar doesn't cover content. */}
+      <div style={{ height: transcriptOpen ? 380 : 80 }} aria-hidden="true" />
 
-      {open && (
-        <div style={{ borderTop: '1px solid var(--border)' }}>
-          {history.length > 0 && (
+      {/* Fixed bottom dock. Always visible while editing a video. The
+          transcript panel slides up out of the dock when there's
+          history or the user expands it. */}
+      <div style={{
+        position: 'fixed',
+        left: 0, right: 0, bottom: 0,
+        zIndex: 50,
+        background: 'color-mix(in srgb, var(--bg) 88%, transparent)',
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        borderTop: '1px solid var(--border)',
+        boxShadow: '0 -8px 24px rgba(0,0,0,0.4)',
+      }}>
+        <div style={{ maxWidth: 1080, margin: '0 auto', padding: '0 24px' }}>
+          {transcriptOpen && (
             <div
               ref={scrollRef}
               style={{
-                maxHeight: 320, overflowY: 'auto',
-                padding: 14, display: 'flex', flexDirection: 'column', gap: 10,
-                background: 'var(--surface-2)',
+                maxHeight: 300, overflowY: 'auto',
+                padding: '14px 0', display: 'flex', flexDirection: 'column', gap: 10,
+                borderBottom: '1px solid var(--border)',
               }}
             >
-              {history.map((m, i) => (
-                <ChatTurn key={i} turn={m} />
-              ))}
-              {busy && (
-                <div style={{ fontSize: 12, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Loader2 size={12} className="spin" /> Thinking…
+              {history.length === 0 ? (
+                <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                  Send a request — Claude edits the map for you. Try "swap segment 4 to a stat-reveal showing 47K" or "drop segment 7".
                 </div>
+              ) : (
+                <>
+                  {history.map((m, i) => <ChatTurn key={i} turn={m} />)}
+                  {busy && (
+                    <div style={{ fontSize: 12, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Loader2 size={12} className="spin" /> Thinking…
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
 
-          <div style={{ padding: 12, display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-            <textarea
+          {/* The always-visible input row — search-bar style. */}
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '12px 0' }}>
+            <button
+              type="button"
+              onClick={() => setTranscriptOpen((v) => !v)}
+              title={transcriptOpen ? 'Hide transcript' : 'Show transcript'}
+              style={{
+                width: 36, height: 36, borderRadius: 10,
+                background: 'rgba(239,68,68,0.16)', color: 'var(--red)',
+                display: 'grid', placeItems: 'center', flexShrink: 0,
+                border: 'none', cursor: 'pointer',
+              }}
+            >
+              <Sparkles size={16} />
+            </button>
+            <input
+              type="text"
               className="input"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={onKeyDown}
-              placeholder='Try: "Change segment 5 to a stat-reveal showing 403K views" or "Make all motion graphics use accent color #ff9b26".'
-              rows={2}
-              style={{ flex: 1, resize: 'vertical', fontSize: 13 }}
+              placeholder='Ask Claude to edit the map — e.g. "make all motion-graphics red" or "drop segment 7"'
+              style={{ flex: 1, fontSize: 13.5, height: 40 }}
               disabled={busy}
               maxLength={4000}
             />
@@ -2147,15 +2166,15 @@ function StudioChat({ videoId }) {
               className="btn-primary"
               onClick={send}
               disabled={busy || !draft.trim()}
-              style={{ alignSelf: 'stretch', padding: '0 16px' }}
+              style={{ height: 40, padding: '0 16px', flexShrink: 0 }}
             >
               {busy ? <Loader2 size={14} className="spin" /> : <Wand2 size={14} />}
-              Send
+              {busy ? 'Sending' : 'Send'}
             </button>
           </div>
         </div>
-      )}
-    </div>
+      </div>
+    </>
   )
 }
 
@@ -2484,6 +2503,13 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
       />
     )}
     <div style={{
+      // Pinned just under the global ScaleSolo header. position:sticky
+      // keeps the bar in the normal flow but glued to the top of the
+      // viewport once you scroll past it. top:56 leaves room for the
+      // app header (adjust if the global header height changes).
+      position: 'sticky',
+      top: 56,
+      zIndex: 40,
       padding: '12px 16px',
       background: 'var(--surface)',
       border: '1px solid var(--border)',
@@ -2492,6 +2518,9 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
       display: 'flex',
       alignItems: 'center',
       gap: 14,
+      // Backdrop blur so content sliding behind it stays legible.
+      backdropFilter: 'blur(8px)',
+      WebkitBackdropFilter: 'blur(8px)',
     }}>
       <div style={{ flex: 1, fontSize: 12.5, color: 'var(--text-soft)' }}>
         {phase === 'done' && video.final_video_url ? (
