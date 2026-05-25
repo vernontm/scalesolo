@@ -1,0 +1,160 @@
+<!doctype html>
+<!--
+  Standalone overlay preview. Composites the live .ov-card system
+  (loaded from _ov-universal.css + _ov-tokens.css) onto a placeholder
+  avatar shot. Use this to validate the look of stat / chapter / tool /
+  caption cards before kicking off a render.
+
+  To preview against your real footage, save the studio shot you want
+  to test against as /public/studio-compositions/sample-avatar.jpg —
+  the .frame background will pick it up automatically.
+
+  This file isn't loaded by the bake pipeline; it's just a dev preview.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Studio · Overlay Preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/studio-compositions/_ov-tokens.css">
+<link rel="stylesheet" href="/studio-compositions/_ov-universal.css">
+<style>
+  html, body { margin: 0; padding: 0; background: #050507; min-height: 100vh; font-family: 'Plus Jakarta Sans', sans-serif; color: #fff; }
+  .page { max-width: 1920px; margin: 0 auto; padding: 24px; }
+  .page h1 { font-weight: 800; font-size: 24px; letter-spacing: -0.02em; margin: 0 0 8px; }
+  .page h1 span { color: #ef4444; }
+  .page .meta { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: rgba(255,255,255,0.55); letter-spacing: 0.16em; text-transform: uppercase; margin-bottom: 18px; }
+  .toolbar { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; flex-wrap: wrap; }
+  .toolbar button {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; padding: 8px 14px;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: #fff; cursor: pointer; border-radius: 6px;
+    letter-spacing: 0.1em; text-transform: uppercase;
+  }
+  .toolbar button[data-active="true"] { background: linear-gradient(135deg, var(--demo-accent, #ef4444), var(--demo-accent-2, #b91c1c)); border-color: transparent; }
+  .toolbar .swatch { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; background: rgba(255,255,255,0.05); border-radius: 6px; font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+  .toolbar .swatch input[type="color"] { width: 22px; height: 22px; border: none; background: transparent; padding: 0; cursor: pointer; }
+
+  /* The "video frame" — sample-avatar.jpg if present, else a warm
+     studio-toned gradient placeholder so the cards have realistic
+     contrast to read against. */
+  .frame {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border-radius: 12px;
+    background:
+      url('/studio-compositions/sample-avatar.jpg') center / cover no-repeat,
+      radial-gradient(ellipse at 60% 45%, #c89a6b 0%, #2a1d12 60%, #0d0905 100%);
+    box-shadow: 0 30px 80px rgba(0,0,0,0.6);
+  }
+
+  /* Position the cards. Same V2 zone math the universal CSS uses
+     (24% wide, vertically centered, 3% inset). */
+  .slot-left, .slot-right {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 24%;
+    aspect-ratio: 1 / 1;
+  }
+  .slot-left  { left: 3%; }
+  .slot-right { right: 3%; }
+  .slot-lower-third {
+    position: absolute;
+    left: 6%; right: 6%;
+    bottom: 7%;
+    text-align: center;
+  }
+  .slot-corner-tr {
+    position: absolute;
+    top: 3%;
+    right: 3%;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>Studio · <span>Overlay Preview</span></h1>
+  <div class="meta">universal .ov-card system · v2 zones · live CSS</div>
+
+  <div class="toolbar">
+    <span style="opacity:.7;">Template:</span>
+    <button data-token="tokens-sleek" data-active="true">Sleek</button>
+    <button data-token="tokens-atlas">Atlas</button>
+    <button data-token="tokens-organic">Organic</button>
+    <button data-token="tokens-retrovhs">Retro VHS</button>
+    <span class="swatch">accent <input id="acc1" type="color" value="#ef4444"></span>
+    <span class="swatch">accent-2 <input id="acc2" type="color" value="#b91c1c"></span>
+  </div>
+
+  <!-- The frame wraps everything in a token class. Swapping the class
+       swaps every card's palette instantly without changing any HTML. -->
+  <div class="frame" id="frame">
+    <div id="tokens" class="tokens-sleek" style="position:absolute; inset:0;">
+
+      <!-- LEFT: chapter marker -->
+      <div class="slot-left">
+        <div class="ov-chapter">
+          <div class="meta">SECTION 01</div>
+          <div class="title">The Faceless <em>Shift</em></div>
+        </div>
+      </div>
+
+      <!-- RIGHT: stat callout -->
+      <div class="slot-right">
+        <div class="ov-stat">
+          <div class="label">POSTS / DAY</div>
+          <div class="number">3<span class="unit">x</span></div>
+          <div class="sub">Faceless</div>
+        </div>
+      </div>
+
+      <!-- LOWER THIRD: caption -->
+      <div class="slot-lower-third">
+        <div class="ov-caption">
+          <div class="text">Faceless creators are <span class="highlight">outshipping</span> personal brands in 2026.</div>
+        </div>
+      </div>
+
+      <!-- CORNER: watermark -->
+      <div class="slot-corner-tr">
+        <div class="ov-watermark">rayvaughnceo</div>
+      </div>
+
+    </div>
+  </div>
+
+  <p style="font-size:12px;color:rgba(255,255,255,0.45);margin-top:14px;line-height:1.5;">
+    Drop a frame grab at <code>/public/studio-compositions/sample-avatar.jpg</code> to see the cards over real footage. Toggle templates above to compare. The accent pickers override <code>--ov-accent</code> / <code>--ov-accent-2</code> directly — same path the bake uses when the user has brand colors set.
+  </p>
+</div>
+
+<script>
+  // Template toggle.
+  const tokens = document.getElementById('tokens')
+  document.querySelectorAll('.toolbar button[data-token]').forEach((b) => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('.toolbar button[data-token]').forEach((x) => x.dataset.active = 'false')
+      b.dataset.active = 'true'
+      tokens.className = b.dataset.token
+    })
+  })
+
+  // Live color override.
+  const acc1 = document.getElementById('acc1')
+  const acc2 = document.getElementById('acc2')
+  const apply = () => {
+    tokens.style.setProperty('--ov-accent',   acc1.value)
+    tokens.style.setProperty('--ov-accent-2', acc2.value)
+  }
+  acc1.addEventListener('input', apply)
+  acc2.addEventListener('input', apply)
+  apply()
+</script>
+</body>
+</html>
