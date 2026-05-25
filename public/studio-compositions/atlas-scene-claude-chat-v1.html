@@ -162,13 +162,6 @@
 <div class="scene">
   <div class="dots-base"></div>
   <div class="dots-bright"></div>
-
-  <div class="scene-meta">
-    <span class="dot"></span>
-    <span id="meta-label">Atlas</span>
-    <span class="divider"></span>
-    <span id="meta-subtitle">Claude</span>
-  </div>
   <div class="scene-handle" id="handle">raytheaiguy</div>
 
   <div class="chat-panel">
@@ -210,8 +203,7 @@
     if (v.user_message) document.getElementById('user-message').textContent = v.user_message
     if (v.url_bar) document.getElementById('url-bar-text').textContent = v.url_bar
     if (v.handle) document.getElementById('handle').textContent = v.handle
-    if (v.meta_label) document.getElementById('meta-label').textContent = v.meta_label
-    if (v.meta_subtitle) document.getElementById('meta-subtitle').textContent = v.meta_subtitle
+
 
     const responseText = String(v.claude_response || "I'll set up a clean React + Supabase CRM with auth, contact management, and a deal pipeline. Let me start with the project structure.")
     const responseEl = document.getElementById('response-text')
@@ -226,7 +218,6 @@
 
     const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } })
     tl.from('.chat-panel', { y: 20, opacity: 0, duration: 0.8 }, 0.2)
-      .from('.scene-meta', { opacity: 0, duration: 0.6 }, 0.5)
       .from('.scene-handle', { opacity: 0, duration: 0.6 }, 0.7)
       .from('.message-user', { y: 20, opacity: 0, duration: 0.5 }, 0.8)
       .from('.claude-avatar', { opacity: 0, duration: 0.4 }, 1.4)

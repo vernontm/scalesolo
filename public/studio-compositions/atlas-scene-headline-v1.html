@@ -150,14 +150,6 @@
 <div class="scene">
   <div class="dots-base"></div>
   <div class="dots-bright"></div>
-
-  <div class="scene-meta">
-    <span class="dot"></span>
-    <span id="meta-label">Atlas</span>
-    <span class="divider"></span>
-    <span id="meta-subtitle">Scene</span>
-  </div>
-
   <div class="scene-handle" id="handle">raytheaiguy</div>
 
   <div class="headline-block">
@@ -176,14 +168,12 @@
     if (v.title_pre != null) document.getElementById('title-pre').textContent = v.title_pre
     if (v.title_highlight != null) document.getElementById('title-highlight').textContent = v.title_highlight
     if (v.handle) document.getElementById('handle').textContent = v.handle
-    if (v.meta_label) document.getElementById('meta-label').textContent = v.meta_label
-    if (v.meta_subtitle) document.getElementById('meta-subtitle').textContent = v.meta_subtitle
+
 
     window.__hyperframes?.recordEvent?.('title_hero', 0.6)
 
     const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } })
     tl.from('.headline',     { y: 30, opacity: 0, duration: 0.8 }, 0.2)
-      .from('.scene-meta',   { y: 10, opacity: 0, duration: 0.6 }, 1.0)
       .from('.scene-handle', { y: 10, opacity: 0, duration: 0.6 }, 1.2)
       .to({}, { duration: 1.5 })  // hold for the highlight sweep to finish + reader to absorb
     window.studioPlay(tl)

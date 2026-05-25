@@ -144,6 +144,10 @@ export async function synthesizeMp3(voiceId, text, opts = {}) {
         stability: 0.5,
         similarity_boost: 0.85,
         style: 0.2,
+        // 0.95× slight slow-down reads more naturally on long-form
+        // voiceover than the 1.0× default — copy that's already tight
+        // sounds rushed at full speed. ElevenLabs supports 0.7–1.2.
+        speed: 0.95,
         use_speaker_boost: true,
       },
     }),

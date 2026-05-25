@@ -980,16 +980,28 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
       const overlayDuration = seg.segment_type === 'avatar'
         ? Math.max(0.5, voiceDuration || 0)
         : Math.max(2, voiceDuration || 4)
-      if (overlaysEligible && resolvedTemplate && Array.isArray(seg.overlay_placements) && seg.overlay_placements.length) {
+      // B-roll segments are visually busy already — overlays compete
+      // with the generated image and clutter the frame. Per product
+      // direction, only captions are allowed on voiceover_broll. Strip
+      // everything else here so neither the renderer nor downstream
+      // motion picks them up.
+      let effectivePlacements = Array.isArray(seg.overlay_placements) ? seg.overlay_placements : []
+      if (seg.segment_type === 'voiceover_broll') {
+        effectivePlacements = effectivePlacements.filter((p) => p?.overlay_id === 'caption-overlay-v1')
+      }
+      if (overlaysEligible && resolvedTemplate && effectivePlacements.length) {
         try {
+          // Hand the renderer a seg with the filtered list so it
+          // doesn't see the stripped placements.
+          const segForOverlays = { ...seg, overlay_placements: effectivePlacements }
           const overlayFramesDir = await renderOverlayPngs(
-            seg, dir, dim, overlayDuration, baseUrl, bypassSecret, resolvedTemplate,
+            segForOverlays, dir, dim, overlayDuration, baseUrl, bypassSecret, resolvedTemplate,
           )
           if (overlayFramesDir) {
             const composited = join(dir, 'out-with-overlay.mp4')
             await compositeOverlayOntoChunk(paths.outChunk, overlayFramesDir, overlayDuration, composited)
             paths.outChunk = composited
-            progress.overlay_rendered.push({ seg_id: seg.id, n: seg.overlay_placements.length })
+            progress.overlay_rendered.push({ seg_id: seg.id, n: effectivePlacements.length })
           } else {
             progress.overlay_skipped.push({ seg_id: seg.id, reason: 'no_frames_dir' })
           }
@@ -1118,28 +1130,9 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
         inputs.push('-i', chunkPaths[i])
       }
 
-      // Per-chunk audio is silence-padded at its tail by the duration
-      // of the xfade that follows it. Without this, acrossfade=d=X
-      // blends the LAST X seconds of voice A with the FIRST X seconds
-      // of voice B → audible voice overlap on the longer transitions
-      // (0.8s swipes, 1.2s flare). With the pad, the crossfade window
-      // blends silence-into-voice instead of voice-into-voice. Audio
-      // timeline length is preserved because the pad we add (+X) is
-      // eaten right back by the acrossfade compression (−X) at the
-      // same boundary — so audio and video stay perfectly in sync.
-      const audioLabel = (i) => {
-        if (i >= chunkPaths.length - 1) return `[${i}:a]`  // last chunk, no following xfade
-        const padDur = (boundaryPlan[i].xf || XFADE_MAP.cut_transition).duration
-        if (padDur <= 0.05) return `[${i}:a]`  // imperceptible — skip the pad
-        const pdStr = padDur.toFixed(3)
-        filter.push(`anullsrc=channel_layout=stereo:sample_rate=48000,atrim=0:${pdStr},asetpts=N/SR/TB[sil${i}]`)
-        filter.push(`[${i}:a][sil${i}]concat=n=2:v=0:a=1[pa${i}]`)
-        return `[pa${i}]`
-      }
-
       let runningOffset = 0  // running concat time before the current xfade boundary
       let prevVideoLabel = '[0:v]'
-      let prevAudioLabel = audioLabel(0)
+      let prevAudioLabel = '[0:a]'
       for (let i = 1; i < chunkPaths.length; i++) {
         const prevDur = chunkDurations[i - 1] || 4
         // Per-boundary xfade. If this boundary's primitive has no xfade
@@ -1153,8 +1146,7 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
         const vOut = `[v${i}]`
         const aOut = `[a${i}]`
         filter.push(`${prevVideoLabel}[${i}:v]xfade=transition=${b.name}:duration=${durStr}:offset=${offsetStr}${vOut}`)
-        const curAudio = audioLabel(i)
-        filter.push(`${prevAudioLabel}${curAudio}acrossfade=d=${durStr}${aOut}`)
+        filter.push(`${prevAudioLabel}[${i}:a]acrossfade=d=${durStr}${aOut}`)
         prevVideoLabel = vOut
         prevAudioLabel = aOut
       }

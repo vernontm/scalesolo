@@ -138,7 +138,7 @@
     position:relative;
     animation: button_breathe 4000ms ease-in-out infinite;
   }
-  .cta-button .icon { width:36px; height:36px; display:flex; align-items:center; justify-content:center; animation: arrow_bounce 2000ms ease-in-out infinite; }
+  .cta-button .icon { width:36px; height:36px; display:flex; align-items:center; justify-content:center; animation: arrow_bounce 4000ms ease-in-out infinite; }
   .cta-button .icon svg { width:100%; height:100%; }
   @keyframes button_breathe {
     0%, 100% { box-shadow: 0 16px 50px rgba(129,140,248,0.5), 0 0 100px rgba(168,85,247,0.35), inset 0 1px 0 rgba(255,255,255,0.2); }
@@ -152,14 +152,6 @@
 <div class="scene">
   <div class="dots-base"></div>
   <div class="dots-bright"></div>
-
-  <div class="scene-meta">
-    <span class="dot"></span>
-    <span id="meta-label">Atlas</span>
-    <span class="divider"></span>
-    <span id="meta-subtitle">End</span>
-  </div>
-
   <div class="cta-block">
     <h2 class="cta-headline">
       <span id="headline-pre">Learn how to use</span><br>
@@ -190,8 +182,7 @@
     if (v.cta_subhead != null) document.getElementById('subhead').textContent = v.cta_subhead
     if (v.cta_button_text != null) document.getElementById('button-text').textContent = v.cta_button_text
     if (v.hero_handle) document.getElementById('hero-handle').textContent = v.hero_handle
-    if (v.meta_label) document.getElementById('meta-label').textContent = v.meta_label
-    if (v.meta_subtitle) document.getElementById('meta-subtitle').textContent = v.meta_subtitle
+
 
     window.__hyperframes?.recordEvent?.('end_card', 0.3)
     window.__hyperframes?.recordEvent?.('subscribe_cta', 1.2)
@@ -201,7 +192,6 @@
       .from('.cta-subhead',           { y: 20, opacity: 0, duration: 0.7 }, 0.8)
       .from('.cta-button',            { scale: 0.85, opacity: 0, duration: 0.7, ease: 'back.out(1.5)' }, 1.2)
       .from('.hero-handle',           { y: 20, opacity: 0, duration: 0.7 }, 1.5)
-      .from('.scene-meta',            { opacity: 0, duration: 0.6 }, 1.7)
       .to({}, { duration: 1.5 })  // hold the CTA on screen
     window.studioPlay(tl)
   })()

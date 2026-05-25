@@ -1099,7 +1099,10 @@ function StudioVideoEditor({ videoId }) {
                   are gone from the editor. */}
               <TemplateSelector video={video} onApplied={(updated) => setVideo(updated || video)} />
               <SegmentList video={video} manualMode={manualMode} />
-              <StudioChat videoId={video.id} />
+              {/* AI chat dock disabled per product feedback —
+                  re-enable by uncommenting once the surgical-edit
+                  flow is polished. */}
+              {/* <StudioChat videoId={video.id} /> */}
             </>
           )}
 
