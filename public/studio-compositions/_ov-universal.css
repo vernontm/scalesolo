@@ -21,17 +21,20 @@
      --ov-radius              card corner radius — optional, default 20px
 ============================================================ */
 
-/* Token defaults — every CSS var has a fallback so a brand-new template
-   shipping with an empty token block still produces a readable card. */
-:where(.ov-card, .ov-stat, .ov-chapter, .ov-tool, .ov-caption,
-       .ov-action, .ov-source, .ov-watermark, .ov-emphasis) {
-  --ov-accent: var(--ov-accent, #e3151e);
-  --ov-accent-2: var(--ov-accent-2, var(--ov-accent));
-  --ov-accent-soft: var(--ov-accent-soft, var(--ov-accent));
-  --ov-font-display: var(--ov-font-display, 'Plus Jakarta Sans', sans-serif);
-  --ov-font-mono: var(--ov-font-mono, 'JetBrains Mono', monospace);
-  --ov-font-italic-style: var(--ov-font-italic-style, italic);
-  --ov-radius: var(--ov-radius, 20px);
+/* Token defaults — declared on :root so they inherit everywhere with
+   no specificity battle. A .tokens-<template> wrapper overrides these
+   for its subtree; cards inside the wrapper inherit naturally.
+   The previous :where() self-referential definitions
+   (--ov-accent: var(--ov-accent, fallback)) were clobbering the
+   wrapper's values by re-setting the property at element scope. */
+:root {
+  --ov-accent: #e3151e;
+  --ov-accent-2: #ff3742;
+  --ov-accent-soft: #ff5560;
+  --ov-font-display: 'Plus Jakarta Sans', sans-serif;
+  --ov-font-mono: 'JetBrains Mono', monospace;
+  --ov-font-italic-style: italic;
+  --ov-radius: 20px;
 }
 
 /* ---------- Base card ---------- */
@@ -142,13 +145,21 @@
   text-align: center;
   align-items: center;
   justify-content: center;
+  /* 100% opaque brand-color gradient — primary → secondary diagonal.
+     Overrides the dark fake-glass base so the card reads as a strong
+     brand badge rather than a UI card. */
+  background: linear-gradient(135deg,
+    var(--ov-accent) 0%,
+    var(--ov-accent-2) 100%);
 }
 .ov-stat .label,
 .ov-card.stat .label {
   font-family: var(--ov-font-mono);
   font-size: 13px;
   font-weight: 700;
-  color: var(--ov-accent);
+  /* On the saturated brand-color gradient, accent text disappears. Use
+     near-white at reduced opacity for the meta label. */
+  color: rgba(255, 255, 255, 0.85);
   letter-spacing: 0.3em;
   text-transform: uppercase;
   margin-bottom: 16px;
@@ -183,13 +194,17 @@
 .ov-card.chapter,
 .ov-chapter {
   justify-content: flex-end;
+  /* Same primary → secondary brand gradient. */
+  background: linear-gradient(135deg,
+    var(--ov-accent) 0%,
+    var(--ov-accent-2) 100%);
 }
 .ov-chapter .meta,
 .ov-card.chapter .meta {
   font-family: var(--ov-font-mono);
   font-size: 13px;
   font-weight: 700;
-  color: var(--ov-accent);
+  color: rgba(255, 255, 255, 0.85);
   letter-spacing: 0.3em;
   text-transform: uppercase;
   margin-bottom: 20px;
@@ -206,8 +221,12 @@
 .ov-chapter .title em,
 .ov-card.chapter .title em {
   font-style: var(--ov-font-italic-style);
-  color: var(--ov-accent);
-  text-shadow: 0 0 24px color-mix(in srgb, var(--ov-accent) 55%, transparent);
+  /* Card already shows the brand color as background; em now reads as
+     a bright highlight via heavy white glow against the accent fill. */
+  color: #ffffff;
+  text-shadow:
+    0 0 24px rgba(255, 255, 255, 0.55),
+    0 2px 12px rgba(0, 0, 0, 0.35);
 }
 
 /* ---------- TOOL variant ---------- */
