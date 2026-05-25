@@ -44,8 +44,7 @@
       "maxDuration": 120
     },
     "api/studio/segments/upload-avatar.js": {
-      "maxDuration": 60,
-      "memory": 1024
+      "maxDuration": 10
     },
     "api/studio/generate-map.js": {
       "maxDuration": 120

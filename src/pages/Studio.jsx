@@ -3278,15 +3278,48 @@ function UploadAvatarButton({ segmentId, hasUpload, onUploaded }) {
     if (!file || !session?.access_token) return
     setBusy(true); setErr('')
     try {
-      const fd = new FormData()
-      fd.append('file', file)
-      const r = await fetch(`/api/studio/segments/upload-avatar?id=${segmentId}`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${session.access_token}` },
-        body: fd,
+      // Phase 1 — ask the server for a signed upload URL. This avoids
+      // Vercel's 4.5MB serverless body limit (the previous direct-POST
+      // path failed with 413 on any file over ~4MB).
+      const initR = await authedFetch(
+        `/api/studio/segments/upload-avatar?id=${segmentId}&mode=init`,
+        session.access_token,
+        { method: 'POST', body: JSON.stringify({
+          filename: file.name,
+          content_type: file.type || 'video/mp4',
+        }) },
+      )
+      const initBody = await initR.json().catch(() => ({}))
+      if (!initR.ok) throw new Error(initBody.error || `Upload init failed (${initR.status})`)
+      const { signed_url, path, token, content_type } = initBody
+
+      // Phase 2 — PUT the file straight to Supabase Storage. No size
+      // limit imposed by Vercel because the bytes never hit our API.
+      // Supabase signed-upload URLs use the supplied token via the
+      // Authorization header.
+      const putR = await fetch(signed_url, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': content_type,
+          'x-upsert': 'true',
+        },
+        body: file,
       })
-      const b = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(b.error || `Upload failed (${r.status})`)
+      if (!putR.ok) {
+        const detail = await putR.text().catch(() => '')
+        throw new Error(`Storage upload ${putR.status}: ${detail.slice(0, 200)}`)
+      }
+
+      // Phase 3 — finalize: tell the server the file is in place so it
+      // can patch the segment row.
+      const finR = await authedFetch(
+        `/api/studio/segments/upload-avatar?id=${segmentId}&mode=finalize`,
+        session.access_token,
+        { method: 'POST', body: JSON.stringify({ path }) },
+      )
+      const finBody = await finR.json().catch(() => ({}))
+      if (!finR.ok) throw new Error(finBody.error || `Finalize failed (${finR.status})`)
       toast({ message: 'Avatar video uploaded — HeyGen skipped for this segment.', kind: 'success' })
       onUploaded?.()
     } catch (e2) {

@@ -1,21 +1,24 @@
-// POST /api/studio/segments/upload-avatar?id=<segment_id>
+// Avatar video upload — two-phase flow that bypasses Vercel's 4.5MB
+// serverless body limit. The browser uploads the file DIRECTLY to
+// Supabase Storage using a short-lived signed URL we mint here.
 //
-// Lets users plug their own rendered avatar video into a segment. The
-// existing avatar_video_url column is reused — when populated by this
-// endpoint, the orchestrator's "already done" check fires and HeyGen
-// is skipped on the next render. Perfect for users who want to render
-// avatars outside ScaleSolo (own platform / more credits / different
-// avatar provider).
+// Phase 1 — POST /api/studio/segments/upload-avatar?id=<segId>&mode=init
+//   Body: { filename, content_type }
+//   Returns: { signed_url, path, token }
 //
-// Body: multipart/form-data with field "file" — the MP4 to upload.
-//   Max 100MB (Vercel function memory).
-//   Accepts video/mp4. Other types rejected with 415.
+// Phase 2 — Browser PUTs the file to signed_url (no Vercel hop).
+//
+// Phase 3 — POST /api/studio/segments/upload-avatar?id=<segId>&mode=finalize
+//   Body: { path }
+//   Patches segment.avatar_video_url to the public URL and flips
+//   status='ready'.
 //
 // Workflow the user follows:
-//   1. Generate voice only via the editor's "Voice only" button.
-//   2. Download voice for each avatar segment via the SegmentRow link.
+//   1. Generate voice only via the editor's "Voice + B-roll" checkbox
+//      with avatar unchecked.
+//   2. Download voice for each avatar segment.
 //   3. Render those voices through their own avatar platform.
-//   4. Upload each finished avatar MP4 here, paired to its segment.
+//   4. Upload each finished MP4 here, paired to its segment.
 //   5. Render the video — the worker pulls these uploads instead of
 //      calling HeyGen for those segments.
 
@@ -23,70 +26,23 @@ import { setCors, requireUser, supaFetch, assertProfileAccess } from '../../_lib
 import { gateStudio } from '../_lib/gate.js'
 
 const STUDIO_BUCKET = 'studio-media'
-const MAX_BYTES = 100 * 1024 * 1024  // 100MB safety cap
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
 
-export const config = {
-  api: {
-    // We parse the body ourselves (raw buffer) — Vercel's default
-    // body parser doesn't handle multipart cleanly without an extra
-    // dependency. Below we just read the raw buffer + extract the
-    // file via a tiny multipart parser.
-    bodyParser: false,
-  },
-}
-
-async function readRawBody(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = []
-    let total = 0
-    req.on('data', (chunk) => {
-      total += chunk.length
-      if (total > MAX_BYTES) {
-        reject(new Error(`File exceeds ${MAX_BYTES / 1024 / 1024}MB limit`))
-        req.destroy()
-        return
-      }
-      chunks.push(chunk)
-    })
-    req.on('end', () => resolve(Buffer.concat(chunks)))
-    req.on('error', reject)
-  })
-}
-
-// Minimal multipart/form-data parser. Pulls the first file part out.
-// Not RFC-grade — good enough for a single-file form post from the UI.
-function extractFirstFile(buf, boundary) {
-  const delim = Buffer.from(`--${boundary}`)
-  const headerSep = Buffer.from('\r\n\r\n')
-  let pos = buf.indexOf(delim)
-  if (pos === -1) return null
-  pos += delim.length
-  // Walk each part until we find one with a filename.
-  while (pos < buf.length) {
-    if (buf.slice(pos, pos + 2).toString() === '--') return null  // end of body
-    pos += 2  // skip \r\n after boundary
-    const headerEnd = buf.indexOf(headerSep, pos)
-    if (headerEnd === -1) return null
-    const headers = buf.slice(pos, headerEnd).toString('utf8')
-    const bodyStart = headerEnd + headerSep.length
-    const nextBoundary = buf.indexOf(delim, bodyStart)
-    if (nextBoundary === -1) return null
-    const bodyEnd = nextBoundary - 2  // strip trailing \r\n before boundary
-    const partBody = buf.slice(bodyStart, bodyEnd)
-    const fileMatch = headers.match(/filename="([^"]+)"/i)
-    const typeMatch = headers.match(/Content-Type:\s*([^\r\n]+)/i)
-    if (fileMatch) {
-      return {
-        filename: fileMatch[1],
-        contentType: typeMatch ? typeMatch[1].trim() : 'application/octet-stream',
-        body: partBody,
-      }
-    }
-    pos = nextBoundary + delim.length
+async function loadSegmentAndAuthorize(auth, segmentId) {
+  const segs = await supaFetch(`studio_segments?id=eq.${segmentId}&select=*,studio_videos(*)`)
+  const seg = segs?.[0]
+  if (!seg) return { error: { status: 404, message: 'Segment not found' } }
+  const video = seg.studio_videos
+  if (!video) return { error: { status: 404, message: 'Parent video not found' } }
+  await assertProfileAccess(auth.user.id, video.profile_id)
+  if (seg.segment_type !== 'avatar') {
+    return { error: {
+      status: 400,
+      message: `Only avatar segments can receive a custom avatar video. This segment is ${seg.segment_type}.`,
+    } }
   }
-  return null
+  return { seg, video }
 }
 
 export default async function handler(req, res) {
@@ -100,77 +56,83 @@ export default async function handler(req, res) {
     gateStudio(auth.user.id)
     const segmentId = req.query.id
     if (!segmentId) return res.status(400).json({ error: 'segment id required in query' })
-
-    // Load segment + verify access via its parent video.
-    const segs = await supaFetch(`studio_segments?id=eq.${segmentId}&select=*,studio_videos(*)`)
-    const seg = segs?.[0]
-    if (!seg) return res.status(404).json({ error: 'Segment not found' })
-    const video = seg.studio_videos
-    if (!video) return res.status(404).json({ error: 'Parent video not found' })
-    await assertProfileAccess(auth.user.id, video.profile_id)
-
-    if (seg.segment_type !== 'avatar') {
-      return res.status(400).json({
-        error: `Only avatar segments can receive a custom avatar video upload. This segment is ${seg.segment_type}.`,
-      })
-    }
-
-    // Multipart parse.
-    const contentType = req.headers['content-type'] || ''
-    const boundaryMatch = contentType.match(/boundary=(.+)$/i)
-    if (!boundaryMatch) {
-      return res.status(400).json({ error: 'multipart/form-data with boundary required' })
-    }
-    const buf = await readRawBody(req)
-    const file = extractFirstFile(buf, boundaryMatch[1])
-    if (!file) return res.status(400).json({ error: 'No file part found in request body' })
-    if (!file.contentType.startsWith('video/')) {
-      return res.status(415).json({
-        error: `Unsupported file type "${file.contentType}". Upload an MP4 (video/mp4).`,
-      })
-    }
-
-    // Upload to studio-media/<profile>/studio/external-avatars/<seg_id>.<ext>.
-    // Same path convention as HeyGen-generated avatars so they're
-    // grouped under the profile prefix. Direct Supabase Storage REST
-    // call with service key — same pattern as poll-assets.js.
     if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
       return res.status(500).json({ error: 'Supabase storage not configured on the server.' })
     }
-    const ext = file.contentType.includes('quicktime') ? 'mov' : 'mp4'
-    const path = `${video.profile_id}/studio/external-avatars/${segmentId}-${Date.now()}.${ext}`
-    const up = await fetch(
-      `${SUPABASE_URL}/storage/v1/object/${STUDIO_BUCKET}/${encodeURI(path)}`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
-          'Content-Type': file.contentType,
-          'x-upsert': 'true',
+
+    const { seg, video, error } = await loadSegmentAndAuthorize(auth, segmentId)
+    if (error) return res.status(error.status).json({ error: error.message })
+
+    const mode = req.query.mode || 'init'
+
+    // ── Phase 1: mint a signed upload URL ───────────────────────────
+    // Storage's signed upload URLs let the browser PUT the file
+    // directly to S3 (the storage backend) without the bytes ever
+    // touching Vercel. Token is single-use and short-lived (~2h).
+    if (mode === 'init') {
+      const body = req.body || {}
+      const contentType = body.content_type || 'video/mp4'
+      if (!contentType.startsWith('video/')) {
+        return res.status(415).json({
+          error: `Unsupported content type "${contentType}". Upload an MP4 / MOV.`,
+        })
+      }
+      const ext = contentType.includes('quicktime') ? 'mov' : 'mp4'
+      const path = `${video.profile_id}/studio/external-avatars/${segmentId}-${Date.now()}.${ext}`
+      // Storage REST: POST /storage/v1/object/upload/sign/<bucket>/<path>
+      // Returns { url, token } where the browser does:
+      //   PUT https://<project>.supabase.co<url>
+      //   with x-upsert + auth header. We hand the relative URL back.
+      const signResp = await fetch(
+        `${SUPABASE_URL}/storage/v1/object/upload/sign/${STUDIO_BUCKET}/${encodeURI(path)}`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({}),
         },
-        body: file.body,
-      },
-    )
-    if (!up.ok) {
-      const detail = await up.text().catch(() => '')
-      return res.status(500).json({ error: `Storage upload ${up.status}: ${detail.slice(0, 200)}` })
+      )
+      if (!signResp.ok) {
+        const detail = await signResp.text().catch(() => '')
+        return res.status(500).json({ error: `Could not sign upload URL (${signResp.status}): ${detail.slice(0, 200)}` })
+      }
+      const signed = await signResp.json()
+      // signed.url is like "/object/upload/sign/<bucket>/<path>?token=..."
+      // — prepend SUPABASE_URL/storage/v1 so the browser hits an
+      // absolute URL.
+      const absUrl = `${SUPABASE_URL}/storage/v1${signed.url}`
+      return res.status(200).json({
+        signed_url: absUrl,
+        path,
+        token: signed.token,
+        content_type: contentType,
+      })
     }
-    const finalUrl = `${SUPABASE_URL}/storage/v1/object/public/${STUDIO_BUCKET}/${path}`
 
-    // Patch the segment. Mark status=ready so the editor immediately
-    // shows the row as good-to-render.
-    await supaFetch(`studio_segments?id=eq.${segmentId}`, {
-      method: 'PATCH',
-      body: { avatar_video_url: finalUrl, status: 'ready', error: null },
-      prefer: 'return=minimal',
-    })
+    // ── Phase 2: finalize ───────────────────────────────────────────
+    // Browser tells us the upload landed at <path>. We patch the
+    // segment so the editor + render path pick up the new URL.
+    if (mode === 'finalize') {
+      const body = req.body || {}
+      const path = body.path
+      if (!path) return res.status(400).json({ error: 'path required' })
+      // Guard: path must live under the user's profile prefix so a
+      // client can't claim someone else's upload.
+      if (!path.startsWith(`${video.profile_id}/studio/external-avatars/`)) {
+        return res.status(400).json({ error: 'path does not belong to this video' })
+      }
+      const finalUrl = `${SUPABASE_URL}/storage/v1/object/public/${STUDIO_BUCKET}/${path}`
+      await supaFetch(`studio_segments?id=eq.${segmentId}`, {
+        method: 'PATCH',
+        body: { avatar_video_url: finalUrl, status: 'ready', error: null },
+        prefer: 'return=minimal',
+      })
+      return res.status(200).json({ ok: true, avatar_video_url: finalUrl })
+    }
 
-    return res.status(200).json({
-      ok: true,
-      avatar_video_url: finalUrl,
-      filename: file.filename,
-      bytes: file.body.length,
-    })
+    return res.status(400).json({ error: `Unknown mode "${mode}". Use init or finalize.` })
   } catch (err) {
     return res.status(err.status || 500).json({ error: err.message || String(err) })
   }
