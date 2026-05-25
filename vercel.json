@@ -37,6 +37,15 @@
     "api/studio/generate-assets.js": {
       "maxDuration": 300
     },
+    "api/studio/enrich-overlays.js": {
+      "maxDuration": 120
+    },
+    "api/studio/generate-map.js": {
+      "maxDuration": 120
+    },
+    "api/studio/chat.js": {
+      "maxDuration": 60
+    },
     "api/social/upload-post.js": {
       "maxDuration": 60
     }

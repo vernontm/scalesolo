@@ -203,16 +203,28 @@ export default async function handler(req, res) {
       brandMd = renderBrandContextMarkdown(ctx, { exclude: ['exemplars'] })
     } catch { /* optional */ }
 
-    const claudeResp = await anthropicMessage({
-      system: buildSystem(brandMd, tmpl, captionsOn),
-      messages: [{ role: 'user', content: buildUser(segments) }],
-      tools: [ENRICH_TOOL],
-      tool_choice: { type: 'tool', name: 'enrich_segments' },
-      max_tokens: 6000,
-    })
+    let claudeResp
+    try {
+      claudeResp = await anthropicMessage({
+        system: buildSystem(brandMd, tmpl, captionsOn),
+        messages: [{ role: 'user', content: buildUser(segments) }],
+        tools: [ENRICH_TOOL],
+        tool_choice: { type: 'tool', name: 'enrich_segments' },
+        max_tokens: 6000,
+      })
+    } catch (apiErr) {
+      // Anthropic-side failure (rate limit, model error, network blip).
+      // Wrap so the client gets a clean JSON body instead of a Vercel
+      // HTML error page → "Invalid JSON" toast.
+      const msg = apiErr?.message || String(apiErr)
+      return res.status(502).json({ error: `Claude API error: ${msg.slice(0, 500)}` })
+    }
     const input = extractToolInput(claudeResp)
     if (!input?.enrichments) {
-      return res.status(502).json({ error: 'Claude did not return an enrichment plan' })
+      // Dump a small sample of what Claude returned so the next user
+      // report is debuggable instead of "Invalid JSON."
+      const sample = JSON.stringify(claudeResp).slice(0, 500)
+      return res.status(502).json({ error: `Claude did not return an enrichment plan. Response sample: ${sample}` })
     }
 
     // Index Claude's enrichments by segment_id for lookup.

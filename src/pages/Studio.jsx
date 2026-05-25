@@ -1303,12 +1303,18 @@ function EnrichOverlaysButton({ video }) {
         method: 'POST',
         body: { studio_video_id: video.id },
       })
+      // Read body as text first so we can fall back to a helpful error
+      // when Vercel returns an HTML timeout / 504 page instead of JSON.
+      const text = await r.text()
+      let body = null
+      try { body = JSON.parse(text) } catch { /* not JSON */ }
       if (!r.ok) {
-        const body = await r.json().catch(() => ({}))
-        throw new Error(body.error || `Request failed (${r.status})`)
+        if (body?.error) throw new Error(body.error)
+        if (r.status === 504) throw new Error('Enrichment timed out. Try again — Claude was slow that time.')
+        throw new Error(`Request failed (${r.status}). ${text.slice(0, 120)}`)
       }
-      const j = await r.json()
-      setResult(j)
+      if (!body) throw new Error('Server returned a non-JSON response. Check Vercel function logs.')
+      setResult(body)
     } catch (e) {
       setErr(e.message)
     } finally {
