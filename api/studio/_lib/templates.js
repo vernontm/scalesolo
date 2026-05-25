@@ -148,17 +148,19 @@ export const SLEEK = {
   // showcase. Keep this block in sync with that file: if the showcase
   // changes, these tokens change too.
   overlay_overrides: {
-    // .ov-stat — deeper glass card with chrome-gradient number + red drop-glow.
+    // .ov-stat — dark-glass card with chrome-gradient number + red drop-glow.
+    // Dark background reads against any footage; saturate(140) keeps
+    // the backdrop blur feeling like glass rather than a flat panel.
     'stat-callout-v1': {
       container: {
-        background: 'linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%)',
+        background: 'linear-gradient(180deg, rgba(10,10,12,0.78) 0%, rgba(10,10,12,0.65) 100%)',
         backdrop_blur_px: 20,
-        border: '1px solid rgba(255,255,255,0.18)',
+        border: '1px solid rgba(255,255,255,0.16)',
         border_radius_px: 14,
         padding: '22px 28px',
         min_width_px: 220,
         text_align: 'center',
-        box_shadow: '0 16px 48px rgba(0,0,0,0.45), 0 0 30px rgba(227,21,30,0.12), 0 1px 0 rgba(255,255,255,0.12) inset',
+        box_shadow: '0 16px 48px rgba(0,0,0,0.55), 0 0 30px rgba(227,21,30,0.18), 0 1px 0 rgba(255,255,255,0.10) inset',
       },
       label:  { font: 'JetBrains Mono', weight: 700, size_px: 10, color: '{accent}', letter_spacing: '0.2em', uppercase: true, margin_bottom_px: 6 },
       number: { font: 'Plus Jakarta Sans', weight: 900, size_px: 48, treatment: 'chrome_vertical', drop_shadow: '0 0 12px rgba(227,21,30,0.4)', letter_spacing: '-0.03em', line_height: 1 },
@@ -183,12 +185,12 @@ export const SLEEK = {
     // emphasis word.
     'caption-overlay-v1': {
       container: {
-        background: 'linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%)',
+        background: 'linear-gradient(180deg, rgba(10,10,12,0.80) 0%, rgba(10,10,12,0.68) 100%)',
         backdrop_blur_px: 20,
-        border: '1px solid rgba(255,255,255,0.18)',
+        border: '1px solid rgba(255,255,255,0.16)',
         border_radius_px: 14,
         padding: '24px 40px', text_align: 'center',
-        box_shadow: '0 16px 48px rgba(0,0,0,0.45), 0 0 40px rgba(227,21,30,0.12), 0 1px 0 rgba(255,255,255,0.12) inset',
+        box_shadow: '0 16px 48px rgba(0,0,0,0.55), 0 0 40px rgba(227,21,30,0.18), 0 1px 0 rgba(255,255,255,0.10) inset',
       },
       text:      { font: 'Plus Jakarta Sans', weight: 700, size_px: 28, color: 'var(--text-primary)', letter_spacing: '-0.015em', line_height: 1.25 },
       highlight: { color: '{accent}', text_shadow: '0 0 20px rgba(227,21,30,0.6)' },
@@ -198,13 +200,13 @@ export const SLEEK = {
     // red border + red glow) next to a name/desc stack.
     'tool-logo-v1': {
       container: {
-        background: 'linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%)',
+        background: 'linear-gradient(180deg, rgba(10,10,12,0.78) 0%, rgba(10,10,12,0.65) 100%)',
         backdrop_blur_px: 20,
-        border: '1px solid rgba(255,255,255,0.18)',
+        border: '1px solid rgba(255,255,255,0.16)',
         border_radius_px: 14,
         padding: '18px 22px', layout: 'flex_row', gap_px: 16,
         min_width_px: 220,
-        box_shadow: '0 16px 48px rgba(0,0,0,0.45), 0 1px 0 rgba(255,255,255,0.12) inset',
+        box_shadow: '0 16px 48px rgba(0,0,0,0.55), 0 1px 0 rgba(255,255,255,0.10) inset',
       },
       logo: {
         size_px: 44, border_radius_px: 8,
@@ -259,13 +261,13 @@ export const SLEEK = {
     // (drop + inset highlight) so the card has real depth.
     'chapter-marker-v1': {
       container: {
-        background: 'linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%)',
+        background: 'linear-gradient(180deg, rgba(10,10,12,0.78) 0%, rgba(10,10,12,0.65) 100%)',
         backdrop_blur_px: 20,
-        border: '1px solid rgba(255,255,255,0.18)',
+        border: '1px solid rgba(255,255,255,0.16)',
         border_radius_px: 14,
         padding: '18px 28px',
         min_width_px: 240,
-        box_shadow: '0 16px 48px rgba(0,0,0,0.45), 0 1px 0 rgba(255,255,255,0.12) inset',
+        box_shadow: '0 16px 48px rgba(0,0,0,0.55), 0 1px 0 rgba(255,255,255,0.10) inset',
       },
       side_strip: { enabled: true, width_px: 4, color: '{accent}', glow: '0 0 18px {accent}', inset_top_pct: 15, inset_bottom_pct: 15, border_radius_px: '0 3px 3px 0' },
       meta:  { font: 'JetBrains Mono', weight: 700, size_px: 11, color: '{accent}', letter_spacing: '0.2em', uppercase: true, line_height: 1, margin_bottom_px: 10 },

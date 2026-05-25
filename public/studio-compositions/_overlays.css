@@ -73,22 +73,25 @@
 /* These match outputs/sleek-overlays.html exactly. Per-template
    overrides arrive via inline style on the card root. */
 
-/* 1. STAT CALLOUT — deeper glass */
+/* 1. STAT CALLOUT — dark glass.
+   The background is dark + opaque enough to read against ANY footage
+   (bright avatar shots, busy B-roll, white walls, etc.) while still
+   feeling like glass via the blur + subtle accent rim. */
 .ov-stat {
   background: linear-gradient(180deg,
-    rgba(255,255,255,0.10) 0%,
-    rgba(255,255,255,0.05) 100%);
+    rgba(10,10,12,0.78) 0%,
+    rgba(10,10,12,0.65) 100%);
   backdrop-filter: blur(20px) saturate(140%);
   -webkit-backdrop-filter: blur(20px) saturate(140%);
-  border: 1px solid rgba(255,255,255,0.18);
+  border: 1px solid rgba(255,255,255,0.16);
   border-radius: 14px;
   padding: 22px 28px;
   min-width: 220px;
   text-align: center;
   box-shadow:
-    0 16px 48px rgba(0,0,0,0.45),
-    0 0 30px rgba(227,21,30,0.12),
-    0 1px 0 rgba(255,255,255,0.12) inset;
+    0 16px 48px rgba(0,0,0,0.55),
+    0 0 30px rgba(227,21,30,0.18),
+    0 1px 0 rgba(255,255,255,0.10) inset;
 }
 .ov-stat .label {
   font-family: 'JetBrains Mono', monospace;
@@ -146,21 +149,23 @@
   border-radius: 2px;
 }
 
-/* 3. CAPTION HIGHLIGHT — deeper glass */
+/* 3. CAPTION HIGHLIGHT — dark glass. Most important card to keep
+   readable against any background because it carries the spoken
+   text on every speaker segment. */
 .ov-caption {
   background: linear-gradient(180deg,
-    rgba(255,255,255,0.10) 0%,
-    rgba(255,255,255,0.05) 100%);
+    rgba(10,10,12,0.80) 0%,
+    rgba(10,10,12,0.68) 100%);
   backdrop-filter: blur(20px) saturate(140%);
   -webkit-backdrop-filter: blur(20px) saturate(140%);
-  border: 1px solid rgba(255,255,255,0.18);
+  border: 1px solid rgba(255,255,255,0.16);
   border-radius: 14px;
   padding: 24px 40px;
   text-align: center;
   box-shadow:
-    0 16px 48px rgba(0,0,0,0.45),
-    0 0 40px rgba(227,21,30,0.12),
-    0 1px 0 rgba(255,255,255,0.12) inset;
+    0 16px 48px rgba(0,0,0,0.55),
+    0 0 40px rgba(227,21,30,0.18),
+    0 1px 0 rgba(255,255,255,0.10) inset;
 }
 .ov-caption .text {
   font-weight: 700;
@@ -174,14 +179,14 @@
   text-shadow: 0 0 20px rgba(227,21,30,0.6);
 }
 
-/* 4. TOOL / PRODUCT LOGO — deeper glass */
+/* 4. TOOL / PRODUCT LOGO — dark glass */
 .ov-tool {
   background: linear-gradient(180deg,
-    rgba(255,255,255,0.10) 0%,
-    rgba(255,255,255,0.05) 100%);
+    rgba(10,10,12,0.78) 0%,
+    rgba(10,10,12,0.65) 100%);
   backdrop-filter: blur(20px) saturate(140%);
   -webkit-backdrop-filter: blur(20px) saturate(140%);
-  border: 1px solid rgba(255,255,255,0.18);
+  border: 1px solid rgba(255,255,255,0.16);
   border-radius: 14px;
   padding: 18px 22px;
   display: flex;
@@ -189,8 +194,8 @@
   gap: 16px;
   min-width: 220px;
   box-shadow:
-    0 16px 48px rgba(0,0,0,0.45),
-    0 1px 0 rgba(255,255,255,0.12) inset;
+    0 16px 48px rgba(0,0,0,0.55),
+    0 1px 0 rgba(255,255,255,0.10) inset;
 }
 .ov-tool .logo {
   width: 44px; height: 44px;
@@ -293,24 +298,20 @@
   line-height: 1.25;
 }
 
-/* 8. CHAPTER MARKER — wider + deeper glass than v1.
-   The card needs to read as a clear, separate UI surface against the
-   speaker behind it. Bumped padding, min-width, stronger border +
-   shadow, deeper blur, brighter inner highlight. */
+/* 8. CHAPTER MARKER — dark glass with accent side strip. */
 .ov-chapter {
   background: linear-gradient(180deg,
-    rgba(255,255,255,0.10) 0%,
-    rgba(255,255,255,0.05) 100%);
+    rgba(10,10,12,0.78) 0%,
+    rgba(10,10,12,0.65) 100%);
   backdrop-filter: blur(20px) saturate(140%);
   -webkit-backdrop-filter: blur(20px) saturate(140%);
-  border: 1px solid rgba(255,255,255,0.18);
+  border: 1px solid rgba(255,255,255,0.16);
   border-radius: 14px;
   padding: 18px 28px;
   min-width: 240px;
   box-shadow:
-    0 16px 48px rgba(0,0,0,0.45),
-    0 0 0 1px rgba(255,255,255,0.04) inset,
-    0 1px 0 rgba(255,255,255,0.12) inset;
+    0 16px 48px rgba(0,0,0,0.55),
+    0 1px 0 rgba(255,255,255,0.10) inset;
   position: relative;
 }
 .ov-chapter::before {
