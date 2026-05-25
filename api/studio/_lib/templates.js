@@ -257,10 +257,33 @@ export const SLEEK = {
     },
   },
   audio: {
+    // Legacy fields kept for backwards compat — generate-map.js still
+    // reads `audio.sfx_pool` + `audio.sfx_density` when assembling the
+    // segmentation prompt. The new resolver reads from `sfx` below.
     sfx_pool: ['swoosh', 'subtle_chime', 'impact'],
     sfx_density: 'medium',
     music_mood: 'futuristic_calm',
     music_volume: 0.12,
+  },
+  // SFX block — read by sfx-resolver.js. Pairs each of Sleek's motion
+  // primitives with a sound. Overrides bump the entrance + transition
+  // whoosh from the default `swoosh_mid` to the more cinematic
+  // `swoosh_low` to match Sleek's premium, deliberate feel.
+  // Standalone triggers fire at known content beats (title hero, stat
+  // land, end card) — see STANDALONE_EVENTS in sfx-bank.js.
+  sfx: {
+    density: 'medium',
+    master_volume: 0.5,
+    pack: 'default',
+    overrides: {
+      entrance: 'swoosh_low',
+      transition: 'swoosh_low',
+    },
+    standalone_triggers: [
+      { event: 'title_hero', sfx: 'sting_logo' },
+      { event: 'stat_land',  sfx: 'sting_punch' },
+      { event: 'end_card',   sfx: 'sting_resolve' },
+    ],
   },
   pacing: {
     segment_duration_avg_secs: 4.5,
