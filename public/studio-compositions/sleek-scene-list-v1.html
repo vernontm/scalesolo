@@ -146,7 +146,7 @@
     0%, 100% { text-shadow: 0 0 20px rgba(227,21,30,0.5), 0 0 40px rgba(227,21,30,0.25); }
     50%      { text-shadow: 0 0 35px rgba(227,21,30,0.9), 0 0 70px rgba(227,21,30,0.5), 0 0 100px rgba(227,21,30,0.3); }
   }
-  .list-title .accent { animation: pulse_glow_text 2000ms ease-in-out infinite; }
+  .list-title .accent { animation: pulse_glow_text 4000ms ease-in-out infinite; }
 </style>
 </head>
 <body>
@@ -213,8 +213,14 @@
       text.className = 'text'
       // Support either: { text: "foo" } | { text: "foo", highlight: "bar" }.
       // Renders text + (optional highlighted suffix) as a single span chain.
+      //
+      // BUG GUARD: Claude sometimes emits `highlight: true` (boolean)
+      // meaning "this item is highlighted" instead of "this string is
+      // the highlight". Coercing that with String(true) appended a
+      // literal "true" after every list item. Only accept STRING
+      // highlights; ignore boolean/null/undefined.
       const plain = String(item.text || '').trim()
-      const hl = String(item.highlight || '').trim()
+      const hl = (typeof item.highlight === 'string') ? item.highlight.trim() : ''
       if (hl) {
         text.innerHTML = `${plain} <span class="highlight"></span>`
         text.querySelector('.highlight').textContent = hl

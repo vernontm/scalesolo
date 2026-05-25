@@ -292,13 +292,22 @@ export const SLEEK = {
     master_volume: 0.5,
     pack: 'default',
     overrides: {
-      entrance: 'swoosh_low',
-      transition: 'swoosh_low',
+      // Ray's hand-picked SFX. Lighter, snappier "designed UI" feel
+      // than the generated bank. Each maps to a single Sleek beat:
+      //   entrance   → ux_swipe   (segment opens, light whoosh)
+      //   exit       → ux_swipe   (mirror entrance — same character)
+      //   transition → ux_zoom    (between-segment crossfade beat)
+      //   emphasis   → null       (no looping emphasis SFX in v1)
+      entrance:   'ux_swipe',
+      exit:       'ux_swipe',
+      transition: 'ux_zoom',
     },
     standalone_triggers: [
-      { event: 'title_hero', sfx: 'sting_logo' },
-      { event: 'stat_land',  sfx: 'sting_punch' },
-      { event: 'end_card',   sfx: 'sting_resolve' },
+      { event: 'title_hero',     sfx: 'ux_ding'  },
+      { event: 'stat_land',      sfx: 'ux_ding'  },
+      { event: 'chapter_change', sfx: 'ux_click' },
+      { event: 'subscribe_cta',  sfx: 'ux_ding'  },
+      { event: 'end_card',       sfx: 'ux_ding'  },
     ],
   },
   pacing: {

@@ -64,6 +64,15 @@ export const SFX_BANK = {
   dip_thud:          { id: 'dip_thud',          file: '/sfx/cinematic/dip_thud.mp3',          duration_ms: 600,  default_volume: 0.8, category: 'cinematic' },
   whoosh_cinematic:  { id: 'whoosh_cinematic',  file: '/sfx/cinematic/whoosh_cinematic.mp3',  duration_ms: 1000, default_volume: 0.65, category: 'cinematic' },
 
+  // ─── USER UX (4) ─ Ray's hand-picked SFX in /public/sfx/ux/.
+  // Take precedence over the generated bank for the four most common
+  // beats. Smaller, snappier, more "designed UI" feel than the
+  // ElevenLabs-generated ones.
+  ux_click: { id: 'ux_click', file: '/sfx/ux/mouse-click.mp3', duration_ms: 120, default_volume: 0.6, category: 'ui' },
+  ux_ding:  { id: 'ux_ding',  file: '/sfx/ux/ding.mp3',        duration_ms: 600, default_volume: 0.55, category: 'ui' },
+  ux_swipe: { id: 'ux_swipe', file: '/sfx/ux/swipe.mp3',       duration_ms: 350, default_volume: 0.7, category: 'whoosh' },
+  ux_zoom:  { id: 'ux_zoom',  file: '/sfx/ux/zoom.mp3',        duration_ms: 500, default_volume: 0.7, category: 'cinematic' },
+
   // ─── STINGERS / HITS (5) ──────────────────────────────────────────
   sting_short:     { id: 'sting_short',     file: '/sfx/stingers/sting_short.mp3',     duration_ms: 600,  default_volume: 0.7, category: 'stinger' },
   sting_subscribe: { id: 'sting_subscribe', file: '/sfx/stingers/sting_subscribe.mp3', duration_ms: 800,  default_volume: 0.75, category: 'stinger' },
