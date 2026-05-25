@@ -171,8 +171,20 @@ async function fetchResolvedTemplate(baseUrl, env, templateId, accent) {
   if (!templateId) return null
   const url = `${baseUrl}/api/studio/template-resolved?id=${encodeURIComponent(templateId)}` +
               (accent ? `&accent=${encodeURIComponent(accent)}` : '')
+  // Vercel SSO Deployment Protection sits in front of preview / non-
+  // production deployments and rejects requests with a 401 + HTML auth
+  // page BEFORE our endpoint sees them. We bypass via the same headers
+  // renderHyperFramesChunk + renderOverlayPngs use. Without this the
+  // worker can never call template-resolved on preview branches, and
+  // overlays + SFX silently disable.
+  const headers = { 'x-worker-secret': secret }
+  const bypassSecret = env.VERCEL_AUTOMATION_BYPASS_SECRET
+  if (bypassSecret) {
+    headers['x-vercel-protection-bypass'] = bypassSecret
+    headers['x-vercel-set-bypass-cookie'] = 'samesitenone'
+  }
   try {
-    const r = await fetch(url, { headers: { 'x-worker-secret': secret } })
+    const r = await fetch(url, { headers })
     if (!r.ok) {
       console.warn(`[studio-render] template fetch returned ${r.status} for ${templateId}; overlays + SFX will be skipped.`)
       return null
