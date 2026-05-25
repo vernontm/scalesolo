@@ -24,6 +24,7 @@ import { gateStudio } from './_lib/gate.js'
 import { message as anthropicMessage } from '../_lib/anthropic.js'
 import { loadBrandContext, renderBrandContextMarkdown } from '../_lib/brand-context.js'
 import { resolveTemplate } from './_lib/templates.js'
+import { buildCompositionGuidance } from './_lib/composition-guidance.js'
 
 // Schema Claude sees. Indexed by segment_id so we don't rely on order.
 const REFRESH_TOOL = {
@@ -60,57 +61,16 @@ function buildSystem(brandMd, tmpl) {
   const pool = tmpl.composition_pool || []
   return `You are Studio's motion-graphics refresher. Each segment already has a script and is rendering as motion graphics. Your job is to look at the actual SCRIPT TEXT of each segment and pick the composition + variables that ACCURATELY match what's being said.
 
-Composition pool (you may ONLY pick from this list — Sleek v2):
+Composition pool (you may ONLY pick from this list):
 ${pool.map((id) => `  - ${id}`).join('\n')}
 
-How to pick (only 3 options — choose by content shape):
-
-- sleek-scene-headline-v1: ANY "big text on screen" moment — titles,
-  quotes, stat reveals, single-line punchlines. The composition shows
-  one headline split into two pieces:
-    title_chrome  — the lead-in (white chrome gradient)
-    title_accent  — the punchy word / number / brand name (red glow)
-  Examples:
-    "We grew 10x"            → chrome "We grew",        accent "10x"
-    "The future is one person" → chrome "The future is", accent "one person"
-    "Here's the thing"       → chrome "Here's",         accent "the thing"
-  Optional vars: subtitle (one line under), eyebrow (small red label above).
-  This is the DEFAULT pick — use it when nothing else fits.
-
-- sleek-scene-list-v1: ONLY when the script enumerates 3-5 discrete
-  items. Set:
-    list_title_chrome / list_title_accent — same chrome+accent pair
-    items — JSON ARRAY STRING of {text, highlight?}, max 5
-  items array length MUST match the literal count of items mentioned.
-  Example: "voice, video, and image generation" → exactly 3 entries.
-
-- sleek-scene-claude-chat-v1: ONLY when the script explicitly mentions
-  asking/prompting/telling Claude something. Shows a Claude.ai-style
-  chat UI with the user's prompt and Claude's reply typing
-  word-by-word. Slots:
-    user_message    — quote the prompt VERBATIM from script, stripping
-                      "I told Claude" framing. e.g. script "I told
-                      Claude to build me a React CRM" → user_message
-                      "Build me a React CRM."
-    claude_response — what Claude said back. If the script states it,
-                      use that verbatim; otherwise write a short 2-3
-                      sentence on-brand reply in Claude voice.
-  Don't pick this for generic "AI did X" — needs explicit Claude.
-
-- sleek-scene-cta-v1: ONLY the LAST motion-graphics segment of the
-  video. Sets:
-    cta_headline_chrome / cta_headline_accent
-    cta_subhead — one-line description
-    cta_button_text — button label
-    hero_handle — defaults to the brand handle
-    eyebrow — optional small red label above headline
+${buildCompositionGuidance(tmpl)}
 
 Per-variable accuracy rules:
 - Pull text VERBATIM from the script where you can. Don't fabricate
   numbers, brand names, or stats that the script doesn't say.
-- title_accent / list_title_accent / cta_headline_accent is for the
-  punchy word — pick ONE word or short phrase. Everything else goes
-  in chrome.
+- The accent / highlight slot is for the punchy word — pick ONE word
+  or short phrase. Everything else goes in the lead-in slot.
 - accent_color: "${tmpl.colors.primary_accent}"
 - handle / hero_handle defaults to the user's brand handle if you
   don't know it; otherwise pull from the brand context below.

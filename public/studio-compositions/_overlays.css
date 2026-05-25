@@ -103,18 +103,24 @@
 }
 .ov-stat .number {
   font-weight: 900;
-  font-size: 48px;
-  line-height: 1;
+  font-size: 96px;
+  line-height: 0.95;
   margin: 4px 0;
+  /* Smoother chrome — the previous gradient had a hard #8a8a92 band at
+     55% that rendered as visible horizontal stripes through the glyph
+     when text-fill-color: transparent clipped the gradient through the
+     small font. With letters sitting in the dark middle band the "x"
+     looked like "a" with weird lines. Soften the band so it reads as
+     metallic sheen at any size. */
   background: linear-gradient(180deg,
-    #ffffff 0%, #f0f0f5 40%, #8a8a92 55%, #d8d8e0 70%, #ffffff 100%);
+    #ffffff 0%, #ececf2 50%, #c8c8d0 65%, #ffffff 100%);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0 0 12px rgba(227,21,30,0.4));
-  letter-spacing: -0.03em;
+  filter: drop-shadow(0 0 18px rgba(227,21,30,0.45));
+  letter-spacing: -0.035em;
 }
-.ov-stat .number .unit { font-size: 26px; }
+.ov-stat .number .unit { font-size: 52px; opacity: 0.92; }
 .ov-stat .sub {
   font-weight: 600;
   font-size: 13px;
