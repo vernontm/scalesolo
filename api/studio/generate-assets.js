@@ -28,6 +28,49 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { gateStudio } from './_lib/gate.js'
+import { customerIdForUser } from '../_lib/credits.js'
+
+// Credit gate. Returns null on success, or a 402 payload to send back.
+// Mirrors the cost estimator's HIGH-bound math from estimate-cost.js
+// so the gate matches the UI display exactly.
+async function checkCredits(userId, video) {
+  const customerId = await customerIdForUser(userId)
+  if (!customerId) {
+    // No billing customer yet → free trial / pre-checkout. Block to
+    // force users into a paid tier before they burn provider quotas
+    // we can't recover from.
+    return { error: 'No active subscription. Start a plan to generate Studio renders.', code: 'no_subscription' }
+  }
+  const duration = Number(video.target_duration_secs) || 120
+  const hasAvatar = !!video.avatar_id
+  const avatarSecs = hasAvatar ? Math.round(duration * 0.65) : 0
+
+  const needAiTokens     = Math.ceil(20000 + 14000 + 9000 + 3 * 3500)   // HIGH bound
+  const needVideoUnits   = Math.ceil(avatarSecs * 1.15 / 6.7)
+  const needVoiceMinutes = Number((duration * 1.10 / 60).toFixed(2))
+
+  const pools = await supaFetch(
+    `credit_pools?customer_id=eq.${customerId}&select=pool_type,balance`,
+  )
+  const bal = { ai_tokens: 0, video_units: 0, voice_minutes: 0 }
+  for (const p of (pools || [])) {
+    if (p.pool_type in bal) bal[p.pool_type] = Number(p.balance) || 0
+  }
+
+  const short = []
+  if (bal.ai_tokens     < needAiTokens)     short.push(`ai_tokens (need ${needAiTokens}, have ${bal.ai_tokens})`)
+  if (needVideoUnits > 0 && bal.video_units < needVideoUnits)
+    short.push(`video_units (need ${needVideoUnits}, have ${bal.video_units})`)
+  if (bal.voice_minutes < needVoiceMinutes) short.push(`voice_minutes (need ${needVoiceMinutes}, have ${bal.voice_minutes})`)
+
+  if (short.length) {
+    return {
+      error: `Insufficient credits: ${short.join(', ')}. Top up or shorten the video.`,
+      code: 'insufficient_credits',
+    }
+  }
+  return null
+}
 import { synthesizeToPublicUrl } from '../_lib/elevenlabs.js'
 import { generateVideoV3, listLooksForGroup } from '../_lib/heygen.js'
 
@@ -272,6 +315,17 @@ export default async function handler(req, res) {
     const video = vRows?.[0]
     if (!video) return res.status(404).json({ error: 'Video not found' })
     await assertProfileAccess(auth.user.id, video.profile_id)
+
+    // Credit gate — block before we burn provider quotas the user
+    // can't actually afford. Skips when this is a per-segment regen
+    // (segment_ids set) since those small individual regens are
+    // cheap and the user already paid for the macro spend at
+    // generation time.
+    const isSingleSegment = Array.isArray(req.body?.segment_ids) && req.body.segment_ids.length
+    if (!isSingleSegment) {
+      const creditErr = await checkCredits(auth.user.id, video)
+      if (creditErr) return res.status(402).json({ error: creditErr.error, code: creditErr.code })
+    }
 
     // Resolve voice/avatar — fall back to brand profile defaults when the
     // video's own ids are blank. For now we only read the video's columns;

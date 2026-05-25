@@ -22,6 +22,31 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { gateStudio } from './_lib/gate.js'
+import { customerIdForUser } from '../_lib/credits.js'
+
+// Render-only gate. Bakes don't burn provider quotas (Claude / HeyGen /
+// ElevenLabs) — those happen at asset-gen time. But Fly compute time
+// is real money, so we still require *some* ai_tokens balance so we
+// can pay for the chat + enrich + refresh calls that fire as part of
+// the render-flow. Threshold is set low: a few thousand ai_tokens.
+async function gateRenderCredits(userId) {
+  const customerId = await customerIdForUser(userId)
+  if (!customerId) {
+    return { error: 'No active subscription. Start a plan to render Studio videos.', code: 'no_subscription' }
+  }
+  const pools = await supaFetch(
+    `credit_pools?customer_id=eq.${customerId}&pool_type=eq.ai_tokens&select=balance`,
+  )
+  const aiTokens = Number(pools?.[0]?.balance || 0)
+  const minNeeded = 30000  // covers the ~25k high-bound for enrich + refresh + a few chat turns
+  if (aiTokens < minNeeded) {
+    return {
+      error: `Insufficient AI tokens to render (need ~${minNeeded}, have ${aiTokens}). Top up your AI tokens balance.`,
+      code: 'insufficient_credits',
+    }
+  }
+  return null
+}
 
 export default async function handler(req, res) {
   setCors(req, res)
@@ -34,6 +59,12 @@ export default async function handler(req, res) {
 
     const videoId = req.body?.studio_video_id
     if (!videoId) return res.status(400).json({ error: 'studio_video_id required' })
+
+    // Credit gate — must hold ai_tokens for the enrich + chat passes.
+    // Avatar / voice were already paid for at asset-gen time; this
+    // pass just runs a few Claude calls + ffmpeg.
+    const creditErr = await gateRenderCredits(auth.user.id)
+    if (creditErr) return res.status(402).json({ error: creditErr.error, code: creditErr.code })
 
     // Validate access before bothering the worker
     const vRows = await supaFetch(`studio_videos?id=eq.${videoId}&select=id,profile_id&limit=1`)

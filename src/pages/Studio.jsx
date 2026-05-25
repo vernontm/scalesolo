@@ -185,6 +185,9 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
   const [error, setError] = useState(null)
   const [avatars, setAvatars] = useState([])
   const [templates, setTemplates] = useState([])
+  // Cost-side affordability — set by CostEstimate when it loads.
+  // Used to disable the submit button when the user can't pay.
+  const [canRender, setCanRender] = useState(true)
   // Slimmed-down form per PDF feedback. No title (auto-generated), no
   // reference URL / text, no brand_color picker (synced from brand
   // profile), no voice picker (tied to avatar), no overlays / auto-fit
@@ -446,6 +449,16 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
         />
       )}
 
+      {/* Cost estimate — updates as the user changes aspect / length /
+          avatar choice. Disables the generate button when the user
+          is short on any pool. */}
+      <CostEstimate
+        profileId={profileId}
+        targetDurationSecs={form.target_duration_secs}
+        hasAvatar={!!form.avatar_id}
+        onAffordability={setCanRender}
+      />
+
       {error && (
         <div style={{
           background: 'rgba(239,68,68,0.12)', color: 'var(--red)',
@@ -460,12 +473,137 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
             Cancel
           </button>
         )}
-        <button type="submit" className="btn-primary" disabled={busy || !form.topic_prompt.trim()}>
+        <button
+          type="submit"
+          className="btn-primary"
+          disabled={busy || !form.topic_prompt.trim() || !canRender}
+          title={!canRender ? 'Not enough credits for this video. Top up or pick a shorter length.' : undefined}
+        >
           {busy ? <Loader2 size={14} className="spin" /> : <Wand2 size={14} />}
           {busy ? 'Creating…' : 'Generate video map'}
         </button>
       </div>
     </form>
+  )
+}
+
+// Shared cost-estimate card. Hits /api/studio/estimate-cost whenever
+// any of the inputs change (debounced) and renders a 3-row block
+// (AI tokens, video credits, voice minutes) with low-high ranges +
+// remaining balance + an "insufficient" badge when the user is short.
+function CostEstimate({ profileId, studioVideoId, targetDurationSecs, hasAvatar, hint, onAffordability }) {
+  const { session } = useAuth()
+  const [data, setData] = useState(null)
+  const [err, setErr] = useState(null)
+
+  // Bubble can_render up to parent. Default true while loading so the
+  // submit button doesn't flicker disabled then re-enable.
+  useEffect(() => {
+    if (data && onAffordability) onAffordability(!!data.can_render)
+  }, [data, onAffordability])
+  // Debounced fetch — typing on the topic field shouldn't fire estimate
+  // on every keystroke, but slider changes feel best with near-instant
+  // feedback. 200ms hits a good middle.
+  useEffect(() => {
+    if (!session?.access_token) return
+    if (!studioVideoId && !profileId) return
+    const t = setTimeout(async () => {
+      try {
+        const body = studioVideoId
+          ? { studio_video_id: studioVideoId }
+          : { profile_id: profileId, target_duration_secs: targetDurationSecs, has_avatar: hasAvatar }
+        const r = await authedFetch('/api/studio/estimate-cost', session.access_token, {
+          method: 'POST', body: JSON.stringify(body),
+        })
+        const text = await r.text()
+        let body2 = null
+        try { body2 = JSON.parse(text) } catch { /* not JSON */ }
+        if (!r.ok) throw new Error(body2?.error || `HTTP ${r.status}`)
+        setData(body2); setErr(null)
+      } catch (e) {
+        setErr(e.message)
+      }
+    }, 200)
+    return () => clearTimeout(t)
+  }, [session?.access_token, profileId, studioVideoId, targetDurationSecs, hasAvatar])
+
+  if (err) {
+    return (
+      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 12 }}>
+        Cost estimate unavailable: {err}
+      </div>
+    )
+  }
+  if (!data) {
+    return (
+      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <Loader2 size={11} className="spin" /> Estimating cost…
+      </div>
+    )
+  }
+
+  const fmt = (n) => Number(n).toLocaleString(undefined, { maximumFractionDigits: 1 })
+  const rows = [
+    {
+      label: 'AI tokens',
+      low: data.cost.ai_tokens.low, high: data.cost.ai_tokens.high,
+      balance: data.balance.ai_tokens,
+      enough: data.sufficient.ai_tokens,
+      hint: 'Script generation, overlay enrichment, motion-graphics auto-fit, chat edits.',
+    },
+    {
+      label: 'Video credits',
+      low: data.cost.video_units.low, high: data.cost.video_units.high,
+      balance: data.balance.video_units,
+      enough: data.sufficient.video_units,
+      hint: 'HeyGen avatar renders. 1 credit ≈ 6.7 seconds of footage.',
+    },
+    {
+      label: 'Voice minutes',
+      low: data.cost.voice_minutes.low, high: data.cost.voice_minutes.high,
+      balance: data.balance.voice_minutes,
+      enough: data.sufficient.voice_minutes,
+      hint: 'ElevenLabs voice synthesis. Roughly the spoken duration of the video.',
+    },
+  ]
+
+  return (
+    <div style={{
+      marginTop: 16,
+      border: `1px solid ${data.can_render ? 'var(--border)' : 'rgba(239,68,68,0.35)'}`,
+      borderRadius: 10,
+      background: 'var(--surface-2)',
+      padding: 12,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+          Estimated cost
+        </div>
+        {!data.can_render && (
+          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--red)' }}>
+            Not enough credits
+          </span>
+        )}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {rows.map((r) => (
+          <div key={r.label} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
+            <span style={{ flex: '0 0 110px', color: 'var(--text-soft)' }}>{r.label}</span>
+            <span style={{ flex: '0 0 130px', fontWeight: 700 }}>
+              {fmt(r.low)} – {fmt(r.high)}
+            </span>
+            <span style={{ flex: 1, color: 'var(--muted)' }}>
+              Balance: <strong style={{ color: r.enough ? 'var(--text-soft)' : 'var(--red)' }}>{fmt(r.balance)}</strong>
+            </span>
+          </div>
+        ))}
+      </div>
+      {hint && (
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8, lineHeight: 1.4 }}>
+          {hint}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -2320,6 +2458,10 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
   const { session } = useAuth()
   const [busy, setBusy] = useState(false)
   const [showRegenOptions, setShowRegenOptions] = useState(false)
+  // can_render arrives from CostEstimate down below. We disable the
+  // primary button when it's false. Default true so the button isn't
+  // greyed out before the estimate loads.
+  const [canRender, setCanRender] = useState(true)
   // Local "we just clicked render-final" flag. Set on click, cleared
   // when Realtime delivers final_video_url. Decoupled from video.status
   // because that's also 'rendering' during asset gen.
@@ -2584,9 +2726,12 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
       <button
         type="button"
         className="btn-primary"
-        disabled={busy || phase === 'rendering' || phase === 'baking' || phase === 'pre-approval'}
+        disabled={busy || phase === 'rendering' || phase === 'baking' || phase === 'pre-approval' || !canRender}
         onClick={onContinue}
         style={{ fontSize: 13, padding: '10px 18px' }}
+        title={!canRender
+          ? 'Not enough credits to continue. Top up or shorten the video.'
+          : undefined}
       >
         {busy || phase === 'rendering' || phase === 'baking' ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
         {phase === 'rendering'
@@ -2601,6 +2746,16 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
                   ? 'Regen all missing'
                   : 'Generate assets'}
       </button>
+    </div>
+    {/* Cost estimate strip inside the sticky bar — keeps the user
+        aware of remaining balance every time they touch the render
+        button. Lives below the main row so the bar stays a tight
+        single-line action on most pages. */}
+    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+      <CostEstimate
+        studioVideoId={video.id}
+        onAffordability={setCanRender}
+      />
     </div>
     </div>
   )
