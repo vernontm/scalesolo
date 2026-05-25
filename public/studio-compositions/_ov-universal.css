@@ -193,22 +193,23 @@
 /* ---------- CHAPTER variant ---------- */
 .ov-card.chapter,
 .ov-chapter {
-  justify-content: flex-end;
+  /* Center title both vertically and horizontally — the meta label
+     used to anchor content to the bottom of the card, but it's been
+     hidden so the title becomes the only thing in the card and reads
+     better dead-center. */
+  justify-content: center;
+  align-items: center;
+  text-align: center;
   /* Same primary → secondary brand gradient. */
   background: linear-gradient(135deg,
     var(--ov-accent) 0%,
     var(--ov-accent-2) 100%);
 }
+/* Section meta label is suppressed — chapter cards now render just
+   the title, centered. Hidden via display:none so the renderer can
+   keep emitting it (less code churn) without it visually appearing. */
 .ov-chapter .meta,
-.ov-card.chapter .meta {
-  font-family: var(--ov-font-mono);
-  font-size: 13px;
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.85);
-  letter-spacing: 0.3em;
-  text-transform: uppercase;
-  margin-bottom: 20px;
-}
+.ov-card.chapter .meta { display: none; }
 .ov-chapter .title,
 .ov-card.chapter .title {
   font-family: var(--ov-font-display);
