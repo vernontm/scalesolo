@@ -230,9 +230,10 @@ const COMPOSITION_EVENTS = {
   // Sleek v2 — three full-screen scenes. Each one calls recordEvent
   // inside its script for precise timing; this table is the heuristic
   // fallback when the runtime didn't emit anything (e.g. older bake).
-  'sleek-scene-headline-v1': [{ event: 'title_hero',      at_secs: 0.5 }],
-  'sleek-scene-list-v1':     [{ event: 'chapter_change', at_secs: 0.4 }],
-  'sleek-scene-cta-v1':      [
+  'sleek-scene-headline-v1':    [{ event: 'title_hero',     at_secs: 0.5 }],
+  'sleek-scene-list-v1':        [{ event: 'chapter_change', at_secs: 0.4 }],
+  'sleek-scene-claude-chat-v1': [{ event: 'title_hero',     at_secs: 0.9 }],
+  'sleek-scene-cta-v1':         [
     { event: 'end_card',      at_secs: 0.3 },
     { event: 'subscribe_cta', at_secs: 1.1 },
   ],

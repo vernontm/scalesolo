@@ -33,11 +33,12 @@ import { OVERLAY_DEFINITIONS, ALL_ZONES, isValidZoneForOrientation } from './_li
 // Keeping this allowlist server-side prevents Claude from hallucinating
 // composition ids the renderer can't honor.
 const HF_COMPOSITION_IDS = [
-  // Sleek v2 pool — three full-screen scenes.
-  'sleek-scene-headline-v1', // any "big text" moment — titles, quotes,
-                              // stat reveals, single-line punchlines
-  'sleek-scene-list-v1',      // enumerated lists, 3-5 items
-  'sleek-scene-cta-v1',       // final segment CTA only
+  // Sleek v2 pool — four full-screen scenes.
+  'sleek-scene-headline-v1',     // any "big text" moment — titles, quotes,
+                                  // stat reveals, single-line punchlines
+  'sleek-scene-list-v1',          // enumerated lists, 3-5 items
+  'sleek-scene-claude-chat-v1',   // speaker references asking/telling Claude
+  'sleek-scene-cta-v1',           // final segment CTA only
 ]
 
 const SFX_LIBRARY = [
@@ -229,7 +230,7 @@ Intro segment (HARD RULE):
 - Pack the intro segment with overlays to keep viewers engaged: chapter-marker-v1 in l-top with meta "INTRO" and a 2-4 word title that captures the hook, PLUS one of (word-emphasis-v1 with the punchiest word in the hook OR stat-callout-v1 if the hook contains a number). Plus the watermark-v1 in corner-tr.
 - Treat the intro overlays as the energy engine. The avatar carries the audio; the overlays carry the visual hook.
 
-Choosing the right HyperFrames composition (Sleek v2 — three options only, pick by content shape):
+Choosing the right HyperFrames composition (Sleek v2 — four options, pick by content shape):
 
 - sleek-scene-headline-v1: any "big text on screen" moment. Use for
   titles, single-line punchlines, quotes, AND stat reveals. The
@@ -250,6 +251,25 @@ Choosing the right HyperFrames composition (Sleek v2 — three options only, pic
   items array length MUST match the actual count of items in
   script_text. If the avatar says "voice, video, and image" → 3
   entries, not 5. If 6+ items, split into two segments.
+
+- sleek-scene-claude-chat-v1: when the script literally describes
+  the speaker prompting / asking / telling Claude something. Shows
+  a Claude.ai-style chat UI with the user's prompt and Claude's reply
+  typing out word-by-word. Slots:
+    user_message     — what the speaker said to Claude. Quote it
+                       verbatim from the script. Strip "I told Claude"
+                       framing and keep only what was actually asked.
+                       Example: script "I told Claude to build me a
+                       React CRM" → user_message: "Build me a React
+                       CRM."
+    claude_response  — what Claude said back. If the script doesn't
+                       state Claude's actual response, write a short,
+                       on-brand reply (2-3 sentences, Claude voice).
+                       Example: "I will set up a clean React + Supabase
+                       project with auth and a deal pipeline. Let me
+                       scaffold the schema first."
+  Use ONLY when the script names Claude or describes prompting an AI.
+  Don't use this for generic "AI did X" — needs explicit Claude mention.
 
 - sleek-scene-cta-v1: the LAST segment of the video only. Slots:
     cta_headline_chrome / cta_headline_accent — final headline pair

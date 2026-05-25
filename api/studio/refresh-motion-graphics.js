@@ -84,6 +84,19 @@ How to pick (only 3 options — choose by content shape):
   items array length MUST match the literal count of items mentioned.
   Example: "voice, video, and image generation" → exactly 3 entries.
 
+- sleek-scene-claude-chat-v1: ONLY when the script explicitly mentions
+  asking/prompting/telling Claude something. Shows a Claude.ai-style
+  chat UI with the user's prompt and Claude's reply typing
+  word-by-word. Slots:
+    user_message    — quote the prompt VERBATIM from script, stripping
+                      "I told Claude" framing. e.g. script "I told
+                      Claude to build me a React CRM" → user_message
+                      "Build me a React CRM."
+    claude_response — what Claude said back. If the script states it,
+                      use that verbatim; otherwise write a short 2-3
+                      sentence on-brand reply in Claude voice.
+  Don't pick this for generic "AI did X" — needs explicit Claude.
+
 - sleek-scene-cta-v1: ONLY the LAST motion-graphics segment of the
   video. Sets:
     cta_headline_chrome / cta_headline_accent

@@ -33,8 +33,9 @@ import { OVERLAY_DEFINITIONS, ALL_ZONES, isValidZoneForOrientation } from './_li
 // Mirror the allowlists in generate-map.js so the chat can't pick a
 // composition_id / transition the renderer doesn't honor.
 const HF_COMPOSITION_IDS = [
-  // Sleek v2 — three full-screen scenes only.
-  'sleek-scene-headline-v1', 'sleek-scene-list-v1', 'sleek-scene-cta-v1',
+  // Sleek v2 — four full-screen scenes.
+  'sleek-scene-headline-v1', 'sleek-scene-list-v1',
+  'sleek-scene-claude-chat-v1', 'sleek-scene-cta-v1',
 ]
 const SEGMENT_TYPES = [
   'avatar', 'voiceover_broll', 'voiceover_motion_graphics', 'pure_motion_graphics',
@@ -422,6 +423,9 @@ Composition library (Sleek v2 — these exact ids):
   sleek-scene-list-v1 — enumerated lists, 3-5 items. Variables:
     list_title_chrome, list_title_accent, items (JSON array string of
     {text, highlight?}, auto-numbered).
+  sleek-scene-claude-chat-v1 — script mentions asking/prompting Claude.
+    Shows a Claude UI with the user's prompt + Claude's reply typing
+    word-by-word. Variables: user_message, claude_response.
   sleek-scene-cta-v1 — final segment CTA. Variables:
     cta_headline_chrome, cta_headline_accent, cta_subhead,
     cta_button_text, hero_handle.

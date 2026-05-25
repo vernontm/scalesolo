@@ -81,15 +81,20 @@ export const SLEEK = {
   // compositions ship. Three more (process-timeline-v1, chapter-card-v1,
   // diagram-card-v1) are v2 and intentionally NOT in this pool.
   composition_pool: [
-    // Sleek v2 pool — three full-screen compositions, content-driven:
+    // Sleek v2 pool — four full-screen compositions, content-driven:
     //   - sleek-scene-headline-v1: any "big text on screen" moment
     //     (titles, quotes, stat reveals, single-line punchlines).
     //     The accent span is where the punchy number / phrase lands.
     //   - sleek-scene-list-v1: anything enumerated — 3-5 items.
+    //   - sleek-scene-claude-chat-v1: when the speaker references
+    //     asking / telling Claude something. Renders a Claude UI
+    //     mock with the user's prompt + Claude's reply typing out
+    //     word-by-word.
     //   - sleek-scene-cta-v1: the final segment only. Big button +
     //     hero handle. Auto-fit reserves this for the LAST segment.
     'sleek-scene-headline-v1',
     'sleek-scene-list-v1',
+    'sleek-scene-claude-chat-v1',
     'sleek-scene-cta-v1',
   ],
   composition_overrides: {
