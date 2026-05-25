@@ -17,7 +17,12 @@ import { spawn } from 'node:child_process'
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg'
 import puppeteer from 'puppeteer'
 
-const ffmpegPath = ffmpegInstaller.path
+// Prefer the system-installed ffmpeg over the bundled @ffmpeg-installer
+// when available. The bundled one ships ffmpeg 4.0 from 2018 and is
+// missing critical filters (xfade, amix normalize=0, acrossfade). On
+// Fly the Dockerfile apt-installs modern ffmpeg and sets FFMPEG_PATH;
+// locally / on Vercel we fall back to the bundled binary.
+const ffmpegPath = process.env.FFMPEG_PATH || ffmpegInstaller.path
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const STUDIO_BUCKET = 'studio-media'
 
@@ -435,23 +440,14 @@ async function mixSfxIntoFinal(finalIn, finalOut, cues, localPaths, masterVolume
   }
 
   const N = mixLabels.length
-  // amix on the bundled ffmpeg (older than 5.0) doesn't support
-  // normalize=0. We use weights + a post-amix volume boost to restore
-  // the voice to ~unity after amix's implicit divide-by-weight-sum.
-  //
-  // With weights "4 1 1 1...": sum = 4 + (N-1). Voice contributes
-  // 4/sum after amix → boost output by sum/4 to land voice at 1.0.
-  // SFX cues end up at (cue.volume * 1/sum * sum/4) = cue.volume/4 in
-  // the final mix — quiet enough to never duck speech, loud enough
-  // to hear.
-  const voiceWeight = 4
-  const sfxWeight = 1
-  const weightSum = voiceWeight + (N - 1) * sfxWeight
-  const outputBoost = weightSum / voiceWeight
-  const weights = [voiceWeight].concat(usable.map(() => sfxWeight)).join(' ')
+  // amix on modern ffmpeg (5.0+): normalize=0 keeps each input at its
+  // own volume instead of dividing by N. Weight 4 on voice + 1 on
+  // each SFX → voice plays at unity, SFX play at cue.volume.
+  // dropout_transition=0 prevents amix from boosting voice when SFX
+  // cues end.
+  const weights = ['4'].concat(usable.map(() => '1')).join(' ')
   filterParts.push(
-    `${mixLabels.join('')}amix=inputs=${N}:duration=first:dropout_transition=0:weights=${weights},` +
-    `volume=${outputBoost.toFixed(3)}[mixed]`,
+    `${mixLabels.join('')}amix=inputs=${N}:duration=first:dropout_transition=0:normalize=0:weights=${weights}[mixed]`,
   )
 
   await runFFmpeg([

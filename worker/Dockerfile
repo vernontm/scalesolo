@@ -42,7 +42,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxrandr2 \
     wget \
     xdg-utils \
+    ffmpeg \
   && rm -rf /var/lib/apt/lists/*
+
+# Use the modern system ffmpeg (apt) over @ffmpeg-installer/ffmpeg.
+# Debian bookworm ships ffmpeg 5.x, which has xfade + amix normalize=0
+# + acrossfade etc. The bundled @ffmpeg-installer is on ffmpeg 4.0
+# from 2018 — missing half the filters our pipeline needs.
+ENV FFMPEG_PATH=/usr/bin/ffmpeg
 
 WORKDIR /app
 COPY package.json ./
