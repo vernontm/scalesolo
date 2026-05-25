@@ -285,6 +285,14 @@ async function orchestrateSegment(segment, ctx) {
         await patch({ heygen_video_id: videoId })
       } else if (segment.voice_url && segment.avatar_video_url) {
         await patch({ status: 'ready', error: null })
+      } else if (voiceUrl && !wants('avatar')) {
+        // User opted out of avatar generation (the "Avatar videos"
+        // checkbox is OFF — they plan to export audio and render
+        // avatars on their own platform). Voice is done, no avatar
+        // job will fire. Mark ready so the UI un-spinners. The
+        // segment will surface an Upload affordance until the user
+        // attaches an avatar video.
+        await patch({ status: 'ready', error: null })
       }
       return
     }
