@@ -331,10 +331,24 @@ function sanitizeSegment(s, idx, tmpl, orientation) {
   // Overlays only make sense on speaker footage (avatar / voiceover_broll).
   // Motion-graphics segments are already self-contained — drop overlays
   // claimed for them.
-  const overlaysEligible = segment_type === 'avatar' || segment_type === 'voiceover_broll'
-  const overlay_placements = overlaysEligible
-    ? sanitizeOverlayPlacements(s.overlay_placements, tmpl, orientation)
-    : []
+  // Visual overlays only ride speaker footage; captions ride every
+  // voiceover segment. We pass through to the sanitizer for speaker
+  // segments (which keeps any overlay Claude emitted), and for voiceover_
+  // motion_graphics we filter down to captions only — postProcessSegments
+  // will inject the actual caption placement separately.
+  const speaker = segment_type === 'avatar' || segment_type === 'voiceover_broll'
+  const hasVoice = speaker || segment_type === 'voiceover_motion_graphics'
+  let overlay_placements
+  if (speaker) {
+    overlay_placements = sanitizeOverlayPlacements(s.overlay_placements, tmpl, orientation)
+  } else if (hasVoice) {
+    // Drop any visual overlays Claude attached to motion-graphics
+    // segments — postProcess injects the caption.
+    overlay_placements = (Array.isArray(s.overlay_placements) ? s.overlay_placements : [])
+      .filter((p) => p?.overlay_id === 'caption-overlay-v1')
+  } else {
+    overlay_placements = []
+  }
   return {
     segment_index: idx,
     segment_type,
@@ -412,11 +426,16 @@ function postProcessSegments(segments, { captionsOn, orientation, overlayPool })
     }
   }
 
-  // 2. Captions injection. Walk every speaker segment.
+  // 2. Captions injection. Captions ride EVERY voiceover segment
+  // (avatar + voiceover_broll + voiceover_motion_graphics) for
+  // accessibility. pure_motion_graphics has no script + no voice, so
+  // gets nothing.
   for (const seg of out) {
-    const eligible = seg.segment_type === 'avatar' || seg.segment_type === 'voiceover_broll'
-    if (!eligible) {
-      // Strip any captions Claude wrongly attached to motion-graphics rows.
+    const hasVoice = seg.segment_type === 'avatar'
+      || seg.segment_type === 'voiceover_broll'
+      || seg.segment_type === 'voiceover_motion_graphics'
+    if (!hasVoice) {
+      // pure_motion_graphics — strip any captions Claude attached.
       seg.overlay_placements = (seg.overlay_placements || []).filter((p) => p.overlay_id !== 'caption-overlay-v1')
       continue
     }
@@ -424,12 +443,10 @@ function postProcessSegments(segments, { captionsOn, orientation, overlayPool })
     const hasCaption = existing.some((p) => p.overlay_id === 'caption-overlay-v1')
 
     if (!captionsOn) {
-      // Captions off — strip any Claude inserted anyway.
       seg.overlay_placements = existing.filter((p) => p.overlay_id !== 'caption-overlay-v1')
       continue
     }
     if (hasCaption) continue
-    // Captions on, missing — inject one IF the template's pool allows it.
     if (pool.size && !pool.has('caption-overlay-v1')) continue
     const text = (seg.script_text || '').trim()
     if (!text) continue

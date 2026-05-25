@@ -240,15 +240,21 @@ export default async function handler(req, res) {
     const captionPoolOk = !tmpl.overlay_pool?.length || tmpl.overlay_pool.includes('caption-overlay-v1')
 
     for (const seg of segments) {
-      const eligible = seg.segment_type === 'avatar' || seg.segment_type === 'voiceover_broll'
-      if (!eligible) {
-        // Wipe any stale overlays on motion-graphics segments.
+      // Visual overlays (stat-callout, tool-logo, etc.) only ride
+      // speaker footage — avatar + voiceover_broll. Captions ride
+      // every voiceover segment for accessibility, including
+      // voiceover_motion_graphics. pure_motion_graphics has no script
+      // and no voice so gets nothing.
+      const speaker = seg.segment_type === 'avatar' || seg.segment_type === 'voiceover_broll'
+      const hasVoice = speaker || seg.segment_type === 'voiceover_motion_graphics'
+      if (!hasVoice) {
+        // Wipe any stale overlays on pure_motion_graphics rows.
         await supaFetch(`studio_segments?id=eq.${seg.id}`, {
           method: 'PATCH', body: { overlay_placements: [] }, prefer: 'return=minimal',
         })
         continue
       }
-      const visual = filterPlacements(byId.get(seg.id), tmpl, orientation)
+      const visual = speaker ? filterPlacements(byId.get(seg.id), tmpl, orientation) : []
       visualOverlays += visual.length
 
       const placements = [...visual]

@@ -882,14 +882,17 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
         continue
       }
 
-      // ── Overlay layer composite (avatar + broll only) ───────────────
-      // Overlays ride ON TOP of speaker footage. They're a no-op for
-      // pure_motion_graphics and full-screen HF compositions (those are
-      // already self-contained). Skipped silently when:
-      //   - the segment has no overlay_placements, OR
-      //   - the template fetch failed (resolvedTemplate is null), OR
-      //   - the segment type isn't avatar / voiceover_broll.
-      const overlaysEligible = seg.segment_type === 'avatar' || seg.segment_type === 'voiceover_broll'
+      // ── Overlay layer composite ──────────────────────────────────────
+      // Overlays ride ON TOP of any voiceover segment — avatar +
+      // voiceover_broll + voiceover_motion_graphics. The motion-graphics
+      // case is captions-only by the enrichment policy, but the worker
+      // doesn't enforce that — it just composites whatever placements
+      // exist on the segment. pure_motion_graphics + segments with empty
+      // placements are no-ops. Skipped silently when the template fetch
+      // failed (resolvedTemplate is null).
+      const overlaysEligible = seg.segment_type === 'avatar'
+        || seg.segment_type === 'voiceover_broll'
+        || seg.segment_type === 'voiceover_motion_graphics'
       const overlayDuration = seg.segment_type === 'avatar'
         ? Math.max(0.5, voiceDuration || 0)
         : Math.max(2, voiceDuration || 4)
