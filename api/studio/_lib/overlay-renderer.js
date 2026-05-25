@@ -167,7 +167,7 @@ function renderCaption(c, t) {
 // brand NOT in this map falls back to `<name-lowered>.com` as a best
 // guess, then to the single-letter glyph if the favicon fails.
 const BRAND_DOMAINS = {
-  claude:       'anthropic.com',
+  claude:       'claude.ai',
   anthropic:    'anthropic.com',
   chatgpt:      'openai.com',
   openai:       'openai.com',
