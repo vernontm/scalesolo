@@ -14,6 +14,7 @@
 // Visible only to users on STUDIO_BETA_USER_IDS (gate enforced in App.jsx).
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Film, Sparkles, Plus, ArrowLeft, Wand2, Loader2, Trash2, RefreshCw,
@@ -893,8 +894,14 @@ function StudioVideoEditor({ videoId }) {
     }
   }
 
+  // Note: NOT using .fade-up here — its forwards-filled transform
+  // keyframe creates a containing block that scopes position:sticky
+  // and position:fixed children to this div instead of the viewport.
+  // Sticky action bar (top) + fixed chat dock (bottom) both need to
+  // attach to the viewport, so we drop the entrance animation on
+  // the editor page.
   return (
-    <div className="fade-up" style={{ maxWidth: 1080, margin: '0 auto', padding: '32px 24px' }}>
+    <div style={{ maxWidth: 1080, margin: '0 auto', padding: '32px 24px' }}>
       <button type="button" className="btn-ghost" onClick={() => navigate('/studio')} style={{ fontSize: 12, padding: '4px 8px', marginBottom: 12 }}>
         <ArrowLeft size={12} /> All videos
       </button>
@@ -2090,11 +2097,13 @@ function StudioChat({ videoId }) {
     }
   }
 
-  return (
+  // The dock is portaled to document.body so position:fixed actually
+  // attaches to the viewport. The editor wrapper uses .fade-up which
+  // animates via transform — and any ancestor with a transform creates
+  // a containing block, which scopes position:fixed to that ancestor
+  // instead of the viewport. The portal escapes that scope entirely.
+  const dock = (
     <>
-      {/* Spacer so the bottom-fixed chat bar doesn't cover content. */}
-      <div style={{ height: transcriptOpen ? 380 : 80 }} aria-hidden="true" />
-
       {/* Fixed bottom dock. Always visible while editing a video. The
           transcript panel slides up out of the dock when there's
           history or the user expands it. */}
@@ -2174,6 +2183,16 @@ function StudioChat({ videoId }) {
           </div>
         </div>
       </div>
+    </>
+  )
+
+  // Spacer stays IN the editor flow so content doesn't slide under the
+  // dock. The dock itself escapes via portal so position:fixed snaps
+  // to the viewport regardless of ancestor transforms.
+  return (
+    <>
+      <div style={{ height: transcriptOpen ? 380 : 80 }} aria-hidden="true" />
+      {typeof document !== 'undefined' && createPortal(dock, document.body)}
     </>
   )
 }
@@ -2484,12 +2503,10 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
   const avatar = segments.filter((s) => s.approved && s.segment_type === 'avatar').length
 
   return (
-    <div style={{
-      position: 'sticky',
-      bottom: 16,
-      marginTop: 24,
-      zIndex: 10,
-    }}>
+    // No outer position:sticky here — the inner div below handles
+    // sticky-to-top placement directly. The old wrapper had
+    // bottom:16 from when this bar lived at the bottom of the page.
+    <div style={{ marginBottom: 16 }}>
     {showRegenOptions && (
       <RegenOptionsPanel
         broll={broll}
