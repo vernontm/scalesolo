@@ -221,9 +221,10 @@
 }
 .ov-chapter .title em,
 .ov-card.chapter .title em {
-  font-style: var(--ov-font-italic-style);
-  /* Card already shows the brand color as background; em now reads as
-     a bright highlight via heavy white glow against the accent fill. */
+  /* No italics — the em was originally there to call out a word with
+     italic + accent color, but the whole card is now accent-filled so
+     we just keep it as a brighter emphasis (heavier weight + glow). */
+  font-style: normal;
   color: #ffffff;
   text-shadow:
     0 0 24px rgba(255, 255, 255, 0.55),
