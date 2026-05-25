@@ -576,8 +576,17 @@ async function renderOverlayPngs(seg, dir, dim, durationSecs, baseUrl, bypassSec
 
   try {
     await page.setViewport({ width: dim.w, height: dim.h, deviceScaleFactor: 1 })
+    // Disable Chrome's HTTP cache so each bake fetches fresh CSS from
+    // Vercel — we've seen stale _ov-universal.css cached between bakes
+    // when the puppeteer browser instance is reused. The pages are
+    // tiny (single HTML + a few KB of CSS / JS), so the perf hit is
+    // negligible compared to the bake's overall runtime.
+    await page.setCacheEnabled(false)
     const varsHash = encodeVarsForUrl(vars)
-    const url = `${baseUrl}/studio-compositions/overlay-layer-v1.html?mode=render#vars=${varsHash}`
+    // Cache-bust the URL too — belt + suspenders. Even if Vercel's
+    // edge somehow serves stale CSS, the version-tagged URL forces
+    // a fresh request.
+    const url = `${baseUrl}/studio-compositions/overlay-layer-v1.html?mode=render&v=${Date.now()}#vars=${varsHash}`
     await page.goto(url, { waitUntil: 'load', timeout: 30_000 })
 
     // Same in-page poll as renderHyperFramesChunk — wait for the

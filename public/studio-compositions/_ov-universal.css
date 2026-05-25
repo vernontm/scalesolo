@@ -401,19 +401,24 @@
    asked specifically to drop the glowing red box so the speech reads
    like cinematic burned-in subtitles, not a UI badge. */
 .ov-caption {
-  padding: 0;
+  padding: 0 !important;
   text-align: center;
   flex-direction: row;
   justify-content: center;
   align-items: center;
-  background: none;
-  border: none;
-  box-shadow: none;
+  /* !important on the box-killers because the bake pipeline has hit
+     stale-CSS-cache issues — the chapter/stat box keeps reappearing
+     on captions when an old stylesheet sneaks in. These overrides
+     win even against any rogue inline / cached rule. */
+  background: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  animation: none !important;
   width: 100%;
   height: auto;
 }
 .ov-caption::before,
-.ov-caption::after { display: none; }
+.ov-caption::after { display: none !important; content: none !important; }
 .ov-caption .text {
   font-family: var(--ov-font-display);
   font-weight: 800;
