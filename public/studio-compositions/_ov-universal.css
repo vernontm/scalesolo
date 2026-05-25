@@ -361,12 +361,20 @@
 }
 .ov-tool .desc,
 .ov-card.tool .desc {
-  font-family: var(--ov-font-mono);
-  font-size: 16px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.85);
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
+  /* Desc line ("AI Architect" / "Strategy Layer" / etc) is suppressed.
+     Kept as display:none so the renderer can stay backward-compatible
+     with any segments that still carry a desc value in the DB. */
+  display: none;
+}
+
+/* Real favicon image inside the logo plate. Falls back via onerror in
+   the renderer's HTML to a <span> with the brand's first letter. */
+.ov-tool .logo img,
+.ov-card.tool .logo img {
+  width: 70%;
+  height: 70%;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45));
 }
 
 /* ---------- CAPTION (lower-third) ----------

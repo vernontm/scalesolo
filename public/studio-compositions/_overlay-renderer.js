@@ -114,12 +114,67 @@ function renderCaption(c, t) {
   </div>`
 }
 
+// Map of company names → primary domain for favicon lookup. Add to
+// this when new brands come up in production. Lookup is case-
+// insensitive; the renderer normalizes name before checking. Any
+// brand NOT in this map falls back to `<name-lowered>.com` as a best
+// guess, then to the single-letter glyph if the favicon fails.
+const BRAND_DOMAINS = {
+  claude:       'anthropic.com',
+  anthropic:    'anthropic.com',
+  chatgpt:      'openai.com',
+  openai:       'openai.com',
+  heygen:       'heygen.com',
+  notion:       'notion.so',
+  shopify:      'shopify.com',
+  stripe:       'stripe.com',
+  youtube:      'youtube.com',
+  tiktok:       'tiktok.com',
+  instagram:    'instagram.com',
+  meta:         'meta.com',
+  facebook:     'facebook.com',
+  twitter:      'twitter.com',
+  x:            'x.com',
+  google:       'google.com',
+  apple:        'apple.com',
+  microsoft:    'microsoft.com',
+  github:       'github.com',
+  elevenlabs:   'elevenlabs.io',
+  cursor:       'cursor.com',
+  vercel:       'vercel.com',
+  supabase:     'supabase.com',
+  figma:        'figma.com',
+  canva:        'canva.com',
+  midjourney:   'midjourney.com',
+  perplexity:   'perplexity.ai',
+  gemini:       'gemini.google.com',
+  runway:       'runwayml.com',
+  scalesolo:    'scalesolo.com',
+}
+
+function brandDomainFor(name) {
+  if (!name || typeof name !== 'string') return null
+  const key = name.toLowerCase().replace(/[^a-z0-9]/g, '')
+  if (BRAND_DOMAINS[key]) return BRAND_DOMAINS[key]
+  // Reasonable fallback for one-word brands — e.g. "Klaviyo" → klaviyo.com.
+  if (/^[a-z0-9-]+$/.test(key) && key.length >= 3) return `${key}.com`
+  return null
+}
+
 function renderTool(c, t) {
+  const name = c.name || ''
+  const fallbackGlyph = esc(c.logo || (name ? name[0].toUpperCase() : '?'))
+  const domain = brandDomainFor(name)
+  // Use Google's S2 favicon service. Free, no API key, 128px max.
+  // Falls back to single-letter glyph if the image fails to load
+  // (onerror swaps the <img> for a <span>).
+  const inner = domain
+    ? `<img src="https://www.google.com/s2/favicons?domain=${esc(domain)}&sz=128" alt="${esc(name)}" onerror="this.outerHTML='<span>${fallbackGlyph}</span>'">`
+    : `<span>${fallbackGlyph}</span>`
   return `<div class="ov-tool"${containerStyle(t.container)}>
-    <div class="logo"${textStyle(t.logo)}>${esc(c.logo || '')}</div>
+    <div class="logo"${textStyle(t.logo)}>${inner}</div>
     <div class="info">
-      <div class="name"${textStyle(t.name)}>${esc(c.name || '')}</div>
-      ${c.desc ? `<div class="desc"${textStyle(t.desc)}>${esc(c.desc)}</div>` : ''}
+      <div class="name"${textStyle(t.name)}>${esc(name)}</div>
     </div>
   </div>`
 }
