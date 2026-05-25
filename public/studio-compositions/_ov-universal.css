@@ -257,26 +257,45 @@
   text-transform: uppercase;
 }
 
-/* ---------- CAPTION (lower-third) ---------- */
+/* ---------- CAPTION (lower-third) ----------
+   No card chrome — captions are pure text over footage. The user
+   asked specifically to drop the glowing red box so the speech reads
+   like cinematic burned-in subtitles, not a UI badge. */
 .ov-caption {
-  padding: 18px 28px;
+  padding: 0;
   text-align: center;
   flex-direction: row;
   justify-content: center;
   align-items: center;
+  background: none;
+  border: none;
+  box-shadow: none;
+  width: 100%;
+  height: auto;
 }
-.ov-caption::before { left: 40%; right: 40%; }  /* shorter hairline for thin band */
+.ov-caption::before,
+.ov-caption::after { display: none; }
 .ov-caption .text {
   font-family: var(--ov-font-display);
-  font-weight: 700;
-  font-size: 28px;
-  line-height: 1.25;
+  font-weight: 800;
+  font-size: 52px;
+  line-height: 1.18;
   color: #ffffff;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
+  /* Heavy text-shadow as the only background — keeps caption legible
+     on any underlying footage without a visible card behind it. */
+  text-shadow:
+    0 2px 8px rgba(0,0,0,0.85),
+    0 6px 24px rgba(0,0,0,0.6),
+    0 0 2px rgba(0,0,0,0.9);
 }
 .ov-caption .text .highlight {
   color: var(--ov-accent);
-  text-shadow: 0 0 18px color-mix(in srgb, var(--ov-accent) 50%, transparent);
+  font-weight: 900;
+  text-shadow:
+    0 2px 8px rgba(0,0,0,0.85),
+    0 6px 24px rgba(0,0,0,0.6),
+    0 0 24px color-mix(in srgb, var(--ov-accent) 55%, transparent);
 }
 
 /* ---------- WORD EMPHASIS (lower-third) ---------- */

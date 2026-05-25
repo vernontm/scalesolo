@@ -1070,21 +1070,29 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
       wipe_right:            { name: 'wiperight',  duration: 0.5 },
       zoom_in:               { name: 'zoomin',     duration: 0.6 },
       dip_to_black:          { name: 'fadeblack',  duration: 1.0 },
-      // Swipes — ffmpeg's xfade slide* names: "slideleft" = next slides
+      // Swipes — ffmpeg's xfade slide* names. "slideleft" = next slides
       // in from the right pushing current to the left, etc. So our
       // semantic "swipe_right" (current exits right, next enters from
       // left) maps to ffmpeg "slideright".
-      swipe_right:           { name: 'slideright', duration: 0.8 },
-      swipe_left:            { name: 'slideleft',  duration: 0.8 },
-      swipe_up:              { name: 'slideup',    duration: 0.8 },
-      swipe_down:            { name: 'slidedown',  duration: 0.8 },
-      swipe_right_fast:      { name: 'slideright', duration: 0.5 },
-      swipe_left_fast:       { name: 'slideleft',  duration: 0.5 },
+      //
+      // Halved durations from the original spec (0.8s → 0.4s, 0.5s →
+      // 0.25s) because each xfade boundary compresses total timeline
+      // by `duration` — on a 10-segment video those 0.8s swipes alone
+      // were stealing 7+ seconds of runtime, making the output feel
+      // rushed. 0.4s still reads as a clearly-directional swipe
+      // visually.
+      swipe_right:           { name: 'slideright', duration: 0.4 },
+      swipe_left:            { name: 'slideleft',  duration: 0.4 },
+      swipe_up:              { name: 'slideup',    duration: 0.4 },
+      swipe_down:            { name: 'slidedown',  duration: 0.4 },
+      swipe_right_fast:      { name: 'slideright', duration: 0.25 },
+      swipe_left_fast:       { name: 'slideleft',  duration: 0.25 },
       // Light flare wipe — fadewhite blooms to white at peak then
       // reveals next clip. Closest ffmpeg approximation of the
-      // warm-bloom whiteout described in TRANSITION-LIGHT-FLARE-WIPE.md.
-      light_flare_wipe:      { name: 'fadewhite',  duration: 1.2 },
-      light_flare_wipe_fast: { name: 'fadewhite',  duration: 0.6 },
+      // warm-bloom whiteout. Trimmed from 1.2s/0.6s for the same
+      // runtime-compression reason.
+      light_flare_wipe:      { name: 'fadewhite',  duration: 0.6 },
+      light_flare_wipe_fast: { name: 'fadewhite',  duration: 0.3 },
       // cut_transition is special — xfade has no zero-duration mode,
       // so we treat it as a 1-frame (~0.04s) fade. Visually
       // indistinguishable from a hard cut, keeps the chain uniform.
