@@ -194,7 +194,7 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
   // toggles (both always on under the hood).
   const [form, setForm] = useState({
     topic_prompt: '',
-    avatar_id: '',  // empty string = "Voiceover only — no avatar"
+    avatar_id: '',  // populated to first avatar in useEffect once they load
     look_id: '',
     target_duration_secs: 120,
     aspect_ratio: '16:9',
@@ -261,7 +261,12 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
       try {
         const r = await authedFetch(`/api/avatars?profile_id=${profileId}`, session.access_token)
         const a = r.ok ? await r.json() : { avatars: [] }
-        if (!cancelled) setAvatars(a.avatars || [])
+        if (cancelled) return
+        const list = a.avatars || []
+        setAvatars(list)
+        // Default-select the first avatar so the user starts in a valid
+        // state — avatar is now required (voice is tied to it).
+        if (list.length && !form.avatar_id) setForm((f) => ({ ...f, avatar_id: list[0].id }))
       } catch { /* dropdown stays empty */ }
     })()
     return () => { cancelled = true }
@@ -350,31 +355,84 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
         </div>
       </Field>
 
-      {/* 2. Avatar — or "Voiceover only" for all motion-graphics + B-roll. */}
-      <Field label="2.  Avatar" hint='Voice is auto-tied to your selected avatar. Choose "Voiceover only" for a video built entirely from motion graphics and B-roll.'>
+      {/* 2. Avatar — voice is auto-tied to the chosen avatar. Avatar
+              video generation itself is toggled later, on the Generate
+              Assets step. */}
+      <Field label="2.  Avatar" hint="Voice and look are pulled from the avatar you pick. You decide whether to actually render avatar video on the next step.">
         <select className="input" value={form.avatar_id} onChange={(e) => set('avatar_id', e.target.value)}>
-          <option value="">Voiceover only — no avatar (motion graphics + B-roll)</option>
+          {avatars.length === 0 && <option value="">No avatars yet — create one on the Avatars page</option>}
           {avatars.map((a) => (
             <option key={a.id} value={a.id}>{a.name || a.id.slice(0, 8)}</option>
           ))}
         </select>
       </Field>
 
-      {/* Look picker — only when an avatar with looks is selected. */}
+      {/* Look picker — thumbnail grid filtered by aspect ratio so only
+          matching orientations show. 9:16 → portrait; 16:9 → landscape;
+          1:1 → both. Falls back to all looks when orientation isn't
+          tagged on a look (legacy data). */}
       {selectedAvatar && looks.length > 0 && (
-        <Field label="Look" hint="Which trained look/framing of this avatar to render with.">
-          <select className="input" value={form.look_id} onChange={(e) => set('look_id', e.target.value)}>
-            <option value="">Default (first look)</option>
-            {looks.map((l) => {
-              const o = l.orientation
-              const tag = o ? ` · ${o}` : ''
-              return (
-                <option key={l.id} value={l.id}>
-                  {(l.name || `Look ${(l.angle_order ?? 0) + 1}`) + tag}
-                </option>
-              )
-            })}
-          </select>
+        <Field label="Look" hint="Click a thumbnail to lock the avatar's framing for this video.">
+          {(() => {
+            const ar = form.aspect_ratio
+            const desired = ar === '9:16' ? 'portrait' : ar === '16:9' ? 'landscape' : null
+            // Keep looks whose orientation matches; if none match (or
+            // orientation isn't set on any look), show everything so the
+            // user is never stuck with an empty grid.
+            const filtered = desired
+              ? looks.filter((l) => !l.orientation || l.orientation === desired)
+              : looks
+            const visible = filtered.length ? filtered : looks
+            return (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8 }}>
+                {visible.map((l, idx) => {
+                  const thumb = l.images?.[0]?.image_url
+                  const isSelected = form.look_id === l.id
+                  const orientationTag = l.orientation
+                  return (
+                    <button
+                      key={l.id}
+                      type="button"
+                      onClick={() => set('look_id', l.id)}
+                      style={{
+                        padding: 0,
+                        background: 'var(--surface)',
+                        border: `2px solid ${isSelected ? 'var(--primary)' : 'transparent'}`,
+                        borderRadius: 10,
+                        overflow: 'hidden',
+                        cursor: 'pointer',
+                        position: 'relative',
+                        aspectRatio: orientationTag === 'landscape' ? '16/9' : '3/4',
+                      }}
+                      title={l.name || `Look ${idx + 1}`}
+                    >
+                      {thumb ? (
+                        <img src={thumb} alt={l.name || `Look ${idx + 1}`}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                      ) : (
+                        <div style={{ width: '100%', height: '100%', background: 'var(--surface-2)' }} />
+                      )}
+                      <div style={{
+                        position: 'absolute', left: 0, right: 0, bottom: 0,
+                        padding: '4px 6px',
+                        fontSize: 10, fontWeight: 700,
+                        color: '#fff',
+                        background: 'linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0))',
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6,
+                      }}>
+                        <span style={{ textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                          {l.name || `Look ${idx + 1}`}
+                        </span>
+                        {orientationTag && (
+                          <span style={{ opacity: 0.7, fontWeight: 500 }}>{orientationTag[0].toUpperCase()}</span>
+                        )}
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            )
+          })()}
         </Field>
       )}
 
@@ -2507,6 +2565,12 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
   const { session } = useAuth()
   const [busy, setBusy] = useState(false)
   const [showRegenOptions, setShowRegenOptions] = useState(false)
+  // Two-checkbox flow for the initial Generate Assets step. Default:
+  // voice + B-roll on, avatar off. Avatar is opt-in because it's the
+  // most expensive provider call (HeyGen) and lots of users want to
+  // export the voice tracks and render avatars elsewhere first.
+  const [genElse, setGenElse] = useState(true)
+  const [genAvatar, setGenAvatar] = useState(false)
   // can_render arrives from CostEstimate down below. We disable the
   // primary button when it's false. Default true so the button isn't
   // greyed out before the estimate loads.
@@ -2649,13 +2713,32 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
     }
   }
 
+  // Compute which asset classes to generate from the two checkboxes
+  // shown in the ready-for-assets phase. Returns null when both are
+  // checked (= generate everything, no filter) or an array filter
+  // otherwise. Returns false when neither box is checked, which the
+  // dispatcher uses to block the click.
+  const onlyTypesFromCheckboxes = () => {
+    if (!genElse && !genAvatar) return false
+    if (genElse && genAvatar) return null
+    if (genAvatar) return ['avatar']
+    return ['voice', 'image']  // "everything else" = voice + B-roll image
+  }
+
   // Continue dispatcher: pick the right action based on the current phase.
   //   ready-to-bake / done → bake (segments already have assets)
-  //   rendered-needs-assets → regen assets first (the existing render
-  //     is preserved on the row, so the player keeps working until the
-  //     new bake replaces it)
+  //   ready-for-assets → asset gen filtered by the two checkboxes
+  //   rendered-needs-assets → asset gen with same checkbox filter
   //   anything else → asset gen
-  const onContinue = (phase === 'ready-to-bake' || phase === 'done') ? onRender : onAssets
+  const onContinue = () => {
+    if (phase === 'ready-to-bake' || phase === 'done') return onRender()
+    const ot = onlyTypesFromCheckboxes()
+    if (ot === false) {
+      toast({ message: 'Tick at least one option to generate.', kind: 'warning' })
+      return
+    }
+    return onAssets(ot)
+  }
 
   // Per-type cost hints shown next to each regen option. Real costs
   // depend on segment count + provider pricing; these are rough guides
@@ -2760,39 +2843,34 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
           </>
         )}
       </div>
-      {/* Audio-export workflow: voice-only generation. Lets users
-          synthesize voice WITHOUT firing the expensive HeyGen +
-          image jobs. Workflow:
-            1. Click here → voice files land on every segment
-            2. Click "Download all avatar voices" → bulk download
-            3. Render avatars on the user's own platform
-            4. Upload each via the per-segment Upload button below
-            5. Click Render — bake uses uploaded videos, skips HeyGen */}
+      {/* Two-checkbox asset-gen control. Default OFF for avatar so
+          users can export the voice tracks first and render avatars
+          on their own platform (HeyGen, DID, Synthesia, RVC...) then
+          upload back via the per-segment Upload button. */}
       {(phase === 'ready-for-assets' || phase === 'rendered-needs-assets') && (
-        <button
-          type="button"
-          className="btn-secondary"
-          disabled={busy}
-          onClick={() => onAssets(['voice'])}
-          style={{ fontSize: 12, padding: '8px 12px' }}
-          title="Generate voice files only — no HeyGen or B-roll. Useful when you want to render avatars on your own platform."
-        >
-          <Wand2 size={12} /> Voice only
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', color: 'var(--text-soft)' }}>
+            <input
+              type="checkbox"
+              checked={genElse}
+              onChange={(e) => setGenElse(e.target.checked)}
+              disabled={busy}
+            />
+            <span>Voice + B-roll</span>
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', color: 'var(--text-soft)' }}
+            title="Off by default — export audio first and render avatars on your own platform to save credits.">
+            <input
+              type="checkbox"
+              checked={genAvatar}
+              onChange={(e) => setGenAvatar(e.target.checked)}
+              disabled={busy}
+            />
+            <span>Avatar videos</span>
+          </label>
+        </div>
       )}
       <DownloadAllVoicesButton segments={segments} />
-      {(phase === 'rendered-needs-assets' || phase === 'ready-for-assets') && (
-        <button
-          type="button"
-          className="btn-secondary"
-          disabled={busy}
-          onClick={() => setShowRegenOptions((v) => !v)}
-          style={{ fontSize: 12, padding: '8px 12px' }}
-          title="Pick which asset classes to regenerate. Skip the expensive ones (avatar, B-roll) when you just want to test voice or motion graphics."
-        >
-          Choose…
-        </button>
-      )}
       <button
         type="button"
         className="btn-primary"
