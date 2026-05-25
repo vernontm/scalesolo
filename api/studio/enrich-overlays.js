@@ -193,7 +193,7 @@ export default async function handler(req, res) {
     )
     if (!segments?.length) return res.status(400).json({ error: 'No segments to enrich' })
 
-    const tmpl = resolveTemplate(video.template_id || 'sleek', video.brand_color)
+    const tmpl = resolveTemplate(video.template_id || 'sleek', video.brand_color, video.brand_color_secondary)
     const orientation = video.aspect_ratio === '9:16' ? 'vertical' : 'landscape'
     const captionsOn = video.captions_enabled !== false
 

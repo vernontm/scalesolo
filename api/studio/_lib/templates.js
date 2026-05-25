@@ -36,7 +36,7 @@ export const SLEEK = {
   },
   colors: {
     primary_accent: '#e3151e',
-    secondary_accent: null,
+    secondary_accent: '#ff3742',  // brighter red for gradients / glow tail
     text_primary: '#ffffff',
     text_secondary: 'rgba(255,255,255,0.65)',
     text_muted: 'rgba(255,255,255,0.40)',
@@ -345,6 +345,7 @@ export const SLEEK = {
       stat_label: 'faster shipping with AI as your back-end team.',
       corner_label: 'STAT-REVEAL-V1',
       accent_color: '{accent}',
+      accent_2_color: '{accent_2}',
     },
   },
 }
@@ -446,6 +447,7 @@ export const ATLAS = {
       title_pre: 'Ship faster with',
       title_highlight: 'AI as your team',
       accent_color: '{accent}',
+      accent_2_color: '{accent_2}',
     },
   },
 }
@@ -458,14 +460,22 @@ export function getTemplate(id) {
   return TEMPLATE_BY_ID[id] || SLEEK
 }
 
-// Resolve "{accent}" placeholders against the brand color the user chose.
-// Returns a cloned template with strings interpolated. Used by both the
-// segmentation prompt and (eventually) the renderer when it picks CSS
-// variables for the iframe.
-export function resolveTemplate(id, brandColor) {
+// Resolve "{accent}" + "{accent_2}" placeholders against the user's
+// brand primary + secondary colors. Returns a cloned template with
+// strings interpolated. Used by both the segmentation prompt and the
+// renderer when it picks CSS variables for the iframe.
+//
+// brandColor / brandColor2 are both optional. Each falls back to the
+// template's own primary/secondary accent so a template selected
+// without any brand-color override still renders correctly.
+export function resolveTemplate(id, brandColor, brandColor2) {
   const tmpl = getTemplate(id)
-  const accent = brandColor || tmpl.colors.primary_accent
-  const replace = (v) => typeof v === 'string' ? v.replace(/\{accent\}/g, accent) : v
+  const accent   = brandColor  || tmpl.colors.primary_accent
+  const accent_2 = brandColor2 || tmpl.colors.secondary_accent || accent
+  const replace = (v) => {
+    if (typeof v !== 'string') return v
+    return v.replace(/\{accent_2\}/g, accent_2).replace(/\{accent\}/g, accent)
+  }
   const walk = (node) => {
     if (Array.isArray(node)) return node.map(walk)
     if (node && typeof node === 'object') {
@@ -476,9 +486,10 @@ export function resolveTemplate(id, brandColor) {
     return replace(node)
   }
   const resolved = walk(tmpl)
-  // Force the resolved accent into colors.primary_accent too so anything
-  // downstream that reads that field gets the user's color, not the
-  // template's default.
+  // Force the resolved accents into colors so anything downstream
+  // that reads them gets the user's brand colors, not the template's
+  // defaults.
   resolved.colors.primary_accent = accent
+  resolved.colors.secondary_accent = accent_2
   return resolved
 }

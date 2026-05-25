@@ -522,7 +522,7 @@ export default async function handler(req, res) {
       // user's chosen color (or template default if not overridden).
       // The resolved spec gets woven into the system prompt so Claude
       // segments according to template pacing + composition pool.
-      const resolvedTemplate = resolveTemplate(video.template_id || 'sleek', video.brand_color)
+      const resolvedTemplate = resolveTemplate(video.template_id || 'sleek', video.brand_color, video.brand_color_secondary)
 
       const claudeResp = await anthropicMessage({
         system: buildSystem(brandMarkdown, resolvedTemplate, video.captions_enabled !== false),

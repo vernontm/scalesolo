@@ -29,6 +29,7 @@ export default async function handler(req, res) {
       when_to_use: t.when_to_use,
       tags: t.tags || [],
       primary_accent: t.colors?.primary_accent,
+      secondary_accent: t.colors?.secondary_accent,
       composition_pool: t.composition_pool || [],
       // Drives the inline selector's preview iframe.
       preview: t.preview || null,

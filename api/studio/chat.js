@@ -479,7 +479,7 @@ export default async function handler(req, res) {
     // overlay_pool, and stamp the orientation so vertical-only zones
     // get rejected in landscape videos.
     const segById = new Map(segments.map((s) => [s.id, s]))
-    const tmpl = resolveTemplate(video.template_id || 'sleek', video.brand_color)
+    const tmpl = resolveTemplate(video.template_id || 'sleek', video.brand_color, video.brand_color_secondary)
     const orientation = video.aspect_ratio === '9:16' ? 'vertical' : 'landscape'
     const overlayPool = new Set(tmpl.overlay_pool || [])
     const ctx = { video, segments, segById, tmpl, orientation, overlayPool }

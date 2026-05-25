@@ -1750,19 +1750,25 @@ function TemplateSelector({ video, onApplied }) {
   const savedCaptions = video.captions_enabled !== false
   const dirty = templateId !== savedTemplate || captionsOn !== savedCaptions
 
-  // Preview iframe vars. Cascade the brand profile's accent (already
-  // baked into the template by the server-side resolver) so the
-  // composition shows the correct color without a separate picker.
+  // Preview iframe vars. Cascade the user's brand primary + secondary
+  // colors into the preview so the composition shows the actual palette
+  // the bake will use, not the template's stock indigo/red. Falls back
+  // to template defaults if the video / profile doesn't have brand
+  // colors set yet.
   const previewVars = useMemo(() => {
     if (!selected?.preview) return null
     const vars = { ...(selected.preview.variables || {}) }
-    const accent = selected.primary_accent || '#e3151e'
+    const accent   = video.brand_color           || selected.primary_accent   || '#e3151e'
+    const accent_2 = video.brand_color_secondary || selected.secondary_accent || accent
     for (const k of Object.keys(vars)) {
-      if (typeof vars[k] === 'string' && vars[k] === '{accent}') vars[k] = accent
+      if (typeof vars[k] !== 'string') continue
+      if (vars[k] === '{accent}')   vars[k] = accent
+      if (vars[k] === '{accent_2}') vars[k] = accent_2
     }
-    vars.accent_color = accent
+    vars.accent_color   = accent
+    vars.accent_2_color = accent_2
     return vars
-  }, [selected?.preview, selected?.primary_accent])
+  }, [selected?.preview, selected?.primary_accent, selected?.secondary_accent, video.brand_color, video.brand_color_secondary])
 
   const apply = async () => {
     if (!session?.access_token || busy || !dirty) return

@@ -10,7 +10,8 @@
     {"id":"hero_handle","type":"string","label":"Hero handle","default":"raytheaiguy"},
     {"id":"meta_label","type":"string","label":"Meta label","default":"Atlas"},
     {"id":"meta_subtitle","type":"string","label":"Meta subtitle","default":"End"},
-    {"id":"accent_color","type":"color","label":"Accent","default":"#818cf8"}
+    {"id":"accent_color","type":"color","label":"Accent (primary)","default":"#818cf8"},
+    {"id":"accent_2_color","type":"color","label":"Accent (secondary)","default":"#a855f7"}
   ]'>
 <head>
 <meta charset="UTF-8">
@@ -177,6 +178,20 @@
 <script>
   (function () {
     const v = window.__studioVars || {}
+    // apply brand accents — override the indigo/purple defaults with
+    // whatever the user passed for accent_color / accent_2_color so the
+    // composition renders in their palette.
+    if (v.accent_color || v.accent_2_color) {
+      const root = document.documentElement.style
+      if (v.accent_color) {
+        root.setProperty('--indigo', v.accent_color)
+        root.setProperty('--indigo-soft', v.accent_color)
+      }
+      if (v.accent_2_color) {
+        root.setProperty('--purple', v.accent_2_color)
+        root.setProperty('--purple-soft', v.accent_2_color)
+      }
+    }
     if (v.cta_headline_pre != null) document.getElementById('headline-pre').textContent = v.cta_headline_pre
     if (v.cta_headline_highlight != null) document.getElementById('headline-highlight').textContent = v.cta_headline_highlight
     if (v.cta_subhead != null) document.getElementById('subhead').textContent = v.cta_subhead

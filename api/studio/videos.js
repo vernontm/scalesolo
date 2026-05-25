@@ -21,7 +21,7 @@ import { gateStudio } from './_lib/gate.js'
 const ALLOWED_CREATE = new Set([
   'profile_id', 'title', 'topic_prompt', 'reference_url', 'reference_text',
   'avatar_id', 'look_id', 'voice_id', 'target_duration_secs', 'aspect_ratio',
-  'template_id', 'brand_color', 'captions_enabled', 'overlays_enabled', 'motion_graphics_enabled',
+  'template_id', 'brand_color', 'brand_color_secondary', 'captions_enabled', 'overlays_enabled', 'motion_graphics_enabled',
 ])
 // Columns the client is allowed to PATCH. Status transitions are
 // allowed here too because the canvas UI flips status as the user
@@ -29,7 +29,7 @@ const ALLOWED_CREATE = new Set([
 const ALLOWED_PATCH = new Set([
   'title', 'topic_prompt', 'reference_url', 'reference_text',
   'avatar_id', 'look_id', 'voice_id', 'target_duration_secs', 'aspect_ratio',
-  'template_id', 'brand_color', 'captions_enabled', 'overlays_enabled', 'motion_graphics_enabled',
+  'template_id', 'brand_color', 'brand_color_secondary', 'captions_enabled', 'overlays_enabled', 'motion_graphics_enabled',
   'status', 'script_full_text', 'final_video_url', 'error',
 ])
 
@@ -72,6 +72,21 @@ export default async function handler(req, res) {
       const insertRow = { user_id: auth.user.id, status: 'draft' }
       for (const [k, v] of Object.entries(body)) {
         if (ALLOWED_CREATE.has(k) && v !== undefined) insertRow[k] = v
+      }
+      // Default brand colors from the user's brand profile when the
+      // client didn't supply them. Studio renders template gradients
+      // using brand_color (primary) + brand_color_secondary (secondary)
+      // so the video always lands in the user's palette even if the
+      // form omits the fields.
+      if (!insertRow.brand_color || !insertRow.brand_color_secondary) {
+        try {
+          const prof = await supaFetch(
+            `profiles?id=eq.${body.profile_id}&select=brand_primary_color,brand_secondary_color&limit=1`,
+          )
+          const p = prof?.[0]
+          if (p?.brand_primary_color && !insertRow.brand_color) insertRow.brand_color = p.brand_primary_color
+          if (p?.brand_secondary_color && !insertRow.brand_color_secondary) insertRow.brand_color_secondary = p.brand_secondary_color
+        } catch { /* brand profile lookup is best-effort */ }
       }
       const created = await supaFetch('studio_videos', { method: 'POST', body: insertRow })
       const video = Array.isArray(created) ? created[0] : created

@@ -137,7 +137,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, refreshed: 0, note: 'No motion-graphics segments to refresh.' })
     }
 
-    const tmpl = resolveTemplate(video.template_id || 'sleek', video.brand_color)
+    const tmpl = resolveTemplate(video.template_id || 'sleek', video.brand_color, video.brand_color_secondary)
     const pool = tmpl.composition_pool || []
 
     let brandMd = ''
