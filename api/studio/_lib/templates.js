@@ -310,6 +310,10 @@ export const SLEEK = {
       { event: 'chapter_change', sfx: 'ux_click' },
       { event: 'subscribe_cta',  sfx: 'ux_ding'  },
       { event: 'end_card',       sfx: 'ux_ding'  },
+      // Plays once when overlay cards animate in (segStart + 0.25s).
+      // Worker auto-emits this event on any segment whose
+      // overlay_placements array is non-empty.
+      { event: 'card_enter',     sfx: 'ux_zoom'  },
     ],
   },
   pacing: {
@@ -431,6 +435,7 @@ export const ATLAS = {
       { event: 'chapter_change', sfx: 'ux_click' },
       { event: 'subscribe_cta',  sfx: 'ux_ding' },
       { event: 'end_card',       sfx: 'ux_ding' },
+      { event: 'card_enter',     sfx: 'ux_zoom' },
     ],
   },
 

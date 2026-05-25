@@ -368,13 +368,32 @@
 }
 
 /* Real favicon image inside the logo plate. Falls back via onerror in
-   the renderer's HTML to a <span> with the brand's first letter. */
+   the renderer's HTML to a <span> with the brand's first letter.
+   object-fit: cover + edge-to-edge so the brand's own logo art (with
+   its own background color and padding) fills the entire plate. */
 .ov-tool .logo img,
 .ov-card.tool .logo img {
-  width: 70%;
-  height: 70%;
-  object-fit: contain;
-  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45));
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: calc(var(--ov-radius) - 8px);
+}
+/* When the logo is rendered as a single-letter span (favicon failed
+   or no domain mapped), we still want the dark recessed plate look. */
+.ov-tool .logo span,
+.ov-card.tool .logo span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+.ov-tool .logo,
+.ov-card.tool .logo {
+  /* Remove the inner padding so the favicon image truly hits the
+     plate edges. The dark gradient + border + glow shadow stay. */
+  padding: 0;
+  overflow: hidden;
 }
 
 /* ---------- CAPTION (lower-third) ----------

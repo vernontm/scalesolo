@@ -365,6 +365,24 @@ function buildSfxCues(segments, segmentDurations, sfxPlan, compositionEventLog =
       })
     }
 
+    // Card-enter SFX. Fires once per segment that has overlay
+    // placements, at segStart + 0.25s — matches the .ov-card CSS
+    // entrance animation (600ms with ~250ms peak). Looks up the
+    // 'card_enter' event in the standalone triggers table so each
+    // template can pick its own sound (ux_zoom on Sleek + Atlas).
+    const hasOverlays = Array.isArray(seg.overlay_placements) && seg.overlay_placements.length > 0
+    const cardEnterTrigger = triggerByEvent['card_enter']
+    if (hasOverlays && cardEnterTrigger && dur > 0.6) {
+      cues.push({
+        kind: 'oneshot',
+        sfx_id: cardEnterTrigger.sfx_id,
+        file:   cardEnterTrigger.file,
+        volume: cardEnterTrigger.volume,
+        at_secs: segStart + 0.25,
+        event: 'card_enter',
+      })
+    }
+
     // Standalone triggers. Prefer real composition-emitted events from
     // the HF runtime (compositionEventLog[seg.id] = [{event, at_secs}]).
     // Fall back to the heuristic COMPOSITION_EVENTS table when the
