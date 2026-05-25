@@ -112,7 +112,6 @@ Rules (READ CAREFULLY):
 - A cited source ("according to Forbes") → source-citation-v1 in left_overlay paired with the stat.
 - A section / chapter beat → chapter-marker-v1 in left_overlay (or top-strip for vertical). meta = section label, title = 2-4 word section name.
 - A direct CTA ("save this", "follow", "subscribe") → action-prompt-v1 in right_overlay.
-- A single punchy word worth slamming → word-emphasis-v1 in lower-third (max 1 per video).
 - watermark-v1 (@handle) on the FIRST speaker segment in corner-tr.
 - Center column is reserved for the avatar — never target it.
 ${captionsOn ? `

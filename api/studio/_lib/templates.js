@@ -131,7 +131,9 @@ export const SLEEK = {
   // chapter-marker for cleaner look).
   overlay_pool: [
     'stat-callout-v1',
-    'word-emphasis-v1',
+    // word-emphasis-v1 removed: captions already highlight one
+    // emphasized word per phrase via the .highlight span, and both
+    // overlays live in lower-third → they were stacking visually.
     'caption-overlay-v1',
     'tool-logo-v1',
     'watermark-v1',
