@@ -184,6 +184,7 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
     template_id: 'sleek',
     brand_color: '',
     captions_enabled: true,
+    overlays_enabled: true,
   })
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
 
@@ -284,6 +285,7 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
         template_id: form.template_id || 'sleek',
         brand_color: form.brand_color || null,
         captions_enabled: form.captions_enabled !== false,
+        overlays_enabled: form.overlays_enabled !== false,
       }
       const r = await authedFetch('/api/studio/videos', session.access_token, {
         method: 'POST', body: JSON.stringify(body),
@@ -472,6 +474,20 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
             />
             <span style={{ fontSize: 13, fontWeight: 600 }}>
               {form.captions_enabled !== false ? 'Captions on' : 'Captions off'}
+            </span>
+          </label>
+        </Field>
+
+        <Field label="Overlays" hint="Stat callouts, tool logos, chapter markers, action prompts. Auto-runs on every render.">
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
+            <input
+              type="checkbox"
+              checked={form.overlays_enabled !== false}
+              onChange={(e) => set('overlays_enabled', e.target.checked)}
+              style={{ width: 16, height: 16 }}
+            />
+            <span style={{ fontSize: 13, fontWeight: 600 }}>
+              {form.overlays_enabled !== false ? 'Overlays on' : 'Overlays off'}
             </span>
           </label>
         </Field>
@@ -908,7 +924,7 @@ function StudioVideoEditor({ videoId }) {
             <>
               <TemplateSelector video={video} onApplied={(updated) => setVideo(updated || video)} />
               <CaptionsToggle video={video} onChanged={(updated) => setVideo(updated || video)} />
-              <EnrichOverlaysButton video={video} />
+              <OverlaysToggle video={video} onChanged={(updated) => setVideo(updated || video)} />
               <SegmentList video={video} />
               <StudioChat videoId={video.id} />
             </>
@@ -1284,36 +1300,55 @@ function CaptionsToggle({ video, onChanged }) {
   )
 }
 
-// One-click overlay enrichment. Hits POST /api/studio/enrich-overlays
-// which runs a focused Claude pass on the existing script + segments
-// and writes overlay_placements only — voice/image/avatar assets are
-// untouched. Use this instead of "Regenerate map" when the user just
-// wants to ADD overlays + captions to an already-rendered video.
-function EnrichOverlaysButton({ video }) {
+// Overlays toggle + manual run. When `overlays_enabled` is true, the
+// Render button auto-calls enrich-overlays before kicking off the bake
+// so placements stay in sync with the script. The "Run now" button
+// here is just for the impatient who want to preview before rendering.
+function OverlaysToggle({ video, onChanged }) {
   const { session } = useAuth()
+  const [enabled, setEnabled] = useState(video.overlays_enabled !== false)
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState(null)
   const [err, setErr] = useState('')
 
-  const run = async () => {
+  useEffect(() => { setEnabled(video.overlays_enabled !== false) }, [video.overlays_enabled])
+
+  const flip = async (next) => {
+    if (!session?.access_token || busy) return
+    setBusy(true); setErr('')
+    try {
+      const r = await authedFetch(`/api/studio/videos?id=${video.id}`, session.access_token, {
+        method: 'PATCH',
+        body: { overlays_enabled: next },
+      })
+      if (!r.ok) throw new Error('Save failed')
+      const updated = await r.json().catch(() => null)
+      setEnabled(next)
+      onChanged?.(updated)
+    } catch (e) {
+      setErr(`Could not save: ${e.message}`)
+      setEnabled(!next)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const runNow = async () => {
     if (!session?.access_token || busy) return
     setBusy(true); setErr(''); setResult(null)
     try {
       const r = await authedFetch('/api/studio/enrich-overlays', session.access_token, {
-        method: 'POST',
-        body: { studio_video_id: video.id },
+        method: 'POST', body: { studio_video_id: video.id },
       })
-      // Read body as text first so we can fall back to a helpful error
-      // when Vercel returns an HTML timeout / 504 page instead of JSON.
       const text = await r.text()
       let body = null
       try { body = JSON.parse(text) } catch { /* not JSON */ }
       if (!r.ok) {
         if (body?.error) throw new Error(body.error)
-        if (r.status === 504) throw new Error('Enrichment timed out. Try again — Claude was slow that time.')
+        if (r.status === 504) throw new Error('Enrichment timed out. Try again.')
         throw new Error(`Request failed (${r.status}). ${text.slice(0, 120)}`)
       }
-      if (!body) throw new Error('Server returned a non-JSON response. Check Vercel function logs.')
+      if (!body) throw new Error('Server returned a non-JSON response. Check Vercel logs.')
       setResult(body)
     } catch (e) {
       setErr(e.message)
@@ -1328,27 +1363,37 @@ function EnrichOverlaysButton({ video }) {
       background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
       borderRadius: 10, marginBottom: 12, flexWrap: 'wrap',
     }}>
+      <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: busy ? 'wait' : 'pointer' }}>
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={busy}
+          onChange={(e) => flip(e.target.checked)}
+          style={{ width: 16, height: 16 }}
+        />
+        <span style={{ fontSize: 13, fontWeight: 700 }}>Overlays {enabled ? 'on' : 'off'}</span>
+      </label>
+      <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)' }}>
+        {enabled
+          ? 'Auto-runs before every render. Stat callouts, tool logos, chapter markers, etc.'
+          : 'Render skips overlay enrichment. Manage placements manually.'}
+      </span>
       <button
         type="button"
-        className="btn-primary"
+        className="btn-secondary"
         disabled={busy}
-        onClick={run}
-        style={{ padding: '8px 14px', fontSize: 13, fontWeight: 700 }}
+        onClick={runNow}
+        style={{ marginLeft: 'auto', padding: '6px 12px', fontSize: 12, fontWeight: 600 }}
       >
-        {busy ? 'Enriching…' : 'Add overlays + captions'}
+        {busy ? 'Working…' : 'Run now'}
       </button>
-      <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', flex: 1, minWidth: 200 }}>
-        Adds visual overlays + captions to existing segments WITHOUT regenerating voice / B-roll / avatar videos. Re-click Render after this completes.
-      </span>
       {result && (
-        <span style={{ fontSize: 12, color: '#84e1bc', fontWeight: 600 }}>
+        <span style={{ fontSize: 12, color: '#84e1bc', fontWeight: 600, flexBasis: '100%' }}>
           {result.segments_updated} segments updated · {result.visual_overlays_added} overlays · {result.captions_injected} captions
         </span>
       )}
       {err && (
-        <span style={{ fontSize: 12, color: '#ff6b6b' }}>
-          {err}
-        </span>
+        <span style={{ fontSize: 12, color: '#ff6b6b', flexBasis: '100%' }}>{err}</span>
       )}
     </div>
   )
@@ -2219,6 +2264,27 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
     setBusy(true)
     setBaking(true)  // local flag drives phase='baking' until final_video_url lands
     try {
+      // Auto-enrich overlays when toggle is on. Idempotent — Claude re-
+      // emits placements every time so this keeps overlays in sync
+      // with the latest script. ~5-15s before the actual render fires.
+      if (video.overlays_enabled !== false) {
+        toast({ message: 'Adding overlays + captions…', kind: 'info' })
+        const er = await authedFetch('/api/studio/enrich-overlays', session.access_token, {
+          method: 'POST',
+          body: JSON.stringify({ studio_video_id: video.id }),
+        })
+        const etxt = await er.text()
+        let ebody = null
+        try { ebody = JSON.parse(etxt) } catch { /* not JSON */ }
+        if (!er.ok) {
+          // Soft-fail: surface the enrichment error but proceed with
+          // the render anyway. Users can flip the toggle off and
+          // re-render if they don't want overlays.
+          const reason = ebody?.error || `enrich-overlays returned ${er.status}`
+          toast({ message: `Overlay enrichment failed (${reason.slice(0, 80)}). Rendering without overlay updates.`, kind: 'warning' })
+        }
+      }
+
       const r = await authedFetch('/api/studio/render-final', session.access_token, {
         method: 'POST',
         body: JSON.stringify({ studio_video_id: video.id }),
