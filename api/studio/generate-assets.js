@@ -277,7 +277,13 @@ async function orchestrateSegment(segment, ctx) {
     if (!voiceUrl && wants('voice')) {
       await patch({ status: 'generating_audio', error: null })
       voiceUrl = await dispatchVoice(segment, voiceId, profileId)
-      if (voiceUrl) await patch({ voice_url: voiceUrl })
+      if (voiceUrl) {
+        await patch({ voice_url: voiceUrl })
+        // Keep the local segment object in sync so Step 2's
+        // "is voice+image done?" check below doesn't see a stale
+        // null and skip the ready transition.
+        segment.voice_url = voiceUrl
+      }
     }
 
     // Step 2 — type-specific async job
