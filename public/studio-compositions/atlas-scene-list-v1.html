@@ -32,13 +32,13 @@
   body { display:flex; align-items:center; justify-content:center; font-family:'Plus Jakarta Sans',sans-serif; }
 
   .scene {
-    position:relative; width:1080px; height:1920px;
+    position:relative; width:1920px; height:1080px;
     background: var(--bg-base);
     overflow:hidden; color: var(--text-primary);
     transform-origin:center center;
   }
-  @media (max-width:1080px) { .scene { transform: scale(calc(100vw / 1080)); } }
-  @media (max-height:1920px) { .scene { transform: scale(calc(100vh / 1920)); } }
+  @media (max-width:1920px) { .scene { transform: scale(calc(100vw / 1920)); } }
+  @media (max-height:1080px) { .scene { transform: scale(calc(100vh / 1080)); } }
 
   .dots-base {
     position:absolute; inset:0;
