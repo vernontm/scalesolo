@@ -27,8 +27,8 @@ export const OVERLAY_DEFINITIONS = {
   'stat-callout-v1': {
     name: 'Stat callout',
     description: 'Floating number + label card. Use to back up a spoken statistic.',
-    allowed_zones: ['l-top', 'l-mid', 'l-bot', 'r-top', 'r-mid', 'r-bot'],
-    default_zone: 'r-mid',
+    allowed_zones: ['l-top', 'l-mid', 'l-bot', 'r-top', 'r-mid', 'r-bot', 'left_overlay', 'right_overlay'],
+    default_zone: 'right_overlay',
     persistent: false,
     duration_pattern: 'speaker_paired',
     typical_duration_secs: 3,
@@ -65,8 +65,8 @@ export const OVERLAY_DEFINITIONS = {
   'tool-logo-v1': {
     name: 'Tool logo',
     description: 'Logo card referencing a specific tool the avatar is talking about.',
-    allowed_zones: ['l-top', 'l-mid', 'r-top', 'r-mid'],
-    default_zone: 'r-top',
+    allowed_zones: ['l-top', 'l-mid', 'r-top', 'r-mid', 'left_overlay', 'right_overlay'],
+    default_zone: 'right_overlay',
     persistent: false,
     duration_pattern: 'speaker_paired',
     typical_duration_secs: 4,
@@ -91,8 +91,8 @@ export const OVERLAY_DEFINITIONS = {
   'action-prompt-v1': {
     name: 'Action prompt',
     description: 'CTA card prompting follow / save / subscribe / etc.',
-    allowed_zones: ['l-mid', 'r-mid', 'lower-third'],
-    default_zone: 'r-mid',
+    allowed_zones: ['l-mid', 'r-mid', 'lower-third', 'left_overlay', 'right_overlay'],
+    default_zone: 'right_overlay',
     persistent: false,
     duration_pattern: 'timed',
     typical_duration_secs: 5,
@@ -103,8 +103,8 @@ export const OVERLAY_DEFINITIONS = {
   'source-citation-v1': {
     name: 'Source citation',
     description: 'Small "Source: …" attribution card.',
-    allowed_zones: ['l-bot', 'r-bot'],
-    default_zone: 'l-bot',
+    allowed_zones: ['l-bot', 'r-bot', 'left_overlay', 'right_overlay'],
+    default_zone: 'left_overlay',
     persistent: false,
     duration_pattern: 'timed',
     typical_duration_secs: 4,
@@ -117,8 +117,8 @@ export const OVERLAY_DEFINITIONS = {
     description: 'Section / chapter title that flags a new beat in the video.',
     // top-strip is only valid in vertical; the zone-resolver
     // rejects it when orientation is landscape.
-    allowed_zones: ['l-top', 'r-top', 'top-strip'],
-    default_zone: 'l-top',
+    allowed_zones: ['l-top', 'r-top', 'top-strip', 'left_overlay', 'right_overlay'],
+    default_zone: 'left_overlay',
     persistent: false,
     duration_pattern: 'timed',
     typical_duration_secs: 2.5,
@@ -136,7 +136,17 @@ export const PERSISTENT_ZONES = new Set([
 ])
 
 // All valid zones across both orientations. Used for validation.
+//
+// V2 layout (OVERLAY-FIX-V2.md): one large vertically-centered slot
+// per side (left_overlay, right_overlay) replaces the V1 6-slot
+// stack (l-top/l-mid/l-bot/r-top/r-mid/r-bot). Old zones stay valid
+// for backward compatibility — the CSS in _ov-universal.css collapses
+// every l-*/r-* zone to the same centered single-slot position, so
+// existing data still renders correctly.
 export const ALL_ZONES = new Set([
+  // V2 zones — preferred
+  'left_overlay', 'right_overlay',
+  // V1 zones — legacy, still valid, rendered as centered single slot
   'l-top', 'l-mid', 'l-bot',
   'r-top', 'r-mid', 'r-bot',
   'lower-third',

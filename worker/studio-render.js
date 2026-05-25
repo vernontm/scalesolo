@@ -522,14 +522,21 @@ async function renderOverlayPngs(seg, dir, dim, durationSecs, baseUrl, bypassSec
 
   const orientation = dim.w >= dim.h ? 'landscape' : 'vertical'
   const motion = template.motion || {}
-  const overlayOverrides = template.overlay_overrides || {}
-  const accent = template.colors?.primary_accent || '#e3151e'
+  // overlay_overrides is now legacy — the universal overlay system
+  // drives all card styling from the active .tokens-<template> class
+  // declared on the overlay-layer-v1.html wrapper. Still pass it
+  // empty so a stale composition fetched from CDN doesn't crash.
+  const overlayOverrides = {}
+  const accent   = template.colors?.primary_accent   || '#e3151e'
+  const accent_2 = template.colors?.secondary_accent || accent
 
   const vars = {
     placements: JSON.stringify(placements),
     overlay_overrides: JSON.stringify(overlayOverrides),
     orientation,
+    template_id: template.id || 'sleek',
     accent_color: accent,
+    accent_2_color: accent_2,
     motion_entrance: motion.entrance || 'slide_up_fade',
     motion_exit: motion.exit || 'fade_out',
     motion_emphasis: motion.emphasis || 'pulse_glow',

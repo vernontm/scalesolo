@@ -139,7 +139,7 @@ const SEGMENT_TOOL = {
                   zone: {
                     type: 'string',
                     enum: [...ALL_ZONES],
-                    description: 'Where on the frame to place it. Side slots: l-top/l-mid/l-bot/r-top/r-mid/r-bot. lower-third for captions. top-strip is vertical-only.',
+                    description: 'Where on the frame to place it. Side slots: left_overlay, right_overlay (one large card per side, vertically centered). lower-third for captions. top-strip is vertical-only.',
                   },
                   content: {
                     type: 'object',
@@ -188,10 +188,10 @@ Overlay rules (read the script content carefully and add overlays that REINFORCE
 - Only put overlays on avatar or voiceover_broll segments. Never on motion-graphics.
 - Center column is reserved for the avatar. Never target it.
 - Cap at 2 non-caption overlays per segment (captions don't count toward the cap).
-- A stat the avatar speaks aloud ("we grew 10x", "47 thousand subscribers") → stat-callout-v1 in r-mid with the actual number. Always include the unit suffix if it's natural ("10" + unit "x", "47K", "$2M").
-- A specific company or tool the avatar names ("HeyGen", "Claude", "Notion", "Shopify", "OpenAI", any product brand) → tool-logo-v1 with logo glyph = the company's first letter (capital). Place in r-top so it sits next to the speaker. Name field is the full company name.
-- A cited statistic with a named source ("according to Forbes", "the Vernon Tech report") → stat-callout-v1 AND source-citation-v1 paired (stat in r-mid, citation in l-bot).
-- A section / chapter beat — when the avatar transitions to a new idea — → chapter-marker-v1 in l-top (or top-strip if this is a vertical video). meta = "Part N / total" or the section number; title = a 2-4 word section name.
+- A stat the avatar speaks aloud ("we grew 10x", "47 thousand subscribers") → stat-callout-v1 in right_overlay with the actual number. Always include the unit suffix if it's natural ("10" + unit "x", "47K", "$2M").
+- A specific company or tool the avatar names ("HeyGen", "Claude", "Notion", "Shopify", "OpenAI", any product brand) → tool-logo-v1 with logo glyph = the company's first letter (capital). Place in right_overlay so it sits next to the speaker. Name field is the full company name.
+- A cited statistic with a named source ("according to Forbes", "the Vernon Tech report") → stat-callout-v1 AND source-citation-v1 paired (stat in right_overlay, citation in left_overlay).
+- A section / chapter beat — when the avatar transitions to a new idea — → chapter-marker-v1 in left_overlay (or top-strip if this is a vertical video). meta = "Part N / total" or the section number; title = a 2-4 word section name.
 - A direct CTA the avatar speaks ("save this", "follow for more", "link in bio", "subscribe") → action-prompt-v1.
 - A single punchy word worth slamming onto screen ("10X", "STOP", "WAIT") → word-emphasis-v1 in lower-third. Use at most 1 per video.
 - watermark-v1 (@handle) should run on the FIRST segment only as a corner-tr placement. Skip it on later segments — the renderer handles persistence automatically when present at segment 0.
@@ -232,7 +232,7 @@ Sound design:
 ${overlayGuidance}
 Intro segment (HARD RULE):
 - The first segment is ALWAYS segment_type: avatar. Never motion_graphics. The hook is the avatar speaking on camera.
-- Pack the intro segment with overlays to keep viewers engaged: chapter-marker-v1 in l-top with meta "INTRO" and a 2-4 word title that captures the hook, PLUS one of (word-emphasis-v1 with the punchiest word in the hook OR stat-callout-v1 if the hook contains a number). Plus the watermark-v1 in corner-tr.
+- Pack the intro segment with overlays to keep viewers engaged: chapter-marker-v1 in left_overlay with meta "INTRO" and a 2-4 word title that captures the hook, PLUS one of (word-emphasis-v1 with the punchiest word in the hook OR stat-callout-v1 if the hook contains a number). Plus the watermark-v1 in corner-tr.
 - Treat the intro overlays as the energy engine. The avatar carries the audio; the overlays carry the visual hook.
 
 ${buildCompositionGuidance(tmpl)}

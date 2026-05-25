@@ -107,11 +107,11 @@ ${overlayList}
 Rules (READ CAREFULLY):
 - Only emit overlays for segments where segment_type is "avatar" or "voiceover_broll". Skip motion-graphics segments entirely (return an empty array for them).
 - Cap at 2 NON-caption overlays per segment. Most segments need 0-1.
-- A stat the avatar speaks ("10x", "47K", "$2M") → stat-callout-v1 in r-mid with the exact number + unit.
-- A specific company / tool / brand the avatar names ("HeyGen", "Claude", "Notion", "Shopify", "OpenAI") → tool-logo-v1 with logo glyph = first letter capital, name = full company name. Place in r-top.
-- A cited source ("according to Forbes") → source-citation-v1 in l-bot paired with the stat.
-- A section / chapter beat → chapter-marker-v1 in l-top (or top-strip for vertical). meta = section label, title = 2-4 word section name.
-- A direct CTA ("save this", "follow", "subscribe") → action-prompt-v1 in r-mid.
+- A stat the avatar speaks ("10x", "47K", "$2M") → stat-callout-v1 in right_overlay with the exact number + unit.
+- A specific company / tool / brand the avatar names ("HeyGen", "Claude", "Notion", "Shopify", "OpenAI") → tool-logo-v1 with logo glyph = first letter capital, name = full company name. Place in right_overlay.
+- A cited source ("according to Forbes") → source-citation-v1 in left_overlay paired with the stat.
+- A section / chapter beat → chapter-marker-v1 in left_overlay (or top-strip for vertical). meta = section label, title = 2-4 word section name.
+- A direct CTA ("save this", "follow", "subscribe") → action-prompt-v1 in right_overlay.
 - A single punchy word worth slamming → word-emphasis-v1 in lower-third (max 1 per video).
 - watermark-v1 (@handle) on the FIRST speaker segment in corner-tr.
 - Center column is reserved for the avatar — never target it.

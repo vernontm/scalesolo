@@ -1,0 +1,55 @@
+/* ============================================================
+   OVERLAY TOKEN CLASSES — per-template
+   ============================================================
+   Apply one of these to the overlay region wrapper to switch
+   templates. The .ov-card / .ov-stat / .ov-chapter / .ov-tool
+   rules in _ov-universal.css consume these CSS custom props.
+
+   To add a new template:
+     1. Pick accent + secondary
+     2. Pick display + mono fonts
+     3. Pick radius (16 organic, 20 modern, 24 friendly)
+     4. Done — no card CSS needed
+============================================================ */
+
+.tokens-sleek {
+  --ov-accent: #e3151e;
+  --ov-accent-2: #ff3742;
+  --ov-accent-soft: #ff5560;
+  --ov-font-display: 'Plus Jakarta Sans', sans-serif;
+  --ov-font-mono: 'JetBrains Mono', monospace;
+  --ov-font-italic-style: italic;
+  --ov-radius: 20px;
+}
+
+.tokens-atlas {
+  --ov-accent: #818cf8;
+  --ov-accent-2: #c084fc;
+  --ov-accent-soft: #a5b4fc;
+  --ov-font-display: 'Plus Jakarta Sans', sans-serif;
+  --ov-font-mono: 'JetBrains Mono', monospace;
+  --ov-font-italic-style: italic;
+  --ov-radius: 24px;
+}
+
+/* Stubs for future templates. Adding the class makes the token block
+   available without any further wiring. */
+.tokens-organic {
+  --ov-accent: #c8633f;
+  --ov-accent-2: #d97757;
+  --ov-accent-soft: #7a8a6b;
+  --ov-font-display: 'Fraunces', serif;
+  --ov-font-mono: 'JetBrains Mono', monospace;
+  --ov-font-italic-style: italic;
+  --ov-radius: 16px;
+}
+
+.tokens-retrovhs {
+  --ov-accent: #ff007a;
+  --ov-accent-2: #00ffe1;
+  --ov-accent-soft: #ff6db4;
+  --ov-font-display: 'VT323', monospace;
+  --ov-font-mono: 'VT323', monospace;
+  --ov-font-italic-style: normal;
+  --ov-radius: 4px;
+}
