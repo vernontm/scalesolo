@@ -40,6 +40,9 @@
     "api/studio/enrich-overlays.js": {
       "maxDuration": 120
     },
+    "api/studio/refresh-motion-graphics.js": {
+      "maxDuration": 120
+    },
     "api/studio/generate-map.js": {
       "maxDuration": 120
     },

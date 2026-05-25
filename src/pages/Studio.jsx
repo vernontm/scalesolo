@@ -185,6 +185,7 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
     brand_color: '',
     captions_enabled: true,
     overlays_enabled: true,
+    motion_graphics_enabled: true,
   })
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
 
@@ -286,6 +287,7 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
         brand_color: form.brand_color || null,
         captions_enabled: form.captions_enabled !== false,
         overlays_enabled: form.overlays_enabled !== false,
+        motion_graphics_enabled: form.motion_graphics_enabled !== false,
       }
       const r = await authedFetch('/api/studio/videos', session.access_token, {
         method: 'POST', body: JSON.stringify(body),
@@ -488,6 +490,20 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
             />
             <span style={{ fontSize: 13, fontWeight: 600 }}>
               {form.overlays_enabled !== false ? 'Overlays on' : 'Overlays off'}
+            </span>
+          </label>
+        </Field>
+
+        <Field label="Auto-fit motion graphics" hint="Claude re-picks composition + content for each motion-graphics segment so it matches the actual script.">
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
+            <input
+              type="checkbox"
+              checked={form.motion_graphics_enabled !== false}
+              onChange={(e) => set('motion_graphics_enabled', e.target.checked)}
+              style={{ width: 16, height: 16 }}
+            />
+            <span style={{ fontSize: 13, fontWeight: 600 }}>
+              {form.motion_graphics_enabled !== false ? 'Auto-fit on' : 'Auto-fit off'}
             </span>
           </label>
         </Field>
@@ -925,6 +941,7 @@ function StudioVideoEditor({ videoId }) {
               <TemplateSelector video={video} onApplied={(updated) => setVideo(updated || video)} />
               <CaptionsToggle video={video} onChanged={(updated) => setVideo(updated || video)} />
               <OverlaysToggle video={video} onChanged={(updated) => setVideo(updated || video)} />
+              <MotionGraphicsToggle video={video} onChanged={(updated) => setVideo(updated || video)} />
               <SegmentList video={video} />
               <StudioChat videoId={video.id} />
             </>
@@ -1390,6 +1407,107 @@ function OverlaysToggle({ video, onChanged }) {
       {result && (
         <span style={{ fontSize: 12, color: '#84e1bc', fontWeight: 600, flexBasis: '100%' }}>
           {result.segments_updated} segments updated · {result.visual_overlays_added} overlays · {result.captions_injected} captions
+        </span>
+      )}
+      {err && (
+        <span style={{ fontSize: 12, color: '#ff6b6b', flexBasis: '100%' }}>{err}</span>
+      )}
+    </div>
+  )
+}
+
+// Auto-fit motion-graphics toggle. When on, the Render flow calls
+// /api/studio/refresh-motion-graphics before baking so every motion
+// segment's composition_id + variables match its actual script. Solves
+// the common drift where stat-reveal-v1 with stat_number "10" lingers
+// on a segment whose script never mentions a number.
+function MotionGraphicsToggle({ video, onChanged }) {
+  const { session } = useAuth()
+  const [enabled, setEnabled] = useState(video.motion_graphics_enabled !== false)
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState(null)
+  const [err, setErr] = useState('')
+
+  useEffect(() => { setEnabled(video.motion_graphics_enabled !== false) }, [video.motion_graphics_enabled])
+
+  const flip = async (next) => {
+    if (!session?.access_token || busy) return
+    setBusy(true); setErr('')
+    try {
+      const r = await authedFetch(`/api/studio/videos?id=${video.id}`, session.access_token, {
+        method: 'PATCH',
+        body: { motion_graphics_enabled: next },
+      })
+      if (!r.ok) throw new Error('Save failed')
+      const updated = await r.json().catch(() => null)
+      setEnabled(next)
+      onChanged?.(updated)
+    } catch (e) {
+      setErr(`Could not save: ${e.message}`)
+      setEnabled(!next)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const runNow = async () => {
+    if (!session?.access_token || busy) return
+    setBusy(true); setErr(''); setResult(null)
+    try {
+      const r = await authedFetch('/api/studio/refresh-motion-graphics', session.access_token, {
+        method: 'POST', body: { studio_video_id: video.id },
+      })
+      const text = await r.text()
+      let body = null
+      try { body = JSON.parse(text) } catch { /* not JSON */ }
+      if (!r.ok) {
+        if (body?.error) throw new Error(body.error)
+        if (r.status === 504) throw new Error('Refresh timed out. Try again.')
+        throw new Error(`Request failed (${r.status}). ${text.slice(0, 120)}`)
+      }
+      if (!body) throw new Error('Server returned a non-JSON response. Check Vercel logs.')
+      setResult(body)
+    } catch (e) {
+      setErr(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
+      background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+      borderRadius: 10, marginBottom: 12, flexWrap: 'wrap',
+    }}>
+      <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: busy ? 'wait' : 'pointer' }}>
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={busy}
+          onChange={(e) => flip(e.target.checked)}
+          style={{ width: 16, height: 16 }}
+        />
+        <span style={{ fontSize: 13, fontWeight: 700 }}>Auto-fit motion graphics {enabled ? 'on' : 'off'}</span>
+      </label>
+      <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)' }}>
+        {enabled
+          ? 'Re-picks composition + content per segment before every render.'
+          : 'Motion graphics stay as-is. Edit by hand or via chat.'}
+      </span>
+      <button
+        type="button"
+        className="btn-secondary"
+        disabled={busy}
+        onClick={runNow}
+        style={{ marginLeft: 'auto', padding: '6px 12px', fontSize: 12, fontWeight: 600 }}
+      >
+        {busy ? 'Working…' : 'Run now'}
+      </button>
+      {result && (
+        <span style={{ fontSize: 12, color: '#84e1bc', fontWeight: 600, flexBasis: '100%' }}>
+          {result.refreshed} / {result.motion_segments_total} motion segments refreshed
+          {result.composition_changes?.length > 0 && ` · ${result.composition_changes.length} composition swap(s)`}
         </span>
       )}
       {err && (
@@ -2264,6 +2382,24 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
     setBusy(true)
     setBaking(true)  // local flag drives phase='baking' until final_video_url lands
     try {
+      // Auto-fit motion graphics when toggle is on. Re-picks composition
+      // + variables per motion segment to match the actual script. Runs
+      // FIRST so overlay enrichment downstream sees the updated comp ids.
+      if (video.motion_graphics_enabled !== false) {
+        toast({ message: 'Refreshing motion graphics…', kind: 'info' })
+        const mr = await authedFetch('/api/studio/refresh-motion-graphics', session.access_token, {
+          method: 'POST',
+          body: JSON.stringify({ studio_video_id: video.id }),
+        })
+        const mtxt = await mr.text()
+        let mbody = null
+        try { mbody = JSON.parse(mtxt) } catch { /* not JSON */ }
+        if (!mr.ok) {
+          const reason = mbody?.error || `refresh returned ${mr.status}`
+          toast({ message: `Motion-graphics refresh failed (${reason.slice(0, 80)}). Rendering with existing compositions.`, kind: 'warning' })
+        }
+      }
+
       // Auto-enrich overlays when toggle is on. Idempotent — Claude re-
       // emits placements every time so this keeps overlays in sync
       // with the latest script. ~5-15s before the actual render fires.

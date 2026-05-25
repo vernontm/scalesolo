@@ -21,7 +21,7 @@ import { gateStudio } from './_lib/gate.js'
 const ALLOWED_CREATE = new Set([
   'profile_id', 'title', 'topic_prompt', 'reference_url', 'reference_text',
   'avatar_id', 'look_id', 'voice_id', 'target_duration_secs', 'aspect_ratio',
-  'template_id', 'brand_color', 'captions_enabled', 'overlays_enabled',
+  'template_id', 'brand_color', 'captions_enabled', 'overlays_enabled', 'motion_graphics_enabled',
 ])
 // Columns the client is allowed to PATCH. Status transitions are
 // allowed here too because the canvas UI flips status as the user
@@ -29,7 +29,7 @@ const ALLOWED_CREATE = new Set([
 const ALLOWED_PATCH = new Set([
   'title', 'topic_prompt', 'reference_url', 'reference_text',
   'avatar_id', 'look_id', 'voice_id', 'target_duration_secs', 'aspect_ratio',
-  'template_id', 'brand_color', 'captions_enabled', 'overlays_enabled',
+  'template_id', 'brand_color', 'captions_enabled', 'overlays_enabled', 'motion_graphics_enabled',
   'status', 'script_full_text', 'final_video_url', 'error',
 ])
 
