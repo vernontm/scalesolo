@@ -8,7 +8,7 @@
 // the worker already has. Writes render_progress directly. Returns
 // when the bake is complete (or throws on terminal failure).
 
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
@@ -965,6 +965,25 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
       const probedDur = await probeAudioDurationSecs(paths.outChunk)
       chunkDurations.push(probedDur || (seg.segment_type === 'avatar' ? Math.max(0.5, voiceDuration || 0) : (voiceDuration || 4)))
       chunkSegments.push(seg)
+
+      // Free /tmp aggressively. PNG sequences and intermediate files
+      // pile up fast (each HF chunk = ~150 PNGs × 8MB = ~1.2GB), and
+      // /tmp is tmpfs-backed on Fly so it counts against RAM. Without
+      // this, a 24-segment bake hits the 8GB ceiling and the OOM
+      // killer reaps the worker mid-bake. Keep only paths.outChunk
+      // (needed for concat) — drop everything else.
+      const keepFiles = new Set([paths.outChunk])
+      try {
+        const dirEntries = await readdir(dir, { withFileTypes: true })
+        for (const entry of dirEntries) {
+          const full = join(dir, entry.name)
+          if (keepFiles.has(full)) continue
+          await rm(full, { recursive: true, force: true })
+        }
+      } catch (e) {
+        console.warn(`[studio-render] tmp cleanup failed for seg ${seg.id}: ${e.message}`)
+      }
+
       progress.current = i + 1
       await writeProgress()
     }
