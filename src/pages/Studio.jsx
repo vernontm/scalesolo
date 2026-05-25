@@ -1328,6 +1328,11 @@ function SegmentList({ video }) {
             onPatch={(patch) => patchSegment(s.id, patch)}
             onDelete={() => deleteSegment(s.id)}
             onRegen={(types) => regenSegment(s, types)}
+            // No callback body needed — the upload endpoint patches
+            // the row itself; Realtime UPDATE delivers the new
+            // avatar_video_url to the editor. Passing a no-op is the
+            // simplest signal "yes this row supports upload".
+            onUploadAvatar={() => { /* realtime handles refresh */ }}
             aspectRatio={video.aspect_ratio}
           />
         ))}
@@ -2454,6 +2459,50 @@ function RenderQualityNote({ video }) {
   )
 }
 
+// Bulk-download all avatar segment voices. Triggers a sequential
+// browser-native download per file (rather than a server-side ZIP)
+// so the worker doesn't have to stream binary data through Vercel's
+// 4.5MB response cap. Filenames are zero-padded by segment_index
+// so they sort correctly in Finder.
+function DownloadAllVoicesButton({ segments }) {
+  const avatarVoices = useMemo(
+    () => (segments || [])
+      .filter((s) => s.segment_type === 'avatar' && s.voice_url)
+      .sort((a, b) => a.segment_index - b.segment_index),
+    [segments],
+  )
+  if (avatarVoices.length === 0) return null
+
+  const downloadAll = async () => {
+    for (let i = 0; i < avatarVoices.length; i++) {
+      const seg = avatarVoices[i]
+      const a = document.createElement('a')
+      a.href = seg.voice_url
+      a.download = `avatar-segment-${String(seg.segment_index + 1).padStart(2, '0')}.mp3`
+      a.style.display = 'none'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      // Tiny delay so browsers actually queue each download instead
+      // of cancelling siblings.
+      await new Promise((r) => setTimeout(r, 250))
+    }
+    toast({ message: `Downloading ${avatarVoices.length} voice file(s)…`, kind: 'info' })
+  }
+
+  return (
+    <button
+      type="button"
+      className="btn-secondary"
+      onClick={downloadAll}
+      style={{ fontSize: 12, padding: '8px 12px' }}
+      title={`Download MP3s for all ${avatarVoices.length} avatar segment(s). Use these in your own avatar platform, then upload the rendered videos back via the per-segment Upload button.`}
+    >
+      ↓ Avatar voices ({avatarVoices.length})
+    </button>
+  )
+}
+
 function StickyActionBar({ video, approvedCount, totalCount, segments }) {
   const { session } = useAuth()
   const [busy, setBusy] = useState(false)
@@ -2711,6 +2760,27 @@ function StickyActionBar({ video, approvedCount, totalCount, segments }) {
           </>
         )}
       </div>
+      {/* Audio-export workflow: voice-only generation. Lets users
+          synthesize voice WITHOUT firing the expensive HeyGen +
+          image jobs. Workflow:
+            1. Click here → voice files land on every segment
+            2. Click "Download all avatar voices" → bulk download
+            3. Render avatars on the user's own platform
+            4. Upload each via the per-segment Upload button below
+            5. Click Render — bake uses uploaded videos, skips HeyGen */}
+      {(phase === 'ready-for-assets' || phase === 'rendered-needs-assets') && (
+        <button
+          type="button"
+          className="btn-secondary"
+          disabled={busy}
+          onClick={() => onAssets(['voice'])}
+          style={{ fontSize: 12, padding: '8px 12px' }}
+          title="Generate voice files only — no HeyGen or B-roll. Useful when you want to render avatars on your own platform."
+        >
+          <Wand2 size={12} /> Voice only
+        </button>
+      )}
+      <DownloadAllVoicesButton segments={segments} />
       {(phase === 'rendered-needs-assets' || phase === 'ready-for-assets') && (
         <button
           type="button"
@@ -2872,7 +2942,7 @@ function RegenOption({ label, checked, onChange, hint, cost, disabled }) {
 // One row of the video map. Cards are dense but legible — Studio is
 // desktop-first. Each editable field debounces text-input PATCHes and
 // fires select/checkbox PATCHes on change.
-function SegmentRow({ segment, onPatch, onDelete, onRegen, aspectRatio }) {
+function SegmentRow({ segment, onPatch, onDelete, onRegen, onUploadAvatar, aspectRatio }) {
   const isAvatar = segment.segment_type === 'avatar'
   const isBroll = segment.segment_type === 'voiceover_broll'
   const isMotion = segment.segment_type === 'voiceover_motion_graphics' || segment.segment_type === 'pure_motion_graphics'
@@ -3059,7 +3129,7 @@ function SegmentRow({ segment, onPatch, onDelete, onRegen, aspectRatio }) {
             </div>
           )}
 
-          {/* Generated assets preview (read-only thumbnails) */}
+          {/* Generated assets preview + per-segment download/upload affordances */}
           {(segment.image_url || segment.voice_url || segment.avatar_video_url) && (
             <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               {segment.image_url && (
@@ -3071,7 +3141,21 @@ function SegmentRow({ segment, onPatch, onDelete, onRegen, aspectRatio }) {
                 </a>
               )}
               {segment.voice_url && (
-                <audio src={segment.voice_url} controls style={{ height: 28 }} />
+                <>
+                  <audio src={segment.voice_url} controls style={{ height: 28 }} />
+                  {/* Download voice MP3 — uses the download attribute so
+                      browsers save instead of stream. Filename includes
+                      the segment index so user can match it to a row
+                      in their own editing tool. */}
+                  <a
+                    href={segment.voice_url}
+                    download={`segment-${String(segment.segment_index + 1).padStart(2, '0')}-voice.mp3`}
+                    style={{ fontSize: 11, color: 'var(--red)', fontWeight: 600 }}
+                    title="Download this segment's voice as MP3"
+                  >
+                    ↓ MP3
+                  </a>
+                </>
               )}
               {segment.avatar_video_url && (
                 <a href={segment.avatar_video_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: 'var(--muted)' }}>
@@ -3080,8 +3164,86 @@ function SegmentRow({ segment, onPatch, onDelete, onRegen, aspectRatio }) {
               )}
             </div>
           )}
+
+          {/* Upload-your-own-avatar — only on avatar segments. Lets
+              users render avatars elsewhere (DID, Synthesia, own RVC
+              tool) and plug the file in here. Skips HeyGen for this
+              segment on the next bake. */}
+          {isAvatar && onUploadAvatar && (
+            <div style={{ marginTop: 8 }}>
+              <UploadAvatarButton
+                segmentId={segment.id}
+                hasUpload={!!segment.avatar_video_url}
+                onUploaded={onUploadAvatar}
+              />
+            </div>
+          )}
         </div>
       </div>
+    </div>
+  )
+}
+
+// File-input button for users to drop their own pre-rendered avatar
+// video into a segment. POSTs multipart/form-data to /api/studio/
+// segments/upload-avatar. Disabled while uploading.
+function UploadAvatarButton({ segmentId, hasUpload, onUploaded }) {
+  const { session } = useAuth()
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const inputRef = useRef(null)
+
+  const onFile = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file || !session?.access_token) return
+    setBusy(true); setErr('')
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const r = await fetch(`/api/studio/segments/upload-avatar?id=${segmentId}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        body: fd,
+      })
+      const b = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(b.error || `Upload failed (${r.status})`)
+      toast({ message: 'Avatar video uploaded — HeyGen skipped for this segment.', kind: 'success' })
+      onUploaded?.()
+    } catch (e2) {
+      setErr(e2.message)
+    } finally {
+      setBusy(false)
+      if (inputRef.current) inputRef.current.value = ''
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        disabled={busy}
+        className="btn-ghost"
+        style={{
+          fontSize: 11, padding: '4px 10px',
+          color: 'var(--text-soft)', border: '1px dashed var(--border)',
+          borderRadius: 6, cursor: busy ? 'wait' : 'pointer', background: 'transparent',
+        }}
+        title="Upload an MP4 you rendered with your own avatar platform (DID, Synthesia, etc). The bake will use this instead of calling HeyGen for this segment."
+      >
+        {busy ? <Loader2 size={11} className="spin" /> : null}
+        {hasUpload ? '↑ Replace my avatar video' : '↑ Use my own avatar video'}
+      </button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="video/mp4,video/*"
+        onChange={onFile}
+        style={{ display: 'none' }}
+      />
+      {err && (
+        <span style={{ fontSize: 11, color: 'var(--red)' }}>{err}</span>
+      )}
     </div>
   )
 }
