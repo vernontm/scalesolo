@@ -1049,17 +1049,32 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
       // Final outputs map to the last labels
       const finalV = prevVideoLabel
       const finalA = prevAudioLabel
+      // FINAL CONCAT — HD delivery preset. Intermediate per-chunk
+      // encodes used preset=veryfast + crf=23 since those bytes are
+      // throwaway. This pass is what the user downloads, so we trade
+      // a bit more CPU time for noticeably better quality:
+      //   preset=medium  — ~2× slower than veryfast, ~15% better
+      //                    compression-to-quality ratio
+      //   crf=20         — visibly cleaner gradients + less banding
+      //                    than 23 (the banding in dark red glow
+      //                    accents was visible at crf 23)
+      //   profile=high level=4.1 — broadest YouTube / TikTok / iOS
+      //                    compat for 1080p H.264
+      //   audio 192k    — bumped from 128k since voice carries the
+      //                    whole video and 128k AAC mono has
+      //                    audible artifacts on s/sh sibilants
       await runFFmpeg([
         '-y', ...inputs,
         '-filter_complex', filter.join(';'),
         '-map', finalV, '-map', finalA,
-        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
-        '-c:a', 'aac', '-b:a', '128k', '-ar', '48000',
+        '-c:v', 'libx264', '-preset', 'medium', '-crf', '20',
+        '-profile:v', 'high', '-level', '4.1',
+        '-c:a', 'aac', '-b:a', '192k', '-ar', '48000',
         '-pix_fmt', 'yuv420p',
         '-movflags', '+faststart', finalPath,
       ], 600_000)
     } else {
-      // Hard cut concat — original behavior.
+      // Hard cut concat — same HD delivery settings as the xfade path.
       const inputs = []
       let filter = ''
       for (let i = 0; i < chunkPaths.length; i++) {
@@ -1071,11 +1086,12 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
         '-y', ...inputs,
         '-filter_complex', filter,
         '-map', '[v]', '-map', '[a]',
-        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
-        '-c:a', 'aac', '-b:a', '128k', '-ar', '48000',
+        '-c:v', 'libx264', '-preset', 'medium', '-crf', '20',
+        '-profile:v', 'high', '-level', '4.1',
+        '-c:a', 'aac', '-b:a', '192k', '-ar', '48000',
         '-pix_fmt', 'yuv420p',
         '-movflags', '+faststart', finalPath,
-      ], 300_000)
+      ], 600_000)
     }
 
     // 5.5. SFX mix pass. Schedules entrance + transition + composition-
