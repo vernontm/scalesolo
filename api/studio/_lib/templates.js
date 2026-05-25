@@ -81,17 +81,16 @@ export const SLEEK = {
   // compositions ship. Three more (process-timeline-v1, chapter-card-v1,
   // diagram-card-v1) are v2 and intentionally NOT in this pool.
   composition_pool: [
-    // Only IDs with a real HTML file in public/studio-compositions/.
-    // hook-card-v1, caption-card-v1, subscribe-cta-v1 are intentionally
-    // commented out until their HTML ships — otherwise auto-fit picks
-    // them and the worker falls back to drawtext.
-    'title-card-v1',
-    'stat-reveal-v1',
-    'list-overlay-v1',
-    'quote-card-v1',
-    'lower-third-v1',
-    'comparison-v1',
-    'end-card-v1',
+    // Sleek v2 pool — three full-screen compositions, content-driven:
+    //   - sleek-scene-headline-v1: any "big text on screen" moment
+    //     (titles, quotes, stat reveals, single-line punchlines).
+    //     The accent span is where the punchy number / phrase lands.
+    //   - sleek-scene-list-v1: anything enumerated — 3-5 items.
+    //   - sleek-scene-cta-v1: the final segment only. Big button +
+    //     hero handle. Auto-fit reserves this for the LAST segment.
+    'sleek-scene-headline-v1',
+    'sleek-scene-list-v1',
+    'sleek-scene-cta-v1',
   ],
   composition_overrides: {
     'stat-reveal-v1': { number_treatment: 'chrome_with_red_glow' },
@@ -144,16 +143,17 @@ export const SLEEK = {
   // showcase. Keep this block in sync with that file: if the showcase
   // changes, these tokens change too.
   overlay_overrides: {
-    // .ov-stat — glass card with chrome-gradient number + red drop-glow.
+    // .ov-stat — deeper glass card with chrome-gradient number + red drop-glow.
     'stat-callout-v1': {
       container: {
-        background: 'var(--surface-card)',
-        backdrop_blur_px: 12,
-        border: '1px solid var(--surface-border)',
-        border_radius_px: 12,
-        padding: '18px 22px',
+        background: 'linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%)',
+        backdrop_blur_px: 20,
+        border: '1px solid rgba(255,255,255,0.18)',
+        border_radius_px: 14,
+        padding: '22px 28px',
+        min_width_px: 220,
         text_align: 'center',
-        box_shadow: '0 8px 32px rgba(0,0,0,0.3), 0 0 30px rgba(227,21,30,0.1)',
+        box_shadow: '0 16px 48px rgba(0,0,0,0.45), 0 0 30px rgba(227,21,30,0.12), 0 1px 0 rgba(255,255,255,0.12) inset',
       },
       label:  { font: 'JetBrains Mono', weight: 700, size_px: 10, color: '{accent}', letter_spacing: '0.2em', uppercase: true, margin_bottom_px: 6 },
       number: { font: 'Plus Jakarta Sans', weight: 900, size_px: 48, treatment: 'chrome_vertical', drop_shadow: '0 0 12px rgba(227,21,30,0.4)', letter_spacing: '-0.03em', line_height: 1 },
@@ -178,23 +178,28 @@ export const SLEEK = {
     // emphasis word.
     'caption-overlay-v1': {
       container: {
-        background: 'var(--surface-card)', backdrop_blur_px: 12,
-        border: '1px solid var(--surface-border)', border_radius_px: 12,
-        padding: '22px 36px', text_align: 'center',
-        box_shadow: '0 8px 32px rgba(0,0,0,0.3), 0 0 40px rgba(227,21,30,0.1)',
+        background: 'linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%)',
+        backdrop_blur_px: 20,
+        border: '1px solid rgba(255,255,255,0.18)',
+        border_radius_px: 14,
+        padding: '24px 40px', text_align: 'center',
+        box_shadow: '0 16px 48px rgba(0,0,0,0.45), 0 0 40px rgba(227,21,30,0.12), 0 1px 0 rgba(255,255,255,0.12) inset',
       },
       text:      { font: 'Plus Jakarta Sans', weight: 700, size_px: 28, color: 'var(--text-primary)', letter_spacing: '-0.015em', line_height: 1.25 },
       highlight: { color: '{accent}', text_shadow: '0 0 20px rgba(227,21,30,0.6)' },
     },
 
-    // .ov-tool — glass card with a 44x44 logo tile (dark gradient +
+    // .ov-tool — deeper glass card with a 44x44 logo tile (dark gradient +
     // red border + red glow) next to a name/desc stack.
     'tool-logo-v1': {
       container: {
-        background: 'var(--surface-card)', backdrop_blur_px: 12,
-        border: '1px solid var(--surface-border)', border_radius_px: 12,
-        padding: '14px 18px', layout: 'flex_row', gap_px: 14,
-        box_shadow: '0 8px 32px rgba(0,0,0,0.3)',
+        background: 'linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%)',
+        backdrop_blur_px: 20,
+        border: '1px solid rgba(255,255,255,0.18)',
+        border_radius_px: 14,
+        padding: '18px 22px', layout: 'flex_row', gap_px: 16,
+        min_width_px: 220,
+        box_shadow: '0 16px 48px rgba(0,0,0,0.45), 0 1px 0 rgba(255,255,255,0.12) inset',
       },
       logo: {
         size_px: 44, border_radius_px: 8,
@@ -243,18 +248,23 @@ export const SLEEK = {
       citation: { font: 'Plus Jakarta Sans', weight: 600, size_px: 13, color: 'var(--text-secondary)', letter_spacing: '-0.005em', line_height: 1.25 },
     },
 
-    // .ov-chapter — glass card with a thin red glowing strip on its
-    // inner-left edge (via ::before), meta label + title stacked.
+    // .ov-chapter — wider, glassier card. The meta+title sits in a
+    // surface that reads as a clear UI element against the speaker
+    // behind it. Bumped padding, min-width, deeper blur, dual shadow
+    // (drop + inset highlight) so the card has real depth.
     'chapter-marker-v1': {
       container: {
-        background: 'var(--surface-card)', backdrop_blur_px: 12,
-        border: '1px solid var(--surface-border)', border_radius_px: 12,
-        padding: '14px 18px',
-        box_shadow: '0 8px 32px rgba(0,0,0,0.3)',
+        background: 'linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%)',
+        backdrop_blur_px: 20,
+        border: '1px solid rgba(255,255,255,0.18)',
+        border_radius_px: 14,
+        padding: '18px 28px',
+        min_width_px: 240,
+        box_shadow: '0 16px 48px rgba(0,0,0,0.45), 0 1px 0 rgba(255,255,255,0.12) inset',
       },
-      side_strip: { enabled: true, width_px: 3, color: '{accent}', glow: '0 0 12px {accent}', inset_top_pct: 20, inset_bottom_pct: 20, border_radius_px: '0 2px 2px 0' },
-      meta:  { font: 'JetBrains Mono', weight: 700, size_px: 10, color: '{accent}', letter_spacing: '0.2em', uppercase: true, line_height: 1, margin_bottom_px: 8 },
-      title: { font: 'Plus Jakarta Sans', weight: 800, size_px: 20, color: 'var(--text-primary)', letter_spacing: '-0.02em', line_height: 1.05 },
+      side_strip: { enabled: true, width_px: 4, color: '{accent}', glow: '0 0 18px {accent}', inset_top_pct: 15, inset_bottom_pct: 15, border_radius_px: '0 3px 3px 0' },
+      meta:  { font: 'JetBrains Mono', weight: 700, size_px: 11, color: '{accent}', letter_spacing: '0.2em', uppercase: true, line_height: 1, margin_bottom_px: 10 },
+      title: { font: 'Plus Jakarta Sans', weight: 800, size_px: 22, color: 'var(--text-primary)', letter_spacing: '-0.02em', line_height: 1.05 },
     },
   },
   audio: {

@@ -61,6 +61,7 @@ function containerStyle(c) {
     props.push(`-webkit-backdrop-filter: blur(${c.backdrop_blur_px}px)`)
   }
   if (c.box_shadow) props.push(`box-shadow: ${c.box_shadow}`)
+  if (c.min_width_px != null) props.push(`min-width: ${c.min_width_px}px`)
   if (c.layout === 'flex_row') { props.push('display: flex'); props.push('align-items: center') }
   return props.length ? ` style="${props.join('; ')}"` : ''
 }

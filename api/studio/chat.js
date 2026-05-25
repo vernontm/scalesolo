@@ -33,8 +33,8 @@ import { OVERLAY_DEFINITIONS, ALL_ZONES, isValidZoneForOrientation } from './_li
 // Mirror the allowlists in generate-map.js so the chat can't pick a
 // composition_id / transition the renderer doesn't honor.
 const HF_COMPOSITION_IDS = [
-  'title-card-v1', 'stat-reveal-v1', 'list-overlay-v1', 'quote-card-v1',
-  'lower-third-v1', 'comparison-v1', 'end-card-v1',
+  // Sleek v2 — three full-screen scenes only.
+  'sleek-scene-headline-v1', 'sleek-scene-list-v1', 'sleek-scene-cta-v1',
 ]
 const SEGMENT_TYPES = [
   'avatar', 'voiceover_broll', 'voiceover_motion_graphics', 'pure_motion_graphics',
@@ -414,9 +414,17 @@ Operating rules:
 - Don't fabricate segment ids — only use ids that appear in the video map below.
 - After your tool calls, write a 1-2 sentence summary of what you changed. No long preamble.
 
-Composition library (use these exact ids):
-  title-card-v1, stat-reveal-v1, list-overlay-v1, quote-card-v1,
-  lower-third-v1, comparison-v1, end-card-v1
+Composition library (Sleek v2 — these exact ids):
+  sleek-scene-headline-v1 — big text on screen (titles, quotes,
+    single-line punchlines, stat reveals). Variables: title_chrome
+    (chrome part), title_accent (red accent part), optional eyebrow
+    + subtitle.
+  sleek-scene-list-v1 — enumerated lists, 3-5 items. Variables:
+    list_title_chrome, list_title_accent, items (JSON array string of
+    {text, highlight?}, auto-numbered).
+  sleek-scene-cta-v1 — final segment CTA. Variables:
+    cta_headline_chrome, cta_headline_accent, cta_subhead,
+    cta_button_text, hero_handle.
 ${overlayPoolBlock}
 ${brandMd ? `Brand context:\n${brandMd}\n` : ''}
 

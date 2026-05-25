@@ -33,13 +33,11 @@ import { OVERLAY_DEFINITIONS, ALL_ZONES, isValidZoneForOrientation } from './_li
 // Keeping this allowlist server-side prevents Claude from hallucinating
 // composition ids the renderer can't honor.
 const HF_COMPOSITION_IDS = [
-  'title-card-v1',       // Big text reveal — hooks, section breaks
-  'stat-reveal-v1',      // Single number + label (e.g. "403,840 views")
-  'list-overlay-v1',     // 3-5 bullet points stacked in
-  'quote-card-v1',       // Pull quote with attribution
-  'lower-third-v1',      // Name + role chip in the bottom corner
-  'comparison-v1',       // Two-column side-by-side
-  'end-card-v1',         // CTA + handle at the end
+  // Sleek v2 pool — three full-screen scenes.
+  'sleek-scene-headline-v1', // any "big text" moment — titles, quotes,
+                              // stat reveals, single-line punchlines
+  'sleek-scene-list-v1',      // enumerated lists, 3-5 items
+  'sleek-scene-cta-v1',       // final segment CTA only
 ]
 
 const SFX_LIBRARY = [
@@ -231,17 +229,45 @@ Intro segment (HARD RULE):
 - Pack the intro segment with overlays to keep viewers engaged: chapter-marker-v1 in l-top with meta "INTRO" and a 2-4 word title that captures the hook, PLUS one of (word-emphasis-v1 with the punchiest word in the hook OR stat-callout-v1 if the hook contains a number). Plus the watermark-v1 in corner-tr.
 - Treat the intro overlays as the energy engine. The avatar carries the audio; the overlays carry the visual hook.
 
-Choosing the right HyperFrames composition (NEVER pick in order — pick what fits the spoken content):
-- title-card-v1: only for section transitions or the headline of a new beat. Large display text. Use when the avatar just said "Here's the thing" or "Now for part two" and the next segment is a single big idea.
-- stat-reveal-v1: only when the segment leads with a single concrete number ("47K followers", "3 hours", "$2M ARR"). Wrong if the script doesn't say a specific number.
-- list-overlay-v1: only when the avatar is enumerating 3-5 discrete items. Count the items in the script literally — if the avatar lists "voice, image, video, edit", that's 4 items, so list-overlay-v1 with exactly 4 bullets. If the script lists 2 items, prefer comparison-v1. If 6+, split across two list-overlay segments.
-- quote-card-v1: only when the script actually quotes someone or includes a quoted statement. Set attribution if the source is named.
-- comparison-v1: only for explicit A-vs-B / before-vs-after / old-vs-new framing. Two columns, equal weight.
-- lower-third-v1: only for name + role labeling (e.g. showing "Rayvaughn · AI Architect" while the avatar speaks).
-- end-card-v1: the LAST segment, always. CTA + handle.
+Choosing the right HyperFrames composition (Sleek v2 — three options only, pick by content shape):
+
+- sleek-scene-headline-v1: any "big text on screen" moment. Use for
+  titles, single-line punchlines, quotes, AND stat reveals. The
+  composition has two slots that render side-by-side:
+    title_chrome   → the lead-in phrase (white chrome gradient)
+    title_accent   → the punchy word / number / brand name (red glow)
+  Examples:
+    Script: "We grew 10x." → title_chrome:"We grew", title_accent:"10x"
+    Script: "The future is one person with a stack." → title_chrome:"The future is", title_accent:"one person"
+    Script: "Here's the thing." → title_chrome:"Here's", title_accent:"the thing"
+  Optional: subtitle (one line under the headline), eyebrow (small
+  red label above headline).
+
+- sleek-scene-list-v1: enumerated lists. Set:
+    list_title_chrome / list_title_accent — same chrome+accent pair
+    items — JSON array (STRING) of {text, highlight?}, max 5 entries
+  The composition auto-numbers them 01, 02, 03 from the array order.
+  items array length MUST match the actual count of items in
+  script_text. If the avatar says "voice, video, and image" → 3
+  entries, not 5. If 6+ items, split into two segments.
+
+- sleek-scene-cta-v1: the LAST segment of the video only. Slots:
+    cta_headline_chrome / cta_headline_accent — final headline pair
+    cta_subhead — one-line description under the headline
+    cta_button_text — the button label, e.g. "Link In Description"
+    hero_handle — big @handle bottom-center, defaults to brand handle
+    eyebrow — optional small red label above headline
+
+These are the only three compositions. There is no quote-card,
+stat-reveal, comparison, lower-third, title-card, or end-card. Use
+sleek-scene-headline-v1 for anything that would have been one of those.
 
 List-item counting rule:
-- When picking list-overlay-v1, the hyperframes_variables.bullets MUST be an array of strings whose length matches the actual count of items in the script_text. If the avatar says "voice, video, and image generation", that's 3 bullets — never pad to 5 or shrink to 2. If the script lists items without naming a count number, infer the count from the items mentioned.
+- The items array passed to sleek-scene-list-v1 MUST be the literal
+  count of things mentioned in the script. If the avatar enumerates
+  "voice, video, and image generation" → exactly 3 items. Never pad
+  to make it longer, never shrink. If the script doesn't enumerate
+  but loosely lists, pick the items count that fits the spoken content.
 
 Other rules:
 - Close with a clear CTA. Use end-card-v1 for the final visual (if it's in the composition pool).

@@ -222,14 +222,15 @@ async function fetchResolvedTemplate(baseUrl, env, templateId, accent) {
 // at a heuristic offset within the segment. Tighten this when the
 // composition runtime grows real event emission.
 const COMPOSITION_EVENTS = {
-  'title-card-v1':    [{ event: 'title_hero',     at_secs: 0.3 }],
-  'stat-reveal-v1':   [{ event: 'stat_land',      at_secs: 1.2 }],
-  'end-card-v1':      [{ event: 'end_card',       at_secs: 0.2 }],
-  'subscribe-cta-v1': [{ event: 'subscribe_cta',  at_secs: 0.2 }],
-  'quote-card-v1':    [{ event: 'chapter_change', at_secs: 0.3 }],
-  'comparison-v1':    [{ event: 'comparison_after', at_secs: 1.6 }],
-  'hook-card-v1':     [{ event: 'title_hero',     at_secs: 0.3 }],
-  'chapter-card-v1':  [{ event: 'chapter_change', at_secs: 0.3 }],
+  // Sleek v2 — three full-screen scenes. Each one calls recordEvent
+  // inside its script for precise timing; this table is the heuristic
+  // fallback when the runtime didn't emit anything (e.g. older bake).
+  'sleek-scene-headline-v1': [{ event: 'title_hero',      at_secs: 0.5 }],
+  'sleek-scene-list-v1':     [{ event: 'chapter_change', at_secs: 0.4 }],
+  'sleek-scene-cta-v1':      [
+    { event: 'end_card',      at_secs: 0.3 },
+    { event: 'subscribe_cta', at_secs: 1.1 },
+  ],
 }
 
 // Build the SFX cue list. Each cue is { sfx_id, file, volume, at_secs,

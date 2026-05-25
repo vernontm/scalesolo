@@ -73,16 +73,22 @@
 /* These match outputs/sleek-overlays.html exactly. Per-template
    overrides arrive via inline style on the card root. */
 
-/* 1. STAT CALLOUT */
+/* 1. STAT CALLOUT — deeper glass */
 .ov-stat {
-  background: var(--surface-card);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--surface-border);
-  border-radius: 12px;
-  padding: 18px 22px;
+  background: linear-gradient(180deg,
+    rgba(255,255,255,0.10) 0%,
+    rgba(255,255,255,0.05) 100%);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 14px;
+  padding: 22px 28px;
+  min-width: 220px;
   text-align: center;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.3), 0 0 30px rgba(227,21,30,0.1);
+  box-shadow:
+    0 16px 48px rgba(0,0,0,0.45),
+    0 0 30px rgba(227,21,30,0.12),
+    0 1px 0 rgba(255,255,255,0.12) inset;
 }
 .ov-stat .label {
   font-family: 'JetBrains Mono', monospace;
@@ -140,16 +146,21 @@
   border-radius: 2px;
 }
 
-/* 3. CAPTION HIGHLIGHT */
+/* 3. CAPTION HIGHLIGHT — deeper glass */
 .ov-caption {
-  background: var(--surface-card);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--surface-border);
-  border-radius: 12px;
-  padding: 22px 36px;
+  background: linear-gradient(180deg,
+    rgba(255,255,255,0.10) 0%,
+    rgba(255,255,255,0.05) 100%);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 14px;
+  padding: 24px 40px;
   text-align: center;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.3), 0 0 40px rgba(227,21,30,0.1);
+  box-shadow:
+    0 16px 48px rgba(0,0,0,0.45),
+    0 0 40px rgba(227,21,30,0.12),
+    0 1px 0 rgba(255,255,255,0.12) inset;
 }
 .ov-caption .text {
   font-weight: 700;
@@ -163,18 +174,23 @@
   text-shadow: 0 0 20px rgba(227,21,30,0.6);
 }
 
-/* 4. TOOL / PRODUCT LOGO */
+/* 4. TOOL / PRODUCT LOGO — deeper glass */
 .ov-tool {
-  background: var(--surface-card);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--surface-border);
-  border-radius: 12px;
-  padding: 14px 18px;
+  background: linear-gradient(180deg,
+    rgba(255,255,255,0.10) 0%,
+    rgba(255,255,255,0.05) 100%);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 14px;
+  padding: 18px 22px;
   display: flex;
   align-items: center;
-  gap: 14px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  gap: 16px;
+  min-width: 220px;
+  box-shadow:
+    0 16px 48px rgba(0,0,0,0.45),
+    0 1px 0 rgba(255,255,255,0.12) inset;
 }
 .ov-tool .logo {
   width: 44px; height: 44px;
@@ -277,26 +293,35 @@
   line-height: 1.25;
 }
 
-/* 8. CHAPTER MARKER */
+/* 8. CHAPTER MARKER — wider + deeper glass than v1.
+   The card needs to read as a clear, separate UI surface against the
+   speaker behind it. Bumped padding, min-width, stronger border +
+   shadow, deeper blur, brighter inner highlight. */
 .ov-chapter {
-  background: var(--surface-card);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--surface-border);
-  border-radius: 12px;
-  padding: 14px 18px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  background: linear-gradient(180deg,
+    rgba(255,255,255,0.10) 0%,
+    rgba(255,255,255,0.05) 100%);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 14px;
+  padding: 18px 28px;
+  min-width: 240px;
+  box-shadow:
+    0 16px 48px rgba(0,0,0,0.45),
+    0 0 0 1px rgba(255,255,255,0.04) inset,
+    0 1px 0 rgba(255,255,255,0.12) inset;
   position: relative;
 }
 .ov-chapter::before {
   content: '';
   position: absolute;
   left: 0;
-  top: 20%; bottom: 20%;
-  width: 3px;
+  top: 15%; bottom: 15%;
+  width: 4px;
   background: var(--accent);
-  border-radius: 0 2px 2px 0;
-  box-shadow: 0 0 12px var(--accent);
+  border-radius: 0 3px 3px 0;
+  box-shadow: 0 0 18px var(--accent);
 }
 /* Templates can disable the side strip via tokens.side_strip.enabled=false;
    the renderer adds this data attr and we kill the pseudo. */
