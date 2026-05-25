@@ -280,13 +280,21 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
     }
     setBusy(true); setError(null)
     try {
+      // Voice is tied to the chosen avatar. Look up the avatar's
+      // elevenlabs_voice_id and pin it on the video row so downstream
+      // jobs (generate-assets) don't error with "No voice selected".
+      // Avatars also have an effective_voice_id (default avatars w/ user
+      // override) — prefer that when present.
+      const avatarRow = avatars.find((a) => a.id === form.avatar_id)
+      const resolvedVoiceId = avatarRow?.effective_voice_id || avatarRow?.elevenlabs_voice_id || null
+
       const body = {
         profile_id: profileId,
         // Title is auto-generated server-side from the topic.
         topic_prompt: form.topic_prompt.trim(),
         avatar_id: form.avatar_id || null,
         look_id: form.look_id || null,
-        // Voice is tied to avatar via brand profile — no separate picker.
+        voice_id: resolvedVoiceId,
         target_duration_secs: Number(form.target_duration_secs) || 120,
         aspect_ratio: form.aspect_ratio,
         template_id: form.template_id || 'sleek',

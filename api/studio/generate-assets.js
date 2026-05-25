@@ -331,6 +331,26 @@ export default async function handler(req, res) {
     // video's own ids are blank. For now we only read the video's columns;
     // proper resolution against the brand-default-avatar/voice library
     // arrives with the next polish pass.
+    // Voice fallback: when the video row has no voice_id (created from
+    // the slimmed-down form which doesn't expose a voice picker), pull
+    // it from the linked avatar's elevenlabs_voice_id. Patch back onto
+    // the video so subsequent calls don't have to redo this lookup.
+    if (!video.voice_id && video.avatar_id) {
+      try {
+        const avatarRow = (await supaFetch(
+          `avatars?id=eq.${video.avatar_id}&select=elevenlabs_voice_id`
+        ))?.[0]
+        const v = avatarRow?.elevenlabs_voice_id
+        if (v) {
+          video.voice_id = v
+          await supaFetch(`studio_videos?id=eq.${videoId}`, {
+            method: 'PATCH',
+            body: { voice_id: v },
+            prefer: 'return=minimal',
+          }).catch(() => {})
+        }
+      } catch { /* fall through to the 400 below */ }
+    }
     if (!video.voice_id) {
       return res.status(400).json({ error: 'No voice selected. Set a voice on the video before continuing.' })
     }
