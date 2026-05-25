@@ -320,44 +320,52 @@
   align-items: center;
   text-align: center;
   justify-content: center;
-  gap: 24px;
+  gap: 28px;
+  /* Same primary → secondary brand gradient as chapter + stat so the
+     three side-overlay cards read as a consistent family. */
+  background: linear-gradient(135deg,
+    var(--ov-accent) 0%,
+    var(--ov-accent-2) 100%);
 }
 .ov-tool .logo,
 .ov-card.tool .logo {
-  width: 110px;
-  height: 110px;
-  border-radius: calc(var(--ov-radius) + 4px);
-  background: linear-gradient(135deg,
-    color-mix(in srgb, var(--ov-accent) 20%, #1a1a1f) 0%,
-    #0a0a0c 100%);
-  border: 1.5px solid var(--ov-accent);
+  width: 160px;
+  height: 160px;
+  border-radius: calc(var(--ov-radius) - 4px);
+  /* Dark recessed logo plate against the bright brand-gradient card —
+     reads like a chip sitting in the card surface. */
+  background: linear-gradient(135deg, #1a1a1f 0%, #0a0a0c 100%);
+  border: 2px solid rgba(255, 255, 255, 0.30);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--ov-accent);
+  color: #ffffff;
   font-family: var(--ov-font-display);
   font-weight: 900;
-  font-size: 56px;
+  font-size: 88px;
+  letter-spacing: -0.04em;
   box-shadow:
-    0 0 30px color-mix(in srgb, var(--ov-accent) 40%, transparent),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    0 8px 24px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
 }
 .ov-tool .info,
-.ov-card.tool .info { display: flex; flex-direction: column; gap: 4px; align-items: center; }
+.ov-card.tool .info { display: flex; flex-direction: column; gap: 8px; align-items: center; }
 .ov-tool .name,
 .ov-card.tool .name {
   font-family: var(--ov-font-display);
   font-weight: 800;
-  font-size: 36px;
+  font-size: 44px;
   color: #ffffff;
   letter-spacing: -0.02em;
+  line-height: 1;
 }
 .ov-tool .desc,
 .ov-card.tool .desc {
   font-family: var(--ov-font-mono);
-  font-size: 13px;
-  color: var(--ov-accent);
-  letter-spacing: 0.2em;
+  font-size: 16px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+  letter-spacing: 0.22em;
   text-transform: uppercase;
 }
 
