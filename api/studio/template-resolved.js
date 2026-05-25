@@ -12,6 +12,8 @@
 // the worker, not from end-user browsers.
 
 import { TEMPLATE_BY_ID, resolveTemplate, SLEEK } from './_lib/templates.js'
+import { resolveMotion } from './_lib/motion-resolver.js'
+import { resolveSfx } from './_lib/sfx-resolver.js'
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
@@ -26,15 +28,32 @@ export default async function handler(req, res) {
     const id = String(req.query.id || '').trim()
     const accent = String(req.query.accent || '').trim() || null
     if (!id) return res.status(400).json({ error: 'id required' })
+
+    let tpl, fallback_used = false
     if (!TEMPLATE_BY_ID[id]) {
       // Fall back to Sleek instead of 404'ing — same behavior as
       // getTemplate() in _lib/templates.js. Tells the worker (via
       // fallback_used) so render_progress can surface it.
-      const tpl = resolveTemplate(SLEEK.id, accent)
-      return res.status(200).json({ template: tpl, fallback_used: true, requested_id: id })
+      tpl = resolveTemplate(SLEEK.id, accent)
+      fallback_used = true
+    } else {
+      tpl = resolveTemplate(id, accent)
     }
-    const tpl = resolveTemplate(id, accent)
-    return res.status(200).json({ template: tpl, fallback_used: false })
+
+    // Pre-resolve motion + sfx so the worker doesn't need to bundle the
+    // resolver code. Both return clean structured plans the worker can
+    // act on directly. Resolver warnings are surfaced so the bake
+    // pipeline can log them to render_progress.
+    const motionPlan = resolveMotion(tpl)
+    const sfxPlan = resolveSfx({ motion: motionPlan.resolved, sfx: tpl.sfx })
+
+    return res.status(200).json({
+      template: tpl,
+      fallback_used,
+      requested_id: id,
+      motion_plan: motionPlan,
+      sfx_plan: sfxPlan,
+    })
   } catch (err) {
     return res.status(500).json({ error: err?.message || String(err) })
   }

@@ -23,3 +23,7 @@ playwright/.cache/
 # regenerable from `npx hyperframes render` so we keep the whole tree
 # out of git. Final assets live in public/landing/faceless-steps/.
 marketing/faceless-steps/
+
+# SFX generator output — move to /public/sfx/ after auditioning
+scripts/sfx/
+

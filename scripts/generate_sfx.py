@@ -327,10 +327,18 @@ SFX_DEFINITIONS = [
 
 
 def generate_sfx(definition: dict) -> bytes:
-    """Generate a single sound effect via ElevenLabs API."""
+    """Generate a single sound effect via ElevenLabs API.
+
+    ElevenLabs requires duration_seconds >= 0.5. For ultra-short SFX
+    (ticks, pops, key clicks) we request the API floor and rely on the
+    bank.js duration_ms field to tell the worker the real playback
+    length. The transient is in the first ~100ms anyway; the tail just
+    sits below the noise floor.
+    """
+    requested_duration = max(0.5, float(definition["duration"]))
     response = client.text_to_sound_effects.convert(
         text=definition["prompt"],
-        duration_seconds=definition["duration"],
+        duration_seconds=requested_duration,
         prompt_influence=0.4,  # slightly higher than default 0.3 for tighter prompt adherence
         output_format=OUTPUT_FORMAT,
         model_id="eleven_text_to_sound_v2",

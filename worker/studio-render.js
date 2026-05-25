@@ -156,16 +156,16 @@ async function resolveFont() {
   throw new Error('No bundled font found in worker/fonts/ or worker/_fonts/.')
 }
 
-// ── Template fetch (overlay overrides, motion, accent) ────────────────────
+// ── Template fetch (overlay overrides, motion, accent, sfx) ───────────────
 // The worker doesn't share an import path with /api code, so we fetch
 // the resolved template over HTTP from /api/studio/template-resolved.
-// Auth: the same WORKER_SHARED_SECRET that protects this worker's
-// inbound endpoint, sent as x-worker-secret. Cached per-bake — the
+// The endpoint also returns the resolved motion + sfx plans so the
+// worker doesn't need to bundle resolver code. Cached per-bake — the
 // template never changes mid-render.
 async function fetchResolvedTemplate(baseUrl, env, templateId, accent) {
   const secret = env.WORKER_SHARED_SECRET
   if (!secret) {
-    console.warn('[studio-render] WORKER_SHARED_SECRET not set — overlay layer disabled.')
+    console.warn('[studio-render] WORKER_SHARED_SECRET not set — overlays + SFX disabled.')
     return null
   }
   if (!templateId) return null
@@ -174,15 +174,178 @@ async function fetchResolvedTemplate(baseUrl, env, templateId, accent) {
   try {
     const r = await fetch(url, { headers: { 'x-worker-secret': secret } })
     if (!r.ok) {
-      console.warn(`[studio-render] template fetch returned ${r.status} for ${templateId}; overlays will be skipped.`)
+      console.warn(`[studio-render] template fetch returned ${r.status} for ${templateId}; overlays + SFX will be skipped.`)
       return null
     }
     const j = await r.json()
-    return j.template || null
+    if (!j.template) return null
+    // Stash motion + sfx plans on the template object so the rest of
+    // the bake can reach them without a second fetch.
+    j.template._motion_plan = j.motion_plan || null
+    j.template._sfx_plan = j.sfx_plan || null
+    return j.template
   } catch (e) {
-    console.warn(`[studio-render] template fetch failed: ${e.message}; overlays will be skipped.`)
+    console.warn(`[studio-render] template fetch failed: ${e.message}; overlays + SFX will be skipped.`)
     return null
   }
+}
+
+// ── SFX scheduling + mixing ───────────────────────────────────────────────
+// Composition-id → standalone event mapping. The HF compositions don't
+// yet surface per-frame events to the renderer, so we fire each event
+// at a heuristic offset within the segment. Tighten this when the
+// composition runtime grows real event emission.
+const COMPOSITION_EVENTS = {
+  'title-card-v1':    [{ event: 'title_hero',     at_secs: 0.3 }],
+  'stat-reveal-v1':   [{ event: 'stat_land',      at_secs: 1.2 }],
+  'end-card-v1':      [{ event: 'end_card',       at_secs: 0.2 }],
+  'subscribe-cta-v1': [{ event: 'subscribe_cta',  at_secs: 0.2 }],
+  'quote-card-v1':    [{ event: 'chapter_change', at_secs: 0.3 }],
+  'comparison-v1':    [{ event: 'comparison_after', at_secs: 1.6 }],
+  'hook-card-v1':     [{ event: 'title_hero',     at_secs: 0.3 }],
+  'chapter-card-v1':  [{ event: 'chapter_change', at_secs: 0.3 }],
+}
+
+// Build the SFX cue list. Each cue is { sfx_id, file, volume, at_secs }
+// in the FINAL concatenated timeline. v1 covers entrance + transition
+// + standalone triggers. Exits + emphasis loops are TODO — exits need
+// per-primitive duration lookups, emphasis loops need ffmpeg aloop
+// orchestration beyond a single amix.
+function buildSfxCues(segments, segmentDurations, sfxPlan) {
+  if (!sfxPlan || sfxPlan.density === 'off') return []
+  const cues = []
+  let cursor = 0  // running offset into the final concat track
+
+  const triggerByEvent = Object.fromEntries(
+    (sfxPlan.standalone_triggers || []).map((t) => [t.event, t]),
+  )
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i]
+    const dur = segmentDurations[i] || 0
+    const segStart = cursor
+
+    // Entrance — every segment (cap at 0 if first segment so it lands
+    // on frame 0; clamp later for negative offsets defensively).
+    if (sfxPlan.entrance) {
+      cues.push({
+        sfx_id: sfxPlan.entrance.sfx_id,
+        file:   sfxPlan.entrance.file,
+        volume: sfxPlan.entrance.volume,
+        at_secs: segStart,
+      })
+    }
+
+    // Transition — fired between segments (skip on first segment).
+    if (i > 0 && sfxPlan.transition) {
+      cues.push({
+        sfx_id: sfxPlan.transition.sfx_id,
+        file:   sfxPlan.transition.file,
+        volume: sfxPlan.transition.volume,
+        at_secs: segStart,  // same beat as entrance — transition + entrance overlap by design
+      })
+    }
+
+    // Standalone triggers — composition-driven. If this segment uses a
+    // composition the worker knows about, fire its event at the
+    // configured offset.
+    const compEvents = COMPOSITION_EVENTS[seg.hyperframes_composition_id] || []
+    for (const evt of compEvents) {
+      const trigger = triggerByEvent[evt.event]
+      if (!trigger) continue
+      cues.push({
+        sfx_id: trigger.sfx_id,
+        file:   trigger.file,
+        volume: trigger.volume,
+        at_secs: segStart + Math.min(evt.at_secs, Math.max(0.1, dur - 0.2)),
+        event: evt.event,
+      })
+    }
+
+    cursor += dur
+  }
+  return cues
+}
+
+// Download every unique SFX file referenced by the cue list. baseUrl
+// is the same Vercel base URL the worker uses for compositions —
+// /public/sfx/<category>/<id>.mp3 is served as static assets.
+async function downloadSfxAssets(cues, baseUrl, bypassSecret, workdir) {
+  const sfxDir = join(workdir, 'sfx')
+  await mkdir(sfxDir, { recursive: true })
+  const seen = new Map()  // sfx_id → local path
+  const missing = []
+
+  for (const cue of cues) {
+    if (seen.has(cue.sfx_id)) continue
+    const url = `${baseUrl}${cue.file}`
+    const dest = join(sfxDir, `${cue.sfx_id}.mp3`)
+    try {
+      const headers = {}
+      if (bypassSecret) {
+        headers['x-vercel-protection-bypass'] = bypassSecret
+        headers['x-vercel-set-bypass-cookie'] = 'samesitenone'
+      }
+      const r = await fetch(url, { headers })
+      if (!r.ok) { missing.push({ sfx_id: cue.sfx_id, status: r.status }); continue }
+      const buf = Buffer.from(await r.arrayBuffer())
+      await writeFile(dest, buf)
+      seen.set(cue.sfx_id, dest)
+    } catch (e) {
+      missing.push({ sfx_id: cue.sfx_id, reason: e?.message || 'fetch error' })
+    }
+  }
+  return { localPaths: seen, missing }
+}
+
+// Mix the SFX cues into the final video's audio track. Builds one
+// ffmpeg invocation: video + voice + N sfx inputs, each sfx delayed
+// via adelay and volume-scaled per the resolved plan, then amixed
+// with the voice. Voice is weighted heavily so SFX don't duck speech.
+async function mixSfxIntoFinal(finalIn, finalOut, cues, localPaths, masterVolume) {
+  // Filter out cues whose files didn't download
+  const usable = cues
+    .filter((c) => localPaths.has(c.sfx_id))
+    .map((c) => ({ ...c, path: localPaths.get(c.sfx_id) }))
+  if (!usable.length) return null
+
+  const inputs = ['-y', '-i', finalIn]
+  const filterParts = []
+  const mixLabels = ['[0:a]']  // voice from final.mp4 as input #0
+
+  for (let i = 0; i < usable.length; i++) {
+    const cue = usable[i]
+    const inputIdx = i + 1
+    inputs.push('-i', cue.path)
+    const delayMs = Math.max(0, Math.round(cue.at_secs * 1000))
+    // adelay needs both channels; pad-up to stereo and apply volume.
+    // afade ensures the cue ends cleanly without click — short 20ms tail.
+    filterParts.push(
+      `[${inputIdx}:a]aformat=channel_layouts=stereo,volume=${cue.volume.toFixed(3)},` +
+      `adelay=${delayMs}|${delayMs}[s${i}]`,
+    )
+    mixLabels.push(`[s${i}]`)
+  }
+
+  const N = mixLabels.length
+  // dropout_transition=0 prevents amix from boosting the voice when
+  // SFX cues end. normalize=0 keeps the voice at unity (otherwise amix
+  // divides everything by N, which destroys speech audibility).
+  const weights = ['4'].concat(usable.map(() => '1')).join(' ')
+  filterParts.push(
+    `${mixLabels.join('')}amix=inputs=${N}:duration=first:dropout_transition=0:normalize=0:weights=${weights}[mixed]`,
+  )
+
+  await runFFmpeg([
+    ...inputs,
+    '-filter_complex', filterParts.join(';'),
+    '-map', '0:v:0', '-map', '[mixed]',
+    '-c:v', 'copy',
+    '-c:a', 'aac', '-b:a', '192k', '-ar', '48000',
+    '-movflags', '+faststart',
+    finalOut,
+  ], 300_000)
+  return finalOut
 }
 
 // ── Overlay layer renderer (transparent PNG sequence) ─────────────────────
@@ -572,6 +735,12 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
   const dim = dimensions(video.aspect_ratio)
   const fontPath = await resolveFont()
   const chunkPaths = []
+  // Parallel array — duration of each rendered chunk. Used to schedule
+  // SFX cues at the right offset into the final concat track.
+  const chunkDurations = []
+  // Parallel array — segment row that produced each chunk. Used to
+  // resolve composition-based standalone SFX triggers.
+  const chunkSegments = []
 
   try {
     // 4. Render each segment to an intermediate MP4
@@ -660,6 +829,12 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
       }
 
       chunkPaths.push(paths.outChunk)
+      // Probe the chunk so we know its exact post-encode duration for
+      // SFX scheduling. ffprobe via audio-duration probe works for
+      // both MP4-with-audio and MP4-with-silent-audio.
+      const probedDur = await probeAudioDurationSecs(paths.outChunk)
+      chunkDurations.push(probedDur || (seg.segment_type === 'avatar' ? Math.max(0.5, voiceDuration || 0) : (voiceDuration || 4)))
+      chunkSegments.push(seg)
       progress.current = i + 1
       await writeProgress()
     }
@@ -685,10 +860,48 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
       '-movflags', '+faststart', finalPath,
     ], 300_000)
 
+    // 5.5. SFX mix pass. Schedules entrance + transition + composition-
+    // driven standalone triggers onto the final concat track. v1 skips
+    // exits and looping emphasis primitives — see buildSfxCues() doc.
+    // Any failure here is recoverable: we ship the voice-only finalPath
+    // and surface the reason in progress.sfx_skipped.
+    let deliveredPath = finalPath
+    const sfxPlan = resolvedTemplate?._sfx_plan
+    if (sfxPlan && sfxPlan.density !== 'off') {
+      try {
+        progress.stage = 'sfx_mix'
+        await writeProgress()
+        const cues = buildSfxCues(chunkSegments, chunkDurations, sfxPlan)
+        if (cues.length) {
+          const { localPaths, missing } = await downloadSfxAssets(cues, baseUrl, bypassSecret, workdir)
+          if (missing.length) {
+            console.warn(`[studio-render] ${missing.length} SFX file(s) missing — they'll be silent in the mix:`,
+              missing.map((m) => m.sfx_id).join(', '))
+            progress.sfx_missing = missing
+          }
+          if (localPaths.size) {
+            const mixedPath = join(workdir, 'final-mixed.mp4')
+            await mixSfxIntoFinal(finalPath, mixedPath, cues, localPaths, sfxPlan.master_volume)
+            deliveredPath = mixedPath
+            progress.sfx_mixed = { cues: cues.length, sounds_used: localPaths.size }
+          } else {
+            progress.sfx_skipped = { reason: 'no_sfx_files_available', missing: missing.length }
+          }
+        } else {
+          progress.sfx_skipped = { reason: 'no_cues_scheduled' }
+        }
+      } catch (e) {
+        const reason = (e?.message || String(e)).slice(0, 800)
+        console.warn(`[studio-render] SFX mix failed: ${reason}`)
+        progress.sfx_skipped = { reason }
+        deliveredPath = finalPath  // fall back to voice-only track
+      }
+    }
+
     // 6. Upload via supabase storage
     progress.stage = 'upload'
     await writeProgress()
-    const buf = await readFile(finalPath)
+    const buf = await readFile(deliveredPath)
     const path = `${video.profile_id}/studio/final/${studio_video_id}-${Date.now()}.mp4`
     const { error: upErr } = await supabase.storage.from(STUDIO_BUCKET)
       .upload(path, buf, { contentType: 'video/mp4', upsert: true })
@@ -713,6 +926,9 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
       hf_fallback: progress.hf_fallback.length,
       overlay_rendered: progress.overlay_rendered.length,
       overlay_skipped: progress.overlay_skipped.length,
+      sfx_mixed: progress.sfx_mixed || null,
+      sfx_skipped: progress.sfx_skipped || null,
+      sfx_missing: progress.sfx_missing?.length || 0,
     }
   } finally {
     await closeBrowserSafe()
