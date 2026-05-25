@@ -908,6 +908,7 @@ function StudioVideoEditor({ videoId }) {
             <>
               <TemplateSelector video={video} onApplied={(updated) => setVideo(updated || video)} />
               <CaptionsToggle video={video} onChanged={(updated) => setVideo(updated || video)} />
+              <EnrichOverlaysButton video={video} />
               <SegmentList video={video} />
               <StudioChat videoId={video.id} />
             </>
@@ -1277,6 +1278,70 @@ function CaptionsToggle({ video, onChanged }) {
       {hint && (
         <span style={{ fontSize: 12, color: 'rgba(255,200,120,0.85)', marginLeft: 'auto' }}>
           {hint}
+        </span>
+      )}
+    </div>
+  )
+}
+
+// One-click overlay enrichment. Hits POST /api/studio/enrich-overlays
+// which runs a focused Claude pass on the existing script + segments
+// and writes overlay_placements only — voice/image/avatar assets are
+// untouched. Use this instead of "Regenerate map" when the user just
+// wants to ADD overlays + captions to an already-rendered video.
+function EnrichOverlaysButton({ video }) {
+  const { session } = useAuth()
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState(null)
+  const [err, setErr] = useState('')
+
+  const run = async () => {
+    if (!session?.access_token || busy) return
+    setBusy(true); setErr(''); setResult(null)
+    try {
+      const r = await authedFetch('/api/studio/enrich-overlays', session.access_token, {
+        method: 'POST',
+        body: { studio_video_id: video.id },
+      })
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}))
+        throw new Error(body.error || `Request failed (${r.status})`)
+      }
+      const j = await r.json()
+      setResult(j)
+    } catch (e) {
+      setErr(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
+      background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+      borderRadius: 10, marginBottom: 12, flexWrap: 'wrap',
+    }}>
+      <button
+        type="button"
+        className="btn-primary"
+        disabled={busy}
+        onClick={run}
+        style={{ padding: '8px 14px', fontSize: 13, fontWeight: 700 }}
+      >
+        {busy ? 'Enriching…' : 'Add overlays + captions'}
+      </button>
+      <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', flex: 1, minWidth: 200 }}>
+        Adds visual overlays + captions to existing segments WITHOUT regenerating voice / B-roll / avatar videos. Re-click Render after this completes.
+      </span>
+      {result && (
+        <span style={{ fontSize: 12, color: '#84e1bc', fontWeight: 600 }}>
+          {result.segments_updated} segments updated · {result.visual_overlays_added} overlays · {result.captions_injected} captions
+        </span>
+      )}
+      {err && (
+        <span style={{ fontSize: 12, color: '#ff6b6b' }}>
+          {err}
         </span>
       )}
     </div>
