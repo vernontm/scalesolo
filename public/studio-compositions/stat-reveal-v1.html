@@ -127,6 +127,11 @@
         document.getElementById('number').innerHTML = unit ? `${num}<span class="unit">${unit}</span>` : num
       }
 
+      // The number lands at 0.15 + 1.0s scale-up = ~1.15s into the segment.
+      // The worker reads this to schedule sting_punch on the actual beat
+      // instead of the heuristic 1.2s from COMPOSITION_EVENTS.
+      window.__hyperframes?.recordEvent?.('stat_land', 1.15)
+
       const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } })
       tl.from('.stat-label-top', { y: -10, opacity: 0, duration: 0.5 }, 0)
         .from('.stat-number',    { scale: 0.7, opacity: 0, duration: 1.0, ease: 'back.out(1.4)' }, 0.15)

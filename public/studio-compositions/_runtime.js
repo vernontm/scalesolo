@@ -63,6 +63,29 @@ window.__studioVars = (function () {
   }
 })()
 
+// ── HyperFrames event API ────────────────────────────────────────────
+// Compositions call window.__hyperframes.recordEvent(name, at_secs)
+// during timeline construction (synchronously, at top of <script>) to
+// declare when key beats fire inside the segment. The worker reads
+// this map after timeline registration and uses it to schedule
+// standalone SFX cues at REAL timings instead of heuristic offsets.
+//
+// Known event names (see api/studio/_lib/sfx-bank.js STANDALONE_EVENTS):
+//   title_hero, stat_land, end_card, subscribe_cta, chapter_change,
+//   comparison_after, command_complete
+window.__hyperframes = window.__hyperframes || {}
+window.__hyperframes.events = window.__hyperframes.events || {}
+window.__hyperframes.recordEvent = function (event, at_secs) {
+  const cid = document.documentElement.getAttribute('data-composition-id')
+  if (!cid) return
+  if (typeof event !== 'string' || typeof at_secs !== 'number' || !Number.isFinite(at_secs)) return
+  if (!window.__hyperframes.events[cid]) window.__hyperframes.events[cid] = []
+  window.__hyperframes.events[cid].push({ event, at_secs })
+}
+window.__hyperframes.getEvents = function (composition_id) {
+  return window.__hyperframes.events[composition_id] || []
+}
+
 window.__studioMode = (function () {
   const m = window.location.search.match(/[?&]mode=(\w+)/)
   return m ? m[1] : 'preview'

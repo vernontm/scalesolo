@@ -183,6 +183,7 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
     aspect_ratio: '16:9',
     template_id: 'sleek',
     brand_color: '',
+    captions_enabled: true,
   })
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
 
@@ -282,6 +283,7 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
         aspect_ratio: form.aspect_ratio,
         template_id: form.template_id || 'sleek',
         brand_color: form.brand_color || null,
+        captions_enabled: form.captions_enabled !== false,
       }
       const r = await authedFetch('/api/studio/videos', session.access_token, {
         method: 'POST', body: JSON.stringify(body),
@@ -458,6 +460,20 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
             onChange={(e) => set('target_duration_secs', Number(e.target.value))}
             style={{ width: '100%' }}
           />
+        </Field>
+
+        <Field label="Captions" hint="Word-by-word lower-third captions on every speaker segment.">
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
+            <input
+              type="checkbox"
+              checked={form.captions_enabled !== false}
+              onChange={(e) => set('captions_enabled', e.target.checked)}
+              style={{ width: 16, height: 16 }}
+            />
+            <span style={{ fontSize: 13, fontWeight: 600 }}>
+              {form.captions_enabled !== false ? 'Captions on' : 'Captions off'}
+            </span>
+          </label>
         </Field>
       </div>
 
@@ -891,6 +907,7 @@ function StudioVideoEditor({ videoId }) {
           {(['mapped', 'editing', 'rendering', 'rendered'].includes(video.status)) && (
             <>
               <TemplateSelector video={video} onApplied={(updated) => setVideo(updated || video)} />
+              <CaptionsToggle video={video} onChanged={(updated) => setVideo(updated || video)} />
               <SegmentList video={video} />
               <StudioChat videoId={video.id} />
             </>
@@ -1197,6 +1214,75 @@ function SegmentList({ video }) {
 // video's saved values (nothing to apply). Expands automatically the
 // moment the user picks a different template or color, exposing the
 // "Use this template" button.
+// Inline captions toggle on the video editor. Patches studio_videos.
+// captions_enabled and surfaces a nudge that re-running the map is
+// required for the new value to land on existing segments (the
+// segmentation pass is what auto-injects caption-overlay-v1 placements
+// on speaker segments). Standalone — TemplateSelector handles its own
+// patch + re-render flow.
+function CaptionsToggle({ video, onChanged }) {
+  const { session } = useAuth()
+  const [enabled, setEnabled] = useState(video.captions_enabled !== false)
+  const [busy, setBusy] = useState(false)
+  const [hint, setHint] = useState('')
+
+  // Re-sync when the underlying video changes (e.g. Realtime push).
+  useEffect(() => {
+    setEnabled(video.captions_enabled !== false)
+  }, [video.captions_enabled])
+
+  const flip = async (next) => {
+    if (!session?.access_token || busy) return
+    setBusy(true)
+    setHint('')
+    try {
+      const r = await authedFetch(`/api/studio/videos?id=${video.id}`, session.access_token, {
+        method: 'PATCH',
+        body: { captions_enabled: next },
+      })
+      if (!r.ok) throw new Error('Save failed')
+      const updated = await r.json().catch(() => null)
+      setEnabled(next)
+      onChanged?.(updated)
+      setHint('Re-run "Regenerate map" to apply on existing segments.')
+    } catch (e) {
+      setHint(`Could not save: ${e.message}`)
+      setEnabled(!next)  // revert UI on error
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
+      background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+      borderRadius: 10, marginBottom: 12,
+    }}>
+      <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: busy ? 'wait' : 'pointer' }}>
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={busy}
+          onChange={(e) => flip(e.target.checked)}
+          style={{ width: 16, height: 16 }}
+        />
+        <span style={{ fontSize: 13, fontWeight: 700 }}>
+          Captions {enabled ? 'on' : 'off'}
+        </span>
+      </label>
+      <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)' }}>
+        Word-by-word lower-third overlay on speaker segments.
+      </span>
+      {hint && (
+        <span style={{ fontSize: 12, color: 'rgba(255,200,120,0.85)', marginLeft: 'auto' }}>
+          {hint}
+        </span>
+      )}
+    </div>
+  )
+}
+
 function TemplateSelector({ video, onApplied }) {
   const { session } = useAuth()
   const [templates, setTemplates] = useState([])

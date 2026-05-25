@@ -172,6 +172,10 @@
         headline.innerHTML = `<span class="chrome">${title}</span>`
       }
 
+      // The end-card hero element (headline) lands at 0.15 + 0.8 = ~1s.
+      // Schedule sting_resolve to hit right as it lands.
+      window.__hyperframes?.recordEvent?.('end_card', 0.2)
+
       const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } })
       tl.from('.ornament',    { y: -10, opacity: 0, duration: 0.5 }, 0)
         .from('.headline',    { y: 50, opacity: 0, duration: 0.8 }, 0.15)

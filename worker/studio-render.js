@@ -206,29 +206,43 @@ const COMPOSITION_EVENTS = {
   'chapter-card-v1':  [{ event: 'chapter_change', at_secs: 0.3 }],
 }
 
-// Build the SFX cue list. Each cue is { sfx_id, file, volume, at_secs }
-// in the FINAL concatenated timeline. v1 covers entrance + transition
-// + standalone triggers. Exits + emphasis loops are TODO — exits need
-// per-primitive duration lookups, emphasis loops need ffmpeg aloop
-// orchestration beyond a single amix.
-function buildSfxCues(segments, segmentDurations, sfxPlan) {
+// Build the SFX cue list. Each cue is { sfx_id, file, volume, at_secs,
+// kind: 'oneshot' | 'loop', loop_until_secs? } in the FINAL concatenated
+// timeline.
+//
+// Layers scheduled when active in the density gate:
+//   - entrance   (oneshot at segment start)
+//   - exit       (oneshot at segment_end - exit_duration_ms)
+//   - transition (oneshot at segment_start, skipped on segment 0)
+//   - emphasis   (LOOP for the full segment duration with a 200ms fade
+//                 tail at the end so it doesn't pop on cut)
+//   - standalone (oneshot at composition-event timing, overridden by
+//                 per-segment composition_events if the HF runtime
+//                 emitted any)
+function buildSfxCues(segments, segmentDurations, sfxPlan, compositionEventLog = {}, motionPlan = null) {
   if (!sfxPlan || sfxPlan.density === 'off') return []
   const cues = []
-  let cursor = 0  // running offset into the final concat track
+  let cursor = 0
 
   const triggerByEvent = Object.fromEntries(
     (sfxPlan.standalone_triggers || []).map((t) => [t.event, t]),
   )
 
+  // Pull per-primitive durations off the resolved motion plan. The
+  // exit primitive's duration_ms tells us where to slot the exit SFX.
+  // Falls back to a sensible default if motion plan wasn't returned.
+  const exitDurationMs = motionPlan?.resolved?.exit?.spec?.duration_ms ?? 400
+
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i]
     const dur = segmentDurations[i] || 0
     const segStart = cursor
+    const segEnd = segStart + dur
 
-    // Entrance — every segment (cap at 0 if first segment so it lands
-    // on frame 0; clamp later for negative offsets defensively).
+    // Entrance
     if (sfxPlan.entrance) {
       cues.push({
+        kind: 'oneshot',
         sfx_id: sfxPlan.entrance.sfx_id,
         file:   sfxPlan.entrance.file,
         volume: sfxPlan.entrance.volume,
@@ -236,28 +250,69 @@ function buildSfxCues(segments, segmentDurations, sfxPlan) {
       })
     }
 
-    // Transition — fired between segments (skip on first segment).
-    if (i > 0 && sfxPlan.transition) {
+    // Exit — lands at segment_end - exit_primitive_duration so the
+    // sound finishes right as the segment cuts. Clamp to mid-segment
+    // if the segment is shorter than the exit duration (very short
+    // stinger segments). Skip on the last segment — the video ends
+    // there, no exit cue needed.
+    if (sfxPlan.exit && i < segments.length - 1) {
+      const exitDurationSecs = exitDurationMs / 1000
+      const exitAt = Math.max(segStart + dur * 0.5, segEnd - exitDurationSecs)
       cues.push({
-        sfx_id: sfxPlan.transition.sfx_id,
-        file:   sfxPlan.transition.file,
-        volume: sfxPlan.transition.volume,
-        at_secs: segStart,  // same beat as entrance — transition + entrance overlap by design
+        kind: 'oneshot',
+        sfx_id: sfxPlan.exit.sfx_id,
+        file:   sfxPlan.exit.file,
+        volume: sfxPlan.exit.volume,
+        at_secs: exitAt,
       })
     }
 
-    // Standalone triggers — composition-driven. If this segment uses a
-    // composition the worker knows about, fire its event at the
-    // configured offset.
-    const compEvents = COMPOSITION_EVENTS[seg.hyperframes_composition_id] || []
-    for (const evt of compEvents) {
+    // Transition (overlaps with the next segment's entrance — by design)
+    if (i > 0 && sfxPlan.transition) {
+      cues.push({
+        kind: 'oneshot',
+        sfx_id: sfxPlan.transition.sfx_id,
+        file:   sfxPlan.transition.file,
+        volume: sfxPlan.transition.volume,
+        at_secs: segStart,
+      })
+    }
+
+    // Emphasis — loops for the whole segment with a 200ms fade tail at
+    // the end. Only scheduled when density is 'high' (the gate handles
+    // this — sfxPlan.emphasis is null otherwise).
+    if (sfxPlan.emphasis && dur > 0.4) {
+      cues.push({
+        kind: 'loop',
+        sfx_id: sfxPlan.emphasis.sfx_id,
+        file:   sfxPlan.emphasis.file,
+        // Emphasis loops sit beneath everything — drop a bit so they
+        // don't add up across segment boundaries when two emphasis
+        // tracks overlap during the transition window.
+        volume: sfxPlan.emphasis.volume * 0.7,
+        at_secs: segStart,
+        loop_until_secs: segEnd,
+      })
+    }
+
+    // Standalone triggers. Prefer real composition-emitted events from
+    // the HF runtime (compositionEventLog[seg.id] = [{event, at_secs}]).
+    // Fall back to the heuristic COMPOSITION_EVENTS table when the
+    // composition didn't emit any.
+    const realEvents = compositionEventLog[seg.id]
+    const events = (realEvents && realEvents.length)
+      ? realEvents
+      : (COMPOSITION_EVENTS[seg.hyperframes_composition_id] || [])
+    for (const evt of events) {
       const trigger = triggerByEvent[evt.event]
       if (!trigger) continue
+      const tInSegment = Math.min(evt.at_secs, Math.max(0.1, dur - 0.2))
       cues.push({
+        kind: 'oneshot',
         sfx_id: trigger.sfx_id,
         file:   trigger.file,
         volume: trigger.volume,
-        at_secs: segStart + Math.min(evt.at_secs, Math.max(0.1, dur - 0.2)),
+        at_secs: segStart + tInSegment,
         event: evt.event,
       })
     }
@@ -318,12 +373,32 @@ async function mixSfxIntoFinal(finalIn, finalOut, cues, localPaths, masterVolume
     const inputIdx = i + 1
     inputs.push('-i', cue.path)
     const delayMs = Math.max(0, Math.round(cue.at_secs * 1000))
-    // adelay needs both channels; pad-up to stereo and apply volume.
-    // afade ensures the cue ends cleanly without click — short 20ms tail.
-    filterParts.push(
-      `[${inputIdx}:a]aformat=channel_layouts=stereo,volume=${cue.volume.toFixed(3)},` +
-      `adelay=${delayMs}|${delayMs}[s${i}]`,
-    )
+
+    if (cue.kind === 'loop') {
+      // Emphasis loop: aloop=-1 repeats the source indefinitely, then
+      // atrim+asetpts clips it to the desired length, afade adds a
+      // 200ms tail so the loop doesn't pop on cut, adelay positions
+      // it on the master timeline.
+      const lengthSecs = Math.max(0.4, cue.loop_until_secs - cue.at_secs)
+      const fadeStart = Math.max(0, lengthSecs - 0.2)
+      // aloop's `size` is samples, not seconds; -1 size means "use the
+      // whole input". We feed it the small static loop file and trim
+      // the result. Sample-rate is normalized to 48k via aformat.
+      filterParts.push(
+        `[${inputIdx}:a]aformat=sample_rates=48000:channel_layouts=stereo,` +
+        `aloop=loop=-1:size=2147483647,` +
+        `atrim=0:${lengthSecs.toFixed(3)},asetpts=N/SR/TB,` +
+        `volume=${cue.volume.toFixed(3)},` +
+        `afade=t=out:st=${fadeStart.toFixed(3)}:d=0.2,` +
+        `adelay=${delayMs}|${delayMs}[s${i}]`,
+      )
+    } else {
+      // Oneshot: pad-up to stereo, volume, delay onto master timeline.
+      filterParts.push(
+        `[${inputIdx}:a]aformat=channel_layouts=stereo,volume=${cue.volume.toFixed(3)},` +
+        `adelay=${delayMs}|${delayMs}[s${i}]`,
+      )
+    }
     mixLabels.push(`[s${i}]`)
   }
 
@@ -532,6 +607,18 @@ async function renderHyperFramesChunk(seg, paths, dim, durationSecs, baseUrl, by
       const tl = window.__timelines[id]
       return tl?.duration ? Number(tl.duration()) : 0
     }, compId)
+
+    // Harvest composition-emitted event log. Compositions call
+    // window.__hyperframes.recordEvent(name, at_secs) at top-of-script
+    // to declare when key beats fire — see public/studio-compositions/
+    // _runtime.js for the API. Stashed on the seg object so buildSfxCues
+    // can read them later.
+    const recordedEvents = await page.evaluate((id) => {
+      return (window.__hyperframes && window.__hyperframes.getEvents)
+        ? window.__hyperframes.getEvents(id)
+        : []
+    }, compId).catch(() => [])
+    seg._hyperframes_events = Array.isArray(recordedEvents) ? recordedEvents : []
 
     const captureDur = Math.max(0.5, durationSecs)
     const fps = 30
@@ -871,7 +958,17 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
       try {
         progress.stage = 'sfx_mix'
         await writeProgress()
-        const cues = buildSfxCues(chunkSegments, chunkDurations, sfxPlan)
+        // Real composition event log, keyed by segment id. Each entry
+        // was harvested from window.__hyperframes.getEvents() inside
+        // renderHyperFramesChunk. Compositions that didn't record
+        // anything fall back to the heuristic COMPOSITION_EVENTS table
+        // inside buildSfxCues.
+        const eventLog = {}
+        for (const s of chunkSegments) {
+          if (s._hyperframes_events?.length) eventLog[s.id] = s._hyperframes_events
+        }
+        const motionPlan = resolvedTemplate?._motion_plan
+        const cues = buildSfxCues(chunkSegments, chunkDurations, sfxPlan, eventLog, motionPlan)
         if (cues.length) {
           const { localPaths, missing } = await downloadSfxAssets(cues, baseUrl, bypassSecret, workdir)
           if (missing.length) {
