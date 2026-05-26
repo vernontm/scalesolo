@@ -1094,12 +1094,49 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
   // gets force-injected onto every eligible segment in corner-tr so
   // the user's @-tag is persistently visible (per product direction —
   // no more "watermark only on segment 0 because the LLM said so").
-  // Discovered from any existing watermark placement on the video —
-  // the LLM typically emits one on the first avatar segment.
-  const videoWatermarkHandle = (segments || [])
-    .flatMap((s) => Array.isArray(s.overlay_placements) ? s.overlay_placements : [])
-    .find((p) => p?.overlay_id === 'watermark-v1' && p?.content?.handle)
-    ?.content?.handle || null
+  //
+  // Resolution order, most-trusted first:
+  //   1. The brand profile's platform handles. Deterministic; survives
+  //      LLM hallucination. instagram → youtube → x → tiktok → threads
+  //      → linkedin (rough order of most-common-creator-platform).
+  //   2. Whatever the LLM emitted on segment 0 (legacy fallback so
+  //      profiles that haven't set any handle still get *something*
+  //      from Claude's best guess).
+  //   3. Null — no watermark rendered.
+  let videoWatermarkHandle = null
+  try {
+    const { data: brandProfile } = await supabase
+      .from('profiles')
+      .select('instagram_handle, youtube_handle, x_handle, tiktok_handle, threads_handle, linkedin_handle')
+      .eq('id', video.profile_id)
+      .maybeSingle()
+    const candidates = [
+      brandProfile?.instagram_handle,
+      brandProfile?.youtube_handle,
+      brandProfile?.x_handle,
+      brandProfile?.tiktok_handle,
+      brandProfile?.threads_handle,
+      brandProfile?.linkedin_handle,
+    ].filter((h) => typeof h === 'string' && h.trim())
+    if (candidates.length) {
+      // Normalize: strip leading @ if the user typed one, then re-add
+      // the @ symbol so the overlay renderer's "@" prefix logic doesn't
+      // double-stamp ("@@handle"). The renderer adds its own @ glyph
+      // separately via t.prefix.char so the stored value is bare.
+      const raw = candidates[0].trim().replace(/^@/, '')
+      videoWatermarkHandle = `@${raw}`
+    }
+  } catch (e) {
+    console.warn(`[studio-render] brand handle lookup failed: ${e?.message || e}`)
+  }
+  // Legacy fallback — pick up whatever the LLM put on segment 0 if the
+  // brand profile has no handles set.
+  if (!videoWatermarkHandle) {
+    videoWatermarkHandle = (segments || [])
+      .flatMap((s) => Array.isArray(s.overlay_placements) ? s.overlay_placements : [])
+      .find((p) => p?.overlay_id === 'watermark-v1' && p?.content?.handle)
+      ?.content?.handle || null
+  }
 
   try {
     // 4. Render each segment to an intermediate MP4
