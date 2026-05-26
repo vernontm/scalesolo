@@ -10,7 +10,8 @@
 //   6. source_details — branches by step 5 choice (topic+length / script text /
 //                       file picker)
 //   7. template     — template cards + captions toggle + example overlay frame
-//   8. confirm      — cost estimate + Generate
+//   8. music        — background music: off | loop one track | cycle all
+//   9. confirm      — cost estimate + Generate
 //
 // On confirm we either:
 //   - POST /api/studio/videos (topic + script paths) then fire
@@ -31,6 +32,9 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
   const [error, setError] = useState(null)
   const [avatars, setAvatars] = useState([])
   const [templates, setTemplates] = useState([])
+  // Account-wide music library, loaded on first open. Feeds the
+  // music step's track picker (loop_one mode) and the cycle preview.
+  const [musicTracks, setMusicTracks] = useState([])
 
   // Single answers blob — same pattern as OnboardingSurvey.
   const [a, setA] = useState({
@@ -46,6 +50,12 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
     voiceover_file: null,
     template_id: 'sleek',
     captions_enabled: true,
+    // Background music. 'off' | 'loop_one' | 'cycle_all'. When
+    // loop_one, music_track_id points at a row from the user's
+    // account music library. Volume is a 0..1 multiplier under voice.
+    music_mode: 'off',
+    music_track_id: '',
+    music_volume: 0.12,
   })
   const set = (k, v) => setA((prev) => ({ ...prev, [k]: v }))
 
@@ -91,21 +101,26 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
     if (!open) { setStepIdx(0); setError(null) }
   }, [open])
 
-  // Load avatars + templates on first open.
+  // Load avatars + templates + music library on first open. Music
+  // tracks come from /api/account/music-tracks (user-scoped library
+  // managed on the Profiles page).
   useEffect(() => {
     if (!open || !session?.access_token || !profileId) return
     let cancelled = false
     ;(async () => {
       try {
-        const [aRes, tRes] = await Promise.all([
+        const [aRes, tRes, mRes] = await Promise.all([
           authedFetch(`/api/avatars?profile_id=${profileId}`, session.access_token),
           authedFetch('/api/studio/templates', session.access_token),
+          authedFetch('/api/account/music-tracks', session.access_token),
         ])
         const aBody = aRes.ok ? await aRes.json() : { avatars: [] }
         const tBody = tRes.ok ? await tRes.json() : { templates: [] }
+        const mBody = mRes.ok ? await mRes.json() : { tracks: [] }
         if (cancelled) return
         setAvatars(aBody.avatars || [])
         setTemplates(tBody.templates || [])
+        setMusicTracks(Array.isArray(mBody.tracks) ? mBody.tracks : [])
         // Default-select the first avatar so users don't see an empty picker.
         if ((aBody.avatars || []).length && !a.avatar_id) {
           set('avatar_id', aBody.avatars[0].id)
@@ -121,7 +136,7 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
   const steps = useMemo(() => {
     const list = ['aspect', 'use_avatar', 'avatar_pick']
     if (a.use_avatar === 'yes') list.push('look_pick')
-    list.push('source', 'source_details', 'template', 'confirm')
+    list.push('source', 'source_details', 'template', 'music', 'confirm')
     return list
   }, [a.use_avatar])
 
@@ -139,6 +154,12 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
       if (a.source === 'voiceover') return !!a.voiceover_file
     }
     if (step === 'template') return !!a.template_id
+    if (step === 'music') {
+      // Must pick a track when looping one. Off + cycle_all are
+      // self-explanatory and need no further choice.
+      if (a.music_mode === 'loop_one') return !!a.music_track_id
+      return true
+    }
     return true
   }
 
@@ -201,6 +222,9 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
             template_id: a.template_id,
             captions_enabled: a.captions_enabled,
             randomize_look_images: a.use_avatar === 'yes' ? !!a.randomize_look_images : false,
+            music_mode: a.music_mode || 'off',
+            music_track_id: a.music_mode === 'loop_one' ? (a.music_track_id || null) : null,
+            music_volume: Number(a.music_volume) || 0.12,
           }) },
         )
         const segBody = await segR.json()
@@ -229,6 +253,9 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
         overlays_enabled: true,
         motion_graphics_enabled: true,
         randomize_look_images: a.use_avatar === 'yes' ? !!a.randomize_look_images : false,
+        music_mode: a.music_mode || 'off',
+        music_track_id: a.music_mode === 'loop_one' ? (a.music_track_id || null) : null,
+        music_volume: Number(a.music_volume) || 0.12,
       }
       const r = await authedFetch('/api/studio/videos', session.access_token, {
         method: 'POST', body: JSON.stringify(body),
@@ -315,11 +342,23 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
               onCaptions={(v) => set('captions_enabled', v)}
             />
           )}
+          {step === 'music' && (
+            <StepMusic
+              tracks={musicTracks}
+              mode={a.music_mode}
+              trackId={a.music_track_id}
+              volume={a.music_volume}
+              onMode={(v) => set('music_mode', v)}
+              onTrack={(v) => set('music_track_id', v)}
+              onVolume={(v) => set('music_volume', v)}
+            />
+          )}
           {step === 'confirm' && (
             <StepConfirm
               profileId={profileId}
               answers={a}
               templates={templates}
+              musicTracks={musicTracks}
             />
           )}
         </div>
@@ -577,7 +616,106 @@ function StepTemplate({ templates, value, captionsEnabled, aspectRatio, onChange
   )
 }
 
-function StepConfirm({ profileId, answers, templates }) {
+function StepMusic({ tracks, mode, trackId, volume, onMode, onTrack, onVolume }) {
+  const selectedTrack = tracks.find((t) => t.id === trackId)
+  return (
+    <Section
+      title="Background music?"
+      hint="Plays under the voiceover. Auto fade-in (1.5s) + fade-out (2s). Pulls from your account music library — manage tracks on the Profiles page."
+    >
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
+        {[
+          { v: 'off',        title: 'No music',          hint: 'Voiceover only.' },
+          { v: 'loop_one',   title: 'Loop one song',     hint: 'Pick one track. It loops for the whole video.' },
+          { v: 'cycle_all',  title: 'Cycle all songs',   hint: 'Play every track in your library, in order. Loops if the video runs past the playlist.' },
+        ].map((opt) => (
+          <OptionCard key={opt.v} active={mode === opt.v} onClick={() => onMode(opt.v)}>
+            <div style={{ fontWeight: 700, fontSize: 14 }}>{opt.title}</div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>{opt.hint}</div>
+          </OptionCard>
+        ))}
+      </div>
+
+      {/* Per-mode follow-ups: track picker for loop_one, playlist
+          preview for cycle_all. */}
+      {mode === 'loop_one' && (
+        <div style={{ marginTop: 18 }}>
+          <Label>Track</Label>
+          {tracks.length === 0 ? (
+            <div style={emptyPanel}>
+              No tracks in your library yet. Add some on the Profiles page → Music tracks.
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 }}>
+              {tracks.map((t) => (
+                <OptionCard key={t.id} active={trackId === t.id} onClick={() => onTrack(t.id)}>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{t.name || t.id}</div>
+                  {t.url && (
+                    <audio
+                      controls
+                      src={t.url}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ width: '100%', marginTop: 8, height: 28 }}
+                    />
+                  )}
+                </OptionCard>
+              ))}
+            </div>
+          )}
+          {selectedTrack && (
+            <div style={{ marginTop: 8, fontSize: 12, color: 'var(--muted)' }}>
+              Selected: {selectedTrack.name || selectedTrack.id}
+            </div>
+          )}
+        </div>
+      )}
+
+      {mode === 'cycle_all' && (
+        <div style={{ marginTop: 18 }}>
+          <Label>Playlist preview</Label>
+          {tracks.length === 0 ? (
+            <div style={emptyPanel}>
+              No tracks in your library yet. Add some on the Profiles page → Music tracks.
+            </div>
+          ) : (
+            <div style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, fontSize: 12, color: 'var(--text-soft)', lineHeight: 1.7 }}>
+              {tracks.map((t, i) => (
+                <div key={t.id}>{i + 1}. {t.name || t.id}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Volume picker — three sensible presets keep the UI focused.
+          Power users who want a custom value can tweak music_volume
+          via the row directly later. */}
+      {mode !== 'off' && (
+        <div style={{ marginTop: 18 }}>
+          <Label>Volume under voice</Label>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+            {[
+              { v: 0.08, label: 'Subtle',         hint: 'Barely there. Voice clearly dominates.' },
+              { v: 0.12, label: 'Low (default)',  hint: 'Standard YouTube tutorial mix.' },
+              { v: 0.18, label: 'Prominent',      hint: 'Music is felt, voice still leads.' },
+            ].map((opt) => (
+              <OptionCard
+                key={opt.v}
+                active={Math.abs(Number(volume) - opt.v) < 0.005}
+                onClick={() => onVolume(opt.v)}
+              >
+                <div style={{ fontWeight: 700, fontSize: 13 }}>{opt.label}</div>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>{opt.hint}</div>
+              </OptionCard>
+            ))}
+          </div>
+        </div>
+      )}
+    </Section>
+  )
+}
+
+function StepConfirm({ profileId, answers, templates, musicTracks = [] }) {
   const { session } = useAuth()
   const [estimate, setEstimate] = useState(null)
   const tmpl = templates.find((t) => t.id === answers.template_id)
@@ -609,6 +747,14 @@ function StepConfirm({ profileId, answers, templates }) {
         <Recap label="Template" value={tmpl?.name || answers.template_id} />
         <Recap label="Length" value={dur != null ? `~${dur}s` : 'Set by voiceover'} />
         <Recap label="Captions" value={answers.captions_enabled ? 'On' : 'Off'} />
+        <Recap
+          label="Music"
+          value={answers.music_mode === 'off'
+            ? 'Off'
+            : answers.music_mode === 'loop_one'
+              ? `Loop · ${musicTracks.find((t) => t.id === answers.music_track_id)?.name || 'unset'}`
+              : `Cycle all (${musicTracks.length})`}
+        />
       </div>
       {estimate ? (
         <div style={{ marginTop: 14, padding: 12, background: 'var(--surface-2)', borderRadius: 8, border: '1px solid var(--border)', fontSize: 12 }}>
