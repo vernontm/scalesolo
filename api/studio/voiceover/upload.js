@@ -20,6 +20,13 @@ import { setCors, requireUser, assertProfileAccess } from '../../_lib/supabase.j
 import { gateStudio } from '../_lib/gate.js'
 import { isolateAudio, resolveByoApiKey } from '../../_lib/elevenlabs.js'
 
+// Vercel default function timeout is 10s — way under what ElevenLabs'
+// Voice Isolator needs for a multi-minute clip (typically 30-60s).
+// Bump to 300s so the finalize phase can run the isolation inline.
+// Anything over Vercel's plan ceiling silently clamps; on Pro this
+// caps at 300, which is fine for our 50MB upper bound.
+export const config = { maxDuration: 300 }
+
 const STUDIO_BUCKET = 'studio-media'
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
@@ -30,6 +37,11 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
 // EL endpoint gets slow + flaky on huge files anyway. 50 MB easily
 // covers a 30+ minute voiceover at typical bitrates.
 const MAX_CLEAN_BYTES = 50 * 1024 * 1024
+// Per-isolation EL timeout. Must comfortably fit within Vercel's
+// function maxDuration above so a slow EL call still returns control
+// to us in time to ship a graceful fallback (raw URL) instead of
+// dying with FUNCTION_INVOCATION_TIMEOUT.
+const EL_ISOLATION_TIMEOUT_MS = 240_000
 
 export default async function handler(req, res) {
   setCors(req, res)
@@ -125,7 +137,7 @@ export default async function handler(req, res) {
           rawBuf,
           path.split('/').pop() || 'voiceover.mp3',
           sourceMime,
-          byoKey ? { apiKey: byoKey } : {},
+          { ...(byoKey ? { apiKey: byoKey } : {}), timeoutMs: EL_ISOLATION_TIMEOUT_MS },
         )
 
         // Upload the cleaned MP3 next to the raw file with -cleaned.mp3
