@@ -800,7 +800,16 @@ async function renderHyperFramesChunk(seg, paths, dim, durationSecs, baseUrl, by
     await page.setViewport({ width: dim.w, height: dim.h, deviceScaleFactor: 2 })
 
     const compId = seg.hyperframes_composition_id
-    const varsHash = encodeVarsForUrl(seg.hyperframes_variables || {})
+    // Suppress composition-level handle rendering — the persistent
+    // corner-tr watermark overlay is now the single source of @-tag
+    // truth. Without this, compositions like sleek-scene-cta-v1 paint
+    // their own hero_handle in lower-third, which then stacks visually
+    // with the caption overlay (Ray's "stacked text behind caption"
+    // bug). Blanking these keys is composition-safe: each composition
+    // skips its handle node when the var is falsy.
+    const rawVars = seg.hyperframes_variables || {}
+    const vars = { ...rawVars, hero_handle: '', handle: '' }
+    const varsHash = encodeVarsForUrl(vars)
     const url = `${baseUrl}/studio-compositions/${compId}.html?mode=render#vars=${varsHash}`
     await page.goto(url, { waitUntil: 'load', timeout: 30_000 })
 
@@ -1057,6 +1066,17 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
   // resolve composition-based standalone SFX triggers.
   const chunkSegments = []
 
+  // Canonical creator handle for this video. The watermark overlay
+  // gets force-injected onto every eligible segment in corner-tr so
+  // the user's @-tag is persistently visible (per product direction —
+  // no more "watermark only on segment 0 because the LLM said so").
+  // Discovered from any existing watermark placement on the video —
+  // the LLM typically emits one on the first avatar segment.
+  const videoWatermarkHandle = (segments || [])
+    .flatMap((s) => Array.isArray(s.overlay_placements) ? s.overlay_placements : [])
+    .find((p) => p?.overlay_id === 'watermark-v1' && p?.content?.handle)
+    ?.content?.handle || null
+
   try {
     // 4. Render each segment to an intermediate MP4
     for (let i = 0; i < segments.length; i++) {
@@ -1172,6 +1192,22 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
       let effectivePlacements = Array.isArray(seg.overlay_placements) ? seg.overlay_placements : []
       if (seg.segment_type === 'voiceover_broll') {
         effectivePlacements = effectivePlacements.filter((p) => p?.overlay_id === 'caption-overlay-v1')
+      }
+      // chapter-marker-v1 is fully retired per product direction —
+      // strip any placements still emitted by older enrichment runs
+      // so the top-left "VTM SCENE" label never reaches the bake.
+      effectivePlacements = effectivePlacements.filter((p) => p?.overlay_id !== 'chapter-marker-v1')
+      // Force the creator watermark into top-right of every eligible
+      // segment. Dedupe first so we don't stack two watermarks if the
+      // LLM already emitted one. Skipped on pure_motion_graphics
+      // (overlaysEligible already excludes those).
+      if (overlaysEligible && videoWatermarkHandle) {
+        effectivePlacements = effectivePlacements.filter((p) => p?.overlay_id !== 'watermark-v1')
+        effectivePlacements.push({
+          overlay_id: 'watermark-v1',
+          zone: 'corner-tr',
+          content: { handle: videoWatermarkHandle },
+        })
       }
       if (overlaysEligible && resolvedTemplate && effectivePlacements.length) {
         try {

@@ -1128,15 +1128,21 @@ function StudioVideoEditor({ videoId }) {
   const [video, setVideo] = useState(null)
   const [error, setError] = useState(null)
 
-  // Initial load + lightweight refresh on focus. The Realtime channel
-  // below handles ongoing updates; this is just the cold load.
+  // Initial load + defensive refetch when the tab regains focus. The
+  // Realtime channel below handles ongoing updates, but long renders
+  // (we've seen 20+ min) can outlive a WebSocket on a backgrounded
+  // tab — Chrome aggressively throttles inactive tabs, the socket
+  // dies silently, and the UI stays stuck on "rendering" even though
+  // the DB has long since flipped to 'rendered'. Re-fetching whenever
+  // the tab becomes visible again catches every missed broadcast.
+  //
   // Hardened so a non-JSON 401 / 5xx page from Vercel can't silently
   // wedge the UI on an infinite spinner — we surface whatever text we
   // got as an error instead.
   useEffect(() => {
     if (!session?.access_token) return
     let cancelled = false
-    ;(async () => {
+    const fetchVideo = async () => {
       try {
         const r = await authedFetch(`/api/studio/videos?id=${videoId}`, session.access_token)
         const ct = r.headers.get('content-type') || ''
@@ -1153,8 +1159,21 @@ function StudioVideoEditor({ videoId }) {
       } catch (e) {
         if (!cancelled) setError(e?.message || 'Network error loading video')
       }
-    })()
-    return () => { cancelled = true }
+    }
+    // Initial cold load.
+    fetchVideo()
+    // Refetch when the tab regains visibility (user switched back
+    // from another tab/window).
+    const onVisible = () => { if (document.visibilityState === 'visible') fetchVideo() }
+    document.addEventListener('visibilitychange', onVisible)
+    // Window focus catches cases where the OS focused the browser
+    // without a tab visibility change (e.g. Cmd-Tab back to Chrome).
+    window.addEventListener('focus', fetchVideo)
+    return () => {
+      cancelled = true
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', fetchVideo)
+    }
   }, [videoId, session?.access_token])
 
   // Asset polling loop. Gates on segment-level state (any row currently

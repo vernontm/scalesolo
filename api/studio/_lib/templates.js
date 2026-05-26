@@ -144,7 +144,10 @@ export const SLEEK = {
     'watermark-v1',
     'action-prompt-v1',
     'source-citation-v1',
-    'chapter-marker-v1',
+    // chapter-marker-v1 retired — Ray didn't want the top-left
+    // "VTM SCENE" / chapter labels on any template. The worker also
+    // filters out any chapter-marker placements that come through
+    // from older enrichment runs as a defensive backstop.
   ],
 
   // ─── OVERLAY OVERRIDES ──────────────────────────────
@@ -192,7 +195,9 @@ export const SLEEK = {
     standalone_triggers: [
       { event: 'title_hero',     sfx: 'ux_ding'  },
       { event: 'stat_land',      sfx: 'ux_ding'  },
-      { event: 'chapter_change', sfx: 'ux_click' },
+      // chapter_change retired with chapter-marker-v1 — kept out of
+      // the trigger list so no SFX fires on a beat that no longer
+      // has a visible overlay.
       { event: 'subscribe_cta',  sfx: 'ux_ding'  },
       { event: 'end_card',       sfx: 'ux_ding'  },
       // Plays once when overlay cards animate in (segStart + 0.25s).
@@ -315,7 +320,7 @@ export const ATLAS = {
     },
     standalone_triggers: [
       { event: 'title_hero',     sfx: 'ux_ding' },
-      { event: 'chapter_change', sfx: 'ux_click' },
+      // chapter_change retired with chapter-marker-v1.
       { event: 'subscribe_cta',  sfx: 'ux_ding' },
       { event: 'end_card',       sfx: 'ux_ding' },
       { event: 'card_enter',     sfx: 'ux_zoom' },
