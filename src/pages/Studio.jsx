@@ -572,14 +572,19 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
         </Field>
       )}
 
-      {/* 3. Length. */}
-      <Field label={`3.  Length: ${form.target_duration_secs}s`} hint="30 seconds to 5 minutes.">
+      {/* 3. Length. No upper cap — type whatever the script needs. */}
+      <Field
+        label={`3.  Length: ${Math.floor(form.target_duration_secs / 60)}m ${String(form.target_duration_secs % 60).padStart(2, '0')}s (${form.target_duration_secs}s)`}
+        hint="30s minimum, no upper cap. Set whatever the script actually requires."
+      >
         <input
-          type="range"
-          min={30} max={300} step={15}
+          type="number"
+          className="input"
+          min={30}
+          step={15}
           value={form.target_duration_secs}
-          onChange={(e) => set('target_duration_secs', Number(e.target.value))}
-          style={{ width: '100%' }}
+          onChange={(e) => set('target_duration_secs', Math.max(30, Number(e.target.value) || 30))}
+          style={{ width: 140 }}
         />
       </Field>
 

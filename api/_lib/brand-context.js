@@ -44,7 +44,11 @@ export async function loadBrandContext(profileId, opts = {}) {
       `profiles?id=eq.${encodeURIComponent(profileId)}&select=` +
       'business_name,industry,brand_bible,brand_bible_summary,' +
       'target_audience,preferred_tone,agent_aggressiveness,' +
-      'core_hashtags,do_not_say,always_include,brand_cta'
+      'core_hashtags,do_not_say,always_include,brand_cta,' +
+      // Visual style controls — drive studio b-roll image / video
+      // prompts so every brand gets a consistent on-brand aesthetic
+      // instead of Claude's default sci-fi futurism bias.
+      'visual_style_guide,visual_keywords,visual_avoid'
     ).then((rows) => { out.profile = rows?.[0] || null })
      .catch(() => { out.profile = null })
   )
@@ -180,6 +184,24 @@ export function renderBadPatternsBlock(ctx) {
     ].join('\n')
 }
 
+// Brand visual style block — drives every studio b-roll prompt
+// (image + future video). Without this, Claude defaults to "sleek
+// futuristic AI on holographic displays" for every brand. Returns
+// empty string when the brand hasn't set any of the three fields.
+export function renderBrandVisualStyleBlock(ctx) {
+  const p = ctx.profile
+  if (!p) return ''
+  const guide = (p.visual_style_guide || '').trim()
+  const kw    = Array.isArray(p.visual_keywords) ? p.visual_keywords.filter(Boolean) : []
+  const avoid = Array.isArray(p.visual_avoid)    ? p.visual_avoid.filter(Boolean)    : []
+  if (!guide && !kw.length && !avoid.length) return ''
+  const bits = []
+  if (guide)       bits.push(`Style direction: ${truncate(guide, 600)}`)
+  if (kw.length)   bits.push(`MUST include these aesthetic keywords in every image / video prompt: ${kw.map((s) => `"${truncate(s, 60)}"`).join(', ')}.`)
+  if (avoid.length) bits.push(`NEVER produce or mention in any image / video prompt: ${avoid.map((s) => `"${truncate(s, 60)}"`).join(', ')}.`)
+  return `\n\n## Visual style (for every b-roll image / video prompt)\n- ${bits.join('\n- ')}`
+}
+
 export function renderHardRulesBlock(ctx) {
   const p = ctx.profile
   if (!p) return ''
@@ -211,8 +233,9 @@ export function renderBrandContextMarkdown(ctx, { include, exclude, bibleCharLim
     hooks:        () => renderGoodHooksBlock(ctx),
     bad_patterns: () => renderBadPatternsBlock(ctx),
     rules:        () => renderHardRulesBlock(ctx),
+    visual_style: () => renderBrandVisualStyleBlock(ctx),
   }
-  const order = ['identity', 'bible', 'summary', 'exemplars', 'hooks', 'bad_patterns', 'rules']
+  const order = ['identity', 'bible', 'summary', 'exemplars', 'hooks', 'bad_patterns', 'rules', 'visual_style']
   const wanted = include
     ? order.filter((k) => include.includes(k))
     : order.filter((k) => !exclude || !exclude.includes(k))

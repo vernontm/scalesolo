@@ -517,14 +517,22 @@ function StepSourceDetails({ source, answers, setAnswer }) {
           maxLength={2000}
         />
         <div style={{ marginTop: 16 }}>
-          <Label>Length: {answers.target_duration_secs}s</Label>
+          <Label>
+            Length: {Math.floor(answers.target_duration_secs / 60)}m {String(answers.target_duration_secs % 60).padStart(2, '0')}s
+            ({answers.target_duration_secs}s)
+          </Label>
           <input
-            type="range" min={30} max={300} step={15}
+            type="number"
+            className="input"
+            min={30}
+            step={15}
             value={answers.target_duration_secs}
-            onChange={(e) => setAnswer('target_duration_secs', Number(e.target.value))}
-            style={{ width: '100%' }}
+            onChange={(e) => setAnswer('target_duration_secs', Math.max(30, Number(e.target.value) || 30))}
+            style={{ width: 140 }}
           />
-          <div style={{ fontSize: 11, color: 'var(--muted)' }}>30 seconds to 5 minutes.</div>
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
+            Type any target length in seconds. 30s minimum, no upper cap — set whatever the script needs.
+          </div>
         </div>
       </Section>
     )

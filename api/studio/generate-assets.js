@@ -96,15 +96,23 @@ async function dispatchVoice(segment, voiceId, profileId) {
 // Match the input shape api/images/generate.js uses for nano-banana-2. The
 // keys here are not what you'd guess from the model name; missing any of
 // num_images/resolution/output_format is a silent 400 from Kie.
-async function dispatchImage(segment, apiKey, aspectRatio) {
+async function dispatchImage(segment, apiKey, aspectRatio, brandStyleAnchor) {
   if (!segment.image_prompt?.trim()) throw new Error('Image prompt is empty')
   // Project aspect ratio → Kie's expected aspect_ratio string. nano-banana-2
   // accepts 16:9 / 9:16 / 1:1 / 'auto'. Pass-through.
   const aspect = ['16:9', '9:16', '1:1'].includes(aspectRatio) ? aspectRatio : 'auto'
+  // Hard-append the brand's style + avoid anchor. The orchestrator
+  // computed this once per video from the profile's visual_keywords +
+  // visual_avoid. Belt + suspenders: even if Claude wrote a generic
+  // "sleek AI avatar" prompt and the user didn't catch it, the brand
+  // anchor still nudges Kie away from off-brand renders.
+  const styledPrompt = brandStyleAnchor
+    ? `${segment.image_prompt.trim()} ${brandStyleAnchor}`
+    : segment.image_prompt
   const body = {
     model: 'nano-banana-2',
     input: {
-      prompt: segment.image_prompt,
+      prompt: styledPrompt,
       image_input: [],
       aspect_ratio: aspect,
       resolution: '2K',
@@ -320,7 +328,7 @@ async function orchestrateSegment(segment, ctx) {
     if (segment.segment_type === 'voiceover_broll') {
       if (!segment.image_url && wants('image')) {
         await patch({ status: 'generating_image' })
-        const taskId = await dispatchImage(segment, kieKey, aspectRatio)
+        const taskId = await dispatchImage(segment, kieKey, aspectRatio, ctx.brandStyleAnchor)
         await patch({ kie_task_id: taskId })
         // status stays 'generating_image' until the poller fills image_url + flips to 'ready'
       } else if (segment.voice_url && segment.image_url) {
@@ -519,6 +527,28 @@ export default async function handler(req, res) {
       }
     }
 
+    // Brand visual style — drives the worker's hard-appended anchor on
+    // every image_prompt before it hits Kie. Belt + suspenders against
+    // Claude's "futuristic AI" default bias: even if the persisted
+    // prompt is generic, the brand keywords + avoid list are stamped
+    // on at dispatch. Best-effort — empty arrays mean no anchor.
+    let brandStyleAnchor = ''
+    try {
+      const styleRows = await supaFetch(
+        `profiles?id=eq.${video.profile_id}&select=visual_style_guide,visual_keywords,visual_avoid&limit=1`,
+      )
+      const sp = styleRows?.[0] || {}
+      const kw    = Array.isArray(sp.visual_keywords) ? sp.visual_keywords.filter(Boolean) : []
+      const avoid = Array.isArray(sp.visual_avoid)    ? sp.visual_avoid.filter(Boolean)    : []
+      const bits = []
+      if (kw.length)    bits.push(`Style: ${kw.join(', ')}.`)
+      if (avoid.length) bits.push(`Avoid: ${avoid.join(', ')}.`)
+      brandStyleAnchor = bits.join(' ')
+    } catch {
+      // brand style is non-critical — image generation works without it
+      brandStyleAnchor = ''
+    }
+
     const ctx = {
       videoId,
       profileId: video.profile_id,
@@ -528,6 +558,7 @@ export default async function handler(req, res) {
       randomLookHeygenIds,
       aspectRatio: video.aspect_ratio || '16:9',
       kieKey,
+      brandStyleAnchor,
       force: req.body?.force === true,
       only_types,
     }

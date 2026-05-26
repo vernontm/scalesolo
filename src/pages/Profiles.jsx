@@ -51,6 +51,12 @@ const FORM_DEFAULTS = {
   brand_cta: '',
   do_not_say: [],
   always_include: [],
+  // Visual style — drives studio b-roll prompts so each brand's
+  // image / video generation matches its actual aesthetic (clean
+  // editorial vs. cinematic vs. corporate documentary, etc).
+  visual_style_guide: '',
+  visual_keywords: [],
+  visual_avoid: [],
   brand_primary_color: '#ef4444',
   brand_secondary_color: '',
   preferred_tone: '',
@@ -708,6 +714,67 @@ function VoiceSection({ form, set, setHelper }) {
           onChange={(e) => set('brand_cta', e.target.value)}
           placeholder="e.g. Free workflow library → scalesolo.ai/free"
         />
+      </Field>
+
+      {/* ── Visual style ───────────────────────────────────────────
+          Drives studio b-roll image / video prompts so this brand's
+          generated visuals stay on-aesthetic. Three fields:
+          - Style guide: 1-3 sentences of overall direction
+          - Keywords: comma-separated tags always appended to prompts
+          - Avoid: comma-separated tags the prompt should NEVER include
+      */}
+      <Field label={
+        <span>
+          Studio visual style
+          <span className="pill pill-muted" style={{ marginLeft: 6 }}>Drives b-roll image / video prompts</span>
+        </span>
+      }>
+        <textarea
+          className="textarea"
+          style={{ minHeight: 80, width: '100%' }}
+          value={form.visual_style_guide || ''}
+          onChange={(e) => set('visual_style_guide', e.target.value)}
+          placeholder="Business documentary aesthetic. Clean modern office settings, focused professionals in conversation, soft natural lighting. Editorial feel like a Bloomberg spread, not a tech demo."
+        />
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
+          1–3 sentences describing how every b-roll image and video should look. Specific is better than fancy.
+        </div>
+      </Field>
+
+      <Field label={
+        <span>
+          Must-include keywords
+          <span className="pill pill-muted" style={{ marginLeft: 6 }}>Appended to every image prompt</span>
+        </span>
+      }>
+        <textarea
+          className="textarea"
+          style={{ minHeight: 60, width: '100%' }}
+          value={Array.isArray(form.visual_keywords) ? form.visual_keywords.join(', ') : ''}
+          onChange={(e) => set('visual_keywords', e.target.value.split(',').map((s) => s.trim()).filter(Boolean))}
+          placeholder="modern editorial, natural lighting, shallow depth of field, business documentary"
+        />
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
+          Comma-separated. Each one becomes a style anchor on every image prompt the studio writes.
+        </div>
+      </Field>
+
+      <Field label={
+        <span>
+          Avoid list
+          <span className="pill pill-muted" style={{ marginLeft: 6 }}>Forbidden in image prompts</span>
+        </span>
+      }>
+        <textarea
+          className="textarea"
+          style={{ minHeight: 60, width: '100%' }}
+          value={Array.isArray(form.visual_avoid) ? form.visual_avoid.join(', ') : ''}
+          onChange={(e) => set('visual_avoid', e.target.value.split(',').map((s) => s.trim()).filter(Boolean))}
+          placeholder="futuristic AI graphics, holographic displays, neon, cyberpunk, sci-fi, abstract digital effects"
+        />
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
+          Comma-separated. Claude is told never to include these in prompts, and the worker hard-appends them as a negative anchor before submitting to the image model.
+        </div>
       </Field>
     </div>
   )

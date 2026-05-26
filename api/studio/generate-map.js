@@ -91,7 +91,7 @@ const SEGMENT_TOOL = {
             },
             image_prompt: {
               type: 'string',
-              description: 'Required only for voiceover_broll. A specific, concrete image prompt (subject + action + style). 1-2 sentences. Match brand color palette when relevant.',
+              description: 'Required only for voiceover_broll. A specific, concrete image prompt (subject + action + style). 1-2 sentences. MUST follow the "Visual style" block in the brand context exactly — match the aesthetic keywords, never include anything from the avoid list. Generic sci-fi / futuristic AI imagery is forbidden unless the visual style explicitly calls for it.',
             },
             motion_gesture_prompt: {
               type: 'string',
