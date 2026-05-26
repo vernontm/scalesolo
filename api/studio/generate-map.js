@@ -329,10 +329,49 @@ function sanitizeOverlayPlacements(raw, tmpl, orientation) {
   return out
 }
 
-function sanitizeSegment(s, idx, tmpl, orientation) {
+// Pick a sensible transition for a segment when Claude didn't supply one
+// (or returned an invalid value). Heuristic, ordered most-specific first:
+//   - First segment always reveals with a fade.
+//   - Avatar talking-head segments fade so the cuts feel conversational.
+//   - voiceover_broll uses zoom for a Ken Burns reveal on the still image.
+//   - voiceover_motion_graphics uses crossfade so the HF composition's
+//     entrance animation isn't cut off by a hard switch.
+//   - pure_motion_graphics gets whip for energy on big graphical beats.
+// Anything left falls back to the template's default_transition (or
+// 'fade' as a safe terminal default — better than the old hardcoded
+// 'cut' that left every segment feeling flat).
+function defaultTransitionFor(segmentType, idx, tmpl) {
+  if (idx === 0) return 'fade'
+  if (segmentType === 'avatar') return 'fade'
+  if (segmentType === 'voiceover_broll') return 'zoom'
+  if (segmentType === 'voiceover_motion_graphics') return 'crossfade'
+  if (segmentType === 'pure_motion_graphics') return 'whip'
+  return tmpl?.default_transition || 'fade'
+}
+
+// Auto-pick a one-shot SFX for high-impact moments when Claude didn't
+// supply one. The template SFX plan already handles entrance/transition
+// whooshes between every segment at bake time — this field is for
+// bigger moments that deserve a "ding" punctuation:
+//   - First segment (hook) → ding so the video opens with a beat.
+//   - Last segment (CTA / wrap) → ding so the close lands.
+function defaultSfxFor(idx, totalSegments) {
+  if (idx === 0) return 'ding'
+  if (idx === totalSegments - 1) return 'ding'
+  return null
+}
+
+function sanitizeSegment(s, idx, tmpl, orientation, totalSegments) {
   const segment_type = SEGMENT_TYPES.includes(s.segment_type) ? s.segment_type : 'voiceover_broll'
-  const transition_in = TRANSITIONS.includes(s.transition_in) ? s.transition_in : 'cut'
-  const sound_effect = (typeof s.sound_effect === 'string' && SFX_LIBRARY.includes(s.sound_effect)) ? s.sound_effect : null
+  // Honor Claude's explicit choice; fall back to a template-aware
+  // heuristic instead of hardcoded 'cut' so every video ships with
+  // varied, intentional transitions out of the box.
+  const transition_in = TRANSITIONS.includes(s.transition_in)
+    ? s.transition_in
+    : defaultTransitionFor(segment_type, idx, tmpl)
+  const sound_effect = (typeof s.sound_effect === 'string' && SFX_LIBRARY.includes(s.sound_effect))
+    ? s.sound_effect
+    : defaultSfxFor(idx, totalSegments)
   const hyperframes_composition_id =
     HF_COMPOSITION_IDS.includes(s.hyperframes_composition_id) ? s.hyperframes_composition_id : null
   // Overlays only make sense on speaker footage (avatar / voiceover_broll).
@@ -567,7 +606,7 @@ export default async function handler(req, res) {
       }
       const orientation = video.aspect_ratio === '9:16' ? 'vertical' : 'landscape'
       const captionsOn = video.captions_enabled !== false
-      segments = mapInput.segments.map((s, i) => sanitizeSegment(s, i, resolvedTemplate, orientation))
+      segments = mapInput.segments.map((s, i, arr) => sanitizeSegment(s, i, resolvedTemplate, orientation, arr.length))
       segments = postProcessSegments(segments, { captionsOn, orientation, overlayPool: resolvedTemplate.overlay_pool || [] })
     } catch (e) {
       // Rollback status, surface the error to the UI
