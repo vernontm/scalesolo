@@ -685,7 +685,15 @@ async function renderOverlayPngs(seg, dir, dim, durationSecs, baseUrl, bypassSec
   }
 
   try {
-    await page.setViewport({ width: dim.w, height: dim.h, deviceScaleFactor: 2 })
+    // deviceScaleFactor stays at 1. We tried 2 for sharper overlays
+    // earlier today, but it captured frames at 2× pixel dimensions
+    // (e.g. 3840×2160 for a 16:9 video) while avatar / b-roll chunks
+    // stayed 1080p — and ffmpeg's xfade chain explodes when input
+    // sizes don't match. If we want sharper text later, the right fix
+    // is to keep DSF=2 here AND add a `-vf scale=${dim.w}:${dim.h}`
+    // to the PNG→MP4 encode step + scale the overlay frames in the
+    // composite filter graph. For now: simple wins.
+    await page.setViewport({ width: dim.w, height: dim.h, deviceScaleFactor: 1 })
     // Disable Chrome's HTTP cache so each bake fetches fresh CSS from
     // Vercel — we've seen stale _ov-universal.css cached between bakes
     // when the puppeteer browser instance is reused. The pages are
@@ -797,7 +805,15 @@ async function renderHyperFramesChunk(seg, paths, dim, durationSecs, baseUrl, by
   }
 
   try {
-    await page.setViewport({ width: dim.w, height: dim.h, deviceScaleFactor: 2 })
+    // deviceScaleFactor stays at 1. We tried 2 for sharper overlays
+    // earlier today, but it captured frames at 2× pixel dimensions
+    // (e.g. 3840×2160 for a 16:9 video) while avatar / b-roll chunks
+    // stayed 1080p — and ffmpeg's xfade chain explodes when input
+    // sizes don't match. If we want sharper text later, the right fix
+    // is to keep DSF=2 here AND add a `-vf scale=${dim.w}:${dim.h}`
+    // to the PNG→MP4 encode step + scale the overlay frames in the
+    // composite filter graph. For now: simple wins.
+    await page.setViewport({ width: dim.w, height: dim.h, deviceScaleFactor: 1 })
 
     const compId = seg.hyperframes_composition_id
     // Suppress composition-level handle rendering — the persistent
