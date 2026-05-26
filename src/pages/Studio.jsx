@@ -24,6 +24,7 @@ import {
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { toast, confirmDialog } from '../components/Toast.jsx'
+import NewVideoModal from '../components/NewVideoModal.jsx'
 import { supabase } from '../lib/supabase.js'
 
 async function authedFetch(path, token, init = {}) {
@@ -63,7 +64,7 @@ function StudioHome() {
   const { selectedProfileId, selectedProfile } = useProfile()
   const navigate = useNavigate()
   const [videos, setVideos] = useState(null)        // null = loading, [] = empty
-  const [showForm, setShowForm] = useState(false)
+  const [modalOpen, setModalOpen] = useState(false)
 
   // Load recent videos when the active profile changes.
   useEffect(() => {
@@ -77,10 +78,10 @@ function StudioHome() {
     return () => { cancelled = true }
   }, [selectedProfileId, session?.access_token])
 
-  // First-time UX: if there are no videos yet, drop the user straight
-  // into the new-video form instead of staring at an empty list.
+  // First-time UX: if there are no videos yet, auto-open the new-video
+  // modal so the empty state doesn't leave the user staring at nothing.
   useEffect(() => {
-    if (videos !== null && videos.length === 0) setShowForm(true)
+    if (videos !== null && videos.length === 0) setModalOpen(true)
   }, [videos])
 
   return (
@@ -88,22 +89,24 @@ function StudioHome() {
       <Header
         title="Studio"
         subtitle={`Long-form video generation${selectedProfile ? ` for ${selectedProfile.business_name}` : ''}.`}
-        action={!showForm && videos?.length > 0 ? (
-          <button className="btn-primary" onClick={() => setShowForm(true)}>
+        action={(
+          <button className="btn-primary" onClick={() => setModalOpen(true)}>
             <Plus size={14} /> New video
           </button>
-        ) : null}
+        )}
       />
 
-      {showForm ? (
-        <NewVideoForm
-          profileId={selectedProfileId}
-          onCancel={videos?.length ? () => setShowForm(false) : null}
-          onCreated={(video) => navigate(`/studio/${video.id}`)}
-        />
-      ) : (
-        <RecentVideos videos={videos} onOpen={(v) => navigate(`/studio/${v.id}`)} />
-      )}
+      <RecentVideos videos={videos} onOpen={(v) => navigate(`/studio/${v.id}`)} />
+
+      <NewVideoModal
+        open={modalOpen}
+        profileId={selectedProfileId}
+        onClose={() => setModalOpen(false)}
+        onCreated={(video) => {
+          setModalOpen(false)
+          if (video?.id) navigate(`/studio/${video.id}`)
+        }}
+      />
     </div>
   )
 }
