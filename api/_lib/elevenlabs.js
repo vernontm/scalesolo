@@ -176,6 +176,51 @@ export async function synthesizeMp3(voiceId, text, opts = {}) {
   return buf
 }
 
+// Run audio through ElevenLabs' Voice Isolator to strip background
+// noise / room tone before we save it as a segment's voice track.
+// Used when a user uploads their own voiceover at /studio — we run
+// the file through this before pinning it as the voice_url so the
+// downstream render gets a clean broadcast-quality track.
+//
+// Returns a fresh Buffer (MP3-encoded by ElevenLabs). On any failure
+// the caller should fall back to the raw audio rather than blocking
+// the upload — the worst case is "user's audio uploads uncleaned,"
+// not "user can't upload at all."
+//
+// Endpoint: POST /v1/audio-isolation, multipart/form-data, field "audio".
+// Response: audio/mpeg bytes (MP3).
+export async function isolateAudio(audioBytes, filename = 'voiceover.mp3', mime = 'audio/mpeg', opts = {}) {
+  const apiKey = opts.apiKey || ELEVENLABS_API_KEY
+  if (!apiKey) throw new Error('ELEVENLABS_API_KEY not configured')
+  if (!audioBytes || !audioBytes.length) throw new Error('audio bytes required')
+  const form = new FormData()
+  form.append('audio', new Blob([audioBytes], { type: mime || 'audio/mpeg' }), filename)
+  // Voice Isolator is heavier than TTS — a 5-min clip can take 20-40s.
+  // 180s gives us headroom but still bails before Vercel's 300s ceiling.
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), opts.timeoutMs || 180_000)
+  let r
+  try {
+    r = await fetch('https://api.elevenlabs.io/v1/audio-isolation', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { 'xi-api-key': apiKey, Accept: 'audio/mpeg' },
+      body: form,
+    })
+  } catch (e) {
+    if (e?.name === 'AbortError') throw new Error('ElevenLabs audio-isolation timed out')
+    throw e
+  } finally {
+    clearTimeout(timeout)
+  }
+  if (!r.ok) {
+    let detail = ''
+    try { detail = (await r.text())?.slice(0, 500) } catch {}
+    throw new Error(`ElevenLabs audio-isolation ${r.status}${detail ? `: ${detail}` : ''}`)
+  }
+  return Buffer.from(await r.arrayBuffer())
+}
+
 // Look up the user's BYOK ElevenLabs key for a profile. Returns null
 // when the profile hasn't connected one. Best-effort — never throws,
 // the caller treats null as "fall through to master key."

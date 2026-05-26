@@ -426,7 +426,7 @@ function RenderComposer({ avatar, models, onClose, onSubmitted }) {
 // Inline, expandable. Cover thumb + name + image count. Click header to
 // collapse / expand. Inside: image grid + drop zone for more images +
 // inline rename.
-function LookFolder({ look, index, onAddImages, onDeleteImage, onRename, onSetOrientation, onReorderImage, busy }) {
+function LookFolder({ look, index, onAddImages, onDeleteImage, onRename, onSetOrientation, onReorderImage, onTrain, busy }) {
   const [open, setOpen] = useState(true)
   const [editingName, setEditingName] = useState(false)
   const [draftName, setDraftName] = useState(look.name || '')
@@ -506,18 +506,78 @@ function LookFolder({ look, index, onAddImages, onDeleteImage, onRename, onSetOr
               {look.name || `Look ${index + 1}`}
             </div>
           )}
-          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
-            {images.length} {images.length === 1 ? 'image' : 'images'}
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span>{images.length} {images.length === 1 ? 'image' : 'images'}</span>
             {look.orientation && (
               <span style={{
-                marginLeft: 8, padding: '1px 7px', borderRadius: 4,
+                padding: '1px 7px', borderRadius: 4,
                 background: 'rgba(99,102,241,0.16)', color: '#a5b4fc',
                 fontSize: 10, fontWeight: 700, letterSpacing: '0.04em',
                 textTransform: 'uppercase',
               }}>{look.orientation}</span>
             )}
+            {/* Training status badge. 'ready' = green; 'training' =
+                amber spinner; 'failed' = red; 'pending' = neutral.
+                The Studio render pipeline reads heygen_look_id; a
+                non-ready look will hard-error on render. */}
+            {look.training_status === 'ready' && look.heygen_look_id && (
+              <span style={{
+                padding: '1px 7px', borderRadius: 4,
+                background: 'rgba(34,197,94,0.16)', color: '#86efac',
+                fontSize: 10, fontWeight: 700, letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+              }}>Ready</span>
+            )}
+            {look.training_status === 'training' && (
+              <span style={{
+                padding: '1px 7px', borderRadius: 4,
+                background: 'rgba(251,191,36,0.16)', color: '#fbbf24',
+                fontSize: 10, fontWeight: 700, letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+              }}>Training…</span>
+            )}
+            {look.training_status === 'failed' && (
+              <span
+                style={{
+                  padding: '1px 7px', borderRadius: 4,
+                  background: 'rgba(239,68,68,0.16)', color: '#fca5a5',
+                  fontSize: 10, fontWeight: 700, letterSpacing: '0.04em',
+                  textTransform: 'uppercase',
+                }}
+                title={look.training_error || 'Training failed'}
+              >Failed</span>
+            )}
+            {(look.training_status === 'pending' || !look.training_status) && !look.heygen_look_id && (
+              <span style={{
+                padding: '1px 7px', borderRadius: 4,
+                background: 'rgba(148,163,184,0.16)', color: '#cbd5e1',
+                fontSize: 10, fontWeight: 700, letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+              }}>Not trained</span>
+            )}
           </div>
         </div>
+        {/* Train button — surfaces only when the look isn't render-
+            ready. Clicking sends the cover image to HeyGen V3 and
+            populates heygen_look_id on the row. Synchronous; the
+            success badge swaps in on the next refetch. */}
+        {onTrain && (!look.heygen_look_id || look.training_status === 'failed') && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onTrain() }}
+            disabled={busy || look.training_status === 'training'}
+            className="btn-primary"
+            title={look.training_status === 'failed'
+              ? `Retry HeyGen training. Previous error: ${look.training_error || 'unknown'}`
+              : 'Send this look’s cover image to HeyGen so it can be used in studio renders.'}
+            style={{
+              padding: '4px 10px', fontSize: 11, fontWeight: 700,
+              letterSpacing: '0.04em', textTransform: 'uppercase',
+            }}
+          >
+            {look.training_status === 'training' ? 'Training…' : (look.training_status === 'failed' ? 'Retry' : 'Train')}
+          </button>
+        )}
         {/* Orientation pill picker — click-through-safe (stops the row
             collapse). Studio reads avatar_looks.orientation to surface a
             badge per look and warn when the chosen look doesn't match
@@ -780,6 +840,24 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
     } catch (e) { setError(e.message) }
   }
 
+  // Train an untrained look on HeyGen so it picks up a heygen_look_id
+  // and becomes usable in the studio render pipeline. Used to backfill
+  // looks created before auto-training shipped (or to retry failed
+  // ones). The endpoint is synchronous — by the time onChange() fires
+  // the look's training_status is already 'ready' or 'failed'.
+  const trainLook = async (lookId) => {
+    setError(null)
+    try {
+      const r = await fetch(`/api/avatars/looks/train?id=${lookId}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      const b = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(b.error || `Training failed (${r.status})`)
+      onChange()
+    } catch (e) { setError(e.message) }
+  }
+
   // Reorder a single image within its look via drag-drop. Splice the
   // image out of its current slot and re-insert at targetIdx, then
   // PATCH each image with a fresh order_index = its new position.
@@ -903,6 +981,7 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
                     onRename={(name) => renameLook(l.id, name)}
                     onSetOrientation={(orientation) => setLookOrientation(l.id, orientation)}
                     onReorderImage={(imageId, targetIdx) => reorderImageInLook(l.id, imageId, targetIdx)}
+                    onTrain={() => trainLook(l.id)}
                     busy={busy}
                   />
                 ))}

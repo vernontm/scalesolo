@@ -97,6 +97,11 @@ export const SLEEK = {
     'sleek-scene-claude-chat-v1',
     'sleek-scene-cta-v1',
   ],
+  // sleek-scene-screenshot-v1 is INTENTIONALLY not in composition_pool.
+  // It's reserved for segment_type='screenshot' — the worker hardcodes
+  // {template_id}-scene-screenshot-v1 in that branch. Adding it to the
+  // pool would let Claude pick it for a motion-graphics segment, which
+  // would fail at render time (no screenshot_url variable).
   composition_overrides: {
     'stat-reveal-v1': { number_treatment: 'chrome_with_red_glow' },
     'quote-card-v1':  { quote_mark_color: '{accent}', quote_mark_opacity: 0.18 },
@@ -279,6 +284,8 @@ export const ATLAS = {
     'atlas-scene-claude-chat-v1',
     'atlas-scene-cta-v1',
   ],
+  // atlas-scene-screenshot-v1 reserved for segment_type='screenshot' —
+  // see SLEEK note above.
 
   // Atlas uses the same overlay set as Sleek. Visual styling is
   // driven entirely by the universal .ov-card system in

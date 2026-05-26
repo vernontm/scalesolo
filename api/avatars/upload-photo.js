@@ -52,6 +52,10 @@ export default async function handler(req, res) {
     })
     const avatar = Array.isArray(created) ? created[0] : created
 
+    // The first look mirrors the photo we just sent to HeyGen, so its
+    // heygen_look_id IS the avatar's talking_photo_id (same V3 entity,
+    // same source image). Set it inline so the look is render-ready
+    // immediately — no separate Train click needed for the cover.
     await supaFetch('avatar_looks', {
       method: 'POST',
       prefer: 'return=minimal',
@@ -61,6 +65,10 @@ export default async function handler(req, res) {
         image_url: photo_url,
         kind: 'upload',
         angle_order: 0,
+        heygen_look_id: avatarId || null,
+        training_status: avatarId ? 'ready' : 'failed',
+        training_error: trainingError,
+        trained_at: avatarId ? new Date().toISOString() : null,
       },
     })
 

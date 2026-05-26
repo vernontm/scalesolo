@@ -29,6 +29,7 @@
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { gateStudio } from './_lib/gate.js'
 import { customerIdForUser } from '../_lib/credits.js'
+import { pickMotionGesture } from './_lib/motion-gestures.js'
 
 // Credit gate. Returns null on success, or a 402 payload to send back.
 // Mirrors the cost estimator's HIGH-bound math from estimate-cost.js
@@ -106,7 +107,7 @@ async function dispatchImage(segment, apiKey, aspectRatio) {
       prompt: segment.image_prompt,
       image_input: [],
       aspect_ratio: aspect,
-      resolution: '1K',
+      resolution: '2K',
       output_format: 'png',
       num_images: 1,
     },
@@ -167,16 +168,38 @@ async function pickFirstLookFromGroup(groupId) {
 // is how a user with portrait + landscape variants of the same avatar
 // chooses which to render with — pick the look that matches the
 // video's aspect ratio.
-async function resolveHeygenAvatarId(rawAvatarId, lookId) {
+//
+// aspectRatio (optional): video's chosen aspect ratio ('16:9' / '9:16' /
+// '1:1'). When provided AND the picked look has an orientation tag, we
+// enforce the match. A tagged-portrait look in a 16:9 video would get
+// letterboxed by HeyGen into a vertical strip with white sidebars; we
+// hard-error here instead so the user re-picks consciously.
+const ASPECT_TO_ORIENTATION = { '16:9': 'landscape', '9:16': 'portrait', '1:1': 'square' }
+async function resolveHeygenAvatarId(rawAvatarId, lookId, aspectRatio) {
   // Explicit look pick takes priority. We still load the look row even
   // if avatar_id isn't set, since the look has its own heygen_look_id.
   if (lookId) {
-    const lkRows = await supaFetch(`avatar_looks?id=eq.${lookId}&select=heygen_look_id&limit=1`).catch(() => [])
-    const heygenLookId = lkRows?.[0]?.heygen_look_id
-    if (heygenLookId) return heygenLookId
-    // Look row exists but no heygen_look_id yet (training failed / not
-    // synced). Fall through to the avatar-level resolution rather than
-    // erroring — user gets the next-best avatar instead of a hard block.
+    const lkRows = await supaFetch(`avatar_looks?id=eq.${lookId}&select=heygen_look_id,orientation,name&limit=1`).catch(() => [])
+    const look = lkRows?.[0]
+    if (!look) throw new Error(`Picked look ${lookId} no longer exists.`)
+    // Orientation guard. Only fire when both sides are known — untagged
+    // looks (orientation:null) get the benefit of the doubt.
+    const wantOrient = ASPECT_TO_ORIENTATION[aspectRatio]
+    if (wantOrient && look.orientation && look.orientation !== wantOrient) {
+      throw new Error(
+        `The picked look is tagged ${look.orientation} but the video is ${aspectRatio} (${wantOrient}). ` +
+        `Re-tag the look on the Avatars page or pick a different look that matches the video aspect.`
+      )
+    }
+    if (look.heygen_look_id) return look.heygen_look_id
+    // No silent fall-through: if the user explicitly picked a look but
+    // it's not trained on HeyGen yet, falling back to the avatar's
+    // default talking_photo silently is what produced the portrait
+    // letterbox bug. Force the user to pick a trained look.
+    throw new Error(
+      `The picked look ("${look.name || lookId}") hasn't finished training on HeyGen yet — ` +
+      `it has no heygen_look_id. Wait for training to complete on the Avatars page, or pick a different look.`
+    )
   }
 
   if (!rawAvatarId) return null
@@ -208,6 +231,13 @@ async function dispatchAvatar(segment, heygenAvatarId, voiceUrl, aspectRatio) {
   if (!heygenAvatarId) throw new Error('No avatar configured on the video — set one in the form')
   if (!voiceUrl) throw new Error('Voice must be generated first (sequencing bug)')
   const dimensionMap = { '16:9': '16:9', '9:16': '9:16', '1:1': '1:1' }
+  // Motion prompt sent to HeyGen v4. Prefer whatever's on the row
+  // (user-edited or Claude-generated) so manual direction is honored;
+  // otherwise rotate through the canonical pool by segment_index so
+  // every avatar segment ships with intentional body language and
+  // adjacent segments never repeat the same gesture.
+  const motionPrompt = (segment.motion_gesture_prompt && segment.motion_gesture_prompt.trim())
+    || pickMotionGesture(segment.segment_index)
   const resp = await generateVideoV3({
     avatarId: heygenAvatarId,
     audioUrl: voiceUrl,
@@ -216,7 +246,7 @@ async function dispatchAvatar(segment, heygenAvatarId, voiceUrl, aspectRatio) {
       title: `Studio segment ${segment.segment_index + 1}`,
       aspect_ratio: dimensionMap[aspectRatio] || '16:9',
       resolution: '1080p',
-      motion_prompt: segment.motion_gesture_prompt || '',
+      motion_prompt: motionPrompt,
     },
   })
   const videoId = resp?.data?.video_id || resp?.video_id || resp?.id
@@ -294,6 +324,17 @@ async function orchestrateSegment(segment, ctx) {
         await patch({ kie_task_id: taskId })
         // status stays 'generating_image' until the poller fills image_url + flips to 'ready'
       } else if (segment.voice_url && segment.image_url) {
+        await patch({ status: 'ready', error: null })
+      }
+      return
+    }
+    if (segment.segment_type === 'screenshot') {
+      // Screenshot segments need voice only — the image_url is filled
+      // by the user via /api/studio/segments/upload-screenshot. We
+      // never call Kie here. Flip to 'ready' once both voice + image
+      // are in place; otherwise the segment surfaces in the editor
+      // with an upload affordance until the user supplies one.
+      if (segment.voice_url && segment.image_url) {
         await patch({ status: 'ready', error: null })
       }
       return
@@ -453,7 +494,7 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'This video has avatar segments but no avatar selected. Pick one in the form or change the avatar segments to voiceover.' })
       }
       try {
-        heygenAvatarId = await resolveHeygenAvatarId(video.avatar_id, video.look_id)
+        heygenAvatarId = await resolveHeygenAvatarId(video.avatar_id, video.look_id, video.aspect_ratio)
         if (!heygenAvatarId) throw new Error('Could not resolve HeyGen avatar id from the selected avatar')
       } catch (e) {
         return res.status(400).json({ error: e.message })

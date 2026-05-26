@@ -203,12 +203,38 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
     aspect_ratio: '16:9',
     template_id: 'sleek',
     captions_enabled: true,
+    // Background-music selection. Tracks live on the user's account-wide
+    // music library (user_profiles.music_tracks). 'off' = silent bg;
+    // 'loop_one' = repeat music_track_id; 'cycle_all' = play all in
+    // order, loop the playlist. Volume is a 0..1 multiplier under voice.
+    music_mode: 'off',
+    music_track_id: '',
+    music_volume: 0.12,
     // Voiceover-upload mode. When 'upload', user picks a file instead
     // of providing a topic; the server transcribes + segments.
     voice_source: 'topic',  // 'topic' | 'upload'
     voiceover_file: null,
   })
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
+
+  // Account-wide music library, fetched on modal open. Same source the
+  // Profiles page edits. Used by the Background-music field to render
+  // the track picker when music_mode === 'loop_one'.
+  const [musicTracks, setMusicTracks] = useState([])
+  useEffect(() => {
+    if (!session?.access_token) return
+    let cancelled = false
+    fetch('/api/account/music-tracks', {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    })
+      .then((r) => r.json())
+      .then((b) => {
+        if (cancelled) return
+        if (Array.isArray(b?.tracks)) setMusicTracks(b.tracks)
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [session?.access_token])
 
   // Load the visual template gallery. Each template defines the look
   // (background pattern, typography, motion graphics style, etc.); the
@@ -257,6 +283,18 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
   const wantOrient = aspectToOrientation[form.aspect_ratio]
   const lookMismatch = selectedLook?.orientation && wantOrient && selectedLook.orientation !== wantOrient
   const lookUnspecified = selectedLook && !selectedLook.orientation
+  // A look without a heygen_look_id hasn't finished training on HeyGen.
+  // Picking one used to silently fall back to the avatar's default
+  // talking_photo at render time — which is portrait — producing a
+  // letterboxed avatar on landscape videos. Block submission instead.
+  const lookUntrained = !!selectedLook && !selectedLook.heygen_look_id
+  // Compound blocker — surfaced both as a disabled submit button and as
+  // a clear inline message above it so the user knows what to fix.
+  const lookBlocker = lookMismatch
+    ? `The picked look is ${selectedLook?.orientation} but the video is ${form.aspect_ratio} (${wantOrient}). Pick a matching look or re-tag this one.`
+    : lookUntrained
+      ? `The picked look hasn't finished training on HeyGen yet. Wait for training to complete on the Avatars page, or pick a different look.`
+      : null
 
   // Pull avatars for the active profile. Voice is tied to the avatar
   // (or to the brand profile when "no avatar" is selected) so we don't
@@ -347,6 +385,9 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
             aspect_ratio: form.aspect_ratio,
             template_id: form.template_id || 'sleek',
             captions_enabled: form.captions_enabled !== false,
+            music_mode: form.music_mode || 'off',
+            music_track_id: form.music_mode === 'loop_one' ? (form.music_track_id || null) : null,
+            music_volume: Number(form.music_volume) || 0.12,
           }) },
         )
         const segBody = await segR.json().catch(() => ({}))
@@ -369,6 +410,9 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
         captions_enabled: form.captions_enabled !== false,
         overlays_enabled: true,
         motion_graphics_enabled: true,
+        music_mode: form.music_mode || 'off',
+        music_track_id: form.music_mode === 'loop_one' ? (form.music_track_id || null) : null,
+        music_volume: Number(form.music_volume) || 0.12,
       }
       const r = await authedFetch('/api/studio/videos', session.access_token, {
         method: 'POST', body: JSON.stringify(body),
@@ -457,26 +501,36 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
                   const thumb = l.images?.[0]?.image_url
                   const isSelected = form.look_id === l.id
                   const orientationTag = l.orientation
+                  // Looks without a heygen_look_id can't actually be
+                  // rendered — they'd fall back to the avatar default
+                  // at render time and produce a letterbox mismatch.
+                  // Grey them out + show "TRAINING" label so users
+                  // skip them in the picker.
+                  const isUntrained = !l.heygen_look_id
                   return (
                     <button
                       key={l.id}
                       type="button"
-                      onClick={() => set('look_id', l.id)}
+                      onClick={() => { if (!isUntrained) set('look_id', l.id) }}
+                      disabled={isUntrained}
                       style={{
                         padding: 0,
                         background: 'var(--surface)',
                         border: `2px solid ${isSelected ? 'var(--primary)' : 'transparent'}`,
                         borderRadius: 10,
                         overflow: 'hidden',
-                        cursor: 'pointer',
+                        cursor: isUntrained ? 'not-allowed' : 'pointer',
                         position: 'relative',
                         aspectRatio: orientationTag === 'landscape' ? '16/9' : '3/4',
+                        opacity: isUntrained ? 0.45 : 1,
                       }}
-                      title={l.name || `Look ${idx + 1}`}
+                      title={isUntrained
+                        ? `${l.name || `Look ${idx + 1}`} — still training on HeyGen. Wait for training to finish, then re-open this picker.`
+                        : (l.name || `Look ${idx + 1}`)}
                     >
                       {thumb ? (
                         <img src={thumb} alt={l.name || `Look ${idx + 1}`}
-                          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', filter: isUntrained ? 'grayscale(0.7)' : 'none' }} />
                       ) : (
                         <div style={{ width: '100%', height: '100%', background: 'var(--surface-2)' }} />
                       )}
@@ -495,6 +549,20 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
                           <span style={{ opacity: 0.7, fontWeight: 500 }}>{orientationTag[0].toUpperCase()}</span>
                         )}
                       </div>
+                      {/* Untrained badge — top-right corner, hard to miss. */}
+                      {isUntrained && (
+                        <div style={{
+                          position: 'absolute', top: 6, right: 6,
+                          padding: '2px 6px',
+                          fontSize: 9, fontWeight: 800,
+                          letterSpacing: 0.5,
+                          textTransform: 'uppercase',
+                          background: 'rgba(0,0,0,0.7)',
+                          color: '#fbbf24',
+                          borderRadius: 4,
+                          border: '1px solid rgba(251,191,36,0.5)',
+                        }}>Training</div>
+                      )}
                     </button>
                   )
                 })}
@@ -597,6 +665,90 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
         </label>
       </Field>
 
+      {/* 7. Background music — pulls from the account-wide music library
+          (Profiles page → Music tracks). Loop one track, cycle the whole
+          library, or skip music entirely. Volume sits under the voice. */}
+      <Field
+        label="7.  Background music"
+        hint="Plays under the voiceover. Auto fade-in (1.5s) + fade-out (2s)."
+      >
+        <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+          {[
+            { v: 'off',        label: 'Off' },
+            { v: 'loop_one',   label: 'Loop one song' },
+            { v: 'cycle_all',  label: 'Cycle all songs' },
+          ].map((r) => (
+            <button
+              key={r.v}
+              type="button"
+              onClick={() => set('music_mode', r.v)}
+              className={form.music_mode === r.v ? 'btn-primary' : 'btn-secondary'}
+              style={{ flex: 1, padding: '10px 8px', fontSize: 12.5, fontWeight: 700 }}
+            >{r.label}</button>
+          ))}
+        </div>
+
+        {/* Track picker — only when looping a single song. */}
+        {form.music_mode === 'loop_one' && (
+          <div style={{ marginTop: 4 }}>
+            {musicTracks.length === 0 ? (
+              <div style={{
+                padding: '8px 10px', fontSize: 12,
+                background: 'var(--surface)', border: '1px dashed var(--border)',
+                borderRadius: 6, color: 'var(--muted)',
+              }}>
+                No tracks in your library yet. Add some on the Profiles page → Music tracks.
+              </div>
+            ) : (
+              <select
+                className="input"
+                value={form.music_track_id || ''}
+                onChange={(e) => set('music_track_id', e.target.value)}
+                style={{ width: '100%' }}
+              >
+                <option value="">— Pick a track —</option>
+                {musicTracks.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name || t.id}</option>
+                ))}
+              </select>
+            )}
+          </div>
+        )}
+
+        {/* Cycle-all preview list — informational only. */}
+        {form.music_mode === 'cycle_all' && (
+          <div style={{
+            marginTop: 4, padding: '8px 10px', fontSize: 12,
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            borderRadius: 6, color: 'var(--text-soft)',
+          }}>
+            {musicTracks.length === 0
+              ? 'No tracks in your library yet. Add some on the Profiles page → Music tracks.'
+              : `Will play in order, looping if the video runs past the playlist: ${musicTracks.map((t) => t.name).filter(Boolean).slice(0, 4).join(' · ')}${musicTracks.length > 4 ? ` + ${musicTracks.length - 4} more` : ''}`}
+          </div>
+        )}
+
+        {/* Volume — 3-preset picker keeps the UI simple. The numeric value
+            saved to the row drives ffmpeg's volume= filter at render time. */}
+        {form.music_mode !== 'off' && (
+          <div style={{ marginTop: 10, display: 'flex', gap: 6 }}>
+            {[
+              { v: 0.08, label: 'Subtle' },
+              { v: 0.12, label: 'Low (default)' },
+              { v: 0.18, label: 'Prominent' },
+            ].map((r) => (
+              <button
+                key={r.v}
+                type="button"
+                onClick={() => set('music_volume', r.v)}
+                className={Math.abs(form.music_volume - r.v) < 0.005 ? 'btn-primary' : 'btn-secondary'}
+                style={{ flex: 1, padding: '6px 8px', fontSize: 11.5, fontWeight: 600 }}
+              >{r.label}</button>
+            ))}
+          </div>
+        )}
+      </Field>
+
       {/* Inline orientation tagger for the selected look. Saves to the
           avatar_looks row so every future video sees the right tag. */}
       {selectedLook && (
@@ -626,6 +778,17 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
         }}>{error}</div>
       )}
 
+      {/* Hard-stop for orientation mismatch or untrained look. Same
+          conditions disable the submit button — this banner makes the
+          reason visible so the disabled state isn't a mystery. */}
+      {lookBlocker && !error && (
+        <div style={{
+          background: 'rgba(239,68,68,0.12)', color: 'var(--red)',
+          border: '1px solid rgba(239,68,68,0.35)', borderRadius: 8,
+          padding: '8px 12px', marginTop: 12, fontSize: 12.5,
+        }}>{lookBlocker}</div>
+      )}
+
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 20 }}>
         {onCancel && (
           <button type="button" className="btn-secondary" onClick={onCancel} disabled={busy}>
@@ -635,8 +798,14 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
         <button
           type="submit"
           className="btn-primary"
-          disabled={busy || !form.topic_prompt.trim() || !canRender}
-          title={!canRender ? 'Not enough credits for this video. Top up or pick a shorter length.' : undefined}
+          disabled={busy || !form.topic_prompt.trim() || !canRender || !!lookBlocker}
+          title={
+            lookBlocker
+              ? lookBlocker
+              : !canRender
+                ? 'Not enough credits for this video. Top up or pick a shorter length.'
+                : undefined
+          }
         >
           {busy ? <Loader2 size={14} className="spin" /> : <Wand2 size={14} />}
           {busy ? 'Creating…' : 'Generate video map'}
@@ -1391,6 +1560,7 @@ const SEGMENT_TYPE_OPTIONS = [
   { value: 'voiceover_broll',            label: 'Voiceover + B-roll' },
   { value: 'voiceover_motion_graphics',  label: 'Voiceover + Motion graphics' },
   { value: 'pure_motion_graphics',       label: 'Motion graphics only (no VO)' },
+  { value: 'screenshot',                 label: 'Use screenshot' },
 ]
 const HF_COMPOSITION_OPTIONS = [
   '', 'title-card-v1', 'stat-reveal-v1', 'list-overlay-v1',
@@ -1520,6 +1690,7 @@ function SegmentList({ video, manualMode = false }) {
             // avatar_video_url to the editor. Passing a no-op is the
             // simplest signal "yes this row supports upload".
             onUploadAvatar={() => { /* realtime handles refresh */ }}
+            onUploadScreenshot={() => { /* realtime handles refresh */ }}
             aspectRatio={video.aspect_ratio}
             manualMode={manualMode}
           />
@@ -3241,10 +3412,11 @@ function RegenOption({ label, checked, onChange, hint, cost, disabled }) {
 // One row of the video map. Cards are dense but legible — Studio is
 // desktop-first. Each editable field debounces text-input PATCHes and
 // fires select/checkbox PATCHes on change.
-function SegmentRow({ segment, onPatch, onDelete, onRegen, onUploadAvatar, aspectRatio, manualMode = false }) {
+function SegmentRow({ segment, onPatch, onDelete, onRegen, onUploadAvatar, onUploadScreenshot, aspectRatio, manualMode = false }) {
   const isAvatar = segment.segment_type === 'avatar'
   const isBroll = segment.segment_type === 'voiceover_broll'
   const isMotion = segment.segment_type === 'voiceover_motion_graphics' || segment.segment_type === 'pure_motion_graphics'
+  const isScreenshot = segment.segment_type === 'screenshot'
   const isPureMotion = segment.segment_type === 'pure_motion_graphics'
   const [showVarsEditor, setShowVarsEditor] = useState(false)
 
@@ -3474,6 +3646,20 @@ function SegmentRow({ segment, onPatch, onDelete, onRegen, onUploadAvatar, aspec
               />
             </div>
           )}
+
+          {/* Screenshot upload — always available on screenshot
+              segments (not gated by manualMode). The render worker
+              uses the uploaded image inside the template-styled
+              device frame. */}
+          {isScreenshot && onUploadScreenshot && (
+            <div style={{ marginTop: 8 }}>
+              <UploadScreenshotButton
+                segmentId={segment.id}
+                hasUpload={!!segment.image_url}
+                onUploaded={onUploadScreenshot}
+              />
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -3567,6 +3753,95 @@ function UploadAvatarButton({ segmentId, hasUpload, onUploaded }) {
         ref={inputRef}
         type="file"
         accept="video/mp4,video/*"
+        onChange={onFile}
+        style={{ display: 'none' }}
+      />
+      {err && (
+        <span style={{ fontSize: 11, color: 'var(--red)' }}>{err}</span>
+      )}
+    </div>
+  )
+}
+
+// File-input button for screenshot segments. Same 3-phase signed-URL
+// flow as UploadAvatarButton — keeps the upload off Vercel (Supabase
+// Storage handles the bytes directly). On success the server patches
+// segment.image_url; realtime delivers the new value back to the UI.
+function UploadScreenshotButton({ segmentId, hasUpload, onUploaded }) {
+  const { session } = useAuth()
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const inputRef = useRef(null)
+
+  const onFile = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file || !session?.access_token) return
+    setBusy(true); setErr('')
+    try {
+      const initR = await authedFetch(
+        `/api/studio/segments/upload-screenshot?id=${segmentId}&mode=init`,
+        session.access_token,
+        { method: 'POST', body: JSON.stringify({
+          filename: file.name,
+          content_type: file.type || 'image/png',
+        }) },
+      )
+      const initBody = await initR.json().catch(() => ({}))
+      if (!initR.ok) throw new Error(initBody.error || `Upload init failed (${initR.status})`)
+      const { signed_url, path, token, content_type } = initBody
+
+      const putR = await fetch(signed_url, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': content_type,
+          'x-upsert': 'true',
+        },
+        body: file,
+      })
+      if (!putR.ok) {
+        const detail = await putR.text().catch(() => '')
+        throw new Error(`Storage upload ${putR.status}: ${detail.slice(0, 200)}`)
+      }
+
+      const finR = await authedFetch(
+        `/api/studio/segments/upload-screenshot?id=${segmentId}&mode=finalize`,
+        session.access_token,
+        { method: 'POST', body: JSON.stringify({ path }) },
+      )
+      const finBody = await finR.json().catch(() => ({}))
+      if (!finR.ok) throw new Error(finBody.error || `Finalize failed (${finR.status})`)
+      toast({ message: 'Screenshot uploaded.', kind: 'success' })
+      onUploaded?.()
+    } catch (e2) {
+      setErr(e2.message)
+    } finally {
+      setBusy(false)
+      if (inputRef.current) inputRef.current.value = ''
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        disabled={busy}
+        className="btn-ghost"
+        style={{
+          fontSize: 11, padding: '4px 10px',
+          color: 'var(--text-soft)', border: '1px dashed var(--border)',
+          borderRadius: 6, cursor: busy ? 'wait' : 'pointer', background: 'transparent',
+        }}
+        title="Upload a screenshot (PNG / JPG / WEBP). It will be rendered inside the template's device-framed card while the voiceover plays."
+      >
+        {busy ? <Loader2 size={11} className="spin" /> : null}
+        {hasUpload ? '↑ Replace screenshot' : '↑ Upload screenshot'}
+      </button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/*"
         onChange={onFile}
         style={{ display: 'none' }}
       />

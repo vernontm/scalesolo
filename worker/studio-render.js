@@ -525,6 +525,116 @@ async function mixSfxIntoFinal(finalIn, finalOut, cues, localPaths, masterVolume
   return finalOut
 }
 
+// ── Background-music bed builder + mixer ──────────────────────────────────
+// Two-step pipeline that sits between the voice concat and the SFX mix:
+//   1. buildMusicBed() — assemble a music.mp3 the exact length of the
+//      voice track. Modes: 'loop_one' (loop a single track from the
+//      user's library) or 'cycle_all' (play every track in order, loop
+//      the playlist if the video runs past it). Applies 1.5s fade-in +
+//      2s fade-out at the tail so the music never cuts hard.
+//   2. mixMusicIntoFinal() — amix the music under the voice at the
+//      configured low volume. Voice stays at unity, music sits under it.
+//      SFX mix runs AFTER this so SFX always pokes through the music.
+//
+// Returns null when no music should play (off mode, no tracks in
+// library, or any ffmpeg/download failure) so the caller falls back to
+// voice-only finalPath. Music is a "nice to have" and never blocks a
+// render.
+async function loadUserMusicTracks(supabase, userId) {
+  if (!userId) return []
+  const { data } = await supabase
+    .from('user_profiles').select('music_tracks').eq('id', userId).maybeSingle()
+  const arr = Array.isArray(data?.music_tracks) ? data.music_tracks : []
+  return arr.filter((t) => t && typeof t.url === 'string' && t.url)
+}
+
+async function buildMusicBed(video, supabase, durationSecs, workdir) {
+  const mode = video?.music_mode
+  if (!mode || mode === 'off' || !durationSecs || durationSecs <= 0) return null
+  try {
+    const tracks = await loadUserMusicTracks(supabase, video.user_id)
+    if (!tracks.length) return null
+
+    let selected = []
+    if (mode === 'loop_one') {
+      const id = video.music_track_id
+      const hit = tracks.find((t) => t.id === id) || tracks[0]
+      if (!hit) return null
+      selected = [hit]
+    } else {
+      // cycle_all — keep library order
+      selected = tracks
+    }
+
+    // Download each unique track to workdir. Use index-based filename
+    // so the concat list can reference deterministic paths.
+    const localPaths = []
+    for (let i = 0; i < selected.length; i++) {
+      const p = join(workdir, `music-src-${i}.mp3`)
+      try { await downloadTo(selected[i].url, p); localPaths.push(p) }
+      catch (e) { console.warn(`[studio-render] music download failed for ${selected[i].url?.slice(0, 80)}: ${e.message}`) }
+    }
+    if (!localPaths.length) return null
+
+    // Step A — if more than one track, concat them into a single base.
+    // We use ffmpeg's concat demuxer (text file with `file '/abs/path'`
+    // entries) so we don't need matching codecs / sample rates.
+    let basePath = localPaths[0]
+    if (localPaths.length > 1) {
+      const listPath = join(workdir, 'music-list.txt')
+      // Escape single quotes in paths for ffmpeg's concat format.
+      const listBody = localPaths.map((p) => `file '${p.replace(/'/g, `'\\''`)}'`).join('\n')
+      await writeFile(listPath, listBody, 'utf8')
+      basePath = join(workdir, 'music-base.mp3')
+      await runFFmpeg([
+        '-y', '-f', 'concat', '-safe', '0', '-i', listPath,
+        '-c:a', 'libmp3lame', '-b:a', '192k', '-ar', '48000', '-ac', '2',
+        basePath,
+      ], 180_000)
+    }
+
+    // Step B — loop the base track to fill the full video duration,
+    // then trim to exactly durationSecs and apply fades. -stream_loop -1
+    // before -i loops the input infinitely; -t trims the output.
+    const fadeInSecs = Math.min(1.5, Math.max(0.3, durationSecs / 8))
+    const fadeOutSecs = Math.min(2.0, Math.max(0.5, durationSecs / 6))
+    const fadeOutStart = Math.max(0, durationSecs - fadeOutSecs)
+    const musicPath = join(workdir, 'music.mp3')
+    await runFFmpeg([
+      '-y', '-stream_loop', '-1', '-i', basePath,
+      '-t', durationSecs.toFixed(3),
+      '-af', `afade=t=in:st=0:d=${fadeInSecs.toFixed(3)},afade=t=out:st=${fadeOutStart.toFixed(3)}:d=${fadeOutSecs.toFixed(3)}`,
+      '-c:a', 'libmp3lame', '-b:a', '192k', '-ar', '48000', '-ac', '2',
+      musicPath,
+    ], 180_000)
+
+    return musicPath
+  } catch (e) {
+    console.warn(`[studio-render] buildMusicBed failed: ${e?.message || e}`)
+    return null
+  }
+}
+
+async function mixMusicIntoFinal(finalIn, finalOut, musicPath, volume) {
+  const v = Math.max(0, Math.min(1, Number(volume) || 0.12))
+  // Voice stays at unity (weight 4), music sits under it (weight 1
+  // after its own volume= multiplier). duration=first keeps the output
+  // pinned to the voice track length so trailing silence on the music
+  // bed never extends the video.
+  await runFFmpeg([
+    '-y', '-i', finalIn, '-i', musicPath,
+    '-filter_complex',
+    `[1:a]volume=${v.toFixed(3)},aformat=channel_layouts=stereo:sample_rates=48000[m];` +
+    `[0:a][m]amix=inputs=2:duration=first:dropout_transition=0:normalize=0:weights=4 1[mixed]`,
+    '-map', '0:v:0', '-map', '[mixed]',
+    '-c:v', 'copy',
+    '-c:a', 'aac', '-b:a', '192k', '-ar', '48000',
+    '-movflags', '+faststart',
+    finalOut,
+  ], 300_000)
+  return finalOut
+}
+
 // ── Overlay layer renderer (transparent PNG sequence) ─────────────────────
 // Renders public/studio-compositions/overlay-layer-v1.html at full
 // segment dimensions with omitBackground=true so we get an alpha
@@ -575,7 +685,7 @@ async function renderOverlayPngs(seg, dir, dim, durationSecs, baseUrl, bypassSec
   }
 
   try {
-    await page.setViewport({ width: dim.w, height: dim.h, deviceScaleFactor: 1 })
+    await page.setViewport({ width: dim.w, height: dim.h, deviceScaleFactor: 2 })
     // Disable Chrome's HTTP cache so each bake fetches fresh CSS from
     // Vercel — we've seen stale _ov-universal.css cached between bakes
     // when the puppeteer browser instance is reused. The pages are
@@ -687,7 +797,7 @@ async function renderHyperFramesChunk(seg, paths, dim, durationSecs, baseUrl, by
   }
 
   try {
-    await page.setViewport({ width: dim.w, height: dim.h, deviceScaleFactor: 1 })
+    await page.setViewport({ width: dim.w, height: dim.h, deviceScaleFactor: 2 })
 
     const compId = seg.hyperframes_composition_id
     const varsHash = encodeVarsForUrl(seg.hyperframes_variables || {})
@@ -976,6 +1086,46 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
       } else if (seg.segment_type === 'voiceover_broll') {
         await downloadTo(seg.image_url, paths.image)
         await renderBrollChunk(seg, paths, dim, Math.max(2, voiceDuration || 4))
+      } else if (seg.segment_type === 'screenshot') {
+        // User-uploaded screenshot rendered in a template-styled device
+        // frame. We don't let Claude pick the composition — the worker
+        // hardcodes it to {template_id}-scene-screenshot-v1 and passes
+        // the uploaded image URL as a variable. Voiceover plays over
+        // it; no avatar PiP.
+        const wantDuration = Math.max(2, voiceDuration || 4)
+        const tmplId = video.template_id || 'sleek'
+        const screenshotCompId = `${tmplId}-scene-screenshot-v1`
+        const screenshotSeg = {
+          ...seg,
+          hyperframes_composition_id: screenshotCompId,
+          hyperframes_variables: {
+            ...(seg.hyperframes_variables || {}),
+            screenshot_url: seg.image_url || '',
+            accent_color: video.brand_color || undefined,
+            accent_2_color: video.brand_color_secondary || undefined,
+          },
+        }
+        try {
+          await renderHyperFramesChunk(screenshotSeg, paths, dim, wantDuration, baseUrl, bypassSecret)
+          progress.hf_rendered.push(seg.id)
+        } catch (e) {
+          const reason = e?.message || String(e)
+          console.warn(`[studio-render] screenshot HF render failed for ${screenshotCompId}: ${reason}`)
+          progress.hf_fallback.push({
+            seg_id: seg.id,
+            composition_id: screenshotCompId,
+            reason: reason.slice(0, 1200),
+          })
+          // Fall back to the still-image Ken Burns renderer so the bake
+          // still produces something usable if the composition file is
+          // missing on the deployed bundle.
+          if (seg.image_url) {
+            await downloadTo(seg.image_url, paths.image)
+            await renderBrollChunk(seg, paths, dim, wantDuration)
+          } else {
+            await renderMotionChunk(seg, paths, dim, wantDuration, fontPath)
+          }
+        }
       } else if (seg.segment_type === 'voiceover_motion_graphics' || seg.segment_type === 'pure_motion_graphics') {
         const wantDuration = seg.segment_type === 'pure_motion_graphics' ? 2.5 : Math.max(2, voiceDuration || 4)
         if (seg.hyperframes_composition_id) {
@@ -1087,7 +1237,9 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
     // concat — hard cut.
     progress.stage = 'concat'
     await writeProgress()
-    const finalPath = join(workdir, 'final.mp4')
+    // Mutable so the optional music-mix pass can swap in a music-bedded
+    // version before the SFX mix reads from it.
+    let finalPath = join(workdir, 'final.mp4')
 
     // Map of transition primitive → { ffmpeg_xfade_name, duration_secs }.
     // Only entries listed here use xfade; everything else stays hard cut.
@@ -1226,7 +1378,7 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
         '-y', ...inputs,
         '-filter_complex', filter.join(';'),
         '-map', finalV, '-map', finalA,
-        '-c:v', 'libx264', '-preset', 'medium', '-crf', '20',
+        '-c:v', 'libx264', '-preset', 'medium', '-crf', '18',
         '-profile:v', 'high', '-level', '4.1',
         '-c:a', 'aac', '-b:a', '192k', '-ar', '48000',
         '-pix_fmt', 'yuv420p',
@@ -1245,12 +1397,43 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
         '-y', ...inputs,
         '-filter_complex', filter,
         '-map', '[v]', '-map', '[a]',
-        '-c:v', 'libx264', '-preset', 'medium', '-crf', '20',
+        '-c:v', 'libx264', '-preset', 'medium', '-crf', '18',
         '-profile:v', 'high', '-level', '4.1',
         '-c:a', 'aac', '-b:a', '192k', '-ar', '48000',
         '-pix_fmt', 'yuv420p',
         '-movflags', '+faststart', finalPath,
       ], 600_000)
+    }
+
+    // 5.4. Background-music bed (optional). Reassigns finalPath so the
+    // downstream SFX mix runs on top of music + voice — SFX should poke
+    // through the bed, not under it. Failure is non-fatal: we log,
+    // leave finalPath as the voice-only track, and continue.
+    if (video.music_mode && video.music_mode !== 'off') {
+      try {
+        progress.stage = 'music_mix'
+        await writeProgress()
+        // Probe the freshly-concatenated final video so the music bed
+        // matches its EXACT length (handles xfade overlap shortening).
+        const finalDur = await probeAudioDurationSecs(finalPath)
+        const musicBedPath = await buildMusicBed(video, supabase, finalDur, workdir)
+        if (musicBedPath) {
+          const musicMixedPath = join(workdir, 'final-with-music.mp4')
+          await mixMusicIntoFinal(finalPath, musicMixedPath, musicBedPath, video.music_volume)
+          finalPath = musicMixedPath
+          progress.music_mixed = {
+            mode: video.music_mode,
+            volume: video.music_volume,
+            duration_secs: Number(finalDur.toFixed(2)),
+          }
+        } else {
+          progress.music_skipped = { reason: 'no_bed_built' }
+        }
+      } catch (e) {
+        const reason = (e?.message || String(e)).slice(0, 800)
+        console.warn(`[studio-render] music mix failed: ${reason}`)
+        progress.music_skipped = { reason }
+      }
     }
 
     // 5.5. SFX mix pass. Schedules entrance + transition + composition-

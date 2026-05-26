@@ -1,0 +1,191 @@
+<!doctype html>
+<html
+  lang="en"
+  data-composition-id="sleek-scene-screenshot-v1"
+  data-composition-variables='[
+    {"id":"screenshot_url","type":"string","label":"Screenshot URL (uploaded by user)","default":""},
+    {"id":"meta_label","type":"string","label":"Meta label","default":"VTM"},
+    {"id":"meta_subtitle","type":"string","label":"Meta subtitle","default":"Screenshot"},
+    {"id":"handle","type":"string","label":"Handle","default":"raytheaiguy"},
+    {"id":"accent_color","type":"color","label":"Accent","default":"#e3151e"}
+  ]'>
+<head>
+<meta charset="UTF-8">
+<title>Sleek Scene — Screenshot</title>
+<link rel="stylesheet" href="/studio-compositions/_shared.css">
+<style>
+  :root {
+    --bg-base: #0a0a0c;
+    --accent: #e3151e;
+    --accent-glow: rgba(227, 21, 30, 0.4);
+    --text-primary: #ffffff;
+    --text-muted: rgba(255, 255, 255, 0.4);
+    --surface-border: rgba(255, 255, 255, 0.12);
+    --grid-color: rgba(227, 21, 30, 0.15);
+  }
+  html, body { width:100%; height:100%; overflow:hidden; background:#000; margin:0; }
+  body { display:flex; align-items:center; justify-content:center; }
+
+  .scene {
+    position:relative;
+    width:1920px; height:1080px;
+    background: var(--bg-base);
+    overflow:hidden;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    color: var(--text-primary);
+    transform-origin:center center;
+  }
+  @media (max-width:1920px) { .scene { transform: scale(calc(100vw / 1920)); } }
+  @media (max-height:1080px) { .scene { transform: scale(calc(100vh / 1080)); } }
+
+  .scene::before {
+    content:''; position:absolute; inset:-10%;
+    background-image:
+      linear-gradient(var(--grid-color) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+    background-size:80px 80px;
+    animation: drift_diagonal 12s linear infinite;
+    pointer-events:none; z-index:1;
+  }
+  @keyframes drift_diagonal { from { transform: translate(0,0); } to { transform: translate(-80px,-80px); } }
+  .scene::after {
+    content:''; position:absolute; top:-30%; right:-20%;
+    width:70%; height:100%;
+    background: radial-gradient(circle, var(--accent-glow) 0%, transparent 60%);
+    pointer-events:none; z-index:2; filter: blur(40px);
+  }
+
+  .corner-mark { position:absolute; z-index:5; pointer-events:none; }
+  .corner-mark.tl { top:60px; left:60px; }
+  .corner-mark.tr { top:60px; right:60px; }
+  .corner-mark.bl { bottom:60px; left:60px; }
+  .corner-mark.br { bottom:60px; right:60px; }
+  .corner-mark svg { width:60px; height:60px; opacity:0.4; }
+
+  .scene-meta {
+    position:absolute; top:60px; left:60px; z-index:6;
+    display:flex; align-items:center; gap:16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size:12px; color: var(--text-muted);
+    letter-spacing:0.2em; text-transform:uppercase;
+  }
+  .scene-meta .dot { width:8px; height:8px; background:var(--accent); border-radius:50%; box-shadow:0 0 12px var(--accent); }
+  .scene-meta .divider { width:32px; height:1px; background:var(--surface-border); }
+
+  .scene-handle {
+    position:absolute; bottom:60px; right:60px; z-index:6;
+    font-family: 'JetBrains Mono', monospace;
+    font-size:13px; color: rgba(255,255,255,0.65);
+    letter-spacing:0.1em; font-weight:600;
+  }
+  .scene-handle::before { content:'@'; color:var(--accent); margin-right:4px; }
+
+  /* Device-framed screenshot card. The image fills the inner area
+     with object-fit:cover so any aspect ratio looks intentional. */
+  .shot-frame {
+    position:relative; z-index:4;
+    width:1500px; height:840px;
+    margin: 120px auto 0;
+    border-radius:20px;
+    overflow:hidden;
+    background:#1a1a1f;
+    box-shadow:
+      0 30px 100px rgba(0,0,0,0.6),
+      0 0 80px rgba(227,21,30,0.15),
+      0 0 0 1px rgba(255,255,255,0.06);
+  }
+  .shot-chrome {
+    display:flex; align-items:center; gap:10px;
+    padding:14px 20px;
+    background: rgba(0,0,0,0.35);
+    border-bottom:1px solid rgba(255,255,255,0.06);
+  }
+  .shot-chrome .light { width:12px; height:12px; border-radius:50%; }
+  .shot-chrome .light.red { background:#ff5f57; }
+  .shot-chrome .light.yellow { background:#febc2e; }
+  .shot-chrome .light.green { background:#28c840; }
+  .shot-img-wrap {
+    position:relative;
+    width:100%;
+    height: calc(100% - 44px);
+    background:#000;
+  }
+  .shot-img {
+    width:100%; height:100%;
+    object-fit: cover;
+    object-position: center top;
+    display:block;
+  }
+  /* Fallback shown if no screenshot URL was provided. */
+  .shot-empty {
+    position:absolute; inset:0;
+    display:flex; align-items:center; justify-content:center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size:14px; color: var(--text-muted);
+    letter-spacing:0.18em; text-transform:uppercase;
+  }
+</style>
+</head>
+<body>
+
+<div class="scene">
+  <div class="corner-mark tl"><svg viewBox="0 0 100 100" fill="none"><path d="M5 30 L 5 5 L 30 5" stroke="#e3151e" stroke-width="1.5"/></svg></div>
+  <div class="corner-mark tr"><svg viewBox="0 0 100 100" fill="none"><path d="M70 5 L 95 5 L 95 30" stroke="#e3151e" stroke-width="1.5"/></svg></div>
+  <div class="corner-mark bl"><svg viewBox="0 0 100 100" fill="none"><path d="M5 70 L 5 95 L 30 95" stroke="#e3151e" stroke-width="1.5"/></svg></div>
+  <div class="corner-mark br"><svg viewBox="0 0 100 100" fill="none"><path d="M70 95 L 95 95 L 95 70" stroke="#e3151e" stroke-width="1.5"/></svg></div>
+
+  <div class="scene-meta">
+    <span class="dot"></span>
+    <span id="meta-label">VTM</span>
+    <span class="divider"></span>
+    <span id="meta-subtitle">Screenshot</span>
+  </div>
+
+  <div class="scene-handle" id="handle">raytheaiguy</div>
+
+  <div class="shot-frame">
+    <div class="shot-chrome">
+      <span class="light red"></span>
+      <span class="light yellow"></span>
+      <span class="light green"></span>
+    </div>
+    <div class="shot-img-wrap">
+      <img class="shot-img" id="screenshot-img" alt="" />
+      <div class="shot-empty" id="screenshot-empty">No screenshot uploaded</div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script src="/studio-compositions/_runtime.js"></script>
+<script>
+  (function () {
+    const v = window.__studioVars || {}
+    if (v.handle) document.getElementById('handle').textContent = v.handle
+    if (v.meta_label) document.getElementById('meta-label').textContent = v.meta_label
+    if (v.meta_subtitle) document.getElementById('meta-subtitle').textContent = v.meta_subtitle
+    if (v.accent_color) document.documentElement.style.setProperty('--accent', v.accent_color)
+
+    const img = document.getElementById('screenshot-img')
+    const empty = document.getElementById('screenshot-empty')
+    if (v.screenshot_url) {
+      img.src = v.screenshot_url
+      empty.style.display = 'none'
+    } else {
+      img.style.display = 'none'
+    }
+
+    window.__hyperframes?.recordEvent?.('card_enter', 0.4)
+
+    const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } })
+    tl.from('.shot-frame', { y: 30, opacity: 0, scale: 0.97, duration: 0.9 }, 0.1)
+      .from('.corner-mark', { opacity: 0, duration: 0.8 }, 0.4)
+      .from('.scene-meta, .scene-handle', { opacity: 0, duration: 0.6 }, 0.6)
+      .to({}, { duration: 1.5 })
+
+    window.studioPlay(tl)
+  })()
+</script>
+
+</body>
+</html>

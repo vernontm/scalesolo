@@ -32,7 +32,7 @@ export default async function handler(req, res) {
       if (!profileId) return res.status(400).json({ error: 'profile_id required' })
       await assertProfileAccess(auth.user.id, profileId)
       const rows = await supaFetch(
-        `avatars?profile_id=eq.${profileId}&order=created_at.desc&select=*,looks:avatar_looks(id,name,kind,orientation,images:avatar_look_images(id,image_url,name,order_index))`
+        `avatars?profile_id=eq.${profileId}&order=created_at.desc&select=*,looks:avatar_looks(id,name,kind,orientation,heygen_look_id,training_status,training_error,trained_at,images:avatar_look_images(id,image_url,name,order_index))`
       )
 
       // Default avatars (admin-curated, shared across every user). We

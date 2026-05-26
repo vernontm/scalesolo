@@ -1,0 +1,180 @@
+<!doctype html>
+<html
+  lang="en"
+  data-composition-id="atlas-scene-screenshot-v1"
+  data-composition-variables='[
+    {"id":"screenshot_url","type":"string","label":"Screenshot URL (uploaded by user)","default":""},
+    {"id":"meta_label","type":"string","label":"Meta label","default":"VTM"},
+    {"id":"meta_subtitle","type":"string","label":"Meta subtitle","default":"Screenshot"},
+    {"id":"handle","type":"string","label":"Handle","default":"raytheaiguy"},
+    {"id":"accent_color","type":"color","label":"Accent","default":"#818cf8"},
+    {"id":"accent_2_color","type":"color","label":"Accent 2","default":"#a855f7"}
+  ]'>
+<head>
+<meta charset="UTF-8">
+<title>Atlas Scene — Screenshot</title>
+<link rel="stylesheet" href="/studio-compositions/_shared.css">
+<style>
+  :root {
+    --bg-base: #0a0a0f;
+    --accent: #818cf8;
+    --accent-2: #a855f7;
+    --text-primary: #ffffff;
+    --text-muted: rgba(255, 255, 255, 0.42);
+    --surface-border: rgba(255, 255, 255, 0.08);
+    --dot-color: rgba(255,255,255,0.07);
+  }
+  html, body { width:100%; height:100%; overflow:hidden; background:#000; margin:0; }
+  body { display:flex; align-items:center; justify-content:center; }
+
+  .scene {
+    position:relative;
+    width:1920px; height:1080px;
+    background: var(--bg-base);
+    overflow:hidden;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    color: var(--text-primary);
+    transform-origin:center center;
+  }
+  @media (max-width:1920px) { .scene { transform: scale(calc(100vw / 1920)); } }
+  @media (max-height:1080px) { .scene { transform: scale(calc(100vh / 1080)); } }
+
+  /* Atlas signature: dot-pattern background + orbiting spotlight. */
+  .scene::before {
+    content:''; position:absolute; inset:0;
+    background-image: radial-gradient(circle, var(--dot-color) 1.2px, transparent 1.4px);
+    background-size: 28px 28px;
+    pointer-events:none; z-index:1;
+  }
+  .scene::after {
+    content:''; position:absolute; top:-25%; left:50%;
+    width:80%; height:80%; transform: translateX(-50%);
+    background: radial-gradient(circle, rgba(129,140,248,0.22) 0%, transparent 60%);
+    pointer-events:none; z-index:2; filter: blur(60px);
+    animation: spotlight_orbit 16s ease-in-out infinite;
+  }
+  @keyframes spotlight_orbit {
+    0%   { transform: translate(-50%, 0) rotate(0deg); }
+    50%  { transform: translate(-40%, 4%) rotate(180deg); }
+    100% { transform: translate(-50%, 0) rotate(360deg); }
+  }
+
+  .scene-meta {
+    position:absolute; top:60px; left:60px; z-index:6;
+    display:flex; align-items:center; gap:16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size:12px; color: var(--text-muted);
+    letter-spacing:0.2em; text-transform:uppercase;
+  }
+  .scene-meta .dot { width:8px; height:8px; background:var(--accent); border-radius:50%; box-shadow:0 0 12px var(--accent); }
+  .scene-meta .divider { width:32px; height:1px; background:var(--surface-border); }
+
+  .scene-handle {
+    position:absolute; bottom:60px; right:60px; z-index:6;
+    font-family: 'JetBrains Mono', monospace;
+    font-size:13px; color: rgba(255,255,255,0.7);
+    letter-spacing:0.1em; font-weight:600;
+  }
+  .scene-handle::before { content:'@'; color:var(--accent); margin-right:4px; }
+
+  .shot-frame {
+    position:relative; z-index:4;
+    width:1500px; height:840px;
+    margin: 120px auto 0;
+    border-radius:24px;
+    overflow:hidden;
+    background:#15151c;
+    box-shadow:
+      0 30px 100px rgba(0,0,0,0.65),
+      0 0 100px rgba(129,140,248,0.18),
+      0 0 0 1px rgba(255,255,255,0.06);
+  }
+  .shot-chrome {
+    display:flex; align-items:center; gap:10px;
+    padding:14px 20px;
+    background: rgba(0,0,0,0.3);
+    border-bottom:1px solid rgba(255,255,255,0.05);
+  }
+  .shot-chrome .light { width:12px; height:12px; border-radius:50%; }
+  .shot-chrome .light.red { background:#ff5f57; }
+  .shot-chrome .light.yellow { background:#febc2e; }
+  .shot-chrome .light.green { background:#28c840; }
+  .shot-img-wrap {
+    position:relative;
+    width:100%;
+    height: calc(100% - 44px);
+    background:#000;
+  }
+  .shot-img {
+    width:100%; height:100%;
+    object-fit: cover;
+    object-position: center top;
+    display:block;
+  }
+  .shot-empty {
+    position:absolute; inset:0;
+    display:flex; align-items:center; justify-content:center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size:14px; color: var(--text-muted);
+    letter-spacing:0.18em; text-transform:uppercase;
+  }
+</style>
+</head>
+<body>
+
+<div class="scene">
+  <div class="scene-meta">
+    <span class="dot"></span>
+    <span id="meta-label">VTM</span>
+    <span class="divider"></span>
+    <span id="meta-subtitle">Screenshot</span>
+  </div>
+
+  <div class="scene-handle" id="handle">raytheaiguy</div>
+
+  <div class="shot-frame">
+    <div class="shot-chrome">
+      <span class="light red"></span>
+      <span class="light yellow"></span>
+      <span class="light green"></span>
+    </div>
+    <div class="shot-img-wrap">
+      <img class="shot-img" id="screenshot-img" alt="" />
+      <div class="shot-empty" id="screenshot-empty">No screenshot uploaded</div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script src="/studio-compositions/_runtime.js"></script>
+<script>
+  (function () {
+    const v = window.__studioVars || {}
+    if (v.handle) document.getElementById('handle').textContent = v.handle
+    if (v.meta_label) document.getElementById('meta-label').textContent = v.meta_label
+    if (v.meta_subtitle) document.getElementById('meta-subtitle').textContent = v.meta_subtitle
+    if (v.accent_color) document.documentElement.style.setProperty('--accent', v.accent_color)
+    if (v.accent_2_color) document.documentElement.style.setProperty('--accent-2', v.accent_2_color)
+
+    const img = document.getElementById('screenshot-img')
+    const empty = document.getElementById('screenshot-empty')
+    if (v.screenshot_url) {
+      img.src = v.screenshot_url
+      empty.style.display = 'none'
+    } else {
+      img.style.display = 'none'
+    }
+
+    window.__hyperframes?.recordEvent?.('card_enter', 0.4)
+
+    const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } })
+    tl.from('.shot-frame', { y: 30, opacity: 0, scale: 0.97, duration: 0.9 }, 0.1)
+      .from('.scene-meta, .scene-handle', { opacity: 0, duration: 0.6 }, 0.5)
+      .to({}, { duration: 1.5 })
+
+    window.studioPlay(tl)
+  })()
+</script>
+
+</body>
+</html>

@@ -18,10 +18,18 @@
 
 import { setCors, requireUser, assertProfileAccess } from '../../_lib/supabase.js'
 import { gateStudio } from '../_lib/gate.js'
+import { isolateAudio, resolveByoApiKey } from '../../_lib/elevenlabs.js'
 
 const STUDIO_BUCKET = 'studio-media'
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
+
+// Hard cap on file size we attempt to clean via ElevenLabs. Above this
+// we skip cleanup and return the raw upload — keeps the serverless
+// function from blowing memory on a multi-hundred-MB upload, and the
+// EL endpoint gets slow + flaky on huge files anyway. 50 MB easily
+// covers a 30+ minute voiceover at typical bitrates.
+const MAX_CLEAN_BYTES = 50 * 1024 * 1024
 
 export default async function handler(req, res) {
   setCors(req, res)
@@ -78,15 +86,86 @@ export default async function handler(req, res) {
       })
     }
 
-    // ── Phase 2: finalize — return public URL ──────────────────────
+    // ── Phase 2: finalize — clean via ElevenLabs Voice Isolator,
+    //   then return the cleaned URL (or the raw one if cleanup
+    //   couldn't run / failed). Errors here NEVER block the upload —
+    //   the user always gets a usable voiceover_url back.
     if (mode === 'finalize') {
       const path = body.path
       if (!path) return res.status(400).json({ error: 'path required' })
       if (!path.startsWith(`${profileId}/studio/voiceover/`)) {
         return res.status(400).json({ error: 'path does not belong to this profile' })
       }
-      const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/${STUDIO_BUCKET}/${path}`
-      return res.status(200).json({ ok: true, voiceover_url: publicUrl, path })
+      const rawUrl = `${SUPABASE_URL}/storage/v1/object/public/${STUDIO_BUCKET}/${path}`
+
+      // Try cleanup. If anything goes wrong we still return rawUrl so
+      // the user's upload is never lost. cleaned=false in the response
+      // tells the client (and lets us surface a "raw audio used" note
+      // in the UI if we want to in the future).
+      let voiceoverUrl = rawUrl
+      let cleanedPath = null
+      let cleanError = null
+      try {
+        const rawResp = await fetch(rawUrl)
+        if (!rawResp.ok) throw new Error(`Could not re-download upload (${rawResp.status})`)
+        const contentLength = Number(rawResp.headers.get('content-length') || 0)
+        if (contentLength && contentLength > MAX_CLEAN_BYTES) {
+          throw new Error(`File too large to clean (${Math.round(contentLength / 1024 / 1024)} MB > 50 MB cap)`)
+        }
+        const rawBuf = Buffer.from(await rawResp.arrayBuffer())
+        if (rawBuf.length > MAX_CLEAN_BYTES) {
+          throw new Error(`File too large to clean (${Math.round(rawBuf.length / 1024 / 1024)} MB > 50 MB cap)`)
+        }
+        // Prefer the user's BYOK ElevenLabs key when they've connected
+        // one — keeps the usage on their account. Fall back to our
+        // master key otherwise.
+        const byoKey = await resolveByoApiKey(profileId)
+        const sourceMime = req.body?.content_type || 'audio/mpeg'
+        const cleanedBuf = await isolateAudio(
+          rawBuf,
+          path.split('/').pop() || 'voiceover.mp3',
+          sourceMime,
+          byoKey ? { apiKey: byoKey } : {},
+        )
+
+        // Upload the cleaned MP3 next to the raw file with -cleaned.mp3
+        // suffix. We keep the raw upload around so we can re-run
+        // cleanup later or fall back if a render shows artifacts.
+        const cleanedFilename = path
+          .replace(/\.[^./]+$/, '')
+          .concat('-cleaned.mp3')
+        const putResp = await fetch(
+          `${SUPABASE_URL}/storage/v1/object/${STUDIO_BUCKET}/${encodeURI(cleanedFilename)}`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+              'Content-Type': 'audio/mpeg',
+              'x-upsert': 'true',
+            },
+            body: cleanedBuf,
+          },
+        )
+        if (!putResp.ok) {
+          const detail = await putResp.text().catch(() => '')
+          throw new Error(`Storage upload of cleaned audio failed (${putResp.status}): ${detail.slice(0, 200)}`)
+        }
+        cleanedPath = cleanedFilename
+        voiceoverUrl = `${SUPABASE_URL}/storage/v1/object/public/${STUDIO_BUCKET}/${cleanedFilename}`
+      } catch (e) {
+        cleanError = e?.message || String(e)
+        console.warn(`[voiceover/upload] cleanup failed, returning raw audio: ${cleanError}`)
+      }
+
+      return res.status(200).json({
+        ok: true,
+        voiceover_url: voiceoverUrl,
+        path: cleanedPath || path,
+        raw_url: rawUrl,
+        raw_path: path,
+        cleaned: !!cleanedPath,
+        clean_error: cleanError,
+      })
     }
 
     return res.status(400).json({ error: `Unknown mode "${mode}". Use init or finalize.` })

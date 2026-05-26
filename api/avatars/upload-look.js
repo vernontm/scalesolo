@@ -5,6 +5,7 @@
 // in the spaces avatar picker grid.
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { createPhotoAvatarV3 } from '../_lib/heygen.js'
 
 export default async function handler(req, res) {
   setCors(req, res)
@@ -27,6 +28,31 @@ export default async function handler(req, res) {
     const existing = await supaFetch(`avatar_looks?avatar_id=eq.${avatar_id}&select=angle_order&order=angle_order.desc&limit=1`)
     const nextOrder = (existing?.[0]?.angle_order ?? -1) + 1
 
+    // Push the new look through HeyGen V3 photo-avatar creation BEFORE
+    // we insert the row, so the look is render-ready the moment it
+    // appears in the UI. HeyGen V3 photo avatars are synchronous —
+    // success returns an avatar_id we use as heygen_look_id.
+    //
+    // Failure is non-fatal here: we still create the local row with
+    // training_status='failed' + the error, so the user can retry via
+    // the Train button. Don't block upload on HeyGen hiccups.
+    let heygenLookId = null
+    let trainingStatus = 'training'
+    let trainingError = null
+    try {
+      const resp = await createPhotoAvatarV3({ imageUrl: photo_url, name: name || `${avatar.name || 'Look'} ${nextOrder + 1}` })
+      heygenLookId = resp?.data?.avatar_item?.id || resp?.data?.id || resp?.id || null
+      if (heygenLookId) {
+        trainingStatus = 'ready'
+      } else {
+        trainingStatus = 'failed'
+        trainingError = `HeyGen V3 response missing avatar id (got: ${JSON.stringify(resp).slice(0, 200)})`
+      }
+    } catch (e) {
+      trainingStatus = 'failed'
+      trainingError = e.message
+    }
+
     const created = await supaFetch('avatar_looks', {
       method: 'POST',
       body: {
@@ -36,6 +62,10 @@ export default async function handler(req, res) {
         name: name || null,
         angle_order: nextOrder,
         kind: 'upload',
+        heygen_look_id: heygenLookId,
+        training_status: trainingStatus,
+        training_error: trainingError,
+        trained_at: heygenLookId ? new Date().toISOString() : null,
       },
     })
     const look = Array.isArray(created) ? created[0] : created
