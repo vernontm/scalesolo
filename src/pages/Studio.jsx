@@ -1619,6 +1619,29 @@ function SegmentList({ video, manualMode = false }) {
     await authedFetch(`/api/studio/segments?id=${id}`, session.access_token, { method: 'DELETE' })
   }
 
+  // Split a segment in two at a cursor offset. The Postgres RPC behind
+  // /split shifts downstream indexes up by 1 atomically and clears both
+  // halves' asset URLs so the next "Generate" pass regenerates voice +
+  // visuals from the new text. Realtime delivers the two updated rows
+  // back to the editor so the new segment slots into the list directly.
+  const splitSegment = async (segmentId, splitAt) => {
+    if (!session?.access_token) return
+    try {
+      const r = await authedFetch('/api/studio/segments/split', session.access_token, {
+        method: 'POST',
+        body: JSON.stringify({ segment_id: segmentId, split_at: splitAt }),
+      })
+      const b = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        toast({ message: b.error || `Split failed (${r.status})`, kind: 'error' })
+        return
+      }
+      toast({ message: 'Segment split. Re-generate assets for the new piece.', kind: 'success' })
+    } catch (e) {
+      toast({ message: e.message, kind: 'error' })
+    }
+  }
+
   // Per-segment regen. Wipes existing asset URLs + fires generate-assets
   // with segment_ids filter + force=true so only this one row burns
   // provider credits. Used by the regen button on avatar / B-roll rows.
@@ -1703,6 +1726,7 @@ function SegmentList({ video, manualMode = false }) {
             segment={s}
             onPatch={(patch) => patchSegment(s.id, patch)}
             onDelete={() => deleteSegment(s.id)}
+            onSplit={(splitAt) => splitSegment(s.id, splitAt)}
             onRegen={(types) => regenSegment(s, types)}
             // No callback body needed — the upload endpoint patches
             // the row itself; Realtime UPDATE delivers the new
@@ -3431,7 +3455,7 @@ function RegenOption({ label, checked, onChange, hint, cost, disabled }) {
 // One row of the video map. Cards are dense but legible — Studio is
 // desktop-first. Each editable field debounces text-input PATCHes and
 // fires select/checkbox PATCHes on change.
-function SegmentRow({ segment, onPatch, onDelete, onRegen, onUploadAvatar, onUploadScreenshot, aspectRatio, manualMode = false }) {
+function SegmentRow({ segment, onPatch, onDelete, onRegen, onSplit, onUploadAvatar, onUploadScreenshot, aspectRatio, manualMode = false }) {
   const isAvatar = segment.segment_type === 'avatar'
   const isBroll = segment.segment_type === 'voiceover_broll'
   const isMotion = segment.segment_type === 'voiceover_motion_graphics' || segment.segment_type === 'pure_motion_graphics'
@@ -3564,11 +3588,14 @@ function SegmentRow({ segment, onPatch, onDelete, onRegen, onUploadAvatar, onUpl
             </div>
           </div>
 
-          {/* Script text (skip for pure motion graphics) */}
+          {/* Script text (skip for pure motion graphics). Enter splits
+              the line into a new segment at the cursor; Shift+Enter
+              still inserts a literal newline. */}
           {!isPureMotion && (
             <DebouncedTextarea
               initialValue={segment.script_text || ''}
               onCommit={(v) => onPatch({ script_text: v })}
+              onSplit={onSplit}
               placeholder={isAvatar ? 'What the avatar says…' : 'What the voiceover says…'}
               rows={2}
               style={{ marginBottom: 8 }}
@@ -3975,7 +4002,7 @@ function DebouncedInput({ initialValue, onCommit, placeholder, icon }) {
   )
 }
 
-function DebouncedTextarea({ initialValue, onCommit, placeholder, rows = 2, style }) {
+function DebouncedTextarea({ initialValue, onCommit, onSplit, placeholder, rows = 2, style }) {
   const [value, setValue] = useState(initialValue || '')
   const [focused, setFocused] = useState(false)
   const lastCommittedRef = useRef(initialValue || '')
@@ -4004,6 +4031,29 @@ function DebouncedTextarea({ initialValue, onCommit, placeholder, rows = 2, styl
     if (timerRef.current) clearTimeout(timerRef.current)
     commit(value)
   }
+  // Enter-to-split. Plain Enter (no modifiers) calls onSplit with the
+  // cursor position so the parent can POST /api/studio/segments/split.
+  // Shift+Enter still inserts a literal newline as an escape hatch —
+  // not that voiceover text needs newlines, but the muscle-memory is
+  // worth preserving for users pasting multi-line scripts.
+  const onKeyDown = (e) => {
+    if (!onSplit) return
+    if (e.key !== 'Enter') return
+    if (e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return
+    const ta = e.target
+    const cursor = typeof ta.selectionStart === 'number' ? ta.selectionStart : value.length
+    // Reject cursor at very start / very end — would produce an empty
+    // half. Server enforces this too; bailing here avoids a wasted
+    // round trip and gives instant visual feedback (the newline just
+    // doesn't happen).
+    if (cursor <= 0 || cursor >= value.length) return
+    e.preventDefault()
+    // Commit current value so the server splits the fresh text, then
+    // signal the parent to call the split endpoint.
+    if (timerRef.current) clearTimeout(timerRef.current)
+    commit(value)
+    onSplit(cursor)
+  }
 
   return (
     <textarea
@@ -4011,10 +4061,12 @@ function DebouncedTextarea({ initialValue, onCommit, placeholder, rows = 2, styl
       onChange={onChange}
       onFocus={() => setFocused(true)}
       onBlur={onBlur}
+      onKeyDown={onKeyDown}
       placeholder={placeholder}
       rows={rows}
       className="input"
       style={{ fontSize: 13, lineHeight: 1.5, resize: 'vertical', ...style }}
+      title={onSplit ? 'Press Enter to split into a new segment at the cursor. Shift+Enter for a literal newline.' : undefined}
     />
   )
 }
