@@ -816,18 +816,26 @@ async function renderHyperFramesChunk(seg, paths, dim, durationSecs, baseUrl, by
     await page.setViewport({ width: dim.w, height: dim.h, deviceScaleFactor: 1 })
 
     const compId = seg.hyperframes_composition_id
-    // Suppress composition-level handle rendering — the persistent
-    // corner-tr watermark overlay is now the single source of @-tag
-    // truth. Without this, compositions like sleek-scene-cta-v1 paint
-    // their own hero_handle in lower-third, which then stacks visually
-    // with the caption overlay (Ray's "stacked text behind caption"
-    // bug). Blanking these keys is composition-safe: each composition
-    // skips its handle node when the var is falsy.
-    const rawVars = seg.hyperframes_variables || {}
-    const vars = { ...rawVars, hero_handle: '', handle: '' }
-    const varsHash = encodeVarsForUrl(vars)
+    const varsHash = encodeVarsForUrl(seg.hyperframes_variables || {})
     const url = `${baseUrl}/studio-compositions/${compId}.html?mode=render#vars=${varsHash}`
     await page.goto(url, { waitUntil: 'load', timeout: 30_000 })
+
+    // Strip composition-level branding nodes AFTER the page loads.
+    // Compositions hardcode <span id="meta-label">VTM</span> + similar
+    // .scene-meta / .scene-handle / .hero-handle blocks. We tried
+    // blanking the meta/handle vars earlier but compositions guard
+    // with `if (v.handle)` — empty strings stay falsy and the hardcoded
+    // defaults win. Removing the DOM nodes outright is universal: it
+    // works regardless of which composition the user picked.
+    //
+    // Why strip: the persistent corner-tr watermark overlay (added in
+    // the segment loop above) is the single source of @-tag truth, and
+    // chapter-marker-style top-left labels were retired per product
+    // direction. Compositions shouldn't double-render either.
+    await page.evaluate(() => {
+      const sel = '.scene-meta, .scene-handle, .hero-handle'
+      document.querySelectorAll(sel).forEach((el) => el.remove())
+    }).catch(() => { /* if eval fails the worst case is a duplicated label, not a broken render */ })
 
     // In-page poll — same pattern as the Vercel version. Real Chrome on
     // Fly doesn't throttle setTimeout for the active page, so this
