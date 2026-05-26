@@ -247,9 +247,11 @@ async function buildMapSource(brands) {
     }
   }
   rows.sort((a, b) => a[0].localeCompare(b[0]))
-  const keyWidth = Math.max(...rows.map((r) => r[0].length), 1)
+  // Always quote keys. Some aliases start with a digit ("11labs") which
+  // would be a parse error as a bare object-literal key in JS.
+  const keyWidth = Math.max(...rows.map((r) => JSON.stringify(r[0]).length), 1)
   for (const [k, v] of rows) {
-    lines.push(`  ${k.padEnd(keyWidth)}: ${JSON.stringify(v)},`)
+    lines.push(`  ${JSON.stringify(k).padEnd(keyWidth)}: ${JSON.stringify(v)},`)
   }
   lines.push('}')
   lines.push('')
