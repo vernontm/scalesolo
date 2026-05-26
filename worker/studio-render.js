@@ -1172,9 +1172,22 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
         inputs.push('-i', chunkPaths[i])
       }
 
+      // PTS reset on every input stream. Without this, accumulated
+      // PTS micro-offsets compound through the xfade chain and
+      // surface as progressive A/V drift on long videos — the
+      // exact "lip sync goes off after :27" symptom. setpts /
+      // asetpts force each chunk's timeline to start from zero
+      // before xfade math runs against it. Also pin every video
+      // stream to 30fps + every audio to 48kHz stereo so xfade /
+      // acrossfade aren't trying to reconcile mismatched rates.
+      for (let i = 0; i < chunkPaths.length; i++) {
+        filter.push(`[${i}:v]fps=30,setpts=PTS-STARTPTS[vn${i}]`)
+        filter.push(`[${i}:a]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=N/SR/TB[an${i}]`)
+      }
+
       let runningOffset = 0  // running concat time before the current xfade boundary
-      let prevVideoLabel = '[0:v]'
-      let prevAudioLabel = '[0:a]'
+      let prevVideoLabel = '[vn0]'
+      let prevAudioLabel = '[an0]'
       for (let i = 1; i < chunkPaths.length; i++) {
         const prevDur = chunkDurations[i - 1] || 4
         // Per-boundary xfade. If this boundary's primitive has no xfade
@@ -1187,8 +1200,8 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
         const durStr = b.duration.toFixed(3)
         const vOut = `[v${i}]`
         const aOut = `[a${i}]`
-        filter.push(`${prevVideoLabel}[${i}:v]xfade=transition=${b.name}:duration=${durStr}:offset=${offsetStr}${vOut}`)
-        filter.push(`${prevAudioLabel}[${i}:a]acrossfade=d=${durStr}${aOut}`)
+        filter.push(`${prevVideoLabel}[vn${i}]xfade=transition=${b.name}:duration=${durStr}:offset=${offsetStr}${vOut}`)
+        filter.push(`${prevAudioLabel}[an${i}]acrossfade=d=${durStr}${aOut}`)
         prevVideoLabel = vOut
         prevAudioLabel = aOut
       }
