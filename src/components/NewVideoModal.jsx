@@ -57,6 +57,35 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
     return () => { document.body.style.overflow = prev }
   }, [open])
 
+  // Load the overlay CSS stylesheets into the document <head> when the
+  // modal first mounts. The template-preview step renders real .ov-card
+  // markup, but those classes only ship in /studio-compositions/_ov-*.css
+  // which the React SPA doesn't import. Injecting via <link> picks them
+  // up live without rebuilding the bundle. Idempotent — checks by href
+  // so repeated opens don't create duplicates.
+  useEffect(() => {
+    if (!open) return
+    const sheets = [
+      '/studio-compositions/_ov-tokens.css',
+      '/studio-compositions/_ov-universal.css',
+    ]
+    const added = []
+    for (const href of sheets) {
+      if (document.querySelector(`link[href="${href}"]`)) continue
+      const l = document.createElement('link')
+      l.rel = 'stylesheet'
+      l.href = href
+      document.head.appendChild(l)
+      added.push(l)
+    }
+    return () => {
+      // Leave the stylesheets in place between modal opens — removing
+      // them would re-load (and flicker) the next time. They're tiny
+      // and scoped (.ov-* / .tokens-*) so they don't conflict with
+      // anything else.
+    }
+  }, [open])
+
   // Reset state when opening fresh.
   useEffect(() => {
     if (!open) { setStepIdx(0); setError(null) }
@@ -504,20 +533,24 @@ function StepTemplate({ templates, value, captionsEnabled, aspectRatio, onChange
         </div>
         <div style={{ position: 'relative', aspectRatio: frameAspect, background: '#000', borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)' }}>
           <img src={sampleSrc} alt="Example background" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.currentTarget.style.display = 'none' }} />
-          {/* Overlay example cards using the live token system */}
+          {/* Live overlay cards — CSS classes match the bake exactly,
+              so what shows here is byte-for-byte what the render
+              produces. Positioning + sizing comes entirely from
+              _ov-universal.css's .ov.<zone> rules; no inline styles
+              needed beyond the absolute-fill wrapper. */}
           <div className={`tokens-${selected?.id || 'sleek'}`} style={{ position: 'absolute', inset: 0 }}>
             <div className="overlay-layer">
-              <div className="ov left_overlay" style={{ position: 'absolute', left: '3%', top: '50%', transform: 'translateY(-50%)', width: '24%', aspectRatio: '1/1' }}>
+              <div className="ov left_overlay">
                 <div className="ov-chapter"><div className="title">Faceless <em>Shift</em></div></div>
               </div>
-              <div className="ov right_overlay" style={{ position: 'absolute', right: '3%', top: '50%', transform: 'translateY(-50%)', width: '24%', aspectRatio: '1/1' }}>
+              <div className="ov right_overlay">
                 <div className="ov-stat">
                   <div className="label">POSTS / DAY</div>
                   <div className="number">3<span className="unit">x</span></div>
                   <div className="sub">Faceless</div>
                 </div>
               </div>
-              <div className="ov lower-third" style={{ position: 'absolute', left: '6%', right: '6%', bottom: '7%' }}>
+              <div className="ov lower-third">
                 <div className="ov-caption"><div className="text">Faceless creators are <span className="highlight">outshipping</span> personal brands in 2026.</div></div>
               </div>
             </div>
