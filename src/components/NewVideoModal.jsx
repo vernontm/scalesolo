@@ -190,8 +190,11 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
           '/api/studio/voiceover/upload?mode=init', session.access_token,
           { method: 'POST', body: JSON.stringify({ profile_id: profileId, filename: file.name, content_type: inferredType }) },
         )
-        const initBody = await initR.json()
-        if (!initR.ok) throw new Error(initBody.error || 'Upload init failed')
+        // Defensive parse — server may return HTML on crash, not JSON.
+        const initText = await initR.text()
+        let initBody = {}
+        try { initBody = initText ? JSON.parse(initText) : {} } catch { /* leave empty */ }
+        if (!initR.ok) throw new Error(initBody.error || `Upload init failed (${initR.status}): ${initText.slice(0, 220)}`)
         const putR = await fetch(initBody.signed_url, {
           method: 'PUT',
           headers: { Authorization: `Bearer ${initBody.token}`, 'Content-Type': initBody.content_type, 'x-upsert': 'true' },
@@ -207,8 +210,10 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
           '/api/studio/voiceover/upload?mode=finalize', session.access_token,
           { method: 'POST', body: JSON.stringify({ profile_id: profileId, path: initBody.path }) },
         )
-        const finBody = await finR.json()
-        if (!finR.ok) throw new Error(finBody.error || 'Finalize failed')
+        const finText = await finR.text()
+        let finBody = {}
+        try { finBody = finText ? JSON.parse(finText) : {} } catch { /* leave empty */ }
+        if (!finR.ok) throw new Error(finBody.error || `Finalize failed (${finR.status}): ${finText.slice(0, 220)}`)
         toast({ message: 'Voiceover uploaded. Transcribing + segmenting…', kind: 'info' })
         const segR = await authedFetch(
           '/api/studio/voiceover/segment', session.access_token,
@@ -227,8 +232,10 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
             music_volume: Number(a.music_volume) || 0.12,
           }) },
         )
-        const segBody = await segR.json()
-        if (!segR.ok) throw new Error(segBody.error || 'Segmentation failed')
+        const segText = await segR.text()
+        let segBody = {}
+        try { segBody = segText ? JSON.parse(segText) : {} } catch { /* leave empty */ }
+        if (!segR.ok) throw new Error(segBody.error || `Segmentation failed (${segR.status}): ${segText.slice(0, 220)}`)
         toast({ message: `Created ${segBody.segments?.length || 0} segments.`, kind: 'success' })
         onCreated?.(segBody.video)
         return
@@ -260,8 +267,17 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
       const r = await authedFetch('/api/studio/videos', session.access_token, {
         method: 'POST', body: JSON.stringify(body),
       })
-      const data = await r.json()
-      if (!r.ok) throw new Error(data.error || 'Could not create video')
+      // Defensive parse — when a serverless function crashes Vercel
+      // returns an HTML "An error occurred" page, NOT JSON. Reading
+      // raw text first lets us surface the actual server text instead
+      // of dying on JSON.parse with "Unexpected token 'A'..." which
+      // tells the user nothing.
+      const rawText = await r.text()
+      let data = {}
+      try { data = rawText ? JSON.parse(rawText) : {} } catch { /* leave data={} */ }
+      if (!r.ok) {
+        throw new Error(data.error || `HTTP ${r.status}: ${rawText.slice(0, 220)}`)
+      }
       toast({ message: 'Draft created. Generating the video map…', kind: 'success' })
       authedFetch('/api/studio/generate-map', session.access_token, {
         method: 'POST', body: JSON.stringify({ studio_video_id: data.video.id }),
