@@ -700,17 +700,24 @@ function TabBtn({ active, onClick, icon: Icon, children }) {
   )
 }
 
+// Overlay used to be display:grid+placeItems:center which jammed the
+// card vertically into the viewport even when content overflowed —
+// users had no way to scroll because internal scroll wasn't catching
+// the events on small displays. Switch to a top-aligned overflow
+// container so the page itself scrolls and the card always starts at
+// the top of the viewport.
 const overlay = {
   position: 'fixed', inset: 0, zIndex: 250,
   background: 'rgba(0,0,0,0.78)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
-  display: 'grid', placeItems: 'center', padding: 20,
+  overflowY: 'auto',
+  display: 'flex', justifyContent: 'center', alignItems: 'flex-start',
+  padding: '32px 20px 64px',
 }
 const card = {
-  width: '100%', maxWidth: 620,
+  width: '100%', maxWidth: 760,
   background: 'var(--surface)', border: '1px solid var(--border)',
-  borderRadius: 16, overflow: 'hidden',
+  borderRadius: 16, overflow: 'visible',
   display: 'flex', flexDirection: 'column',
-  maxHeight: 'calc(100vh - 40px)',
   boxShadow: '0 30px 80px rgba(0,0,0,0.5)',
 }
 const progressTrack = { height: 3, background: 'var(--surface-2)' }
@@ -724,8 +731,10 @@ const brandIcon = {
   color: '#fff', display: 'grid', placeItems: 'center',
 }
 const bodyScroll = {
-  flex: 1, overflowY: 'auto',
-  padding: '4px 22px 16px',
+  // Inner scroll removed — the overlay itself is the scroll
+  // container now, so the survey scrolls with the page instead of
+  // trapping inside a tiny div.
+  padding: '4px 22px 20px',
 }
 const footer = { padding: '16px 22px 20px', borderTop: '1px solid var(--border)', background: 'var(--surface)' }
 
