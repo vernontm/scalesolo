@@ -26,7 +26,13 @@ import { fileURLToPath } from 'node:url'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(__dirname, '..')
 const LOGO_DIR = join(REPO_ROOT, 'public', 'brand-logos')
-const MAP_FILE = join(REPO_ROOT, 'api', 'studio', '_lib', 'brand-logos-map.js')
+// Two copies of the map. Server-side (Node) imports the api/_lib one,
+// browser-side (Puppeteer-rendered compositions) imports the public
+// one. Both must stay in sync or the worker renders the wrong logos
+// (the bug Ray hit: server map said scalesolo.png, browser map was
+// still hitting Google favicons + returning the wrong icon).
+const MAP_FILE        = join(REPO_ROOT, 'api', 'studio', '_lib', 'brand-logos-map.js')
+const MAP_FILE_PUBLIC = join(REPO_ROOT, 'public', 'studio-compositions', '_brand-logos-map.js')
 
 // ─── Brand catalog ───────────────────────────────────────────────────
 // One entry per logical brand. Multiple aliases map to the same file
@@ -298,7 +304,9 @@ async function main() {
   // on disk get entries, so the renderer never points at a 404.
   const { src, missing } = await buildMapSource(BRAND_LIST)
   await mkdir(dirname(MAP_FILE), { recursive: true })
+  await mkdir(dirname(MAP_FILE_PUBLIC), { recursive: true })
   await writeFile(MAP_FILE, src, 'utf8')
+  await writeFile(MAP_FILE_PUBLIC, src, 'utf8')
 
   console.log(`\nSummary:`)
   console.log(`  Downloaded from Simple Icons: ${ok}`)

@@ -114,62 +114,34 @@ function renderCaption(c, t) {
   </div>`
 }
 
-// Map of company names → primary domain for favicon lookup. Add to
-// this when new brands come up in production. Lookup is case-
-// insensitive; the renderer normalizes name before checking. Any
-// brand NOT in this map falls back to `<name-lowered>.com` as a best
-// guess, then to the single-letter glyph if the favicon fails.
-const BRAND_DOMAINS = {
-  claude:       'claude.ai',
-  anthropic:    'anthropic.com',
-  chatgpt:      'openai.com',
-  openai:       'openai.com',
-  heygen:       'heygen.com',
-  notion:       'notion.so',
-  shopify:      'shopify.com',
-  stripe:       'stripe.com',
-  youtube:      'youtube.com',
-  tiktok:       'tiktok.com',
-  instagram:    'instagram.com',
-  meta:         'meta.com',
-  facebook:     'facebook.com',
-  twitter:      'twitter.com',
-  x:            'x.com',
-  google:       'google.com',
-  apple:        'apple.com',
-  microsoft:    'microsoft.com',
-  github:       'github.com',
-  elevenlabs:   'elevenlabs.io',
-  cursor:       'cursor.com',
-  vercel:       'vercel.com',
-  supabase:     'supabase.com',
-  figma:        'figma.com',
-  canva:        'canva.com',
-  midjourney:   'midjourney.com',
-  perplexity:   'perplexity.ai',
-  gemini:       'gemini.google.com',
-  runway:       'runwayml.com',
-  scalesolo:    'scalesolo.com',
-}
+// Curated brand → local logo file map. Mirrors the server-side renderer
+// in api/studio/_lib/overlay-renderer.js. Both files import from the
+// auto-generated map in:
+//   - api/studio/_lib/brand-logos-map.js (server side)
+//   - public/studio-compositions/_brand-logos-map.js (browser side)
+// Re-run `npm run sync-logos` to regenerate both.
+//
+// Pre-fix, this file used Google's S2 favicon service which returned
+// generic/wrong icons for brands like ScaleSolo (rendered as the "HD"
+// glitch Ray saw). The local catalog is intentional + correct.
+import { LOCAL_BRAND_LOGOS } from './_brand-logos-map.js'
 
-function brandDomainFor(name) {
+function brandLogoFor(name) {
   if (!name || typeof name !== 'string') return null
   const key = name.toLowerCase().replace(/[^a-z0-9]/g, '')
-  if (BRAND_DOMAINS[key]) return BRAND_DOMAINS[key]
-  // Reasonable fallback for one-word brands — e.g. "Klaviyo" → klaviyo.com.
-  if (/^[a-z0-9-]+$/.test(key) && key.length >= 3) return `${key}.com`
-  return null
+  return LOCAL_BRAND_LOGOS[key] || null
 }
 
 function renderTool(c, t) {
   const name = c.name || ''
   const fallbackGlyph = esc(c.logo || (name ? name[0].toUpperCase() : '?'))
-  const domain = brandDomainFor(name)
-  // Use Google's S2 favicon service. Free, no API key, 128px max.
-  // Falls back to single-letter glyph if the image fails to load
-  // (onerror swaps the <img> for a <span>).
-  const inner = domain
-    ? `<img src="https://www.google.com/s2/favicons?domain=${esc(domain)}&sz=128" alt="${esc(name)}" onerror="this.outerHTML='<span>${fallbackGlyph}</span>'">`
+  const localLogo = brandLogoFor(name)
+  // Local-logo lookup. No remote favicon fetch — unknown brands fall
+  // back to the single-letter glyph so we never ship a grainy 16px
+  // favicon into a 1080p+ render. object-fit:cover makes the logo
+  // fill the entire .logo plate.
+  const inner = localLogo
+    ? `<img src="${esc(localLogo)}" alt="${esc(name)}" style="width:100%;height:100%;object-fit:cover;display:block;" onerror="this.outerHTML='<span>${fallbackGlyph}</span>'">`
     : `<span>${fallbackGlyph}</span>`
   return `<div class="ov-tool"${containerStyle(t.container)}>
     <div class="logo"${textStyle(t.logo)}>${inner}</div>
