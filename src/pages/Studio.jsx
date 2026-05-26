@@ -3852,15 +3852,15 @@ function UploadScreenshotButton({ segmentId, hasUpload, onUploaded }) {
           color: 'var(--text-soft)', border: '1px dashed var(--border)',
           borderRadius: 6, cursor: busy ? 'wait' : 'pointer', background: 'transparent',
         }}
-        title="Upload a screenshot (PNG / JPG / WEBP). It will be rendered inside the template's device-framed card while the voiceover plays."
+        title="Upload an image (PNG / JPG / WEBP) or video (MP4 / MOV / WEBM). It will be rendered inside the template's device-framed card while the voiceover plays. Video gets cut at the next segment."
       >
         {busy ? <Loader2 size={11} className="spin" /> : null}
-        {hasUpload ? '↑ Replace screenshot' : '↑ Upload screenshot'}
+        {hasUpload ? '↑ Replace screenshot / video' : '↑ Upload screenshot or video'}
       </button>
       <input
         ref={inputRef}
         type="file"
-        accept="image/png,image/jpeg,image/webp,image/*"
+        accept="image/png,image/jpeg,image/webp,image/*,video/mp4,video/quicktime,video/webm,video/*"
         onChange={onFile}
         style={{ display: 'none' }}
       />

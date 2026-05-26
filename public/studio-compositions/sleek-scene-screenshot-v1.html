@@ -151,6 +151,8 @@
     </div>
     <div class="shot-img-wrap">
       <img class="shot-img" id="screenshot-img" alt="" />
+      <video class="shot-img" id="screenshot-video" muted playsinline preload="auto"
+             style="display:none; width:100%; height:100%; object-fit:cover; object-position:center top;"></video>
       <div class="shot-empty" id="screenshot-empty">No screenshot uploaded</div>
     </div>
   </div>
@@ -167,12 +169,33 @@
     if (v.accent_color) document.documentElement.style.setProperty('--accent', v.accent_color)
 
     const img = document.getElementById('screenshot-img')
+    const video = document.getElementById('screenshot-video')
     const empty = document.getElementById('screenshot-empty')
-    if (v.screenshot_url) {
-      img.src = v.screenshot_url
+
+    // Detect upload kind by URL extension. Worker stores video at
+    // {profile_id}/studio/screenshots/...mp4 (or .mov / .webm). Same
+    // upload path, same DB column — the composition fork is purely
+    // client-side based on what we see in the URL.
+    const url = String(v.screenshot_url || '')
+    const isVideo = /\.(mp4|mov|webm|m4v)(\?|#|$)/i.test(url)
+    let videoReady = false
+
+    if (isVideo) {
+      img.style.display = 'none'
+      video.style.display = 'block'
+      video.src = url
       empty.style.display = 'none'
+      // Mark ready once first frame is decoded so the worker's
+      // __hfSeek hook below can rely on a finite duration when it
+      // seeks frame-by-frame.
+      video.addEventListener('loadeddata', () => { videoReady = true }, { once: true })
+    } else if (url) {
+      img.src = url
+      empty.style.display = 'none'
+      video.style.display = 'none'
     } else {
       img.style.display = 'none'
+      video.style.display = 'none'
     }
 
     window.__hyperframes?.recordEvent?.('card_enter', 0.4)
@@ -184,6 +207,31 @@
       .to({}, { duration: 1.5 })
 
     window.studioPlay(tl)
+
+    // Per-frame seek hook. The worker's renderHyperFramesChunk calls
+    // window.__hfSeek(time) once per captured frame; we forward to the
+    // GSAP timeline AND to the video element. For images this is a
+    // no-op pass-through. For videos: pause + seek + wait-for-seeked
+    // so Puppeteer's screenshot captures the right frame.
+    window.__hfSeek = async (time) => {
+      try { tl.seek(time, false) } catch { /* tl already settled */ }
+      if (!isVideo || !videoReady) return
+      if (isNaN(video.duration) || video.duration <= 0) return
+      const t = Math.min(time, Math.max(0, video.duration - 0.05))
+      // Only seek when the video isn't already at that time; cuts
+      // unnecessary 'seeked' waits when the worker fires the same
+      // frame twice (rare but happens at segment edges).
+      if (Math.abs(video.currentTime - t) < 0.02) return
+      video.pause()
+      await new Promise((resolve) => {
+        const done = () => { video.removeEventListener('seeked', done); resolve() }
+        video.addEventListener('seeked', done, { once: true })
+        video.currentTime = t
+        // Safety timeout — some browsers don't fire 'seeked' if seek
+        // lands exactly on the current frame. 200ms is enough headroom.
+        setTimeout(done, 200)
+      })
+    }
   })()
 </script>
 

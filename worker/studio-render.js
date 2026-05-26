@@ -890,7 +890,16 @@ async function renderHyperFramesChunk(seg, paths, dim, durationSecs, baseUrl, by
     for (let i = 0; i < totalFrames; i++) {
       const tInSegment = i / fps
       const tInTimeline = tlDur > 0 ? Math.min(tInSegment, tlDur) : tInSegment
-      await page.evaluate((id, time) => {
+      // Prefer the composition-defined seek hook when present. The
+      // screenshot/video composition uses __hfSeek to seek both the
+      // GSAP timeline AND the embedded <video> element to the right
+      // frame before Puppeteer captures. Falls back to the legacy
+      // timeline-only seek for plain motion-graphics compositions.
+      await page.evaluate(async (id, time) => {
+        if (typeof window.__hfSeek === 'function') {
+          await window.__hfSeek(time)
+          return
+        }
         const tl = window.__timelines[id]
         if (tl?.seek) tl.seek(time, false)
       }, compId, tInTimeline)

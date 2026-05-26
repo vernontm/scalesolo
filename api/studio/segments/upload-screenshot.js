@@ -42,6 +42,13 @@ function extFromContentType(ct) {
   if (ct === 'image/jpeg') return 'jpg'
   if (ct === 'image/webp') return 'webp'
   if (ct === 'image/gif')  return 'gif'
+  // Video formats — the segment composition renders <video> instead of
+  // <img> when the upload's extension matches. mp4 covers the common
+  // case (phone exports, screen recorders); mov is Apple QuickTime
+  // (iPhone defaults); webm is for web recorders.
+  if (ct === 'video/mp4')       return 'mp4'
+  if (ct === 'video/quicktime') return 'mov'
+  if (ct === 'video/webm')      return 'webm'
   return 'png'
 }
 
@@ -68,9 +75,15 @@ export default async function handler(req, res) {
     if (mode === 'init') {
       const body = req.body || {}
       const contentType = body.content_type || 'image/png'
-      if (!contentType.startsWith('image/')) {
+      // Allow both image and video uploads. The composition detects
+      // which one was uploaded from the URL extension and renders
+      // either an <img> (static) or <video> (plays back during the
+      // segment, hard-cut at the next scene boundary).
+      const isImage = contentType.startsWith('image/')
+      const isVideo = ['video/mp4', 'video/quicktime', 'video/webm'].includes(contentType)
+      if (!isImage && !isVideo) {
         return res.status(415).json({
-          error: `Unsupported content type "${contentType}". Upload a PNG / JPG / WEBP image.`,
+          error: `Unsupported content type "${contentType}". Upload PNG/JPG/WEBP image or MP4/MOV/WEBM video.`,
         })
       }
       const ext = extFromContentType(contentType)
