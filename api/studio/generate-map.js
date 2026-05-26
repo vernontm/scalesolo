@@ -256,7 +256,21 @@ Call emit_video_map exactly once. Do not include any text outside the tool call.
 }
 
 function buildUser(video) {
-  const lines = [`Topic: ${video.topic_prompt}`]
+  const lines = []
+  // Fixed-script path: the user pasted their final script. Treat it
+  // as immutable — Claude only decides segment boundaries, segment_type,
+  // and overlays. Don't rewrite.
+  if (video.fixed_script?.trim()) {
+    lines.push('SCRIPT IS FIXED — the user pasted this script verbatim. You may NOT rewrite it. Your only job is to break it into segments and pick visual treatments for each.')
+    lines.push('Concatenating the script_text of every segment in order MUST equal the script below (modulo whitespace normalization).')
+    lines.push('')
+    lines.push('<fixed_script>')
+    lines.push(video.fixed_script.slice(0, 20000))
+    lines.push('</fixed_script>')
+    lines.push('')
+  } else {
+    lines.push(`Topic: ${video.topic_prompt}`)
+  }
   lines.push(`Target duration: ${video.target_duration_secs} seconds (±15%).`)
   lines.push(`Aspect ratio: ${video.aspect_ratio}.`)
   if (video.title?.trim()) lines.push(`Working title (user-supplied, you may override): ${video.title}`)

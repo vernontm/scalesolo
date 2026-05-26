@@ -301,7 +301,16 @@ async function orchestrateSegment(segment, ctx) {
     if (segment.segment_type === 'avatar') {
       if (!segment.avatar_video_url && wants('avatar') && voiceUrl) {
         await patch({ status: 'generating_avatar' })
-        const videoId = await dispatchAvatar(segment, ctx.heygenAvatarId, voiceUrl, aspectRatio)
+        // Pick the avatar look for this segment. Default = the
+        // resolved heygenAvatarId from ctx (same image every segment).
+        // When randomize_look_images is on AND multiple matching looks
+        // exist, rotate deterministically by segment_index so re-renders
+        // are stable.
+        let segmentLookId = ctx.heygenAvatarId
+        if (ctx.randomLookHeygenIds && ctx.randomLookHeygenIds.length >= 2) {
+          segmentLookId = ctx.randomLookHeygenIds[segment.segment_index % ctx.randomLookHeygenIds.length]
+        }
+        const videoId = await dispatchAvatar(segment, segmentLookId, voiceUrl, aspectRatio)
         await patch({ heygen_video_id: videoId })
       } else if (segment.voice_url && segment.avatar_video_url) {
         await patch({ status: 'ready', error: null })
@@ -433,6 +442,11 @@ export default async function handler(req, res) {
     // Failing here surfaces a clear error before we burn voice synth on
     // a render that's destined to fail.
     let heygenAvatarId = null
+    // When randomize_look_images is on, we resolve a DIFFERENT
+    // heygen_look_id per avatar segment from the avatar's full
+    // landscape/portrait look set. Stash the candidate list on ctx
+    // so each segment can pick deterministically.
+    let randomLookHeygenIds = null
     const hasAvatarSegments = segments.some((s) => s.approved && s.segment_type === 'avatar')
     if (hasAvatarSegments && wantAvatar) {
       if (!video.avatar_id) {
@@ -444,6 +458,24 @@ export default async function handler(req, res) {
       } catch (e) {
         return res.status(400).json({ error: e.message })
       }
+      if (video.randomize_look_images) {
+        // Look-image rotation: pull every look on this avatar that
+        // matches the video's orientation. dispatchAvatar picks a
+        // different one per segment so the video doesn't read like a
+        // single static shot. Falls back to the resolved heygenAvatarId
+        // if there's only one matching look.
+        try {
+          const desired = video.aspect_ratio === '9:16' ? 'portrait'
+            : video.aspect_ratio === '16:9' ? 'landscape' : null
+          const lookRows = await supaFetch(
+            `avatar_looks?avatar_id=eq.${video.avatar_id}&select=heygen_look_id,orientation`,
+          ).catch(() => [])
+          const candidates = (lookRows || [])
+            .filter((r) => r.heygen_look_id && (!desired || !r.orientation || r.orientation === desired))
+            .map((r) => r.heygen_look_id)
+          if (candidates.length >= 2) randomLookHeygenIds = candidates
+        } catch { /* best-effort */ }
+      }
     }
 
     const ctx = {
@@ -452,6 +484,7 @@ export default async function handler(req, res) {
       voiceId: video.voice_id,
       avatarId: video.avatar_id || null,
       heygenAvatarId,
+      randomLookHeygenIds,
       aspectRatio: video.aspect_ratio || '16:9',
       kieKey,
       force: req.body?.force === true,

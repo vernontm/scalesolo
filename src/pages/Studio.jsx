@@ -1185,12 +1185,11 @@ function StudioVideoEditor({ videoId }) {
 
           {(['mapped', 'editing', 'rendering', 'rendered'].includes(video.status)) && (
             <>
-              {/* Template selector now owns: template pick + captions
-                  toggle. Both apply with a single "Use this template"
-                  button + re-render. Overlays + auto-fit motion-
-                  graphics are forced on every render — those toggles
-                  are gone from the editor. */}
-              <TemplateSelector video={video} onApplied={(updated) => setVideo(updated || video)} />
+              {/* Compact template-change row. Full TemplateSelector
+                  retired from the editor — template + captions are
+                  now picked in the new-video modal. This row is the
+                  one-line "wrong template? swap it" affordance. */}
+              <TemplateSwapRow video={video} onApplied={(updated) => setVideo(updated || video)} />
               <SegmentList video={video} manualMode={manualMode} />
               {/* AI chat dock disabled per product feedback —
                   re-enable by uncommenting once the surgical-edit
@@ -1813,11 +1812,98 @@ function MotionGraphicsToggle({ video, onChanged }) {
 }
 
 // Visual template panel — phase-2 layout per the Scale Solo Updates PDF.
-// Scrollable list of template cards on the left, live preview on the
-// right, single "Use this template" button at the bottom. Brand color
-// is no longer a picker here (synced from brand profile). Captions
-// toggle moved into this panel so all visual settings live in one
-// place.
+// Compact one-line template-swap row shown above the segment list
+// in the editor. Replaces the heavy in-editor TemplateSelector (which
+// duplicated the picker the new-video modal already shows). One
+// dropdown to switch templates, a captions toggle, a save button.
+function TemplateSwapRow({ video, onApplied }) {
+  const { session } = useAuth()
+  const [templates, setTemplates] = useState([])
+  const [templateId, setTemplateId] = useState(video.template_id || 'sleek')
+  const [captionsOn, setCaptionsOn] = useState(video.captions_enabled !== false)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (!session?.access_token) return
+    let cancelled = false
+    authedFetch('/api/studio/templates', session.access_token)
+      .then((r) => r.ok ? r.json() : { templates: [] })
+      .then((b) => { if (!cancelled) setTemplates(b.templates || []) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [session?.access_token])
+
+  const savedTemplate = video.template_id || 'sleek'
+  const savedCaptions = video.captions_enabled !== false
+  const dirty = templateId !== savedTemplate || captionsOn !== savedCaptions
+
+  const apply = async () => {
+    if (!session?.access_token || busy || !dirty) return
+    setBusy(true)
+    try {
+      const patches = []
+      if (templateId !== savedTemplate) {
+        patches.push(authedFetch('/api/studio/apply-template', session.access_token, {
+          method: 'POST',
+          body: JSON.stringify({ studio_video_id: video.id, template_id: templateId, deep: false }),
+        }))
+      }
+      if (captionsOn !== savedCaptions) {
+        patches.push(authedFetch(`/api/studio/videos?id=${video.id}`, session.access_token, {
+          method: 'PATCH',
+          body: JSON.stringify({ captions_enabled: captionsOn }),
+        }))
+      }
+      await Promise.all(patches)
+      toast({ message: 'Visual settings saved. Re-render to apply.', kind: 'success' })
+      onApplied?.({ ...video, template_id: templateId, captions_enabled: captionsOn })
+    } catch (e) {
+      toast({ message: e.message, kind: 'error' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 12,
+      padding: '10px 14px', marginBottom: 12,
+      background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10,
+      fontSize: 12.5,
+    }}>
+      <span style={{ color: 'var(--muted)', fontWeight: 700, fontSize: 11, letterSpacing: 0.1, textTransform: 'uppercase' }}>Template</span>
+      <select
+        className="input" value={templateId}
+        onChange={(e) => setTemplateId(e.target.value)}
+        style={{ padding: '6px 10px', fontSize: 12.5, maxWidth: 220 }}
+      >
+        {templates.map((t) => (
+          <option key={t.id} value={t.id}>{t.name}</option>
+        ))}
+      </select>
+      <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-soft)', cursor: 'pointer' }}>
+        <input type="checkbox" checked={captionsOn} onChange={(e) => setCaptionsOn(e.target.checked)} />
+        <span>Captions</span>
+      </label>
+      <div style={{ flex: 1 }} />
+      <button
+        type="button"
+        onClick={apply}
+        disabled={!dirty || busy}
+        className="btn-primary"
+        style={{ fontSize: 12, padding: '6px 14px' }}
+      >
+        {busy ? <Loader2 size={12} className="spin" /> : null}
+        {dirty ? 'Save changes' : 'Saved'}
+      </button>
+    </div>
+  )
+}
+
+// Legacy full-screen template selector. Kept around as dead code in
+// case we want to revive the rich preview surface — the compact
+// TemplateSwapRow above replaces it in the editor today.
+// eslint-disable-next-line no-unused-vars
 function TemplateSelector({ video, onApplied }) {
   const { session } = useAuth()
   const [templates, setTemplates] = useState([])
@@ -3036,16 +3122,10 @@ function StickyActionBar({ video, approvedCount, totalCount, segments, manualMod
                   : 'Generate assets'}
       </button>
     </div>
-    {/* Cost estimate strip inside the sticky bar — keeps the user
-        aware of remaining balance every time they touch the render
-        button. Lives below the main row so the bar stays a tight
-        single-line action on most pages. */}
-    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-      <CostEstimate
-        studioVideoId={video.id}
-        onAffordability={setCanRender}
-      />
-    </div>
+    {/* Cost estimate moved into the new-video modal (shown once at
+        creation time). Removing the duplicate strip from the editor
+        per product feedback — keeps the action bar a single tight
+        row. canRender stays true since we no longer block here. */}
     </div>
   )
 }

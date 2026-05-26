@@ -19,17 +19,17 @@ import { gateStudio } from './_lib/gate.js'
 // Columns the client is allowed to write on create. Mirrors the form
 // shape; anything outside this set is silently dropped.
 const ALLOWED_CREATE = new Set([
-  'profile_id', 'title', 'topic_prompt', 'reference_url', 'reference_text',
+  'profile_id', 'title', 'topic_prompt', 'fixed_script', 'reference_url', 'reference_text',
   'avatar_id', 'look_id', 'voice_id', 'target_duration_secs', 'aspect_ratio',
-  'template_id', 'brand_color', 'brand_color_secondary', 'captions_enabled', 'overlays_enabled', 'motion_graphics_enabled',
+  'template_id', 'brand_color', 'brand_color_secondary', 'randomize_look_images', 'captions_enabled', 'overlays_enabled', 'motion_graphics_enabled',
 ])
 // Columns the client is allowed to PATCH. Status transitions are
 // allowed here too because the canvas UI flips status as the user
 // moves through the editor (draft → mapping → mapped → editing → …).
 const ALLOWED_PATCH = new Set([
-  'title', 'topic_prompt', 'reference_url', 'reference_text',
+  'title', 'topic_prompt', 'fixed_script', 'reference_url', 'reference_text',
   'avatar_id', 'look_id', 'voice_id', 'target_duration_secs', 'aspect_ratio',
-  'template_id', 'brand_color', 'brand_color_secondary', 'captions_enabled', 'overlays_enabled', 'motion_graphics_enabled',
+  'template_id', 'brand_color', 'brand_color_secondary', 'randomize_look_images', 'captions_enabled', 'overlays_enabled', 'motion_graphics_enabled',
   'status', 'script_full_text', 'final_video_url', 'error',
 ])
 
