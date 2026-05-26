@@ -1740,6 +1740,7 @@ function SegmentList({ video, manualMode = false }) {
             onUploadAvatar={() => { /* realtime handles refresh */ }}
             onUploadScreenshot={() => { /* realtime handles refresh */ }}
             aspectRatio={video.aspect_ratio}
+            videoVoiceoverSourceUrl={video.voiceover_source_url || null}
             manualMode={manualMode}
           />
         ))}
@@ -3460,12 +3461,20 @@ function RegenOption({ label, checked, onChange, hint, cost, disabled }) {
 // One row of the video map. Cards are dense but legible — Studio is
 // desktop-first. Each editable field debounces text-input PATCHes and
 // fires select/checkbox PATCHes on change.
-function SegmentRow({ segment, onPatch, onDelete, onRegen, onSplit, onUploadAvatar, onUploadScreenshot, aspectRatio, manualMode = false }) {
+function SegmentRow({ segment, onPatch, onDelete, onRegen, onSplit, onUploadAvatar, onUploadScreenshot, aspectRatio, manualMode = false, videoVoiceoverSourceUrl = null }) {
   const isAvatar = segment.segment_type === 'avatar'
   const isBroll = segment.segment_type === 'voiceover_broll'
   const isMotion = segment.segment_type === 'voiceover_motion_graphics' || segment.segment_type === 'pure_motion_graphics'
   const isScreenshot = segment.segment_type === 'screenshot'
   const isPureMotion = segment.segment_type === 'pure_motion_graphics'
+  // Voice is "locked" when it was sliced from a user-uploaded
+  // voiceover instead of synthesized by ElevenLabs. Regen must NOT
+  // re-synth in that case — it would replace the user's real recorded
+  // voice with TTS. Signal: per-segment voice_source_start_secs OR
+  // the parent video having voiceover_source_url set.
+  const isVoiceLocked = segment.voice_source_start_secs != null
+    || segment.voice_source_end_secs != null
+    || !!videoVoiceoverSourceUrl
   const [showVarsEditor, setShowVarsEditor] = useState(false)
 
   const borderColor = segment.approved
@@ -3571,14 +3580,33 @@ function SegmentRow({ segment, onPatch, onDelete, onRegen, onSplit, onUploadAvat
               {(isAvatar || isBroll) && onRegen && (
                 <button
                   type="button"
-                  onClick={() => onRegen(isAvatar ? ['voice', 'avatar'] : ['voice', 'image'])}
+                  onClick={() => {
+                    // Build the regen scope. Voice is sliced from the
+                    // user's uploaded clip in upload-voiceover mode —
+                    // we must NOT re-synth it via ElevenLabs there, or
+                    // their actual recorded voice gets replaced with
+                    // TTS. Skip 'voice' from the types when locked.
+                    const types = []
+                    if (!isVoiceLocked) types.push('voice')
+                    types.push(isAvatar ? 'avatar' : 'image')
+                    onRegen(types)
+                  }}
                   className="btn-ghost"
                   style={{ padding: '4px 8px', fontSize: 11, color: 'var(--red)', fontWeight: 700 }}
-                  title={isAvatar
-                    ? 'Re-synthesize voice + re-render the HeyGen avatar video for this segment only.'
-                    : 'Re-synthesize voice + regenerate the B-roll image for this segment only.'}
+                  title={
+                    isVoiceLocked
+                      ? (isAvatar
+                          ? 'Re-render the HeyGen avatar video using your uploaded voice slice — voice stays untouched.'
+                          : 'Regenerate the B-roll image only. Voice was sliced from your upload and stays untouched.')
+                      : (isAvatar
+                          ? 'Re-synthesize voice + re-render the HeyGen avatar video for this segment only.'
+                          : 'Re-synthesize voice + regenerate the B-roll image for this segment only.')
+                  }
                 >
                   <RefreshCw size={11} /> Regen
+                  {isVoiceLocked && (
+                    <span style={{ marginLeft: 4, opacity: 0.7, fontWeight: 500 }}>(image only)</span>
+                  )}
                 </button>
               )}
               <button

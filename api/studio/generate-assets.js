@@ -83,6 +83,17 @@ export const config = {
 // Each segment gets its own try/catch so one failure doesn't poison the rest.
 async function dispatchVoice(segment, voiceId, profileId) {
   if (!segment.script_text?.trim()) return null
+  // Refuse to TTS-overwrite a voice that was sliced from a user-
+  // uploaded voiceover. Without this guard, a "regen voice" call
+  // (or a buggy retry) would replace the user's actual recorded
+  // voice with ElevenLabs TTS — invisible to the user until they
+  // play the segment and hear a synthetic clone instead of
+  // themselves. The UI also blocks this path, but defense in depth.
+  if (segment.voice_source_start_secs != null || segment.voice_source_end_secs != null) {
+    throw new Error(
+      'Voice for this segment was sliced from your uploaded voiceover — refusing to overwrite with TTS. Re-slice via /api/studio/voiceover/segment if you need to rebuild it.',
+    )
+  }
   if (!voiceId) throw new Error('No voice configured on the video')
   const url = await synthesizeToPublicUrl(voiceId, segment.script_text, profileId, {
     // Modest defaults; the brand voice's saved settings live on the avatar/
