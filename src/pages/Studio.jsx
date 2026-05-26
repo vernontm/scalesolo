@@ -200,6 +200,10 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
     aspect_ratio: '16:9',
     template_id: 'sleek',
     captions_enabled: true,
+    // Voiceover-upload mode. When 'upload', user picks a file instead
+    // of providing a topic; the server transcribes + segments.
+    voice_source: 'topic',  // 'topic' | 'upload'
+    voiceover_file: null,
   })
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
 
@@ -274,23 +278,84 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
 
   const submit = async (e) => {
     e?.preventDefault?.()
-    if (!form.topic_prompt.trim()) {
+
+    // Two paths: topic-based (existing) or voiceover-upload.
+    if (form.voice_source === 'upload') {
+      if (!form.voiceover_file) {
+        setError('Pick a voiceover audio file to upload.')
+        return
+      }
+    } else if (!form.topic_prompt.trim()) {
       setError('Tell Claude what the video is about.')
       return
     }
     setBusy(true); setError(null)
     try {
-      // Voice is tied to the chosen avatar. Look up the avatar's
-      // elevenlabs_voice_id and pin it on the video row so downstream
-      // jobs (generate-assets) don't error with "No voice selected".
-      // Avatars also have an effective_voice_id (default avatars w/ user
-      // override) — prefer that when present.
       const avatarRow = avatars.find((a) => a.id === form.avatar_id)
       const resolvedVoiceId = avatarRow?.effective_voice_id || avatarRow?.elevenlabs_voice_id || null
 
+      // ── Voiceover-upload branch ───────────────────────────────
+      if (form.voice_source === 'upload') {
+        const file = form.voiceover_file
+        // Phase 1: ask server for a signed upload URL.
+        const initR = await authedFetch(
+          '/api/studio/voiceover/upload?mode=init',
+          session.access_token,
+          { method: 'POST', body: JSON.stringify({
+            profile_id: profileId,
+            filename: file.name,
+            content_type: file.type || 'audio/mpeg',
+          }) },
+        )
+        const initBody = await initR.json().catch(() => ({}))
+        if (!initR.ok) throw new Error(initBody.error || `Upload init failed (${initR.status})`)
+        // Phase 2: PUT file straight to Supabase Storage.
+        const putR = await fetch(initBody.signed_url, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${initBody.token}`,
+            'Content-Type': initBody.content_type,
+            'x-upsert': 'true',
+          },
+          body: file,
+        })
+        if (!putR.ok) throw new Error(`Storage upload ${putR.status}`)
+        // Phase 3: finalize → returns public URL.
+        const finR = await authedFetch(
+          '/api/studio/voiceover/upload?mode=finalize',
+          session.access_token,
+          { method: 'POST', body: JSON.stringify({ profile_id: profileId, path: initBody.path }) },
+        )
+        const finBody = await finR.json().catch(() => ({}))
+        if (!finR.ok) throw new Error(finBody.error || 'Finalize failed')
+
+        toast({ message: 'Voiceover uploaded. Transcribing + segmenting…', kind: 'info' })
+
+        // Phase 4: kick off transcription + segmentation.
+        const segR = await authedFetch(
+          '/api/studio/voiceover/segment',
+          session.access_token,
+          { method: 'POST', body: JSON.stringify({
+            profile_id: profileId,
+            voiceover_url: finBody.voiceover_url,
+            avatar_id: form.avatar_id || null,
+            look_id: form.look_id || null,
+            voice_id: resolvedVoiceId,
+            aspect_ratio: form.aspect_ratio,
+            template_id: form.template_id || 'sleek',
+            captions_enabled: form.captions_enabled !== false,
+          }) },
+        )
+        const segBody = await segR.json().catch(() => ({}))
+        if (!segR.ok) throw new Error(segBody.error || 'Segmentation failed')
+        toast({ message: `Created ${segBody.segments?.length || 0} segments from your voiceover.`, kind: 'success' })
+        onCreated(segBody.video)
+        return
+      }
+
+      // ── Topic-based branch (existing flow) ────────────────────
       const body = {
         profile_id: profileId,
-        // Title is auto-generated server-side from the topic.
         topic_prompt: form.topic_prompt.trim(),
         avatar_id: form.avatar_id || null,
         look_id: form.look_id || null,
@@ -298,11 +363,7 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
         target_duration_secs: Number(form.target_duration_secs) || 120,
         aspect_ratio: form.aspect_ratio,
         template_id: form.template_id || 'sleek',
-        // Brand color is synced from the brand profile on the server.
         captions_enabled: form.captions_enabled !== false,
-        // Overlays + auto-fit always on. Defaults in DB are true; we
-        // explicitly send so even an admin who flipped the defaults
-        // gets the intended behavior for new videos.
         overlays_enabled: true,
         motion_graphics_enabled: true,
       }
@@ -312,10 +373,6 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
       const data = await r.json()
       if (!r.ok) throw new Error(data.error || 'Could not create video')
       toast({ message: 'Draft created. Generating the video map…', kind: 'success' })
-      // Kick off segmentation in the background — the per-video page
-      // polls for status and renders the map when it transitions to
-      // 'mapped'. Don't await: navigate immediately so the user sees
-      // a "mapping…" state instead of staring at the form.
       authedFetch('/api/studio/generate-map', session.access_token, {
         method: 'POST',
         body: JSON.stringify({ studio_video_id: data.video.id }),
@@ -455,16 +512,49 @@ function NewVideoForm({ profileId, onCancel, onCreated }) {
         />
       </Field>
 
-      {/* 4. Topic. */}
-      <Field label="4.  Topic" required hint="What is this video about? One or two sentences. Title is auto-generated.">
-        <textarea
-          className="input"
-          rows={3}
-          placeholder="A 90-second explainer on why faceless creators are out-shipping personal brands in 2026."
-          value={form.topic_prompt}
-          onChange={(e) => set('topic_prompt', e.target.value)}
-          maxLength={2000}
-        />
+      {/* 4. Source — topic prompt OR uploaded voiceover. */}
+      <Field label="4.  Source" required hint="Either describe the video and Claude writes + voices it, or upload your own voiceover and we'll segment it for you.">
+        <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+          {[
+            { v: 'topic',  label: 'Topic prompt' },
+            { v: 'upload', label: 'Upload my voiceover' },
+          ].map((r) => (
+            <button
+              key={r.v}
+              type="button"
+              onClick={() => set('voice_source', r.v)}
+              className={form.voice_source === r.v ? 'btn-primary' : 'btn-secondary'}
+              style={{ flex: 1, padding: '10px 8px', fontSize: 12.5, fontWeight: 700 }}
+            >{r.label}</button>
+          ))}
+        </div>
+        {form.voice_source === 'topic' ? (
+          <textarea
+            className="input"
+            rows={3}
+            placeholder="A 90-second explainer on why faceless creators are out-shipping personal brands in 2026."
+            value={form.topic_prompt}
+            onChange={(e) => set('topic_prompt', e.target.value)}
+            maxLength={2000}
+          />
+        ) : (
+          <div>
+            <input
+              type="file"
+              accept="audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/x-m4a,audio/mp4,audio/aac,audio/ogg,audio/flac"
+              onChange={(e) => set('voiceover_file', e.target.files?.[0] || null)}
+              style={{ width: '100%', padding: 10, background: 'var(--surface)', border: '1px dashed var(--border)', borderRadius: 8, color: 'var(--text-soft)', fontSize: 12 }}
+            />
+            {form.voiceover_file && (
+              <div style={{ marginTop: 6, fontSize: 11, color: 'var(--muted)' }}>
+                {form.voiceover_file.name} · {(form.voiceover_file.size / 1024 / 1024).toFixed(1)} MB
+              </div>
+            )}
+            <div style={{ marginTop: 8, fontSize: 11, color: 'var(--muted)', lineHeight: 1.5 }}>
+              MP3, WAV, M4A, AAC, OGG, or FLAC. We'll transcribe, split into beats, slice the audio per segment, and pick visuals automatically. You can still upload your own avatar videos for each beat on the next step.
+            </div>
+          </div>
+        )}
       </Field>
 
       {/* 5. Visual template — selectable cards. Brand color cascades

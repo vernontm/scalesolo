@@ -379,7 +379,11 @@ export default async function handler(req, res) {
         }
       } catch { /* fall through to the 400 below */ }
     }
-    if (!video.voice_id) {
+    // Skip the voice-id requirement when this video was created from
+    // an uploaded voiceover — segments already carry their own
+    // voice_url slices, so no ElevenLabs synth is needed and the
+    // voice_id column may legitimately be null.
+    if (!video.voice_id && !video.voiceover_source_url) {
       return res.status(400).json({ error: 'No voice selected. Set a voice on the video before continuing.' })
     }
 

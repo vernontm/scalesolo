@@ -59,6 +59,14 @@
     "api/studio/segments/upload-avatar.js": {
       "maxDuration": 10
     },
+    "api/studio/voiceover/upload.js": {
+      "maxDuration": 10
+    },
+    "api/studio/voiceover/segment.js": {
+      "includeFiles": "node_modules/@ffmpeg-installer/**",
+      "maxDuration": 300,
+      "memory": 1024
+    },
     "api/studio/generate-map.js": {
       "maxDuration": 120
     },
