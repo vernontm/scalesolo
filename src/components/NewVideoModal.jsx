@@ -160,9 +160,14 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
       // ── Voiceover upload path ────────────────────────────────
       if (a.source === 'voiceover') {
         const file = a.voiceover_file
+        // Some browsers leave file.type empty for audio types (especially
+        // .m4a / .wav from older OSes). Best-effort fall back to a MIME
+        // we know the server accepts; the server's regex doesn't care
+        // about the exact bytes, only the declared content type.
+        const inferredType = file.type || guessMimeFromName(file.name) || 'audio/mpeg'
         const initR = await authedFetch(
           '/api/studio/voiceover/upload?mode=init', session.access_token,
-          { method: 'POST', body: JSON.stringify({ profile_id: profileId, filename: file.name, content_type: file.type || 'audio/mpeg' }) },
+          { method: 'POST', body: JSON.stringify({ profile_id: profileId, filename: file.name, content_type: inferredType }) },
         )
         const initBody = await initR.json()
         if (!initR.ok) throw new Error(initBody.error || 'Upload init failed')
@@ -171,7 +176,12 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
           headers: { Authorization: `Bearer ${initBody.token}`, 'Content-Type': initBody.content_type, 'x-upsert': 'true' },
           body: file,
         })
-        if (!putR.ok) throw new Error(`Storage upload ${putR.status}`)
+        if (!putR.ok) {
+          // Surface Supabase's actual error message so 400s are
+          // debuggable instead of opaque ("Storage upload 400").
+          const detail = await putR.text().catch(() => '')
+          throw new Error(`Storage upload ${putR.status}${detail ? `: ${detail.slice(0, 300)}` : ''}`)
+        }
         const finR = await authedFetch(
           '/api/studio/voiceover/upload?mode=finalize', session.access_token,
           { method: 'POST', body: JSON.stringify({ profile_id: profileId, path: initBody.path }) },
@@ -628,6 +638,24 @@ function estimateScriptDuration(text) {
   return (words / wpm) * 60
 }
 
+// Browser-detected file.type is sometimes empty for older audio
+// formats (especially .m4a / .wav from older OS combinations).
+// Map extensions → MIME so the server-side validator accepts the
+// upload init.
+function guessMimeFromName(name = '') {
+  const ext = name.toLowerCase().split('.').pop()
+  switch (ext) {
+    case 'mp3':  return 'audio/mpeg'
+    case 'wav':  return 'audio/wav'
+    case 'm4a':  return 'audio/x-m4a'
+    case 'mp4':  return 'audio/mp4'
+    case 'aac':  return 'audio/aac'
+    case 'ogg':  return 'audio/ogg'
+    case 'flac': return 'audio/flac'
+    default:     return null
+  }
+}
+
 function Section({ title, hint, children }) {
   return (
     <div>
@@ -676,20 +704,21 @@ function Recap({ label, value }) {
 
 // ── Styles ───────────────────────────────────────────────────────────
 
+// Full-page modal — no card chrome, no surrounding dim layer. The
+// modal IS the page while it's open: solid background, edge-to-edge,
+// content centered in a wide column that still scrolls naturally.
 const overlayStyle = {
   position: 'fixed', inset: 0, zIndex: 250,
-  background: 'rgba(0,0,0,0.78)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
+  background: 'var(--bg-base, #0a0a0c)',
   overflowY: 'auto',
-  display: 'flex', justifyContent: 'center', alignItems: 'flex-start',
-  padding: '32px 20px 64px',
 }
 const cardStyle = {
-  width: '100%', maxWidth: 820,
-  background: 'var(--surface)', border: '1px solid var(--border)',
-  borderRadius: 16,
+  // No max-width card — just a centered content column. The modal
+  // reads as a normal page rather than a popover.
+  width: '100%',
+  minHeight: '100vh',
+  background: 'transparent',
   display: 'flex', flexDirection: 'column',
-  boxShadow: '0 30px 80px rgba(0,0,0,0.5)',
-  overflow: 'hidden',
 }
 const progressTrack = { height: 3, background: 'var(--surface-2)' }
 const progressFill = {
@@ -697,9 +726,13 @@ const progressFill = {
   transition: 'width 0.25s ease',
 }
 const headerStyle = {
-  padding: '16px 22px',
+  padding: '20px 32px',
   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
   borderBottom: '1px solid var(--border)',
+  maxWidth: 1080,
+  margin: '0 auto',
+  width: '100%',
+  boxSizing: 'border-box',
 }
 const brandIcon = {
   width: 30, height: 30, borderRadius: 8,
@@ -710,11 +743,29 @@ const closeBtn = {
   background: 'transparent', border: 'none', cursor: 'pointer',
   color: 'var(--muted)', padding: 6, display: 'inline-flex', alignItems: 'center',
 }
-const bodyStyle = { padding: '24px 22px 8px' }
+const bodyStyle = {
+  padding: '40px 32px 24px',
+  maxWidth: 1080,
+  margin: '0 auto',
+  width: '100%',
+  boxSizing: 'border-box',
+  flex: 1,
+}
 const footerStyle = {
-  padding: '14px 22px 18px',
+  padding: '20px 32px 28px',
   borderTop: '1px solid var(--border)',
   display: 'flex', justifyContent: 'space-between',
+  maxWidth: 1080,
+  margin: '0 auto',
+  width: '100%',
+  boxSizing: 'border-box',
+  // Stick footer at the bottom of the page so the action buttons
+  // are always reachable. position:sticky inside an overflow:auto
+  // overlay does the right thing on long step bodies.
+  position: 'sticky',
+  bottom: 0,
+  background: 'var(--bg-base, #0a0a0c)',
+  zIndex: 1,
 }
 const errorPanel = {
   marginBottom: 14, padding: '10px 14px',
