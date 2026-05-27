@@ -141,6 +141,60 @@ async function getBrowser() {
   return _browserPromise
 }
 
+// Puppeteer/Chrome concurrency gate.
+//
+// The outer render loop pool runs N segments in parallel (default 4 on
+// perf-8x). Each segment is a mix of:
+//   - ffmpeg work (process-isolated, scales linearly with vCPUs)
+//   - Puppeteer work (HF composition render + overlay PNG capture,
+//     both done inside the ONE shared Chrome instance)
+//
+// Puppeteer calls into Chrome serialize on Chrome's main thread + GPU
+// compositor. When 4 segments simultaneously hit page.screenshot in a
+// 30fps loop (150-300 captures each), the compositor thrashes and the
+// 180s protocolTimeout fires — that's the "Page.captureScreenshot
+// timed out" error we saw, and the runaway 60%-CPU Chrome renderer
+// processes we caught with `ps -ef`.
+//
+// Fix: cap CHROME-BOUND work at 2 concurrent ops while letting ffmpeg
+// run fully in parallel. The semaphore wraps every renderHyperFrames
+// Chunk + renderOverlayPngs call; ffmpeg encodes outside the gate.
+//
+// Tunable via PUPPETEER_CONCURRENCY env (default 2).
+const PUPPETEER_CONCURRENCY = Math.max(1, parseInt(process.env.PUPPETEER_CONCURRENCY || '2', 10) || 2)
+let _chromeInFlight = 0
+const _chromeQueue = []
+async function withChromeSlot(fn) {
+  if (_chromeInFlight >= PUPPETEER_CONCURRENCY) {
+    await new Promise((resolve) => _chromeQueue.push(resolve))
+  }
+  _chromeInFlight++
+  try {
+    return await fn()
+  } finally {
+    _chromeInFlight--
+    const next = _chromeQueue.shift()
+    if (next) next()
+  }
+}
+
+// Hard outer timeout for Puppeteer-bound functions. If a single seg's
+// Chrome work takes longer than this, we abandon it (return null /
+// throw) so a runaway page can't block the entire bake. Two minutes
+// is generous — a 30s segment at 30fps = 900 captures × ~80ms = 72s.
+const PUPPETEER_HARD_TIMEOUT_MS = 150_000
+async function withTimeout(promise, ms, label) {
+  let timer
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} exceeded ${ms}ms hard timeout`)), ms)
+  })
+  try {
+    return await Promise.race([promise, timeout])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function closeBrowserSafe() {
   if (!_browserPromise) return
   try {
@@ -1246,7 +1300,11 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
           },
         }
         try {
-          await renderHyperFramesChunk(screenshotSeg, paths, dim, wantDuration, baseUrl, bypassSecret)
+          await withChromeSlot(() => withTimeout(
+            renderHyperFramesChunk(screenshotSeg, paths, dim, wantDuration, baseUrl, bypassSecret),
+            PUPPETEER_HARD_TIMEOUT_MS,
+            `renderHyperFramesChunk(${screenshotCompId})`,
+          ))
           progress.hf_rendered.push(seg.id)
         } catch (e) {
           const reason = e?.message || String(e)
@@ -1270,7 +1328,11 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
         const wantDuration = seg.segment_type === 'pure_motion_graphics' ? 2.5 : Math.max(2, voiceDuration || 4)
         if (seg.hyperframes_composition_id) {
           try {
-            await renderHyperFramesChunk(seg, paths, dim, wantDuration, baseUrl, bypassSecret)
+            await withChromeSlot(() => withTimeout(
+              renderHyperFramesChunk(seg, paths, dim, wantDuration, baseUrl, bypassSecret),
+              PUPPETEER_HARD_TIMEOUT_MS,
+              `renderHyperFramesChunk(${seg.hyperframes_composition_id})`,
+            ))
             progress.hf_rendered.push(seg.id)
           } catch (e) {
             const reason = e?.message || String(e)
@@ -1353,9 +1415,11 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
           // Hand the renderer a seg with the filtered list so it
           // doesn't see the stripped placements.
           const segForOverlays = { ...seg, overlay_placements: effectivePlacements }
-          const overlayFramesDir = await renderOverlayPngs(
-            segForOverlays, dir, dim, overlayDuration, baseUrl, bypassSecret, resolvedTemplate,
-          )
+          const overlayFramesDir = await withChromeSlot(() => withTimeout(
+            renderOverlayPngs(segForOverlays, dir, dim, overlayDuration, baseUrl, bypassSecret, resolvedTemplate),
+            PUPPETEER_HARD_TIMEOUT_MS,
+            `renderOverlayPngs(seg=${seg.id})`,
+          ))
           if (overlayFramesDir) {
             const composited = join(dir, 'out-with-overlay.mp4')
             await compositeOverlayOntoChunk(paths.outChunk, overlayFramesDir, overlayDuration, composited)
