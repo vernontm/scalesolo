@@ -376,6 +376,10 @@ async function orchestrateSegment(segment, ctx) {
     if (touchesAssets && !('rendered_chunk_url' in body)) {
       body = { ...body, rendered_chunk_url: null }
     }
+    // Voice replaced → cleaned status is invalid for the new file.
+    if ('voice_url' in body && !('voice_cleaned' in body)) {
+      body = { ...body, voice_cleaned: false }
+    }
     await supaFetch(`studio_segments?id=eq.${segment.id}`, {
       method: 'PATCH', body, prefer: 'return=minimal',
     }).catch(() => {})

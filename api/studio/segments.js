@@ -28,7 +28,7 @@ const ALLOWED_PATCH = new Set([
   // Server-set during asset orchestration
   'voice_url', 'voice_duration_secs', 'avatar_video_url', 'image_url',
   'broll_video_url', 'grok_task_id',
-  'status', 'error', 'rendered_chunk_url',
+  'status', 'error', 'rendered_chunk_url', 'voice_cleaned',
 ])
 
 // Helper: resolve a segment's profile_id (used for access check) without
@@ -104,6 +104,10 @@ export default async function handler(req, res) {
       // (which is how the worker itself reports completion).
       if (!('rendered_chunk_url' in updates)) {
         updates.rendered_chunk_url = null
+      }
+      // voice_url replaced → previous cleaning was for the old file.
+      if ('voice_url' in updates && !('voice_cleaned' in updates)) {
+        updates.voice_cleaned = false
       }
 
       const updated = await supaFetch(`studio_segments?id=eq.${id}`, {

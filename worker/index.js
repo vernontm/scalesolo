@@ -1698,6 +1698,138 @@ async function extractAudioCore(body) {
   }
 }
 
+// ── Studio voice isolation (ElevenLabs) ────────────────────────────────────
+// Per-segment ElevenLabs Voice Isolator pass. We can't run this from
+// /api/studio/voiceover/segment.js — EL's isolation endpoint takes
+// 30-60s on a multi-second chunk and N segments × 60s blows past
+// Vercel's 300s function ceiling. This worker handles it in the
+// background after segmentation completes.
+//
+// Body: { studio_video_id }
+// Response: { ok, cleaned, failed, skipped }
+// Auth: x-worker-secret.
+
+const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || ''
+
+// Inline copy of api/_lib/elevenlabs.js isolateAudio (worker is a
+// separate Node project, so we duplicate rather than reach across the
+// repo). If you edit the original, edit this too.
+async function isolateAudio(audioBytes, { apiKey, filename = 'voice.mp3', timeoutMs = 180_000 } = {}) {
+  if (!apiKey) throw new Error('ELEVENLABS_API_KEY not configured')
+  if (!audioBytes?.length) throw new Error('audio bytes required')
+  const form = new FormData()
+  form.append('audio', new Blob([audioBytes], { type: 'audio/mpeg' }), filename)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  let r
+  try {
+    r = await fetch('https://api.elevenlabs.io/v1/audio-isolation', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { 'xi-api-key': apiKey, Accept: 'audio/mpeg' },
+      body: form,
+    })
+  } catch (e) {
+    if (e?.name === 'AbortError') throw new Error('ElevenLabs audio-isolation timed out')
+    throw e
+  } finally {
+    clearTimeout(timer)
+  }
+  if (!r.ok) {
+    let detail = ''
+    try { detail = (await r.text())?.slice(0, 500) } catch {}
+    throw new Error(`ElevenLabs audio-isolation ${r.status}${detail ? `: ${detail}` : ''}`)
+  }
+  return Buffer.from(await r.arrayBuffer())
+}
+
+app.post('/jobs/voice-isolate-segments', requireSecret, async (req, res) => {
+  const videoId = req.body?.studio_video_id
+  if (!videoId) return res.status(400).json({ error: 'studio_video_id required' })
+  if (!SUPABASE_URL || !SERVICE_KEY) {
+    return res.status(500).json({ error: 'SUPABASE_URL / SUPABASE_SERVICE_KEY not configured' })
+  }
+  if (!ELEVENLABS_API_KEY) {
+    return res.status(500).json({ error: 'ELEVENLABS_API_KEY not configured on worker' })
+  }
+
+  jobStart()
+  // Respond immediately so the caller (Vercel function) doesn't have
+  // to hold the connection open for the full isolation pass. The
+  // actual work continues in the background; results land on the DB
+  // (voice_url + voice_cleaned + rendered_chunk_url=null per segment).
+  res.json({ ok: true, dispatched: true, studio_video_id: videoId })
+
+  try {
+    const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
+    // Only clean segments that came from a user-uploaded voiceover
+    // (voice_source_start_secs is set on the slice). TTS-generated
+    // voices are already clean — running them through isolation
+    // would just add latency for no quality win.
+    const { data: segs, error: fetchErr } = await supabase
+      .from('studio_segments')
+      .select('id, profile_id, voice_url, voice_source_start_secs, voice_cleaned')
+      .eq('studio_video_id', videoId)
+      .not('voice_url', 'is', null)
+      .not('voice_source_start_secs', 'is', null)
+      .eq('voice_cleaned', false)
+    if (fetchErr) throw new Error(`fetch segments: ${fetchErr.message}`)
+    if (!segs?.length) {
+      console.log(`[voice-isolate] no segments to clean for video ${videoId}`)
+      return
+    }
+    console.log(`[voice-isolate] cleaning ${segs.length} segment(s) for video ${videoId}`)
+
+    let cleaned = 0
+    let failed = 0
+    // Concurrency 3 — each isolation call is network-bound (uploading
+    // audio + waiting on EL servers), so we don't need cores for it.
+    // Higher concurrency risks tripping EL's per-minute rate limits.
+    const CONCURRENCY = 3
+    let nextIdx = 0
+    const workers = Array.from({ length: Math.min(CONCURRENCY, segs.length) }, async () => {
+      while (true) {
+        const i = nextIdx++
+        if (i >= segs.length) return
+        const seg = segs[i]
+        try {
+          // Download the existing voice slice
+          const r = await fetch(seg.voice_url)
+          if (!r.ok) throw new Error(`download voice_url: ${r.status}`)
+          const raw = Buffer.from(await r.arrayBuffer())
+          // Isolate
+          const cleanedBuf = await isolateAudio(raw, { apiKey: ELEVENLABS_API_KEY })
+          // Upload alongside the raw slice
+          const path = `${seg.profile_id}/studio/voice/clean-${seg.id}-${Date.now()}.mp3`
+          const { error: upErr } = await supabase.storage.from('studio-media')
+            .upload(path, cleanedBuf, { contentType: 'audio/mpeg', upsert: true })
+          if (upErr) throw new Error(`upload cleaned: ${upErr.message}`)
+          const { data: pub } = supabase.storage.from('studio-media').getPublicUrl(path)
+          const cleanedUrl = pub?.publicUrl
+          if (!cleanedUrl) throw new Error('cleaned url empty')
+          // Patch — clear rendered_chunk_url so the next bake re-renders
+          // this segment with the cleaned audio.
+          await supabase.from('studio_segments').update({
+            voice_url: cleanedUrl,
+            voice_cleaned: true,
+            rendered_chunk_url: null,
+          }).eq('id', seg.id)
+          cleaned++
+        } catch (e) {
+          console.warn(`[voice-isolate] seg ${seg.id} failed: ${e?.message || e}`)
+          failed++
+        }
+      }
+    })
+    await Promise.all(workers)
+    console.log(`[voice-isolate] done video ${videoId}: cleaned=${cleaned} failed=${failed} of ${segs.length}`)
+  } catch (e) {
+    console.error('voice-isolate job error:', e?.stack || e)
+  } finally {
+    jobEnd()
+  }
+})
+
 // ── Studio render-final ────────────────────────────────────────────────────
 // Long-running HyperFrames bake. Replaces the Vercel /api/studio/render-final
 // path that was hitting the 300s function ceiling and the headless-Chrome

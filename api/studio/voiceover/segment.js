@@ -365,6 +365,33 @@ export default async function handler(req, res) {
     const insertRows = segments.map((s) => ({ ...s, studio_video_id: video.id, profile_id }))
     const insertedSegs = await supaFetch('studio_segments', { method: 'POST', body: insertRows })
 
+    // ── Step 6: Kick off background voice cleaning on fly worker.
+    // Fire-and-forget — the response goes back to the client right
+    // away. Worker runs ElevenLabs Voice Isolator on each user-sliced
+    // voice_url and patches it back with voice_cleaned=true. We do
+    // this AFTER segments are inserted (worker queries them by
+    // studio_video_id) and AFTER we have a video row to attach to.
+    // Errors here are non-fatal — the user's segments work fine
+    // with raw audio, they just won't be broadcast-clean.
+    try {
+      const workerUrl = process.env.WORKER_URL
+      const workerSecret = process.env.WORKER_SHARED_SECRET
+      if (workerUrl && workerSecret) {
+        // Don't await — let the fetch fly. AbortSignal.timeout(2000)
+        // means we don't even wait for the worker's response body.
+        // The bake (which can take 5+ min) lives inside the worker.
+        fetch(`${workerUrl}/jobs/voice-isolate-segments`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-worker-secret': workerSecret,
+          },
+          body: JSON.stringify({ studio_video_id: video.id }),
+          signal: AbortSignal.timeout(2000),
+        }).catch(() => { /* fire-and-forget */ })
+      }
+    } catch (_) { /* never block the response on cleanup dispatch */ }
+
     return res.status(201).json({ video, segments: insertedSegs })
   } catch (err) {
     return res.status(err.status || 500).json({ error: err.message || String(err) })
