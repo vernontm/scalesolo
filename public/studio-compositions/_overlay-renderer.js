@@ -135,19 +135,30 @@ function brandLogoFor(name) {
 function renderTool(c, t) {
   const name = c.name || ''
   const fallbackGlyph = esc(c.logo || (name ? name[0].toUpperCase() : '?'))
-  const localLogo = brandLogoFor(name)
-  // Local-logo lookup. No remote favicon fetch — unknown brands fall
-  // back to the single-letter glyph so we never ship a grainy 16px
-  // favicon into a 1080p+ render. object-fit:cover makes the logo
-  // fill the entire .logo plate.
-  const inner = localLogo
-    ? `<img src="${esc(localLogo)}" alt="${esc(name)}" style="width:100%;height:100%;object-fit:cover;display:block;" onerror="this.outerHTML='<span>${fallbackGlyph}</span>'">`
-    : `<span>${fallbackGlyph}</span>`
-  return `<div class="ov-tool"${containerStyle(t.container)}>
-    <div class="logo"${textStyle(t.logo)}>${inner}</div>
-    <div class="info">
-      <div class="name"${textStyle(t.name)}>${esc(name)}</div>
-    </div>
+  // Stays in sync with api/studio/_lib/overlay-renderer.js renderTool.
+  // Four tiers: content.logo_image → LOCAL_BRAND_LOGOS → gradient
+  // card (default) → glyph (opt-in).
+  const brandImage = (typeof c.logo_image === 'string' && c.logo_image.trim()) ? c.logo_image : null
+  const localLogo = brandImage || brandLogoFor(name)
+  if (localLogo) {
+    const inner = `<img src="${esc(localLogo)}" alt="${esc(name)}" style="width:100%;height:100%;object-fit:cover;display:block;" onerror="this.outerHTML='<span>${fallbackGlyph}</span>'">`
+    return `<div class="ov-tool"${containerStyle(t.container)}>
+      <div class="logo"${textStyle(t.logo)}>${inner}</div>
+      <div class="info">
+        <div class="name"${textStyle(t.name)}>${esc(name)}</div>
+      </div>
+    </div>`
+  }
+  if (c.style === 'glyph') {
+    return `<div class="ov-tool"${containerStyle(t.container)}>
+      <div class="logo"${textStyle(t.logo)}><span>${fallbackGlyph}</span></div>
+      <div class="info">
+        <div class="name"${textStyle(t.name)}>${esc(name)}</div>
+      </div>
+    </div>`
+  }
+  return `<div class="ov-tool ov-tool-gradient"${containerStyle(t.container)} data-gradient-card="1">
+    <div class="gradient-card-name"${textStyle(t.name)}>${esc(name)}</div>
   </div>`
 }
 

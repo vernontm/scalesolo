@@ -1113,12 +1113,20 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
   //      from Claude's best guess).
   //   3. Null — no watermark rendered.
   let videoWatermarkHandle = null
+  // Brand-profile lookups for the tool-logo override too — when the
+  // speaker says the user's own brand name, we substitute the brand
+  // profile's logo_url for the curated catalog. Captured here so
+  // both flows hit the DB once.
+  let brandBusinessName = null
+  let brandLogoUrl = null
   try {
     const { data: brandProfile } = await supabase
       .from('profiles')
-      .select('instagram_handle, youtube_handle, x_handle, tiktok_handle, threads_handle, linkedin_handle')
+      .select('business_name, logo_url, instagram_handle, youtube_handle, x_handle, tiktok_handle, threads_handle, linkedin_handle')
       .eq('id', video.profile_id)
       .maybeSingle()
+    brandBusinessName = brandProfile?.business_name || null
+    brandLogoUrl      = brandProfile?.logo_url || null
     const candidates = [
       brandProfile?.instagram_handle,
       brandProfile?.youtube_handle,
@@ -1277,6 +1285,25 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
           overlay_id: 'watermark-v1',
           zone: 'corner-tr',
           content: { handle: videoWatermarkHandle },
+        })
+      }
+      // Brand-profile logo override for tool-logo placements. When
+      // the speaker names the active brand (matches business_name
+      // ignoring case + non-alphanumeric chars), swap the curated
+      // LOCAL_BRAND_LOGOS lookup for the brand's own logo_url. This
+      // is how "Vernon Tech and Media" mentions render with Ray's
+      // actual VTM mark instead of falling back to a letter glyph.
+      if (brandBusinessName && brandLogoUrl) {
+        const normalizedBrandName = brandBusinessName.toLowerCase().replace(/[^a-z0-9]/g, '')
+        effectivePlacements = effectivePlacements.map((p) => {
+          if (p?.overlay_id !== 'tool-logo-v1') return p
+          const spokenName = p?.content?.name || ''
+          const normalizedSpoken = spokenName.toLowerCase().replace(/[^a-z0-9]/g, '')
+          if (!normalizedSpoken || normalizedSpoken !== normalizedBrandName) return p
+          return {
+            ...p,
+            content: { ...(p.content || {}), logo_image: brandLogoUrl },
+          }
         })
       }
       if (overlaysEligible && resolvedTemplate && effectivePlacements.length) {

@@ -588,3 +588,41 @@
   width: auto;
   margin: 0 auto;
 }
+
+/* ───────────────────────────────────────────────────────────────
+   Gradient-card mode for tool-logo overlay (.ov-tool.ov-tool-gradient).
+   Triggered by overlay-renderer renderTool() when no logo image is
+   available and c.style isn't 'glyph'. Renders the company name in
+   big chrome text on a brand-color gradient background — keeps the
+   card looking intentional + on-brand instead of dropping a sad
+   single letter for unmapped brands.
+
+   Inherits the same gradient + glass treatment as ov-tool itself,
+   but replaces the inner .logo plate + .info text with a single
+   center-aligned .gradient-card-name block.
+   ─────────────────────────────────────────────────────────────── */
+.ov-tool.ov-tool-gradient {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 32px;
+}
+.ov-tool.ov-tool-gradient .gradient-card-name {
+  font-family: var(--ov-font-display);
+  font-weight: 900;
+  font-size: 48px;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  /* Chrome gradient on the text — same recipe as the headline
+     composition's .headline .chrome span. Reads as premium /
+     intentional on top of the warm brand gradient card. */
+  background: linear-gradient(180deg, #ffffff 0%, #e8e8ed 40%, #8a8a92 50%, #d4d4dc 60%, #ffffff 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  padding-bottom: 6px;
+  text-shadow:
+    0 2px 8px rgba(0,0,0,0.35),
+    0 0 16px rgba(255,255,255,0.05);
+}

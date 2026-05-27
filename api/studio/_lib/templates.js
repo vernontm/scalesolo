@@ -93,6 +93,12 @@ export const SLEEK = {
     //   - sleek-scene-cta-v1: the final segment only. Big button +
     //     hero handle. Auto-fit reserves this for the LAST segment.
     'sleek-scene-headline-v1',
+    // Typewriter variant of the headline — same fonts + gradient,
+    // words land one-by-one with a blinking cursor. Use for hooks
+    // and identity beats where the "still being typed" feel adds
+    // anticipation. Same composition_id contract — meta-strip is
+    // stripped by the worker.
+    'sleek-scene-headline-typewriter-v1',
     'sleek-scene-list-v1',
     'sleek-scene-claude-chat-v1',
     'sleek-scene-cta-v1',

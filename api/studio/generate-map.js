@@ -87,7 +87,7 @@ const SEGMENT_TOOL = {
             segment_type: { type: 'string', enum: SEGMENT_TYPES },
             script_text: {
               type: 'string',
-              description: 'What the avatar or voiceover says in this segment. Required unless segment_type is pure_motion_graphics. Average 5 seconds of spoken content (~12-15 words).',
+              description: 'What the avatar or voiceover says in this segment. Required unless segment_type is pure_motion_graphics. Keep segments TIGHT: 1-2 short sentences or a single clause, ~5-12 words (3-5 seconds of spoken content). Never put a full paragraph in one segment — split paragraphs at sentence boundaries (period, exclamation, question mark) or strong comma breaks so each beat gets its own visual. Tight segments give the editor more visual variety to work with.',
             },
             image_prompt: {
               type: 'string',
@@ -221,7 +221,7 @@ Composition pool you may use (do NOT pick anything outside this list):
 ${compositionPool.map((id) => `  - ${id}`).join('\n')}
 
 Pacing for this template:
-- Target average segment duration: ${pacing.segment_duration_avg_secs ?? 4.5} seconds.
+- Target average segment duration: ${pacing.segment_duration_avg_secs ?? 4.5} seconds. Prefer SHORTER segments — 2-5 seconds is the sweet spot for visual variety. Long monologue blocks should be split at sentence or strong comma boundaries; one paragraph from the script ≈ 2-4 segments, never 1.
 - Hook segment max: ${pacing.hook_segment_max_secs ?? 2.5} seconds.
 - Rhythm: ${pacing.rhythm || 'balanced'}.
 - ${motionDensity}Vary segment types — never put 3 of the same type in a row.
@@ -349,24 +349,29 @@ function sanitizeOverlayPlacements(raw, tmpl, orientation) {
   return out
 }
 
-// Pick a sensible transition for a segment when Claude didn't supply one
-// (or returned an invalid value). Heuristic, ordered most-specific first:
-//   - First segment always reveals with a fade.
-//   - Avatar talking-head segments fade so the cuts feel conversational.
-//   - voiceover_broll uses zoom for a Ken Burns reveal on the still image.
-//   - voiceover_motion_graphics uses crossfade so the HF composition's
-//     entrance animation isn't cut off by a hard switch.
-//   - pure_motion_graphics gets whip for energy on big graphical beats.
-// Anything left falls back to the template's default_transition (or
-// 'fade' as a safe terminal default — better than the old hardcoded
-// 'cut' that left every segment feeling flat).
+// Per-segment transition picker. Hard rules first, then a deterministic
+// random pick by segment_index so re-renders are stable.
+//
+// Hard rules:
+//   - First segment always opens with a fade so the video doesn't slam in.
+//   - voiceover_broll ALWAYS uses zoom (Ray's product rule — Ken Burns
+//     reveal on the still image, never anything else).
+//
+// Other types: pick from the template's random pool deterministically
+// by segment_index so the same video re-renders identically and adjacent
+// segments don't accidentally hit the same transition twice in a row.
+const TRANSITION_POOL_DEFAULT = ['fade', 'crossfade', 'whip', 'wipe', 'dip_to_black']
+
 function defaultTransitionFor(segmentType, idx, tmpl) {
   if (idx === 0) return 'fade'
-  if (segmentType === 'avatar') return 'fade'
   if (segmentType === 'voiceover_broll') return 'zoom'
-  if (segmentType === 'voiceover_motion_graphics') return 'crossfade'
-  if (segmentType === 'pure_motion_graphics') return 'whip'
-  return tmpl?.default_transition || 'fade'
+  const pool = Array.isArray(tmpl?.transition_pool) && tmpl.transition_pool.length
+    ? tmpl.transition_pool
+    : TRANSITION_POOL_DEFAULT
+  // Deterministic rotation that skips the immediately-previous choice
+  // when possible — keeps adjacent transitions from repeating without
+  // needing actual random state.
+  return pool[idx % pool.length]
 }
 
 // Auto-pick a one-shot SFX for high-impact moments when Claude didn't

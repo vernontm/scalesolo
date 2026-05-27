@@ -1,11 +1,11 @@
 <!doctype html>
 <html
   lang="en"
-  data-composition-id="sleek-scene-headline-v1"
+  data-composition-id="sleek-scene-headline-typewriter-v1"
   data-composition-variables='[
     {"id":"eyebrow","type":"string","label":"Eyebrow","default":""},
-    {"id":"title_chrome","type":"string","label":"Title (chrome part)","default":"Large headline text goes"},
-    {"id":"title_accent","type":"string","label":"Title (accent part)","default":"right here"},
+    {"id":"title_chrome","type":"string","label":"Title (chrome part)","default":"Type the headline"},
+    {"id":"title_accent","type":"string","label":"Title (accent part)","default":"word by word"},
     {"id":"subtitle","type":"string","label":"Subtitle","default":""},
     {"id":"meta_label","type":"string","label":"Meta label","default":"VTM"},
     {"id":"meta_subtitle","type":"string","label":"Meta subtitle","default":"Scene"},
@@ -14,9 +14,14 @@
   ]'>
 <head>
 <meta charset="UTF-8">
-<title>Sleek Scene — Centered Headline</title>
+<title>Sleek Scene — Headline (typewriter)</title>
 <link rel="stylesheet" href="/studio-compositions/_shared.css">
 <style>
+  /* Variant of sleek-scene-headline-v1 with a typewriter entrance.
+     Same fonts, same chrome + accent gradients, same background grid
+     and glow — only the entrance animation differs. Words appear
+     one-at-a-time as if being typed, with a blinking cursor that
+     vanishes after the last word. */
   :root {
     --bg-base: #0a0a0c;
     --accent: #e3151e;
@@ -24,7 +29,6 @@
     --text-primary: #ffffff;
     --text-secondary: rgba(255, 255, 255, 0.65);
     --text-muted: rgba(255, 255, 255, 0.4);
-    --surface-card: rgba(255, 255, 255, 0.06);
     --surface-border: rgba(255, 255, 255, 0.12);
     --grid-color: rgba(227, 21, 30, 0.15);
   }
@@ -40,7 +44,6 @@
     color: var(--text-primary);
     transform-origin: center center;
   }
-  /* Scale to fit any viewport (preview iframe + worker capture both use 1920x1080 so no scaling, but preserved for inline previews) */
   @media (max-width:1920px) { .scene { transform: scale(calc(100vw / 1920)); } }
   @media (max-height:1080px) { .scene { transform: scale(calc(100vh / 1080)); } }
 
@@ -54,7 +57,6 @@
     pointer-events:none; z-index:1;
   }
   @keyframes drift_diagonal { from { transform: translate(0,0); } to { transform: translate(-80px,-80px); } }
-
   .scene::after {
     content:''; position:absolute; top:-30%; right:-20%;
     width:70%; height:100%;
@@ -101,19 +103,11 @@
     letter-spacing:0.25em; text-transform:uppercase;
     color: var(--accent);
     margin-bottom:40px;
-    display:flex; align-items:center; gap:18px;
-  }
-  .eyebrow::before, .eyebrow::after {
-    content:''; width:40px; height:1.5px;
-    background:var(--accent); box-shadow:0 0 10px var(--accent);
   }
 
   .headline {
     font-family: 'Plus Jakarta Sans', sans-serif;
     font-weight:900;
-    /* Bumped from 0.98 → 1.08 + padding-bottom so descenders (g, j, p,
-       q, y) don't clip. Previous value clipped the bottom of "g" in
-       words like "agent" — Ray flagged on the AI Agents render. */
     font-size:132px; line-height:1.08;
     letter-spacing:-0.035em;
     max-width:1600px;
@@ -125,46 +119,35 @@
     background: linear-gradient(180deg, #ffffff 0%, #e8e8ed 40%, #8a8a92 50%, #d4d4dc 60%, #ffffff 100%);
     -webkit-background-clip:text; background-clip:text;
     -webkit-text-fill-color:transparent;
-    /* Extra room for descenders inside the gradient clip — they get
-       cropped even harder when -webkit-background-clip is in play. */
     padding-bottom:12px;
   }
   .headline .accent {
-    display:inline-block;
-    color:var(--accent);
+    display:inline-block; color:var(--accent);
     padding-bottom:12px;
   }
-
-  /* Slow continuous Ken Burns on the whole headline block. Scale 1.0
-     → 1.04 over 18s, loops smoothly. Subtle motion without competing
-     with the GSAP entrance. */
-  @keyframes slow_ken_burns {
-    0%   { transform: scale(1.00); }
-    50%  { transform: scale(1.04); }
-    100% { transform: scale(1.00); }
+  .headline .word {
+    display:inline-block;
+    opacity:0;  /* GSAP reveals each word */
+    transform: translateY(8px);
   }
-  .headline-block {
-    animation: slow_ken_burns 18s ease-in-out infinite;
+  /* Typewriter cursor — sits at the current insertion point. CSS-only
+     blink so the worker doesn't have to seek it; the seek loop hides
+     the cursor entirely after the last word lands. */
+  .cursor {
+    display:inline-block;
+    width:14px; height:120px;
+    vertical-align:bottom; margin-bottom:8px; margin-left:4px;
+    background: var(--accent);
+    box-shadow:0 0 16px var(--accent);
+    animation: blink_caret 0.7s steps(1) infinite;
   }
+  @keyframes blink_caret { 0%,50%{opacity:1} 50.01%,100%{opacity:0} }
 
   .subtitle {
     font-family: 'Plus Jakarta Sans', sans-serif;
     font-weight:500; font-size:28px; line-height:1.4;
     color: var(--text-secondary);
     max-width:1100px; letter-spacing:-0.005em;
-  }
-
-  /* Emphasis loop on accent — runs continuously, not seek-driven.
-     Slowed from 4s → 7s per cycle; Ray flagged the previous pulse as
-     "blinking too quickly." 7s reads as a calm breathing glow that
-     doesn't draw the eye away from the words. */
-  @keyframes pulse_glow_text {
-    0%, 100% { text-shadow: 0 0 20px rgba(227,21,30,0.5), 0 0 40px rgba(227,21,30,0.25); }
-    50%      { text-shadow: 0 0 35px rgba(227,21,30,0.9), 0 0 70px rgba(227,21,30,0.5), 0 0 100px rgba(227,21,30,0.3); }
-  }
-  .headline .accent {
-    animation: pulse_glow_text 7000ms ease-in-out infinite,
-               slow_ken_burns 18s ease-in-out infinite;
   }
 </style>
 </head>
@@ -187,9 +170,9 @@
 
   <div class="headline-block">
     <div class="eyebrow" id="eyebrow-wrap" style="display:none;"><span id="eyebrow"></span></div>
-    <h1 class="headline">
-      <span class="chrome" id="title-chrome">Large headline text goes</span>
-      <span class="accent" id="title-accent">right here</span>
+    <h1 class="headline" id="headline">
+      <span class="chrome" id="title-chrome-host"></span>
+      <span class="accent" id="title-accent-host"></span><span class="cursor" id="cursor"></span>
     </h1>
     <p class="subtitle" id="subtitle" style="display:none;"></p>
   </div>
@@ -200,8 +183,16 @@
 <script>
   (function () {
     const v = window.__studioVars || {}
-    if (v.title_chrome != null) document.getElementById('title-chrome').textContent = v.title_chrome
-    if (v.title_accent != null) document.getElementById('title-accent').textContent = v.title_accent
+    const chromeText = v.title_chrome != null ? String(v.title_chrome) : 'Type the headline'
+    const accentText = v.title_accent != null ? String(v.title_accent) : 'word by word'
+
+    // Wrap each word of the title parts in a span so GSAP can stagger
+    // their entrance. The result reads as a typewriter that paces
+    // through the headline left-to-right, accent words land last.
+    const wrapWords = (text) => text.trim().split(/\s+/).map((w) => `<span class="word">${w}</span>`).join(' ')
+    document.getElementById('title-chrome-host').innerHTML = wrapWords(chromeText)
+    document.getElementById('title-accent-host').innerHTML = ' ' + wrapWords(accentText)
+
     if (v.subtitle && String(v.subtitle).trim()) {
       const el = document.getElementById('subtitle')
       el.textContent = v.subtitle
@@ -219,19 +210,23 @@
       document.documentElement.style.setProperty('--accent', v.accent_color)
     }
 
-    // Drives standalone SFX trigger 'title_hero' (headline lands at ~1.0s).
-    window.__hyperframes?.recordEvent?.('title_hero', 0.5)
+    window.__hyperframes?.recordEvent?.('title_hero', 0.8)
 
-    // Build GSAP timeline. The composition's CSS no longer ships the
-    // entrance keyframes — GSAP owns them so worker can seek per-frame.
+    const words = document.querySelectorAll('.headline .word')
+    const cursor = document.getElementById('cursor')
+    const wordRevealSecs = 0.12
+    const revealStart = 0.4
+    const revealEnd = revealStart + words.length * wordRevealSecs
+
     const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } })
-    tl.from('.eyebrow',                 { y: -10, opacity: 0, duration: 0.6 }, 0.1)
-      .from('.headline .chrome',        { y: 20, opacity: 0, duration: 0.6 }, 0.2)
-      .from('.headline .accent',        { y: 20, opacity: 0, duration: 0.6 }, 0.5)
-      .from('.subtitle',                { y: 20, opacity: 0, duration: 0.6 }, 0.8)
-      .from('.corner-mark',             { opacity: 0, duration: 0.8 }, 0.8)
-      .from('.scene-meta, .scene-handle', { opacity: 0, duration: 0.6 }, 1.0)
-      .to({}, { duration: 1.5 })  // hold tail
+    tl.from('.eyebrow', { y: -10, opacity: 0, duration: 0.5 }, 0.1)
+      .to('.headline .word', { opacity: 1, y: 0, duration: 0.25, stagger: wordRevealSecs }, revealStart)
+      // Hide the typewriter cursor a beat after the last word lands.
+      .set(cursor, { display: 'none' }, revealEnd + 0.5)
+      .from('.subtitle', { y: 20, opacity: 0, duration: 0.6 }, revealEnd + 0.6)
+      .from('.corner-mark', { opacity: 0, duration: 0.8 }, revealEnd + 0.7)
+      .from('.scene-meta, .scene-handle', { opacity: 0, duration: 0.6 }, revealEnd + 0.9)
+      .to({}, { duration: 1.5 })
     window.studioPlay(tl)
   })()
 </script>

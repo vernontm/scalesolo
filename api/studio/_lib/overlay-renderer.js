@@ -181,19 +181,42 @@ function brandLogoFor(name) {
 function renderTool(c, t) {
   const name = c.name || ''
   const fallbackGlyph = esc(c.logo || (name ? name[0].toUpperCase() : '?'))
-  const localLogo = brandLogoFor(name)
-  // Curated local-logo lookup. No remote favicon fetch — unknown
-  // brands fall back to the single-letter glyph so we never ship a
-  // grainy 16px favicon into a 1080p+ render. The inline style on the
-  // <img> makes the logo fill the entire .logo container.
-  const inner = localLogo
-    ? `<img src="${esc(localLogo)}" alt="${esc(name)}" style="width:100%;height:100%;object-fit:cover;display:block;" onerror="this.outerHTML='<span>${fallbackGlyph}</span>'">`
-    : `<span>${fallbackGlyph}</span>`
-  return `<div class="ov-tool"${containerStyle(t.container)}>
-    <div class="logo"${textStyle(t.logo)}>${inner}</div>
-    <div class="info">
-      <div class="name"${textStyle(t.name)}>${esc(name)}</div>
-    </div>
+  // Four-tier logo source:
+  //   1. content.logo_image — brand profile override (own logo_url).
+  //   2. LOCAL_BRAND_LOGOS catalog (claude.svg / openai.png / etc).
+  //   3. Gradient card — when nothing maps, instead of a sad single
+  //      letter we render the company name in big chrome text on a
+  //      brand-color gradient card. Looks intentional, on-brand,
+  //      matches the rest of the template.
+  //   4. (Reserved.) Glyph fallback now only fires when c.style is
+  //      explicitly 'glyph' — for cases where the renderer wants the
+  //      old behavior.
+  const brandImage = (typeof c.logo_image === 'string' && c.logo_image.trim()) ? c.logo_image : null
+  const localLogo = brandImage || brandLogoFor(name)
+  if (localLogo) {
+    const inner = `<img src="${esc(localLogo)}" alt="${esc(name)}" style="width:100%;height:100%;object-fit:cover;display:block;" onerror="this.outerHTML='<span>${fallbackGlyph}</span>'">`
+    return `<div class="ov-tool"${containerStyle(t.container)}>
+      <div class="logo"${textStyle(t.logo)}>${inner}</div>
+      <div class="info">
+        <div class="name"${textStyle(t.name)}>${esc(name)}</div>
+      </div>
+    </div>`
+  }
+  // Glyph mode (legacy) — opt-in via c.style === 'glyph'.
+  if (c.style === 'glyph') {
+    return `<div class="ov-tool"${containerStyle(t.container)}>
+      <div class="logo"${textStyle(t.logo)}><span>${fallbackGlyph}</span></div>
+      <div class="info">
+        <div class="name"${textStyle(t.name)}>${esc(name)}</div>
+      </div>
+    </div>`
+  }
+  // Gradient-card fallback — no logo image, no glyph request. Render
+  // the company name BIG inside a brand-color gradient card. Matches
+  // the visual language of headline + stat-callout (chrome-on-gradient)
+  // so an off-catalog brand still feels native to the template.
+  return `<div class="ov-tool ov-tool-gradient"${containerStyle(t.container)} data-gradient-card="1">
+    <div class="gradient-card-name"${textStyle(t.name)}>${esc(name)}</div>
   </div>`
 }
 
