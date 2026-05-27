@@ -27,3 +27,5 @@ marketing/faceless-steps/
 # SFX generator output — move to /public/sfx/ after auditioning
 scripts/sfx/
 
+.vercel
+.env*.local

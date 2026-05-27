@@ -50,13 +50,11 @@ primary_region = 'iad'
     soft_limit = 25
 
 [[vm]]
-  # performance-4x with 16GB RAM (was 8GB). Studio renders combine:
-  # Chrome (Puppeteer) holding pages for HF + overlay capture, ffmpeg
-  # xfade chain that loads all N chunks into the filter graph for
-  # crossfade transitions, and tmpfs-backed /tmp holding intermediate
-  # PNG sequences. 8GB had headroom for 1-2 concurrent ops but
-  # multi-segment bakes OOM during the final xfade-concat pass. 16GB
-  # gives ~3x headroom. Cost only applies while the machine is awake;
-  # auto_stop_machines keeps idle billing flat.
-  size = 'performance-4x'
+  # performance-8x with 16GB RAM. Upgraded from perf-4x (4 vCPU) to
+  # perf-8x (8 vCPU) to support STUDIO_RENDER_CONCURRENCY=4. The 10-min
+  # script bake at concurrency=2 on 4 vCPUs ran ~90 min; at concurrency
+  # =4 on 8 vCPUs we expect ~25-30 min. Memory stays at 16GB — Puppeteer
+  # pages + PNG sequence buffers are the limit, not CPU. Cost only
+  # applies while awake (auto-suspend keeps idle billing flat).
+  size = 'performance-8x'
   memory = '16gb'
