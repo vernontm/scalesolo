@@ -30,6 +30,81 @@ import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/su
 import { gateStudio } from './_lib/gate.js'
 import { customerIdForUser } from '../_lib/credits.js'
 import { pickMotionGesture } from './_lib/motion-gestures.js'
+import { spawn } from 'node:child_process'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import ffmpegInstaller from '@ffmpeg-installer/ffmpeg'
+
+const FFMPEG = process.env.FFMPEG_PATH || ffmpegInstaller.path
+const STUDIO_BUCKET = 'studio-media'
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY
+
+// Re-slice a segment's voice from the parent video's voiceover_source_url.
+// Used when voice_url is missing but voice_source_start_secs/end_secs are
+// set — happens after split-segment clears voice_url, or when a segment
+// errored mid-bake. Avoids the user having to re-run the whole voiceover
+// /segment pipeline just to rebuild one missing slice.
+//
+// Returns the public URL of the new slice, or null if the parent video
+// has no source audio (TTS-only video — caller should fall through to
+// TTS dispatch).
+async function resliceVoiceFromSource(segment, profileId) {
+  if (segment.voice_source_start_secs == null || segment.voice_source_end_secs == null) return null
+  // Pull the parent video to get voiceover_source_url
+  const v = await supaFetch(`studio_videos?id=eq.${segment.studio_video_id}&select=voiceover_source_url&limit=1`)
+  const sourceUrl = v?.[0]?.voiceover_source_url
+  if (!sourceUrl) return null
+
+  let workdir
+  try {
+    workdir = await mkdtemp(join(tmpdir(), 'reslice-'))
+    const srcPath = join(workdir, 'source.mp3')
+    const outPath = join(workdir, 'slice.mp3')
+
+    // Download source
+    const r = await fetch(sourceUrl)
+    if (!r.ok) throw new Error(`download source: ${r.status}`)
+    await writeFile(srcPath, Buffer.from(await r.arrayBuffer()))
+
+    // Slice with ffmpeg — re-encode for frame-accurate boundaries
+    await new Promise((resolve, reject) => {
+      const args = [
+        '-y',
+        '-ss', Number(segment.voice_source_start_secs).toFixed(3),
+        '-to', Number(segment.voice_source_end_secs).toFixed(3),
+        '-i', srcPath,
+        '-vn', '-c:a', 'libmp3lame', '-q:a', '4',
+        outPath,
+      ]
+      const p = spawn(FFMPEG, args, { stdio: ['ignore', 'ignore', 'pipe'] })
+      let stderr = ''
+      p.stderr.on('data', (b) => { stderr += b.toString() })
+      p.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg exit ${code}: ${stderr.slice(-300)}`)))
+    })
+
+    // Upload
+    const buf = await readFile(outPath)
+    const path = `${profileId}/studio/voiceover-slices/${Date.now()}-reslice-${segment.id.slice(0, 8)}.mp3`
+    const up = await fetch(
+      `${SUPABASE_URL}/storage/v1/object/${STUDIO_BUCKET}/${encodeURI(path)}`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+          'Content-Type': 'audio/mpeg',
+          'x-upsert': 'true',
+        },
+        body: buf,
+      },
+    )
+    if (!up.ok) throw new Error(`upload ${up.status}: ${(await up.text().catch(() => '')).slice(0, 200)}`)
+    return `${SUPABASE_URL}/storage/v1/object/public/${STUDIO_BUCKET}/${path}`
+  } finally {
+    if (workdir) try { await rm(workdir, { recursive: true, force: true }) } catch { /* noop */ }
+  }
+}
 
 // Credit gate. Returns null on success, or a 402 payload to send back.
 // Mirrors the cost estimator's HIGH-bound math from estimate-cost.js
@@ -83,15 +158,20 @@ export const config = {
 // Each segment gets its own try/catch so one failure doesn't poison the rest.
 async function dispatchVoice(segment, voiceId, profileId) {
   if (!segment.script_text?.trim()) return null
-  // Refuse to TTS-overwrite a voice that was sliced from a user-
-  // uploaded voiceover. Without this guard, a "regen voice" call
-  // (or a buggy retry) would replace the user's actual recorded
-  // voice with ElevenLabs TTS — invisible to the user until they
-  // play the segment and hear a synthetic clone instead of
-  // themselves. The UI also blocks this path, but defense in depth.
+  // If this segment is a slice from a user-uploaded voiceover (we have
+  // start/end secs marking its range in the source mp3), re-slice from
+  // source instead of TTS-overwriting with a synthetic voice. Common
+  // after a split-segment call: both halves get voice_url cleared but
+  // keep their time ranges, and the user expects their REAL voice on
+  // both — not an EL clone for one of them.
   if (segment.voice_source_start_secs != null || segment.voice_source_end_secs != null) {
+    const reslicedUrl = await resliceVoiceFromSource(segment, profileId)
+    if (reslicedUrl) return reslicedUrl
+    // Fall through to TTS only if source isn't available (rare — would
+    // mean the parent video had no voiceover_source_url, which can't
+    // happen for user-uploaded flows, only for fully TTS videos).
     throw new Error(
-      'Voice for this segment was sliced from your uploaded voiceover — refusing to overwrite with TTS. Re-slice via /api/studio/voiceover/segment if you need to rebuild it.',
+      'Voice for this segment was sliced from your uploaded voiceover, but the source audio is missing. Re-upload the voiceover to rebuild it.',
     )
   }
   if (!voiceId) throw new Error('No voice configured on the video')
@@ -162,7 +242,18 @@ async function dispatchVideoBroll(segment, apiKey, aspectRatio, voiceDurationSec
 }
 
 async function dispatchImage(segment, apiKey, aspectRatio, brandStyleAnchor, avatarReferenceImageUrl) {
-  if (!segment.image_prompt?.trim()) throw new Error('Image prompt is empty')
+  // Prompt source priority: explicit image_prompt → b-roll video prompt
+  // (often equally good for the still) → script_text fallback. The
+  // fallback exists because split-segment + manual edits often leave
+  // image_prompt null, and we'd rather generate a thematically-aligned
+  // image from the script than fail the segment outright.
+  let basePrompt = segment.image_prompt?.trim()
+    || segment.broll_video_prompt?.trim()
+    || segment.script_text?.trim()
+  if (!basePrompt) throw new Error('No prompt available — script_text and image_prompt are both empty')
+  // Use a shallow mutable copy so we don't mutate the segment object
+  // the caller passed in.
+  segment = { ...segment, image_prompt: basePrompt }
   // Project aspect ratio → Kie's expected aspect_ratio string. nano-banana-2
   // accepts 16:9 / 9:16 / 1:1 / 'auto'. Pass-through.
   const aspect = ['16:9', '9:16', '1:1'].includes(aspectRatio) ? aspectRatio : 'auto'
