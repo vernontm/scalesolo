@@ -25,9 +25,17 @@ primary_region = 'iad'
   # index.js). The self-ping leaves the machine, hits Fly's proxy,
   # and comes back in — Fly counts that as inbound traffic and resets
   # the suspend timer.
-  auto_stop_machines = 'suspend'
+  # auto_stop_machines DISABLED. The previous 'suspend' setting was
+  # killing long bakes mid-flight: a 52-segment bake got to 51/52 then
+  # the keepalive ping failed silently and Fly suspended the machine,
+  # wiping the workdir. The cost of always-on perf-8x (~$240/mo) is
+  # acceptable vs losing 45 min of render every time. If we want to
+  # save cost later, the right fix is a robust keepalive that explicitly
+  # tells Fly "stay awake" via the Machines API — not a sleep timer
+  # racing with a Node-side ping.
+  auto_stop_machines = 'off'
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
   processes = ['app']
 
   [[http_service.checks]]
