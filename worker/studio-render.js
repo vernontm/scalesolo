@@ -124,11 +124,19 @@ function wrapText(text, perLine = 38) {
 
 // ── Headless Chrome (real Chrome, not @sparticuz) ──────────────────────────
 // Fly's Linux container can run unmodified Chrome from puppeteer's bundle.
-// One browser per bake, shared across all motion-graphics chunks.
-let _browserPromise = null
-async function getBrowser() {
-  if (_browserPromise) return _browserPromise
-  _browserPromise = puppeteer.launch({
+//
+// Architecture: each worker-pool task launches its OWN Chrome instance.
+// We tried sharing one Chrome across N parallel renders earlier but ran
+// into severe contention: Chrome's GPU compositor + main thread are
+// per-process, so 4 parallel calls to page.screenshot serialized on one
+// thread. Result was 30s screenshots blowing past 150s deadlines and
+// every Chrome call failing. With per-worker browsers, each instance
+// gets its own renderer process tree and contention is gone.
+//
+// Cost: ~500MB-1GB RAM per Chrome instance. On the perf-8x machine
+// (16GB) we can comfortably run 4 in parallel + ffmpeg encodes.
+async function launchBrowser() {
+  return await puppeteer.launch({
     headless: true,
     args: [
       '--no-sandbox',
@@ -138,6 +146,15 @@ async function getBrowser() {
       '--hide-scrollbars',
     ],
   })
+}
+
+// Legacy single-shared-browser path. Kept ONLY for the cleanup helper
+// (closeBrowserSafe) — runStudioRender no longer reads this. Per-worker
+// browsers are created and closed inside the segment pool below.
+let _browserPromise = null
+async function getBrowser() {
+  if (_browserPromise) return _browserPromise
+  _browserPromise = launchBrowser()
   return _browserPromise
 }
 
@@ -697,7 +714,7 @@ async function mixMusicIntoFinal(finalIn, finalOut, musicPath, volume) {
 //
 // Skipped when placements is empty — returns null, signal to caller
 // that no overlay step is needed.
-async function renderOverlayPngs(seg, dir, dim, durationSecs, baseUrl, bypassSecret, template, deadlineMs = null) {
+async function renderOverlayPngs(seg, dir, dim, durationSecs, baseUrl, bypassSecret, template, deadlineMs = null, browserOverride = null) {
   const placements = Array.isArray(seg.overlay_placements) ? seg.overlay_placements : []
   if (!placements.length) return null
   if (!template) return null
@@ -724,7 +741,7 @@ async function renderOverlayPngs(seg, dir, dim, durationSecs, baseUrl, bypassSec
     motion_emphasis: motion.emphasis || 'pulse_glow',
   }
 
-  const browser = await getBrowser()
+  const browser = browserOverride || await getBrowser()
   const page = await browser.newPage()
   page.on('pageerror', (err) => console.warn(`[overlay-page] ${err.message}`))
   page.on('requestfailed', (req) => {
@@ -838,8 +855,8 @@ async function compositeOverlayOntoChunk(baseMp4, overlayFramesDir, durationSecs
 }
 
 // ── HyperFrames composition renderer (Puppeteer + frame capture) ──────────
-async function renderHyperFramesChunk(seg, paths, dim, durationSecs, baseUrl, bypassSecret, deadlineMs = null) {
-  const browser = await getBrowser()
+async function renderHyperFramesChunk(seg, paths, dim, durationSecs, baseUrl, bypassSecret, deadlineMs = null, browserOverride = null) {
+  const browser = browserOverride || await getBrowser()
   const page = await browser.newPage()
   const pageLogs = []
   const pageErrors = []
@@ -1253,7 +1270,7 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
     chunkSegments.length = segments.length
     let completedCount = 0
 
-    const renderOneSegment = async (i) => {
+    const renderOneSegment = async (i, workerBrowser) => {
       const seg = segments[i]
       const dir = join(workdir, `seg-${String(i).padStart(3, '0')}`)
       await mkdir(dir, { recursive: true })
@@ -1306,10 +1323,10 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
           },
         }
         try {
-          await withChromeSlot(() => renderHyperFramesChunk(
+          await renderHyperFramesChunk(
             screenshotSeg, paths, dim, wantDuration, baseUrl, bypassSecret,
-            Date.now() + PUPPETEER_HARD_TIMEOUT_MS,
-          ))
+            Date.now() + PUPPETEER_HARD_TIMEOUT_MS, workerBrowser,
+          )
           progress.hf_rendered.push(seg.id)
         } catch (e) {
           const reason = e?.message || String(e)
@@ -1333,10 +1350,10 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
         const wantDuration = seg.segment_type === 'pure_motion_graphics' ? 2.5 : Math.max(2, voiceDuration || 4)
         if (seg.hyperframes_composition_id) {
           try {
-            await withChromeSlot(() => renderHyperFramesChunk(
+            await renderHyperFramesChunk(
               seg, paths, dim, wantDuration, baseUrl, bypassSecret,
-              Date.now() + PUPPETEER_HARD_TIMEOUT_MS,
-            ))
+              Date.now() + PUPPETEER_HARD_TIMEOUT_MS, workerBrowser,
+            )
             progress.hf_rendered.push(seg.id)
           } catch (e) {
             const reason = e?.message || String(e)
@@ -1419,10 +1436,10 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
           // Hand the renderer a seg with the filtered list so it
           // doesn't see the stripped placements.
           const segForOverlays = { ...seg, overlay_placements: effectivePlacements }
-          const overlayFramesDir = await withChromeSlot(() => renderOverlayPngs(
+          const overlayFramesDir = await renderOverlayPngs(
             segForOverlays, dir, dim, overlayDuration, baseUrl, bypassSecret, resolvedTemplate,
-            Date.now() + PUPPETEER_HARD_TIMEOUT_MS,
-          ))
+            Date.now() + PUPPETEER_HARD_TIMEOUT_MS, workerBrowser,
+          )
           if (overlayFramesDir) {
             const composited = join(dir, 'out-with-overlay.mp4')
             await compositeOverlayOntoChunk(paths.outChunk, overlayFramesDir, overlayDuration, composited)
@@ -1472,20 +1489,39 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
     }
 
     // Worker-pool style: keep `concurrency` segments in flight at any
-    // time. We pull indexes off a shared cursor so faster segments
-    // don't block slower ones in a row.
+    // time, with each pool worker owning its OWN Chrome instance for
+    // its entire lifetime. We pull indexes off a shared cursor so a
+    // fast worker doesn't block waiting for a slow neighbor.
+    //
+    // Per-worker Chrome: the earlier shared-browser design serialized
+    // all page.screenshot calls on Chrome's single main thread + GPU
+    // compositor process, which caused every overlay/HF capture to
+    // exceed the 150s deadline under any real concurrency. Giving each
+    // worker its own browser process means N independent renderer
+    // process trees — no contention. Memory cost is ~500MB-1GB per
+    // browser, fine on perf-8x's 16GB.
     let nextIdx = 0
-    const workers = Array.from({ length: Math.min(concurrency, segments.length) }, async () => {
-      while (true) {
-        const i = nextIdx++
-        if (i >= segments.length) return
-        try {
-          await renderOneSegment(i)
-        } catch (e) {
-          // Bubble the first error up so the whole bake fails fast,
-          // matching the prior serial behavior.
-          throw new Error(`segment ${i} (${segments[i]?.id}) failed: ${e.message}`)
+    const workerCount = Math.min(concurrency, segments.length)
+    const workers = Array.from({ length: workerCount }, async (_, workerIdx) => {
+      const workerBrowser = await launchBrowser()
+      try {
+        while (true) {
+          const i = nextIdx++
+          if (i >= segments.length) return
+          try {
+            await renderOneSegment(i, workerBrowser)
+          } catch (e) {
+            // Bubble the first error up so the whole bake fails fast,
+            // matching the prior serial behavior.
+            throw new Error(`segment ${i} (${segments[i]?.id}) failed: ${e.message}`)
+          }
         }
+      } finally {
+        // Always close this worker's Chrome instance — even on failure
+        // — so the next bake on a re-used machine doesn't leak browsers.
+        await workerBrowser.close().catch((e) => {
+          console.warn(`[studio-render] worker ${workerIdx} browser close failed: ${e.message}`)
+        })
       }
     })
     await Promise.all(workers)
