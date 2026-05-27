@@ -24,6 +24,10 @@ import { useAuth } from '../context/AuthContext.jsx'
 import { authedFetch } from '../lib/authedFetch.js'
 import { toast } from './Toast.jsx'
 import { X, ChevronLeft, Sparkles, Loader2 } from 'lucide-react'
+// Cost rates + estimator. Same module the server uses, so the
+// dollar figures shown in the ContentMix step are byte-for-byte
+// what the orchestrator will spend.
+import { estimateContentCost } from '../../api/_lib/studio-cost-rates.js'
 
 export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
   const { session } = useAuth()
@@ -48,6 +52,7 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
     target_duration_secs: 120,
     script_text: '',
     voiceover_file: null,
+    voiceover_duration_secs: null,
     template_id: 'sleek',
     captions_enabled: true,
     // Background music. 'off' | 'loop_one' | 'cycle_all'. When
@@ -56,6 +61,17 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
     music_mode: 'off',
     music_track_id: '',
     music_volume: 0.12,
+    // Content mix — percentages of each segment type. Sums to 100.
+    // Drives the per-type $ display in the ContentMix step + flows
+    // into the segmentation prompt as a soft constraint. Defaults
+    // match DEFAULT_CONTENT_MIX in api/_lib/studio-cost-rates.js
+    // and are tuned to a realistic motion-heavy mix.
+    content_mix: {
+      avatar_pct:       15,
+      broll_image_pct:  20,
+      broll_video_pct:  15,
+      motion_pct:       50,
+    },
   })
   const set = (k, v) => setA((prev) => ({ ...prev, [k]: v }))
 
@@ -136,7 +152,7 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
   const steps = useMemo(() => {
     const list = ['aspect', 'use_avatar', 'avatar_pick']
     if (a.use_avatar === 'yes') list.push('look_pick')
-    list.push('source', 'source_details', 'template', 'music', 'confirm')
+    list.push('source', 'source_details', 'template', 'music', 'content_mix', 'confirm')
     return list
   }, [a.use_avatar])
 
@@ -159,6 +175,14 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
       // self-explanatory and need no further choice.
       if (a.music_mode === 'loop_one') return !!a.music_track_id
       return true
+    }
+    if (step === 'content_mix') {
+      // The mix must sum to exactly 100 — guarantees the user
+      // understands they've allocated all the video's runtime.
+      const m = a.content_mix || {}
+      const sum = (Number(m.avatar_pct) || 0) + (Number(m.broll_image_pct) || 0)
+        + (Number(m.broll_video_pct) || 0) + (Number(m.motion_pct) || 0)
+      return Math.round(sum) === 100
     }
     return true
   }
@@ -230,6 +254,7 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
             music_mode: a.music_mode || 'off',
             music_track_id: a.music_mode === 'loop_one' ? (a.music_track_id || null) : null,
             music_volume: Number(a.music_volume) || 0.12,
+            content_mix: a.content_mix || null,
           }) },
         )
         const segText = await segR.text()
@@ -263,6 +288,7 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
         music_mode: a.music_mode || 'off',
         music_track_id: a.music_mode === 'loop_one' ? (a.music_track_id || null) : null,
         music_volume: Number(a.music_volume) || 0.12,
+        content_mix: a.content_mix || null,
       }
       const r = await authedFetch('/api/studio/videos', session.access_token, {
         method: 'POST', body: JSON.stringify(body),
@@ -367,6 +393,13 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
               onMode={(v) => set('music_mode', v)}
               onTrack={(v) => set('music_track_id', v)}
               onVolume={(v) => set('music_volume', v)}
+            />
+          )}
+          {step === 'content_mix' && (
+            <StepContentMix
+              mix={a.content_mix}
+              onChange={(next) => set('content_mix', next)}
+              answers={a}
             />
           )}
           {step === 'confirm' && (
@@ -570,17 +603,39 @@ function StepSourceDetails({ source, answers, setAnswer }) {
       </Section>
     )
   }
+  // When the user picks a voiceover file, read its duration locally
+  // via the HTMLAudioElement loadedmetadata event. Stashes secs onto
+  // answers.voiceover_duration_secs so the ContentMix step can show
+  // accurate $ estimates without waiting for server-side transcription.
+  const onVoiceoverPicked = (file) => {
+    setAnswer('voiceover_file', file || null)
+    setAnswer('voiceover_duration_secs', null)
+    if (!file) return
+    const url = URL.createObjectURL(file)
+    const audio = new Audio()
+    audio.preload = 'metadata'
+    audio.src = url
+    audio.addEventListener('loadedmetadata', () => {
+      const secs = Number.isFinite(audio.duration) ? Math.round(audio.duration) : null
+      if (secs && secs > 0) setAnswer('voiceover_duration_secs', secs)
+      URL.revokeObjectURL(url)
+    }, { once: true })
+    audio.addEventListener('error', () => URL.revokeObjectURL(url), { once: true })
+  }
   return (
     <Section title="Upload your voiceover" hint="MP3, WAV, M4A, AAC, OGG, or FLAC. Up to ~30 minutes.">
       <input
         type="file"
         accept="audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/x-m4a,audio/mp4,audio/aac,audio/ogg,audio/flac"
-        onChange={(e) => setAnswer('voiceover_file', e.target.files?.[0] || null)}
+        onChange={(e) => onVoiceoverPicked(e.target.files?.[0] || null)}
         style={{ width: '100%', padding: 12, background: 'var(--surface-2)', border: '1px dashed var(--border)', borderRadius: 8, color: 'var(--text-soft)', fontSize: 12 }}
       />
       {answers.voiceover_file && (
         <div style={{ marginTop: 8, fontSize: 12, color: 'var(--muted)' }}>
           {answers.voiceover_file.name} · {(answers.voiceover_file.size / 1024 / 1024).toFixed(1)} MB
+          {answers.voiceover_duration_secs ? (
+            <> · {Math.floor(answers.voiceover_duration_secs / 60)}m {String(answers.voiceover_duration_secs % 60).padStart(2, '0')}s</>
+          ) : null}
         </div>
       )}
     </Section>
@@ -735,6 +790,158 @@ function StepMusic({ tracks, mode, trackId, volume, onMode, onTrack, onVolume })
           </div>
         </div>
       )}
+    </Section>
+  )
+}
+
+// Content-mix step. Four sliders that sum to 100, each driving the
+// generation count for a segment type. Live $ per slider + total at
+// the bottom — pulls rates from api/_lib/studio-cost-rates.js so the
+// UI and any future server-side estimator share the same numbers.
+//
+// Linked-slider behavior: changing one slider compensates the others
+// pro-rata to keep the total at 100. Same pattern as common
+// budget-allocator UIs (no need for an unallocated remainder).
+function StepContentMix({ mix, onChange, answers }) {
+  // Derive video length from whichever source the user picked.
+  // Topic → user-set target_duration_secs. Script → estimated from
+  // word count. Voiceover upload → auto-detected from file metadata
+  // earlier in the survey.
+  const durationSecs = (() => {
+    if (answers.source === 'voiceover' && answers.voiceover_duration_secs) {
+      return answers.voiceover_duration_secs
+    }
+    if (answers.source === 'script') {
+      return Math.max(30, Math.round(estimateScriptDuration(answers.script_text)))
+    }
+    return Number(answers.target_duration_secs) || 120
+  })()
+
+  const scriptChars = answers.source === 'script'
+    ? (answers.script_text || '').length
+    : null
+
+  const cost = useMemo(
+    () => estimateContentCost(durationSecs, mix, { source: answers.source, scriptChars }),
+    [durationSecs, mix, answers.source, scriptChars],
+  )
+
+  const updatePct = (key, nextPct) => {
+    // Pro-rata redistribute the other three to keep sum=100.
+    const clamped = Math.max(0, Math.min(100, Math.round(nextPct)))
+    const others = Object.keys(mix).filter((k) => k !== key)
+    const remaining = 100 - clamped
+    const otherSum = others.reduce((acc, k) => acc + (Number(mix[k]) || 0), 0)
+    const next = { ...mix, [key]: clamped }
+    if (otherSum > 0) {
+      others.forEach((k) => {
+        next[k] = Math.round((Number(mix[k]) || 0) / otherSum * remaining)
+      })
+    } else {
+      // All others were 0 — split equally.
+      others.forEach((k) => { next[k] = Math.round(remaining / others.length) })
+    }
+    // Float drift correction — make sure we land on exactly 100.
+    const drift = 100 - Object.values(next).reduce((a, b) => a + Number(b), 0)
+    if (drift !== 0) {
+      const target = others[0]
+      next[target] = (Number(next[target]) || 0) + drift
+    }
+    onChange(next)
+  }
+
+  const rows = [
+    {
+      key:  'avatar_pct',
+      label:'Avatar on camera',
+      hint: 'HeyGen Avatar IV @ 1080p',
+      cost: cost.avatar,
+      detail: `${cost.breakdown.avatarSecs}s of avatar render`,
+    },
+    {
+      key:  'broll_image_pct',
+      label:'B-roll images',
+      hint: 'Kie.ai nano-banana-2 @ 2K, ~12s per image',
+      cost: cost.brollImages,
+      detail: `${cost.breakdown.brollImageCount} image${cost.breakdown.brollImageCount === 1 ? '' : 's'} (${cost.breakdown.brollImageSecs}s of screen time)`,
+    },
+    {
+      key:  'broll_video_pct',
+      label:'B-roll videos',
+      hint: 'Grok Imagine Image-to-Video 720p',
+      cost: cost.brollVideos,
+      detail: `${cost.breakdown.brollVideoSecs}s of generated video`,
+    },
+    {
+      key:  'motion_pct',
+      label:'Motion graphics',
+      hint: 'Pure HyperFrames — effectively free',
+      cost: cost.motion,
+      detail: `${cost.breakdown.motionSecs}s of motion-graphics scenes`,
+    },
+  ]
+
+  const sumPct = rows.reduce((a, r) => a + (Number(mix[r.key]) || 0), 0)
+
+  return (
+    <Section
+      title="Content mix"
+      hint={`Set the ratio of each segment type. Total must equal 100%. Live $ shown per slider, total at the bottom. Video length: ${Math.floor(durationSecs / 60)}m ${String(durationSecs % 60).padStart(2, '0')}s.`}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+        {rows.map((row) => {
+          const pct = Number(mix[row.key]) || 0
+          return (
+            <div key={row.key} style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, padding: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>{row.label} <span style={{ marginLeft: 8, color: 'var(--muted)', fontSize: 12, fontWeight: 500 }}>{pct}%</span></div>
+                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{row.hint}</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontWeight: 800, fontSize: 16 }}>{row.cost === 0 ? 'Free' : `$${row.cost.toFixed(2)}`}</div>
+                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>{row.detail}</div>
+                </div>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={5}
+                value={pct}
+                onChange={(e) => updatePct(row.key, Number(e.target.value))}
+                style={{ width: '100%' }}
+              />
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Totals + fixed-cost line + sum check */}
+      <div style={{
+        marginTop: 18, padding: 14,
+        background: sumPct === 100 ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.10)',
+        border: `1px solid ${sumPct === 100 ? 'rgba(34,197,94,0.35)' : 'rgba(239,68,68,0.35)'}`,
+        borderRadius: 10,
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--muted)' }}>
+          <span>Avatar + B-roll images + B-roll videos + Motion</span>
+          <span>${(cost.avatar + cost.brollImages + cost.brollVideos + cost.motion).toFixed(2)}</span>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
+          <span>Fixed: Claude segmentation + Fly render + voice {answers.source === 'voiceover' ? '(Scribe)' : '(TTS)'}</span>
+          <span>${cost.fixed.toFixed(2)}</span>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
+          <div>
+            <div style={{ fontWeight: 800, fontSize: 14 }}>Estimated total</div>
+            <div style={{ fontSize: 11, color: sumPct === 100 ? 'var(--muted)' : 'var(--red)' }}>
+              {sumPct === 100 ? 'Mix sums to 100% — ready to generate.' : `Mix must equal 100% (currently ${sumPct}%).`}
+            </div>
+          </div>
+          <div style={{ fontWeight: 800, fontSize: 22 }}>${cost.total.toFixed(2)}</div>
+        </div>
+      </div>
     </Section>
   )
 }

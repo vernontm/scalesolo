@@ -158,7 +158,7 @@ const SEGMENT_TOOL = {
   },
 }
 
-function buildSystem(brandMarkdown, tmpl, captionsEnabled) {
+function buildSystem(brandMarkdown, tmpl, captionsEnabled, contentMix = null) {
   // Template constraints get woven into the prompt so Claude segments
   // according to the chosen visual preset's pacing + composition pool +
   // SFX vibe. The resolved template already has {accent} replaced with
@@ -240,6 +240,26 @@ Other rules:
 - Close with a clear CTA. Use end-card-v1 for the final visual (if it's in the composition pool).
 - Total runtime should land within ±15% of the target duration.
 - Default transition between segments: ${tmpl.default_transition || 'cut'}. Per-segment overrides allowed.
+${contentMix ? `
+## Target content mix (user-chosen, drives cost + pacing)
+
+The user set this distribution in the new-video survey. Hit these
+targets ±5% when assigning segment_type across the video. Sum is 100%.
+
+- Avatar on camera (segment_type='avatar'): ${contentMix.avatar_pct ?? 0}% of total runtime
+- B-roll images (segment_type='voiceover_broll'): ${contentMix.broll_image_pct ?? 0}% of total runtime
+- B-roll videos (segment_type='voiceover_broll' with broll_video_prompt set): ${contentMix.broll_video_pct ?? 0}% of total runtime
+- Motion graphics (segment_type='voiceover_motion_graphics' or 'pure_motion_graphics'): ${contentMix.motion_pct ?? 0}% of total runtime
+
+When the user paid for a higher avatar percentage, use avatar
+segments at the highest-impact moments — strong hooks, identity
+beats ("my name is...", "what most people miss is..."), CTAs.
+Don't burn avatar seconds on generic transition lines.
+
+Treat this as a soft target, not a hard cap. If a segment HAS to
+be avatar to land (the speaker says "look at me" or directly
+addresses the viewer), use avatar even if it slightly overshoots.
+` : ''}
 
 Brand context (the brand's voice, do-not-say list, hooks library, etc.) is below. Honor it exactly. Do-not-say words are non-negotiable.
 
@@ -577,7 +597,7 @@ export default async function handler(req, res) {
       const resolvedTemplate = resolveTemplate(video.template_id || 'sleek', video.brand_color, video.brand_color_secondary)
 
       const claudeResp = await anthropicMessage({
-        system: buildSystem(brandMarkdown, resolvedTemplate, video.captions_enabled !== false),
+        system: buildSystem(brandMarkdown, resolvedTemplate, video.captions_enabled !== false, video.content_mix || null),
         messages: [{ role: 'user', content: buildUser(video) }],
         tools: [SEGMENT_TOOL],
         tool_choice: { type: 'tool', name: 'emit_video_map' },

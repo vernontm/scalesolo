@@ -23,6 +23,7 @@ const ALLOWED_CREATE = new Set([
   'avatar_id', 'look_id', 'voice_id', 'target_duration_secs', 'aspect_ratio',
   'template_id', 'brand_color', 'brand_color_secondary', 'randomize_look_images', 'captions_enabled', 'overlays_enabled', 'motion_graphics_enabled',
   'music_mode', 'music_track_id', 'music_volume',
+  'content_mix',
 ])
 // Columns the client is allowed to PATCH. Status transitions are
 // allowed here too because the canvas UI flips status as the user
@@ -32,6 +33,7 @@ const ALLOWED_PATCH = new Set([
   'avatar_id', 'look_id', 'voice_id', 'target_duration_secs', 'aspect_ratio',
   'template_id', 'brand_color', 'brand_color_secondary', 'randomize_look_images', 'captions_enabled', 'overlays_enabled', 'motion_graphics_enabled',
   'music_mode', 'music_track_id', 'music_volume',
+  'content_mix',
   'status', 'script_full_text', 'final_video_url', 'error',
 ])
 

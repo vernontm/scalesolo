@@ -350,6 +350,7 @@ export default async function handler(req, res) {
       music_mode: ['off', 'loop_one', 'cycle_all'].includes(body.music_mode) ? body.music_mode : 'off',
       music_track_id: body.music_track_id || null,
       music_volume: typeof body.music_volume === 'number' ? body.music_volume : 0.12,
+      content_mix: body.content_mix && typeof body.content_mix === 'object' ? body.content_mix : null,
       brand_color: brandPrimary || null,
       brand_color_secondary: brandSecondary || null,
       voiceover_source_url: voiceover_url,
