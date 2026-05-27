@@ -303,6 +303,7 @@ export default async function handler(req, res) {
         image_prompt: seg.segment_type === 'voiceover_broll' ? seg.image_prompt : null,
         hyperframes_composition_id: seg.segment_type === 'voiceover_motion_graphics' ? seg.hyperframes_composition_id : null,
         hyperframes_variables: seg.segment_type === 'voiceover_motion_graphics' ? seg.hyperframes_variables : {},
+        overlay_placements: [],
       })
     }
 

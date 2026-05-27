@@ -74,7 +74,7 @@ export default async function handler(req, res) {
       if (!v?.[0]) return res.status(404).json({ error: 'Video not found' })
       await assertProfileAccess(auth.user.id, v[0].profile_id)
 
-      const insertRow = { profile_id: v[0].profile_id, status: 'pending' }
+      const insertRow = { profile_id: v[0].profile_id, status: 'pending', overlay_placements: [] }
       for (const [k, v2] of Object.entries(body)) {
         if (ALLOWED_CREATE.has(k) && v2 !== undefined) insertRow[k] = v2
       }
