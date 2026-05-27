@@ -4146,10 +4146,27 @@ function DebouncedTextarea({ initialValue, onCommit, onSplit, placeholder, rows 
     // doesn't happen).
     if (cursor <= 0 || cursor >= value.length) return
     e.preventDefault()
-    // Commit current value so the server splits the fresh text, then
-    // signal the parent to call the split endpoint.
     if (timerRef.current) clearTimeout(timerRef.current)
+
+    // Commit the FULL current text first so the server-side split RPC
+    // sees the freshest version when it slices at the cursor offset.
     commit(value)
+
+    // Optimistically collapse this textarea to the prefix so the user
+    // doesn't see stale full-text while the realtime UPDATE catches up.
+    // Without this, the local `value` state stayed at the original full
+    // string and the `!focused` guard in useEffect blocked the prefix
+    // from arriving — so the original segment row visually still
+    // contained both halves of the split.
+    const prefix = value.slice(0, cursor).trimEnd()
+    if (prefix && prefix !== value) {
+      setValue(prefix)
+      lastCommittedRef.current = prefix
+    }
+    // Blur so the useEffect resync isn't gated by `focused`. The newly
+    // created sibling row will steal focus naturally on next paint.
+    try { ta.blur() } catch { /* noop */ }
+
     onSplit(cursor)
   }
 
