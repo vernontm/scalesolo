@@ -3551,6 +3551,39 @@ function SegmentRow({ segment, onPatch, onDelete, onRegen, onSplit, onUploadAvat
               </select>
             )}
 
+            {/* B-roll style toggle: image (Ken Burns on Kie nano-banana
+                still) vs video (Grok Imagine image-to-video). Visible
+                only on voiceover_broll segments. The icon + label make
+                it scannable at a glance — Ray asked to be able to see
+                "which ones are going to be video and which ones are
+                going to be image B-roll" without inspecting each row.
+                Toggling fires a PATCH which invalidates rendered_chunk_url
+                so the next render rebuilds with the new mode. */}
+            {isBroll && (
+              <label
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  padding: '4px 8px', borderRadius: 6,
+                  fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
+                  background: segment.is_video_broll ? 'rgba(168,85,247,0.18)' : 'rgba(255,255,255,0.04)',
+                  border: `1px solid ${segment.is_video_broll ? 'rgba(168,85,247,0.55)' : 'var(--border)'}`,
+                  color: segment.is_video_broll ? '#c084fc' : 'var(--muted)',
+                  whiteSpace: 'nowrap',
+                }}
+                title={segment.is_video_broll
+                  ? 'Grok Imagine animates the still into a short video clip. ~$0.015/sec extra.'
+                  : 'Still image with Ken Burns zoom. Default — no extra cost beyond the image.'}
+              >
+                <input
+                  type="checkbox"
+                  checked={!!segment.is_video_broll}
+                  onChange={(e) => onPatch({ is_video_broll: e.target.checked })}
+                  style={{ margin: 0, accentColor: '#a855f7' }}
+                />
+                {segment.is_video_broll ? '🎬 Video' : '🖼 Image'}
+              </label>
+            )}
+
             <select
               className="input"
               value={segment.transition_in}
