@@ -255,22 +255,34 @@ async function dispatchVideoBroll(segment, apiKey, aspectRatio, voiceDurationSec
 // Cost: ~$0.001-0.003 per call (Sonnet, short system + short user).
 // Best-effort: returns null on any failure so the caller can still fall
 // through to the script_text fallback and produce SOMETHING.
-async function generateImagePromptFromScript(segment, brandStyleAnchor) {
+async function generateImagePromptFromScript(segment, brandStyleAnchor, videoTheme) {
   const script = (segment.script_text || '').trim()
   if (!script) return null
   try {
     const system =
-      'You write concise b-roll image-generation prompts. Given a single ' +
-      'sentence from a video voiceover, output ONE clear visual scene that ' +
-      'illustrates the IDEA being conveyed, not the literal words. Avoid ' +
-      'images of people reading books, generic stock-photo "person at laptop" ' +
-      'cliches, and abstract negations. Lead with the subject, then setting, ' +
-      'then lighting/mood. 1-2 sentences max. No "Image of" prefix, no ' +
-      'quotation marks, no explanation. Output ONLY the prompt. ' +
+      'You write concise b-roll image-generation prompts for ONE segment of a ' +
+      'larger video. The user will provide:\n' +
+      '  - The overall video theme (title + opening of script). USE THIS to stay ' +
+      'on-topic. If the video is about AI/software and the line mentions "coding," ' +
+      'image programming/software/screens — NOT electrical wiring. If about ' +
+      'cooking and the line mentions "fire," image stove flames — not a wildfire. ' +
+      'Anchor every prompt in the video\'s domain.\n' +
+      '  - The specific voiceover line from this segment.\n\n' +
+      'Output ONE clear visual scene that illustrates the IDEA being conveyed in ' +
+      'that line, interpreted through the lens of the video\'s domain. Avoid ' +
+      'cliches (person reading book, generic "person at laptop", abstract ' +
+      'negations). Lead with the subject, then setting, then lighting/mood. ' +
+      '1-2 sentences max. No "Image of" prefix, no quotation marks, no ' +
+      'explanation. Output ONLY the prompt. ' +
       (brandStyleAnchor ? `Brand visual style anchor (incorporate naturally): ${brandStyleAnchor}` : '')
+
+    const userContent = videoTheme
+      ? `Overall video theme: ${videoTheme}\n\nVoiceover line for this segment: "${script}"`
+      : `Voiceover line: "${script}"`
+
     const resp = await anthropicMessage({
       system,
-      messages: [{ role: 'user', content: `Voiceover line: "${script}"` }],
+      messages: [{ role: 'user', content: userContent }],
       max_tokens: 200,
       cache_system: false,
     })
@@ -283,7 +295,7 @@ async function generateImagePromptFromScript(segment, brandStyleAnchor) {
   }
 }
 
-async function dispatchImage(segment, apiKey, aspectRatio, brandStyleAnchor, avatarReferenceImageUrl) {
+async function dispatchImage(segment, apiKey, aspectRatio, brandStyleAnchor, avatarReferenceImageUrl, videoTheme) {
   // Prompt source priority:
   //   1. explicit image_prompt (user- or Claude-segmentation-set)
   //   2. broll_video_prompt (also visually grounded)
@@ -291,7 +303,7 @@ async function dispatchImage(segment, apiKey, aspectRatio, brandStyleAnchor, ava
   //   4. raw script_text fallback (rare — only if Claude call fails)
   let basePrompt = segment.image_prompt?.trim() || segment.broll_video_prompt?.trim()
   if (!basePrompt) {
-    basePrompt = await generateImagePromptFromScript(segment, brandStyleAnchor)
+    basePrompt = await generateImagePromptFromScript(segment, brandStyleAnchor, videoTheme)
     if (basePrompt) {
       // Persist back so the UI shows it + future regens reuse instead of
       // burning another Claude call. Best-effort — render path doesn't
@@ -568,7 +580,7 @@ async function orchestrateSegment(segment, ctx) {
     if (segment.segment_type === 'voiceover_broll') {
       if (!segment.image_url && wants('image')) {
         await patch({ status: 'generating_image' })
-        const taskId = await dispatchImage(segment, kieKey, aspectRatio, ctx.brandStyleAnchor, ctx.avatarReferenceImageUrl)
+        const taskId = await dispatchImage(segment, kieKey, aspectRatio, ctx.brandStyleAnchor, ctx.avatarReferenceImageUrl, ctx.videoTheme)
         await patch({ kie_task_id: taskId })
         // status stays 'generating_image' until the poller fills image_url + flips to 'ready'
       } else if (segment.voice_url && segment.image_url) {
@@ -808,6 +820,20 @@ export default async function handler(req, res) {
       avatarReferenceImageUrl = ''
     }
 
+    // Build a "video theme" snippet that ALL inline image-prompt
+    // generations get. Without this, per-segment Claude calls see only
+    // the local script line and a script like "I mentioned coding" on
+    // a video about AI gets imaged as physical wiring. The title +
+    // first ~500 chars of the script give Claude enough domain
+    // grounding to keep prompts on-topic across the whole video.
+    const themeBits = []
+    if (video.title?.trim()) themeBits.push(`Title: ${video.title.trim()}`)
+    if (video.script_full_text?.trim()) {
+      const summary = video.script_full_text.trim().slice(0, 500)
+      themeBits.push(`Opening of script: ${summary}${video.script_full_text.length > 500 ? '…' : ''}`)
+    }
+    const videoTheme = themeBits.join(' | ')
+
     const ctx = {
       videoId,
       profileId: video.profile_id,
@@ -819,6 +845,7 @@ export default async function handler(req, res) {
       kieKey,
       brandStyleAnchor,
       avatarReferenceImageUrl,
+      videoTheme,
       force: req.body?.force === true,
       only_types,
     }
