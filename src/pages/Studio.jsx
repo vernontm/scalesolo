@@ -3717,9 +3717,30 @@ function SegmentRow({ segment, onPatch, onDelete, onRegen, onSplit, onUploadAvat
           )}
 
           {/* Generated assets preview + per-segment download/upload affordances */}
-          {(segment.image_url || segment.voice_url || segment.avatar_video_url) && (
+          {(segment.image_url || segment.voice_url || segment.avatar_video_url || segment.broll_video_url) && (
             <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              {segment.image_url && (
+              {/* B-roll preview: prefer the Grok motion clip when it's
+                  landed, otherwise fall back to the still image. The
+                  Grok mp4 IS the still + 6-30s of motion baked in, so
+                  showing it in place of the static thumbnail lets the
+                  user spot-check the motion before committing to a full
+                  render. Click-to-play (muted autoplay would be too
+                  noisy when many segments are visible). */}
+              {segment.broll_video_url ? (
+                <a href={segment.broll_video_url} target="_blank" rel="noopener noreferrer" style={{ display: 'block', position: 'relative' }}>
+                  <video
+                    src={segment.broll_video_url}
+                    muted
+                    playsInline
+                    preload="metadata"
+                    onMouseEnter={(e) => { try { e.currentTarget.play() } catch { /* noop */ } }}
+                    onMouseLeave={(e) => { try { e.currentTarget.pause(); e.currentTarget.currentTime = 0 } catch { /* noop */ } }}
+                    style={{ width: 96, height: 54, objectFit: 'cover', borderRadius: 4, border: '1px solid rgba(168,85,247,0.55)', display: 'block', background: '#000' }}
+                    title="Hover to play Grok motion preview — click to open"
+                  />
+                  <span style={{ position: 'absolute', bottom: 2, right: 2, fontSize: 9, fontWeight: 700, background: 'rgba(168,85,247,0.85)', color: '#fff', padding: '1px 4px', borderRadius: 3, pointerEvents: 'none' }}>🎬 GROK</span>
+                </a>
+              ) : segment.image_url && (
                 <a href={segment.image_url} target="_blank" rel="noopener noreferrer" style={{ display: 'block' }}>
                   <img
                     src={segment.image_url} alt="B-roll preview"
