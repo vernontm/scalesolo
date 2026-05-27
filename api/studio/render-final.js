@@ -94,18 +94,36 @@ export default async function handler(req, res) {
     const workerUrl = `${WORKER_URL.replace(/\/$/, '')}/jobs/studio-render`
     const dispatchedAt = new Date().toISOString()
 
+    // Write the "dispatching" status to the DB BEFORE firing the
+    // worker request. If we wrote it after, there'd be a race: the
+    // worker often writes its own "baking" status within ~1s, and our
+    // 4s-delayed "dispatching" write would overwrite it — leaving the
+    // UI stuck on "dispatching" while the bake actually progresses
+    // silently. Pre-writing means the worker's later writes are
+    // monotonically newer and always win.
+    await supaFetch(`studio_videos?id=eq.${videoId}`, {
+      method: 'PATCH',
+      body: {
+        status: 'rendering',
+        error: null,
+        render_progress: {
+          stage: 'dispatching',
+          current: 0,
+          total: 0,
+          started_at: dispatchedAt,
+          hf_rendered: [],
+          hf_fallback: [],
+        },
+      },
+      prefer: 'return=minimal',
+    })
+
     // Send the dispatch. The worker's /jobs/studio-render handler holds
     // the connection open for the entire bake (minutes), so we use
     // AbortController to cut the connection after ~4s — long enough
     // for TCP handshake + Node to start processing the body, short
     // enough that Vercel returns inside its function budget. The
     // worker keeps running in the background after we abort.
-    //
-    // The previous fire-and-forget pattern (fetchPromise.then(...))
-    // didn't work reliably: Vercel kills the process the moment the
-    // handler returns, which can cancel the underlying TCP connection
-    // BEFORE it's even opened. That's how the runtime log showed zero
-    // outbound calls to the Fly worker even though dispatch "succeeded".
     const dispatchAbort = new AbortController()
     const dispatchTimeout = setTimeout(() => dispatchAbort.abort(), 4000)
     try {
@@ -132,28 +150,6 @@ export default async function handler(req, res) {
     } finally {
       clearTimeout(dispatchTimeout)
     }
-
-    // Mark the video as rendering so the UI updates immediately.
-    // (The worker will overwrite this with its own status writes as
-    // it progresses. We pre-set it here so there's no awkward "is
-    // anything happening?" window between dispatch and the worker's
-    // first progress write.)
-    await supaFetch(`studio_videos?id=eq.${videoId}`, {
-      method: 'PATCH',
-      body: {
-        status: 'rendering',
-        error: null,
-        render_progress: {
-          stage: 'dispatching',
-          current: 0,
-          total: 0,
-          started_at: dispatchedAt,
-          hf_rendered: [],
-          hf_fallback: [],
-        },
-      },
-      prefer: 'return=minimal',
-    })
 
     return res.status(202).json({
       ok: true,
