@@ -239,7 +239,7 @@ ${buildCompositionGuidance(tmpl)}
 Other rules:
 - Close with a clear CTA. Use end-card-v1 for the final visual (if it's in the composition pool).
 - Total runtime should land within ±15% of the target duration.
-- Default transition between segments: ${tmpl.default_transition || 'cut'}. Per-segment overrides allowed.
+- Transitions are auto-assigned in post — leave transition_in='cut' on every segment unless a specific scene genuinely needs a particular transition (e.g. 'dip_to_black' before a hard topic pivot, 'fade' for a slow intro). The renderer rotates fade/crossfade/whip/wipe/dip_to_black across segments to avoid monotony.
 ${contentMix ? `
 ## Target content mix (user-chosen, drives cost + pacing)
 
@@ -388,10 +388,14 @@ function defaultSfxFor(idx, totalSegments) {
 
 function sanitizeSegment(s, idx, tmpl, orientation, totalSegments) {
   const segment_type = SEGMENT_TYPES.includes(s.segment_type) ? s.segment_type : 'voiceover_broll'
-  // Honor Claude's explicit choice; fall back to a template-aware
-  // heuristic instead of hardcoded 'cut' so every video ships with
-  // varied, intentional transitions out of the box.
-  const transition_in = TRANSITIONS.includes(s.transition_in)
+  // Honor Claude's explicit, non-lazy choice. We treat 'cut' as the
+  // "Claude didn't actually decide" signal because the prompt used to
+  // tell Claude the default was 'cut' — and a 46-segment millionaire
+  // bake came back with 46/46 cuts. Override 'cut' with the
+  // deterministic rotation so videos ship varied out of the box.
+  // Anything else Claude picked (fade, wipe, whip, etc.) is honored.
+  const claudeChose = TRANSITIONS.includes(s.transition_in) && s.transition_in !== 'cut'
+  const transition_in = claudeChose
     ? s.transition_in
     : defaultTransitionFor(segment_type, idx, tmpl)
   const sound_effect = (typeof s.sound_effect === 'string' && SFX_LIBRARY.includes(s.sound_effect))
