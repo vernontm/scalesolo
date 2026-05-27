@@ -697,7 +697,7 @@ async function mixMusicIntoFinal(finalIn, finalOut, musicPath, volume) {
 //
 // Skipped when placements is empty — returns null, signal to caller
 // that no overlay step is needed.
-async function renderOverlayPngs(seg, dir, dim, durationSecs, baseUrl, bypassSecret, template) {
+async function renderOverlayPngs(seg, dir, dim, durationSecs, baseUrl, bypassSecret, template, deadlineMs = null) {
   const placements = Array.isArray(seg.overlay_placements) ? seg.overlay_placements : []
   if (!placements.length) return null
   if (!template) return null
@@ -786,15 +786,17 @@ async function renderOverlayPngs(seg, dir, dim, durationSecs, baseUrl, bypassSec
     // frames at the right rate. Seek to time t for each frame so the
     // first 500ms of slide_up_fade is properly captured.
     for (let i = 0; i < totalFrames; i++) {
+      // Deadline check BEFORE each screenshot. If our outer caller's
+      // budget is gone, throw early — that lets the `finally { page.
+      // close() }` run cleanly so Chrome reclaims the page + its
+      // associated renderer process. Without this, the page.screenshot
+      // call below would block past the deadline (Puppeteer protocol
+      // timeout default is 180s), leaving a zombie tab that thrashes
+      // Chrome's GPU compositor and poisons every subsequent render.
+      if (deadlineMs && Date.now() > deadlineMs) {
+        throw new Error(`overlay capture deadline exceeded at frame ${i}/${totalFrames}`)
+      }
       const tInSegment = i / fps
-      // The overlay layer uses pure CSS animations, not GSAP timelines.
-      // CSS animation-delay is computed at element-create time and
-      // advances with real wall-clock time. To capture deterministic
-      // frames we use page.evaluate to set the timeline progress on
-      // the placeholder GSAP timeline (forces a tick) AND set the CSS
-      // animationPlayState to 'paused' after seeking. Simpler approach:
-      // freeze animations at element creation by setting playState to
-      // paused, then advance via animation-delay manipulation.
       await page.evaluate((time) => {
         const cards = document.querySelectorAll('.ov > *')
         cards.forEach((card) => {
@@ -804,8 +806,6 @@ async function renderOverlayPngs(seg, dir, dim, durationSecs, baseUrl, bypassSec
       }, tInSegment)
 
       const framePath = join(framesDir, `frame-${String(i).padStart(5, '0')}.png`)
-      // omitBackground=true gives us the alpha channel we need to
-      // composite over the avatar/b-roll base chunk.
       await page.screenshot({ path: framePath, type: 'png', omitBackground: true })
     }
 
@@ -838,7 +838,7 @@ async function compositeOverlayOntoChunk(baseMp4, overlayFramesDir, durationSecs
 }
 
 // ── HyperFrames composition renderer (Puppeteer + frame capture) ──────────
-async function renderHyperFramesChunk(seg, paths, dim, durationSecs, baseUrl, bypassSecret) {
+async function renderHyperFramesChunk(seg, paths, dim, durationSecs, baseUrl, bypassSecret, deadlineMs = null) {
   const browser = await getBrowser()
   const page = await browser.newPage()
   const pageLogs = []
@@ -942,6 +942,12 @@ async function renderHyperFramesChunk(seg, paths, dim, durationSecs, baseUrl, by
     await mkdir(framesDir, { recursive: true })
 
     for (let i = 0; i < totalFrames; i++) {
+      // Same deadline-bail pattern as renderOverlayPngs. Lets the page
+      // close cleanly in `finally` instead of leaving an in-flight
+      // screenshot ghost that poisons Chrome for every later segment.
+      if (deadlineMs && Date.now() > deadlineMs) {
+        throw new Error(`HF chunk capture deadline exceeded at frame ${i}/${totalFrames}`)
+      }
       const tInSegment = i / fps
       const tInTimeline = tlDur > 0 ? Math.min(tInSegment, tlDur) : tInSegment
       // Prefer the composition-defined seek hook when present. The
@@ -1300,10 +1306,9 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
           },
         }
         try {
-          await withChromeSlot(() => withTimeout(
-            renderHyperFramesChunk(screenshotSeg, paths, dim, wantDuration, baseUrl, bypassSecret),
-            PUPPETEER_HARD_TIMEOUT_MS,
-            `renderHyperFramesChunk(${screenshotCompId})`,
+          await withChromeSlot(() => renderHyperFramesChunk(
+            screenshotSeg, paths, dim, wantDuration, baseUrl, bypassSecret,
+            Date.now() + PUPPETEER_HARD_TIMEOUT_MS,
           ))
           progress.hf_rendered.push(seg.id)
         } catch (e) {
@@ -1328,10 +1333,9 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
         const wantDuration = seg.segment_type === 'pure_motion_graphics' ? 2.5 : Math.max(2, voiceDuration || 4)
         if (seg.hyperframes_composition_id) {
           try {
-            await withChromeSlot(() => withTimeout(
-              renderHyperFramesChunk(seg, paths, dim, wantDuration, baseUrl, bypassSecret),
-              PUPPETEER_HARD_TIMEOUT_MS,
-              `renderHyperFramesChunk(${seg.hyperframes_composition_id})`,
+            await withChromeSlot(() => renderHyperFramesChunk(
+              seg, paths, dim, wantDuration, baseUrl, bypassSecret,
+              Date.now() + PUPPETEER_HARD_TIMEOUT_MS,
             ))
             progress.hf_rendered.push(seg.id)
           } catch (e) {
@@ -1415,10 +1419,9 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
           // Hand the renderer a seg with the filtered list so it
           // doesn't see the stripped placements.
           const segForOverlays = { ...seg, overlay_placements: effectivePlacements }
-          const overlayFramesDir = await withChromeSlot(() => withTimeout(
-            renderOverlayPngs(segForOverlays, dir, dim, overlayDuration, baseUrl, bypassSecret, resolvedTemplate),
-            PUPPETEER_HARD_TIMEOUT_MS,
-            `renderOverlayPngs(seg=${seg.id})`,
+          const overlayFramesDir = await withChromeSlot(() => renderOverlayPngs(
+            segForOverlays, dir, dim, overlayDuration, baseUrl, bypassSecret, resolvedTemplate,
+            Date.now() + PUPPETEER_HARD_TIMEOUT_MS,
           ))
           if (overlayFramesDir) {
             const composited = join(dir, 'out-with-overlay.mp4')
