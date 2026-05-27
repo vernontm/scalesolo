@@ -35,7 +35,11 @@ const ALLOWED_PATCH = new Set([
 // pulling the whole row twice. Falls back to the parent video if denorm
 // is missing for any reason (legacy rows, etc.).
 async function loadSegmentForAccess(id) {
-  const rows = await supaFetch(`studio_segments?id=eq.${id}&select=id,profile_id,studio_video_id&limit=1`)
+  // Includes the b-roll mode flags so the PATCH handler can detect
+  // an image↔video toggle and reset status/grok_task_id as needed.
+  // The selector is intentionally lean — full row fetches happen
+  // elsewhere when the row content matters.
+  const rows = await supaFetch(`studio_segments?id=eq.${id}&select=id,profile_id,studio_video_id,segment_type,is_video_broll,broll_video_url&limit=1`)
   return rows?.[0] || null
 }
 
@@ -108,6 +112,26 @@ export default async function handler(req, res) {
       // voice_url replaced → previous cleaning was for the old file.
       if ('voice_url' in updates && !('voice_cleaned' in updates)) {
         updates.voice_cleaned = false
+      }
+      // Flipping a segment image→video b-roll requires the Grok dispatch
+      // to fire. The orchestrator skips segments at status='ready' as
+      // "already done," but a previously-ready image broll has no
+      // broll_video_url yet — so without resetting status, the
+      // Grok task never runs. Same idea in reverse for video→image:
+      // clear the now-stale broll_video_url + grok_task_id so the
+      // worker uses the still image with Ken Burns instead.
+      if ('is_video_broll' in updates && existing.segment_type === 'voiceover_broll'
+          && updates.is_video_broll !== existing.is_video_broll) {
+        if (updates.is_video_broll === true) {
+          if (!existing.broll_video_url) {
+            updates.status = 'pending'
+            updates.error = null
+            updates.grok_task_id = null
+          }
+        } else {
+          updates.broll_video_url = null
+          updates.grok_task_id = null
+        }
       }
 
       const updated = await supaFetch(`studio_segments?id=eq.${id}`, {
