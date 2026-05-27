@@ -192,8 +192,10 @@ async function pollKieTask(segment, kieKey, profileId) {
 // helper export and the dispatch is small enough to duplicate.
 async function dispatchVideoBrollFromImage({ segment_with_image, apiKey, aspectRatio, voiceDurationSecs }) {
   if (!segment_with_image?.image_url) throw new Error('No image_url to send to Grok')
+  // Visual motion prompt. NEVER fall back to script_text — Grok was
+  // rendering voiceover lines as on-screen text. Same fix as in
+  // generate-assets.js dispatchVideoBroll.
   const prompt = (segment_with_image.broll_video_prompt && segment_with_image.broll_video_prompt.trim())
-    || (segment_with_image.script_text && segment_with_image.script_text.trim())
     || (segment_with_image.image_prompt && segment_with_image.image_prompt.trim())
     || 'Subtle camera movement, natural motion, cinematic'
   const desiredSecs = Math.max(6, Math.min(30, Math.ceil(Number(voiceDurationSecs) || 6)))

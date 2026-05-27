@@ -199,8 +199,16 @@ async function dispatchVoice(segment, voiceId, profileId) {
 // Docs: https://docs.kie.ai/market/grok-imagine/image-to-video
 async function dispatchVideoBroll(segment, apiKey, aspectRatio, voiceDurationSecs) {
   if (!segment.image_url?.trim()) throw new Error('Cannot generate video b-roll: no source image yet')
+  // Motion-direction prompt. Order matters: prefer an explicit
+  // broll_video_prompt (the user/Claude said "slow push in"),
+  // then the image_prompt (visual scene — Grok knows how to animate
+  // that), and finally a generic "subtle movement" fallback.
+  //
+  // Critically: do NOT fall back to script_text. Earlier we did, and
+  // Grok was rendering the voiceover line as on-screen text in the
+  // video — turning b-roll clips into karaoke. The script is for the
+  // voice track, never the visual.
   const prompt = (segment.broll_video_prompt && segment.broll_video_prompt.trim())
-    || (segment.script_text && segment.script_text.trim())
     || (segment.image_prompt && segment.image_prompt.trim())
     || 'Subtle camera movement, natural motion, cinematic'
   // Clamp to Kie's [6, 30] second range. Match the segment's voice
