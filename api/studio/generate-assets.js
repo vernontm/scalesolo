@@ -107,7 +107,7 @@ async function dispatchVoice(segment, voiceId, profileId) {
 // Match the input shape api/images/generate.js uses for nano-banana-2. The
 // keys here are not what you'd guess from the model name; missing any of
 // num_images/resolution/output_format is a silent 400 from Kie.
-async function dispatchImage(segment, apiKey, aspectRatio, brandStyleAnchor) {
+async function dispatchImage(segment, apiKey, aspectRatio, brandStyleAnchor, avatarReferenceImageUrl) {
   if (!segment.image_prompt?.trim()) throw new Error('Image prompt is empty')
   // Project aspect ratio → Kie's expected aspect_ratio string. nano-banana-2
   // accepts 16:9 / 9:16 / 1:1 / 'auto'. Pass-through.
@@ -117,14 +117,29 @@ async function dispatchImage(segment, apiKey, aspectRatio, brandStyleAnchor) {
   // visual_avoid. Belt + suspenders: even if Claude wrote a generic
   // "sleek AI avatar" prompt and the user didn't catch it, the brand
   // anchor still nudges Kie away from off-brand renders.
-  const styledPrompt = brandStyleAnchor
+  let styledPrompt = brandStyleAnchor
     ? `${segment.image_prompt.trim()} ${brandStyleAnchor}`
     : segment.image_prompt
+  // Avatar-likeness anchor (PDF #13). When the video uses an avatar
+  // and the b-roll prompt references a person (heuristic: "person",
+  // "founder", "you", "creator", "solopreneur", "they", etc), we
+  // pass the avatar's look image as a Kie image_input reference AND
+  // append a likeness instruction. Kie's nano-banana-2 with a
+  // reference image tries to preserve the subject's face / hair /
+  // build, so b-roll characters look like the host instead of a
+  // random stock person. Falls back to text-only generation when
+  // the avatar reference isn't available.
+  const imageInput = []
+  const refersToPerson = /\b(person|founder|creator|solopreneur|host|speaker|founder|she|he|they|you|coder|developer|entrepreneur|woman|man|professional)\b/i.test(styledPrompt)
+  if (avatarReferenceImageUrl && refersToPerson) {
+    imageInput.push(avatarReferenceImageUrl)
+    styledPrompt = `${styledPrompt} The main person in this image should resemble the reference photo (same face, hair, build, age, ethnicity, and overall identity). Clothing, environment, lighting, pose, and what they're doing can change to fit the scene.`
+  }
   const body = {
     model: 'nano-banana-2',
     input: {
       prompt: styledPrompt,
-      image_input: [],
+      image_input: imageInput,
       aspect_ratio: aspect,
       resolution: '2K',
       output_format: 'png',
@@ -339,7 +354,7 @@ async function orchestrateSegment(segment, ctx) {
     if (segment.segment_type === 'voiceover_broll') {
       if (!segment.image_url && wants('image')) {
         await patch({ status: 'generating_image' })
-        const taskId = await dispatchImage(segment, kieKey, aspectRatio, ctx.brandStyleAnchor)
+        const taskId = await dispatchImage(segment, kieKey, aspectRatio, ctx.brandStyleAnchor, ctx.avatarReferenceImageUrl)
         await patch({ kie_task_id: taskId })
         // status stays 'generating_image' until the poller fills image_url + flips to 'ready'
       } else if (segment.voice_url && segment.image_url) {
@@ -560,6 +575,25 @@ export default async function handler(req, res) {
       brandStyleAnchor = ''
     }
 
+    // Avatar reference image — used by dispatchImage as a Kie
+    // image_input so b-roll characters resemble the host. Resolved
+    // once per video: look's cover image if a look is picked, else
+    // the avatar's photo_url. Best-effort — empty string means
+    // text-only generation (current behavior).
+    let avatarReferenceImageUrl = ''
+    try {
+      if (video.look_id) {
+        const looks = await supaFetch(`avatar_looks?id=eq.${video.look_id}&select=image_url&limit=1`)
+        avatarReferenceImageUrl = looks?.[0]?.image_url || ''
+      }
+      if (!avatarReferenceImageUrl && video.avatar_id) {
+        const avs = await supaFetch(`avatars?id=eq.${video.avatar_id}&select=photo_url&limit=1`)
+        avatarReferenceImageUrl = avs?.[0]?.photo_url || ''
+      }
+    } catch {
+      avatarReferenceImageUrl = ''
+    }
+
     const ctx = {
       videoId,
       profileId: video.profile_id,
@@ -570,6 +604,7 @@ export default async function handler(req, res) {
       aspectRatio: video.aspect_ratio || '16:9',
       kieKey,
       brandStyleAnchor,
+      avatarReferenceImageUrl,
       force: req.body?.force === true,
       only_types,
     }
