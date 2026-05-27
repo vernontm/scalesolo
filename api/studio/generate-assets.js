@@ -30,6 +30,7 @@ import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/su
 import { gateStudio } from './_lib/gate.js'
 import { customerIdForUser } from '../_lib/credits.js'
 import { pickMotionGesture } from './_lib/motion-gestures.js'
+import { message as anthropicMessage } from '../_lib/anthropic.js'
 import { spawn } from 'node:child_process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -241,15 +242,68 @@ async function dispatchVideoBroll(segment, apiKey, aspectRatio, voiceDurationSec
   return taskId
 }
 
+// Inline Claude image-prompt generator. Runs when a segment has no
+// image_prompt set (common after split-segment, or when Claude's
+// segmentation pass left it blank). Earlier we fell back to using
+// script_text directly — but short transitional clauses like
+// "It is not prompt engineering, it is not coding" produce thematically
+// wrong images (the generator latched onto "engineering" and "coding"
+// keywords and made a person reading in a forest). This helper asks
+// Claude to write a proper visual scene description for the IDEA the
+// script is conveying, not the literal words.
+//
+// Cost: ~$0.001-0.003 per call (Sonnet, short system + short user).
+// Best-effort: returns null on any failure so the caller can still fall
+// through to the script_text fallback and produce SOMETHING.
+async function generateImagePromptFromScript(segment, brandStyleAnchor) {
+  const script = (segment.script_text || '').trim()
+  if (!script) return null
+  try {
+    const system =
+      'You write concise b-roll image-generation prompts. Given a single ' +
+      'sentence from a video voiceover, output ONE clear visual scene that ' +
+      'illustrates the IDEA being conveyed, not the literal words. Avoid ' +
+      'images of people reading books, generic stock-photo "person at laptop" ' +
+      'cliches, and abstract negations. Lead with the subject, then setting, ' +
+      'then lighting/mood. 1-2 sentences max. No "Image of" prefix, no ' +
+      'quotation marks, no explanation. Output ONLY the prompt. ' +
+      (brandStyleAnchor ? `Brand visual style anchor (incorporate naturally): ${brandStyleAnchor}` : '')
+    const resp = await anthropicMessage({
+      system,
+      messages: [{ role: 'user', content: `Voiceover line: "${script}"` }],
+      max_tokens: 200,
+      cache_system: false,
+    })
+    const text = (resp?.content || []).map((b) => b?.text || '').join('').trim()
+    // Strip surrounding quotes if Claude added them despite the instruction.
+    return text.replace(/^["']|["']$/g, '').trim() || null
+  } catch (e) {
+    console.warn(`[generate-assets] auto image_prompt for seg ${segment.id} failed: ${e?.message || e}`)
+    return null
+  }
+}
+
 async function dispatchImage(segment, apiKey, aspectRatio, brandStyleAnchor, avatarReferenceImageUrl) {
-  // Prompt source priority: explicit image_prompt → b-roll video prompt
-  // (often equally good for the still) → script_text fallback. The
-  // fallback exists because split-segment + manual edits often leave
-  // image_prompt null, and we'd rather generate a thematically-aligned
-  // image from the script than fail the segment outright.
-  let basePrompt = segment.image_prompt?.trim()
-    || segment.broll_video_prompt?.trim()
-    || segment.script_text?.trim()
+  // Prompt source priority:
+  //   1. explicit image_prompt (user- or Claude-segmentation-set)
+  //   2. broll_video_prompt (also visually grounded)
+  //   3. Claude-generated visual scene from script_text
+  //   4. raw script_text fallback (rare — only if Claude call fails)
+  let basePrompt = segment.image_prompt?.trim() || segment.broll_video_prompt?.trim()
+  if (!basePrompt) {
+    basePrompt = await generateImagePromptFromScript(segment, brandStyleAnchor)
+    if (basePrompt) {
+      // Persist back so the UI shows it + future regens reuse instead of
+      // burning another Claude call. Best-effort — render path doesn't
+      // care if the write fails.
+      await supaFetch(`studio_segments?id=eq.${segment.id}`, {
+        method: 'PATCH',
+        body: { image_prompt: basePrompt },
+        prefer: 'return=minimal',
+      }).catch(() => {})
+    }
+  }
+  if (!basePrompt) basePrompt = segment.script_text?.trim()
   if (!basePrompt) throw new Error('No prompt available — script_text and image_prompt are both empty')
   // Use a shallow mutable copy so we don't mutate the segment object
   // the caller passed in.
