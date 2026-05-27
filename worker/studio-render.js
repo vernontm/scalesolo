@@ -199,7 +199,11 @@ async function withChromeSlot(fn) {
 // Chrome work takes longer than this, we abandon it (return null /
 // throw) so a runaway page can't block the entire bake. Two minutes
 // is generous — a 30s segment at 30fps = 900 captures × ~80ms = 72s.
-const PUPPETEER_HARD_TIMEOUT_MS = 150_000
+// Bumped from 150s → 300s after a 52-seg bake hit deadline on three
+// 20-25 second segments at 80-96% completion. With per-worker Chrome
+// the previous bottleneck (shared compositor contention) is gone, so
+// long captures finish reliably — they just need the budget.
+const PUPPETEER_HARD_TIMEOUT_MS = 300_000
 async function withTimeout(promise, ms, label) {
   let timer
   const timeout = new Promise((_, reject) => {
