@@ -97,6 +97,15 @@ export default async function handler(req, res) {
       }
       if (!Object.keys(updates).length) return res.status(400).json({ error: 'no editable fields in body' })
 
+      // Any user-driven edit invalidates the cached chunk. The worker
+      // would otherwise reuse an out-of-date chunk on the next bake
+      // and the edit would silently fail to appear. Skip invalidation
+      // when the caller is specifically setting rendered_chunk_url
+      // (which is how the worker itself reports completion).
+      if (!('rendered_chunk_url' in updates)) {
+        updates.rendered_chunk_url = null
+      }
+
       const updated = await supaFetch(`studio_segments?id=eq.${id}`, {
         method: 'PATCH', body: updates,
       })

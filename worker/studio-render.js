@@ -1289,6 +1289,35 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
         outChunk:  join(dir, 'out.mp4'),
       }
 
+      // Resume-from-existing: if this segment was baked on a prior
+      // attempt that lost its machine to suspend/deploy/crash, its
+      // rendered_chunk_url is set. Download instead of re-render —
+      // saves 30-60s per segment, lets a 51/52 bake pick up where
+      // it left off. We probe the chunk for duration so the downstream
+      // concat/xfade math works, and write to chunk arrays so the
+      // segment appears as "complete" in the worker pool result.
+      if (seg.rendered_chunk_url) {
+        try {
+          await downloadTo(seg.rendered_chunk_url, paths.outChunk)
+          const probedDur = await probeAudioDurationSecs(paths.outChunk)
+          if (probedDur && probedDur > 0.1) {
+            chunkPaths[i] = paths.outChunk
+            chunkDurations[i] = probedDur
+            chunkSegments[i] = seg
+            completedCount++
+            progress.current = completedCount
+            await writeProgress()
+            console.log(`[studio-render] reused chunk for seg ${i} (${seg.id}) from ${seg.rendered_chunk_url.slice(0, 80)}…`)
+            return
+          }
+          // Probe returned 0 — chunk URL is set but file is corrupt
+          // or unreachable. Fall through to render normally.
+          console.warn(`[studio-render] seg ${i} chunk URL set but probe returned ${probedDur}; re-rendering`)
+        } catch (e) {
+          console.warn(`[studio-render] seg ${i} chunk reuse failed (${e?.message || e}); re-rendering`)
+        }
+      }
+
       let voiceDuration = seg.voice_duration_secs || 0
       if (seg.voice_url && seg.segment_type !== 'pure_motion_graphics') {
         paths.voice = join(dir, 'voice.mp3')
@@ -1468,6 +1497,35 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
       chunkPaths[i] = paths.outChunk
       chunkDurations[i] = probedDur || (seg.segment_type === 'avatar' ? Math.max(0.5, voiceDuration || 0) : (voiceDuration || 4))
       chunkSegments[i] = seg
+
+      // Persist the chunk to Supabase Storage immediately on success.
+      // If the next bake step (concat/music/sfx/upload) dies for any
+      // reason, this chunk is safe and the next bake will resume here
+      // via the rendered_chunk_url short-circuit at the top of this fn.
+      // Also surfaces the chunk in the Studio UI as a per-segment
+      // preview so the user sees progress materialize in real time.
+      try {
+        const chunkBuf = await readFile(paths.outChunk)
+        const chunkStoragePath = `${video.profile_id}/studio/chunks/${studio_video_id}/seg-${String(i).padStart(3, '0')}-${Date.now()}.mp4`
+        const { error: chunkUpErr } = await supabase.storage.from(STUDIO_BUCKET)
+          .upload(chunkStoragePath, chunkBuf, { contentType: 'video/mp4', upsert: true })
+        if (chunkUpErr) {
+          // Non-fatal: bake continues, segment just won't be reusable
+          // if the rest of the bake fails. We log loudly so this doesn't
+          // hide silently if it starts happening for every segment.
+          console.warn(`[studio-render] seg ${i} chunk upload failed: ${chunkUpErr.message}`)
+        } else {
+          const { data: chunkPub } = supabase.storage.from(STUDIO_BUCKET).getPublicUrl(chunkStoragePath)
+          const chunkUrl = chunkPub?.publicUrl
+          if (chunkUrl) {
+            await supabase.from('studio_segments')
+              .update({ rendered_chunk_url: chunkUrl })
+              .eq('id', seg.id)
+          }
+        }
+      } catch (e) {
+        console.warn(`[studio-render] seg ${i} chunk persist failed: ${e?.message || e}`)
+      }
 
       // Free /tmp aggressively. PNG sequences and intermediate files
       // pile up fast (each HF chunk = ~150 PNGs × 8MB = ~1.2GB), and

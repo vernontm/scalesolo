@@ -166,8 +166,8 @@ async function pollKieTask(segment, kieKey, profileId) {
       await supaFetch(`studio_segments?id=eq.${segment.id}`, {
         method: 'PATCH',
         body: grokTaskId
-          ? { image_url: mirrored, grok_task_id: grokTaskId, status: 'generating_image', error: null }
-          : { image_url: mirrored, status: 'error', error: `Grok video dispatch failed: ${(grokError || 'unknown').slice(0, 500)}` },
+          ? { image_url: mirrored, grok_task_id: grokTaskId, status: 'generating_image', error: null, rendered_chunk_url: null }
+          : { image_url: mirrored, status: 'error', error: `Grok video dispatch failed: ${(grokError || 'unknown').slice(0, 500)}`, rendered_chunk_url: null },
         prefer: 'return=minimal',
       })
       return true
@@ -176,7 +176,7 @@ async function pollKieTask(segment, kieKey, profileId) {
     const isReady = !!segment.voice_url
     await supaFetch(`studio_segments?id=eq.${segment.id}`, {
       method: 'PATCH',
-      body: { image_url: mirrored, status: isReady ? 'ready' : 'generating_audio', error: null },
+      body: { image_url: mirrored, status: isReady ? 'ready' : 'generating_audio', error: null, rendered_chunk_url: null },
       prefer: 'return=minimal',
     })
     return true
@@ -269,7 +269,7 @@ async function pollGrokTask(segment, kieKey, profileId) {
     const isReady = !!segment.voice_url
     await supaFetch(`studio_segments?id=eq.${segment.id}`, {
       method: 'PATCH',
-      body: { broll_video_url: mirrored, status: isReady ? 'ready' : 'generating_audio', error: null },
+      body: { broll_video_url: mirrored, status: isReady ? 'ready' : 'generating_audio', error: null, rendered_chunk_url: null },
       prefer: 'return=minimal',
     })
     return true
@@ -321,7 +321,7 @@ async function pollHeygenVideo(segment, profileId) {
     const isReady = !!segment.voice_url
     await supaFetch(`studio_segments?id=eq.${segment.id}`, {
       method: 'PATCH',
-      body: { avatar_video_url: mirrored, status: isReady ? 'ready' : 'generating_audio', error: null },
+      body: { avatar_video_url: mirrored, status: isReady ? 'ready' : 'generating_audio', error: null, rendered_chunk_url: null },
       prefer: 'return=minimal',
     })
     return true

@@ -3513,6 +3513,16 @@ function SegmentRow({ segment, onPatch, onDelete, onRegen, onSplit, onUploadAvat
           </button>
         </div>
 
+        {/* Rendered chunk preview — set by the worker as soon as each
+            segment finishes baking. Aspect-aware so 9:16 vertical bakes
+            don't squish into a 16:9 box. Any segment edit invalidates
+            this URL on the server side, so a stale preview can't outlive
+            the change that broke it. */}
+        <ChunkPreview
+          url={segment.rendered_chunk_url}
+          aspectRatio={aspectRatio}
+        />
+
         {/* Main content column */}
         <div style={{ flex: 1, minWidth: 0 }}>
           {/* Top row: type select + composition + transition + SFX + status + actions */}
@@ -3928,6 +3938,61 @@ function UploadScreenshotButton({ segmentId, hasUpload, onUploaded }) {
         <span style={{ fontSize: 11, color: 'var(--red)' }}>{err}</span>
       )}
     </div>
+  )
+}
+
+// Per-segment chunk preview. The worker uploads each baked segment to
+// Supabase Storage and writes the URL to segment.rendered_chunk_url
+// as soon as it finishes. This lets a long-form bake (52 segments,
+// 40+ min) show progress materializing in real time instead of just a
+// "current/total" counter, and gives the user a way to spot-check a
+// problem segment WITHOUT waiting for the whole final video.
+//
+// Empty box (no border, no label) when the chunk isn't ready yet —
+// keeps the row layout stable instead of jumping when the URL arrives.
+function ChunkPreview({ url, aspectRatio }) {
+  // Aspect-aware container sizing. Landscape: 80x45 (16:9). Vertical:
+  // 36x64 (9:16). Square: 56x56. Worker chunks are always rendered at
+  // the project dim, so the URL itself is the right aspect — we just
+  // pick a reasonable thumbnail box.
+  const isVertical = aspectRatio === '9:16'
+  const isSquare = aspectRatio === '1:1'
+  const w = isVertical ? 36 : isSquare ? 56 : 80
+  const h = isVertical ? 64 : isSquare ? 56 : 45
+
+  if (!url) {
+    return (
+      <div style={{
+        width: w, height: h, borderRadius: 6,
+        background: 'var(--surface)', border: '1px dashed var(--border)',
+        display: 'grid', placeItems: 'center',
+        fontSize: 9, color: 'var(--muted)', flexShrink: 0,
+      }} title="No baked chunk yet">
+        —
+      </div>
+    )
+  }
+
+  return (
+    <video
+      src={url}
+      muted
+      playsInline
+      preload="metadata"
+      controls={false}
+      onClick={(e) => {
+        // Click to play/pause — quick spot-check without opening a
+        // separate viewer.
+        const v = e.currentTarget
+        if (v.paused) v.play(); else v.pause()
+      }}
+      style={{
+        width: w, height: h, borderRadius: 6, objectFit: 'cover',
+        background: '#000', cursor: 'pointer', flexShrink: 0,
+        border: '1px solid var(--border)',
+      }}
+      title="Baked chunk preview — click to play"
+    />
   )
 }
 

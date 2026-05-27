@@ -365,6 +365,17 @@ async function orchestrateSegment(segment, ctx) {
   const wants = (cls) => !only_types || only_types.length === 0 || only_types.includes(cls)
 
   const patch = async (body) => {
+    // Any asset-touching write (new voice, new image, new b-roll video)
+    // invalidates the cached render chunk. Without this, regen would
+    // produce a fresh image but the worker would happily reuse the
+    // stale chunk on the next bake. Only invalidate when an asset URL
+    // actually changes — status-only writes (generating_audio etc.)
+    // shouldn't reset.
+    const touchesAssets = ['voice_url','image_url','avatar_video_url','broll_video_url','image_prompt','motion_gesture_prompt']
+      .some((k) => k in body)
+    if (touchesAssets && !('rendered_chunk_url' in body)) {
+      body = { ...body, rendered_chunk_url: null }
+    }
     await supaFetch(`studio_segments?id=eq.${segment.id}`, {
       method: 'PATCH', body, prefer: 'return=minimal',
     }).catch(() => {})
