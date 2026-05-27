@@ -1114,13 +1114,13 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
   const workdir = await mkdtemp(join(tmpdir(), `studio-render-${studio_video_id.slice(0, 8)}-`))
   const dim = dimensions(video.aspect_ratio)
   const fontPath = await resolveFont()
-  const chunkPaths = []
+  let chunkPaths = []
   // Parallel array — duration of each rendered chunk. Used to schedule
   // SFX cues at the right offset into the final concat track.
-  const chunkDurations = []
+  let chunkDurations = []
   // Parallel array — segment row that produced each chunk. Used to
   // resolve composition-based standalone SFX triggers.
-  const chunkSegments = []
+  let chunkSegments = []
 
   // Canonical creator handle for this video. The watermark overlay
   // gets force-injected onto every eligible segment in corner-tr so
@@ -1179,8 +1179,21 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
   }
 
   try {
-    // 4. Render each segment to an intermediate MP4
-    for (let i = 0; i < segments.length; i++) {
+    // 4. Render each segment to an intermediate MP4.
+    //
+    // Runs N segments in parallel (default 2, overridable via
+    // STUDIO_RENDER_CONCURRENCY). On a perf-4x machine with 4 vCPUs we
+    // get a near-linear 2× speedup on bake time without exhausting RAM
+    // (each HF render pulls a Puppeteer page + a few hundred MB of PNG
+    // frames, and ffmpeg encode pegs ~2 cores at -preset veryfast).
+    // Output ordering is preserved by indexing into chunk arrays.
+    const concurrency = Math.max(1, parseInt(process.env.STUDIO_RENDER_CONCURRENCY || '2', 10) || 2)
+    chunkPaths.length = segments.length
+    chunkDurations.length = segments.length
+    chunkSegments.length = segments.length
+    let completedCount = 0
+
+    const renderOneSegment = async (i) => {
       const seg = segments[i]
       const dir = join(workdir, `seg-${String(i).padStart(3, '0')}`)
       await mkdir(dir, { recursive: true })
@@ -1274,7 +1287,7 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
           await renderMotionChunk(seg, paths, dim, wantDuration, fontPath)
         }
       } else {
-        continue
+        return  // unsupported segment type — leave slot empty, filtered below
       }
 
       // ── Overlay layer composite ──────────────────────────────────────
@@ -1360,13 +1373,13 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
         }
       }
 
-      chunkPaths.push(paths.outChunk)
       // Probe the chunk so we know its exact post-encode duration for
       // SFX scheduling. ffprobe via audio-duration probe works for
       // both MP4-with-audio and MP4-with-silent-audio.
       const probedDur = await probeAudioDurationSecs(paths.outChunk)
-      chunkDurations.push(probedDur || (seg.segment_type === 'avatar' ? Math.max(0.5, voiceDuration || 0) : (voiceDuration || 4)))
-      chunkSegments.push(seg)
+      chunkPaths[i] = paths.outChunk
+      chunkDurations[i] = probedDur || (seg.segment_type === 'avatar' ? Math.max(0.5, voiceDuration || 0) : (voiceDuration || 4))
+      chunkSegments[i] = seg
 
       // Free /tmp aggressively. PNG sequences and intermediate files
       // pile up fast (each HF chunk = ~150 PNGs × 8MB = ~1.2GB), and
@@ -1386,8 +1399,48 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
         console.warn(`[studio-render] tmp cleanup failed for seg ${seg.id}: ${e.message}`)
       }
 
-      progress.current = i + 1
+      completedCount++
+      progress.current = completedCount
       await writeProgress()
+    }
+
+    // Worker-pool style: keep `concurrency` segments in flight at any
+    // time. We pull indexes off a shared cursor so faster segments
+    // don't block slower ones in a row.
+    let nextIdx = 0
+    const workers = Array.from({ length: Math.min(concurrency, segments.length) }, async () => {
+      while (true) {
+        const i = nextIdx++
+        if (i >= segments.length) return
+        try {
+          await renderOneSegment(i)
+        } catch (e) {
+          // Bubble the first error up so the whole bake fails fast,
+          // matching the prior serial behavior.
+          throw new Error(`segment ${i} (${segments[i]?.id}) failed: ${e.message}`)
+        }
+      }
+    })
+    await Promise.all(workers)
+
+    // Filter out any unsupported segment-type slots that returned early.
+    // Iterate by index and keep only slots where all three arrays
+    // received values (renderOneSegment writes to all three atomically
+    // at the end, so this check is equivalent to "segment succeeded").
+    {
+      const keepPaths = []
+      const keepDurations = []
+      const keepSegments = []
+      for (let i = 0; i < chunkPaths.length; i++) {
+        if (chunkPaths[i]) {
+          keepPaths.push(chunkPaths[i])
+          keepDurations.push(chunkDurations[i])
+          keepSegments.push(chunkSegments[i])
+        }
+      }
+      chunkPaths = keepPaths
+      chunkDurations = keepDurations
+      chunkSegments = keepSegments
     }
 
     // 5. Concat all chunks with optional crossfade between segments.
