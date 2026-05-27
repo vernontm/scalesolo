@@ -17,16 +17,17 @@ const ALLOWED_CREATE = new Set([
   'studio_video_id', 'profile_id', 'segment_index', 'segment_type',
   'script_text', 'image_prompt', 'motion_gesture_prompt', 'broll_video_prompt',
   'hyperframes_composition_id', 'hyperframes_variables',
-  'transition_in', 'sound_effect',
+  'transition_in', 'sound_effect', 'is_video_broll',
 ])
 const ALLOWED_PATCH = new Set([
   // User-editable from the video map UI
   'script_text', 'segment_type', 'approved',
   'image_prompt', 'motion_gesture_prompt', 'broll_video_prompt',
   'hyperframes_composition_id', 'hyperframes_variables',
-  'transition_in', 'sound_effect',
+  'transition_in', 'sound_effect', 'is_video_broll',
   // Server-set during asset orchestration
   'voice_url', 'voice_duration_secs', 'avatar_video_url', 'image_url',
+  'broll_video_url', 'grok_task_id',
   'status', 'error', 'rendered_chunk_url',
 ])
 

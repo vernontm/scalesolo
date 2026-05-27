@@ -970,6 +970,29 @@ async function renderAvatarChunk(seg, paths, dim, durationSecs) {
 async function renderBrollChunk(seg, paths, dim, durationSecs) {
   const outFile = paths.outChunk
   const dur = durationSecs.toFixed(3)
+  // Video b-roll path: when the segment has a Grok-generated mp4, use
+  // that as the chunk source directly. We scale/pad to the project
+  // dimensions, trim to voice duration (Grok delivers 6-30s clips —
+  // anything longer than the voice gets cut here), and mux with the
+  // segment's voice audio. No Ken Burns zoom — the Grok clip has
+  // its own motion baked in.
+  if (paths.brollVideo) {
+    await runFFmpeg([
+      '-y',
+      '-i', paths.brollVideo,
+      '-i', paths.voice,
+      '-vf', `scale=${dim.w}:${dim.h}:force_original_aspect_ratio=increase,crop=${dim.w}:${dim.h},setsar=1,fps=30`,
+      '-t', dur,
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
+      '-c:a', 'aac', '-b:a', '128k', '-ar', '48000',
+      '-pix_fmt', 'yuv420p',
+      '-map', '0:v:0', '-map', '1:a:0',
+      '-movflags', '+faststart',
+      outFile,
+    ], 180_000)
+    return outFile
+  }
+  // Still-image path with Ken Burns zoom (existing behavior).
   const totalFrames = Math.max(30, Math.ceil(durationSecs * 30))
   const ZOOM_MAX = 0.12
   const prepW = Math.round(dim.w * 1.3)
@@ -1164,6 +1187,7 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
       const paths = {
         avatarMp4: join(dir, 'avatar.mp4'),
         image:     join(dir, 'image.jpg'),
+        brollVideo: null,
         voice:     null,
         textHead:  join(dir, 'head.txt'),
         textSub:   join(dir, 'sub.txt'),
@@ -1182,7 +1206,12 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
         await downloadTo(seg.avatar_video_url, paths.avatarMp4)
         await renderAvatarChunk(seg, paths, dim, Math.max(0.5, voiceDuration || 0))
       } else if (seg.segment_type === 'voiceover_broll') {
-        await downloadTo(seg.image_url, paths.image)
+        if (seg.broll_video_url) {
+          paths.brollVideo = join(dir, 'broll.mp4')
+          await downloadTo(seg.broll_video_url, paths.brollVideo)
+        } else {
+          await downloadTo(seg.image_url, paths.image)
+        }
         await renderBrollChunk(seg, paths, dim, Math.max(2, voiceDuration || 4))
       } else if (seg.segment_type === 'screenshot') {
         // User-uploaded screenshot rendered in a template-styled device

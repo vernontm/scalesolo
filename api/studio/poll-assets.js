@@ -144,13 +144,132 @@ async function pollKieTask(segment, kieKey, profileId) {
       })
       return true
     }
-    // image_url + ready iff voice_url is also already there (the orchestrator
-    // sequences voice before image, so this should always be true; double-check
-    // anyway so a partial state doesn't claim ready prematurely).
+    // Branch: still image vs Grok video b-roll. When the segment is
+    // flagged is_video_broll, the still we just got from Kie becomes
+    // the FIRST FRAME of a Grok Imagine Image-to-Video render. We
+    // dispatch the Grok task here and let pollGrokTask finish it.
+    // The segment stays 'generating_image' until both still + video
+    // are in. Otherwise it's a normal b-roll image → ready as usual.
+    if (segment.is_video_broll && !segment.broll_video_url) {
+      let grokTaskId = null
+      let grokError = null
+      try {
+        grokTaskId = await dispatchVideoBrollFromImage({
+          segment_with_image: { ...segment, image_url: mirrored },
+          apiKey: kieKey,
+          aspectRatio: await loadVideoAspectRatio(segment.studio_video_id),
+          voiceDurationSecs: segment.voice_duration_secs,
+        })
+      } catch (e) {
+        grokError = e.message
+      }
+      await supaFetch(`studio_segments?id=eq.${segment.id}`, {
+        method: 'PATCH',
+        body: grokTaskId
+          ? { image_url: mirrored, grok_task_id: grokTaskId, status: 'generating_image', error: null }
+          : { image_url: mirrored, status: 'error', error: `Grok video dispatch failed: ${(grokError || 'unknown').slice(0, 500)}` },
+        prefer: 'return=minimal',
+      })
+      return true
+    }
+    // Plain image-only b-roll path.
     const isReady = !!segment.voice_url
     await supaFetch(`studio_segments?id=eq.${segment.id}`, {
       method: 'PATCH',
       body: { image_url: mirrored, status: isReady ? 'ready' : 'generating_audio', error: null },
+      prefer: 'return=minimal',
+    })
+    return true
+  }
+  return false
+}
+
+// Inline Grok Imagine dispatch — mirrors dispatchVideoBroll in
+// generate-assets.js. Lives here so pollKieTask can hand off to Grok
+// the moment the still image lands without making a second
+// orchestrator pass. Kept in this file (vs. importing from
+// generate-assets) because that module isn't structured as a clean
+// helper export and the dispatch is small enough to duplicate.
+async function dispatchVideoBrollFromImage({ segment_with_image, apiKey, aspectRatio, voiceDurationSecs }) {
+  if (!segment_with_image?.image_url) throw new Error('No image_url to send to Grok')
+  const prompt = (segment_with_image.broll_video_prompt && segment_with_image.broll_video_prompt.trim())
+    || (segment_with_image.script_text && segment_with_image.script_text.trim())
+    || (segment_with_image.image_prompt && segment_with_image.image_prompt.trim())
+    || 'Subtle camera movement, natural motion, cinematic'
+  const desiredSecs = Math.max(6, Math.min(30, Math.ceil(Number(voiceDurationSecs) || 6)))
+  const ar = ['16:9', '9:16', '1:1', '2:3', '3:2'].includes(aspectRatio) ? aspectRatio : '16:9'
+  const submit = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'grok-imagine/image-to-video',
+      input: {
+        image_urls: [segment_with_image.image_url],
+        prompt: prompt.slice(0, 5000),
+        mode: 'normal',
+        duration: String(desiredSecs),
+        resolution: '720p',
+        aspect_ratio: ar,
+      },
+    }),
+  })
+  const text = await submit.text()
+  let data = {}
+  try { data = JSON.parse(text) } catch { /* ignore */ }
+  if (!submit.ok || (data?.code && data.code !== 200)) {
+    throw new Error(`Kie Grok createTask ${submit.status}: ${(data?.msg || text).slice(0, 240)}`)
+  }
+  const taskId = data?.data?.taskId || data?.taskId
+  if (!taskId) throw new Error(`Kie Grok response missing taskId: ${text.slice(0, 240)}`)
+  return taskId
+}
+
+async function loadVideoAspectRatio(videoId) {
+  if (!videoId) return '16:9'
+  const rows = await supaFetch(`studio_videos?id=eq.${videoId}&select=aspect_ratio&limit=1`).catch(() => [])
+  return rows?.[0]?.aspect_ratio || '16:9'
+}
+
+// Poll Kie's Grok Imagine task. Same recordInfo endpoint as image
+// tasks — Kie's unified jobs API returns the resultUrls regardless
+// of model. Writes broll_video_url when the mp4 lands and flips
+// status='ready' if voice_url is also in place.
+async function pollGrokTask(segment, kieKey, profileId) {
+  if (!segment.grok_task_id) return false
+  const r = await fetch(
+    `https://api.kie.ai/api/v1/jobs/recordInfo?taskId=${encodeURIComponent(segment.grok_task_id)}`,
+    { headers: { Authorization: `Bearer ${kieKey}` } }
+  )
+  const text = await r.text()
+  let body = {}
+  try { body = JSON.parse(text) } catch { body = { raw: text } }
+  const data = body?.data || body
+  const state = String(data?.state || data?.status || '').toLowerCase()
+  const url = pickKieImageUrl(data)
+  if (state === 'fail' || state === 'failed' || state === 'error') {
+    await supaFetch(`studio_segments?id=eq.${segment.id}`, {
+      method: 'PATCH',
+      body: { status: 'error', error: (data?.failMsg || data?.errorMessage || 'Grok video generation failed').slice(0, 500) },
+      prefer: 'return=minimal',
+    })
+    return true
+  }
+  if (url) {
+    let mirrored
+    try {
+      mirrored = await mirrorToStorage(url, profileId, 'video')
+    } catch (e) {
+      await supaFetch(`studio_segments?id=eq.${segment.id}`, {
+        method: 'PATCH',
+        body: { status: 'error', error: `Could not save Grok video to storage: ${e.message}`.slice(0, 500) },
+        prefer: 'return=minimal',
+      })
+      return true
+    }
+    const isReady = !!segment.voice_url
+    await supaFetch(`studio_segments?id=eq.${segment.id}`, {
+      method: 'PATCH',
+      body: { broll_video_url: mirrored, status: isReady ? 'ready' : 'generating_audio', error: null },
       prefer: 'return=minimal',
     })
     return true
@@ -236,7 +355,13 @@ export default async function handler(req, res) {
       const kieKey = process.env.KIE_API_KEY
       await Promise.all(targets.map(async (seg) => {
         try {
-          if (seg.status === 'generating_image' && seg.kie_task_id) {
+          // Grok video poll wins over image poll when both are in
+          // flight on the same segment — image already landed (since
+          // grok_task_id only gets set after image_url is filled by
+          // pollKieTask) and we're now waiting on the video render.
+          if (seg.status === 'generating_image' && seg.grok_task_id && !seg.broll_video_url) {
+            await pollGrokTask(seg, kieKey, video.profile_id)
+          } else if (seg.status === 'generating_image' && seg.kie_task_id && !seg.image_url) {
             await pollKieTask(seg, kieKey, video.profile_id)
           } else if (seg.status === 'generating_avatar' && seg.heygen_video_id) {
             await pollHeygenVideo(seg, video.profile_id)

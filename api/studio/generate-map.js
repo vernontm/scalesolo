@@ -432,6 +432,7 @@ function sanitizeSegment(s, idx, tmpl, orientation, totalSegments) {
     transition_in,
     sound_effect,
     overlay_placements,
+    is_video_broll: false,
   }
 }
 
@@ -477,7 +478,30 @@ function pickCaptionHighlight(text) {
 //      (auto-inserted from script_text if Claude forgot); none when off.
 //   3. Overlay placements are de-duplicated against pool/orientation
 //      one more time as a belt-and-suspenders check.
-function postProcessSegments(segments, { captionsOn, orientation, overlayPool }) {
+// Distribute is_video_broll=true across voiceover_broll segments based on
+// content_mix.broll_video_pct vs broll_image_pct. We mark every Nth broll
+// segment as a video so the spend matches the slider — e.g. 50/50 means
+// every other broll is a Grok video clip. Mutates segments in place.
+function applyBrollVideoMix(segments, contentMix) {
+  if (!contentMix) return
+  const videoPct = Number(contentMix.broll_video_pct) || 0
+  const imagePct = Number(contentMix.broll_image_pct) || 0
+  const total = videoPct + imagePct
+  if (videoPct <= 0 || total <= 0) return
+  const ratio = videoPct / total
+  const brollIdxs = []
+  segments.forEach((s, i) => { if (s.segment_type === 'voiceover_broll') brollIdxs.push(i) })
+  if (!brollIdxs.length) return
+  const want = Math.max(1, Math.round(brollIdxs.length * ratio))
+  // Evenly spread the video segments across the broll list (stride pick).
+  const stride = brollIdxs.length / want
+  for (let k = 0; k < want; k++) {
+    const pick = Math.min(brollIdxs.length - 1, Math.floor(k * stride))
+    segments[brollIdxs[pick]].is_video_broll = true
+  }
+}
+
+function postProcessSegments(segments, { captionsOn, orientation, overlayPool, contentMix }) {
   if (!segments?.length) return segments
   const pool = new Set(overlayPool || [])
   const out = segments.map((s, i) => ({ ...s }))
@@ -531,6 +555,11 @@ function postProcessSegments(segments, { captionsOn, orientation, overlayPool })
       },
     ]
   }
+
+  // 2.5. Mark a subset of voiceover_broll segments as video b-roll based
+  // on content_mix.broll_video_pct. These get a Grok Imagine motion clip
+  // generated on top of the still image during asset orchestration.
+  applyBrollVideoMix(out, contentMix)
 
   // 3. Belt-and-suspenders: orientation filter once more (e.g. drop
   // top-strip from any landscape segments that slipped through).
@@ -632,7 +661,7 @@ export default async function handler(req, res) {
       const orientation = video.aspect_ratio === '9:16' ? 'vertical' : 'landscape'
       const captionsOn = video.captions_enabled !== false
       segments = mapInput.segments.map((s, i, arr) => sanitizeSegment(s, i, resolvedTemplate, orientation, arr.length))
-      segments = postProcessSegments(segments, { captionsOn, orientation, overlayPool: resolvedTemplate.overlay_pool || [] })
+      segments = postProcessSegments(segments, { captionsOn, orientation, overlayPool: resolvedTemplate.overlay_pool || [], contentMix: video.content_mix || null })
     } catch (e) {
       // Rollback status, surface the error to the UI
       await supaFetch(`studio_videos?id=eq.${video.id}`, {

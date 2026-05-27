@@ -107,6 +107,60 @@ async function dispatchVoice(segment, voiceId, profileId) {
 // Match the input shape api/images/generate.js uses for nano-banana-2. The
 // keys here are not what you'd guess from the model name; missing any of
 // num_images/resolution/output_format is a silent 400 from Kie.
+// Kie.ai Grok Imagine Image-to-Video 720p. Submits a createTask with
+// the segment's image_url as the input frame + the script_text as
+// motion direction. Returns the Kie task id; poll-assets watches
+// grok_task_id and writes broll_video_url when complete.
+// Pricing (verified 2026-05-27): $0.015/sec at 720p. Duration is a
+// numeric string between "6" and "30"; we cap to the segment's voice
+// duration so we don't pay for video footage that gets trimmed off.
+//
+// Docs: https://docs.kie.ai/market/grok-imagine/image-to-video
+async function dispatchVideoBroll(segment, apiKey, aspectRatio, voiceDurationSecs) {
+  if (!segment.image_url?.trim()) throw new Error('Cannot generate video b-roll: no source image yet')
+  const prompt = (segment.broll_video_prompt && segment.broll_video_prompt.trim())
+    || (segment.script_text && segment.script_text.trim())
+    || (segment.image_prompt && segment.image_prompt.trim())
+    || 'Subtle camera movement, natural motion, cinematic'
+  // Clamp to Kie's [6, 30] second range. Match the segment's voice
+  // duration when possible so we don't generate excess footage.
+  const desiredSecs = Math.max(6, Math.min(30, Math.ceil(Number(voiceDurationSecs) || 6)))
+  const ar = ['16:9', '9:16', '1:1', '2:3', '3:2'].includes(aspectRatio) ? aspectRatio : '16:9'
+  const body = {
+    model: 'grok-imagine/image-to-video',
+    input: {
+      image_urls: [segment.image_url],
+      prompt: prompt.slice(0, 5000),
+      mode: 'normal',
+      duration: String(desiredSecs),
+      resolution: '720p',
+      aspect_ratio: ar,
+    },
+  }
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 30_000)
+  let submit
+  try {
+    submit = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  } finally {
+    clearTimeout(timeout)
+  }
+  const text = await submit.text()
+  let data = {}
+  try { data = JSON.parse(text) } catch { /* ignore */ }
+  if (!submit.ok || data?.code && data.code !== 200) {
+    throw new Error(`Kie Grok video createTask ${submit.status}: ${(data?.msg || text).slice(0, 240)}`)
+  }
+  const taskId = data?.data?.taskId || data?.taskId
+  if (!taskId) throw new Error(`Kie Grok video response missing taskId: ${text.slice(0, 240)}`)
+  return taskId
+}
+
 async function dispatchImage(segment, apiKey, aspectRatio, brandStyleAnchor, avatarReferenceImageUrl) {
   if (!segment.image_prompt?.trim()) throw new Error('Image prompt is empty')
   // Project aspect ratio → Kie's expected aspect_ratio string. nano-banana-2
