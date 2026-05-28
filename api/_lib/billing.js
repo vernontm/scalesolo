@@ -84,6 +84,27 @@ export const TIERS = {
     support: 'Priority chat + email + founding-member Discord',
     description: 'Solo Pro features, locked for life, with 2× AI tokens and 50% more video units. 100 spots only.',
   },
+  // Internal tier for ScaleSolo staff + Ray's own brand-builder
+  // workflow. Bypasses every quota. NOT exposed on the pricing page.
+  // Assign manually via DB / admin tool. Use the special value
+  // Number.MAX_SAFE_INTEGER for limits we want effectively unlimited.
+  admin_unlimited: {
+    name: 'Admin (Unlimited)',
+    profile_limit: Number.MAX_SAFE_INTEGER,
+    monthly_price_id: null,
+    annual_price_id:  null,
+    monthly_usd: 0,
+    annual_usd:  0,
+    credits: { ai_tokens: 999_999_999, video_units: 99_999, voice_minutes: 99_999 },
+    limits: {
+      active_workflows: Number.MAX_SAFE_INTEGER,
+      avatars_per_profile: Number.MAX_SAFE_INTEGER,
+      looks_per_avatar: Number.MAX_SAFE_INTEGER,
+      public_templates: true,
+    },
+    support: 'Internal — direct access to engineering',
+    description: 'Internal admin tier. Unlimited everything. Not on the pricing page.',
+  },
 }
 
 // Trial caps — server-enforced on every avatar render and polish
