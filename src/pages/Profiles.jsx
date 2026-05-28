@@ -61,6 +61,10 @@ const FORM_DEFAULTS = {
   // (after the auto-generated summary + chapter timestamps). Channel
   // links, socials, CTAs, affiliate disclosures — the static stuff.
   youtube_description_default: '',
+  // Array of public URLs to reference thumbnails the user uploads as
+  // style inspiration. Claude sends these as image blocks when
+  // generating new thumbnails for Studio videos.
+  youtube_thumbnail_references: [],
   brand_primary_color: '#ef4444',
   brand_secondary_color: '',
   preferred_tone: '',
@@ -580,6 +584,107 @@ function BrandSection({ form, set, profile }) {
 
 // Reuses the LogoUpload upload pattern but with a wide preview tile
 // instead of a 64px square — cover templates are full-frame images.
+// Multi-image uploader for YouTube thumbnail reference images. Stores
+// URLs in profiles.youtube_thumbnail_references — Claude reads them as
+// image blocks when generating new thumbnails for Studio videos. Cap at
+// 6 references so vision token cost stays bounded.
+function ThumbnailReferenceUploader({ profileId, token, urls, onChange }) {
+  const [busy, setBusy] = useState(false)
+  const max = 6
+  const canAdd = urls.length < max
+
+  const handleFile = async (file) => {
+    if (!file || !profileId) return
+    if (file.size > 5 * 1024 * 1024) {
+      alert(`Image too big (${(file.size / 1024 / 1024).toFixed(2)}MB) — max 5MB.`)
+      return
+    }
+    setBusy(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      fd.append('profile_id', profileId)
+      const r = await fetch('/api/profiles/upload-thumbnail-reference', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd,
+      })
+      const b = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        alert(b.error || `Upload failed (${r.status})`)
+        return
+      }
+      onChange(b.references || [...urls, b.url])
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleRemove = (idx) => {
+    const next = urls.filter((_, i) => i !== idx)
+    onChange(next)
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+        {urls.map((u, i) => (
+          <div key={`${i}-${u}`} style={{ position: 'relative' }}>
+            <img
+              src={u}
+              alt={`reference ${i + 1}`}
+              style={{ width: 140, height: 79, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--border)', display: 'block' }}
+            />
+            <button
+              type="button"
+              onClick={() => handleRemove(i)}
+              title="Remove reference"
+              style={{
+                position: 'absolute', top: 2, right: 2,
+                background: 'rgba(0,0,0,0.65)', color: '#fff', border: 'none',
+                width: 20, height: 20, borderRadius: '50%', cursor: 'pointer',
+                fontSize: 12, lineHeight: 1, padding: 0,
+              }}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+        {canAdd && (
+          <label
+            style={{
+              width: 140, height: 79, borderRadius: 6,
+              border: '1px dashed var(--border)', background: 'var(--surface-2)',
+              display: 'grid', placeItems: 'center', cursor: busy ? 'wait' : 'pointer',
+              fontSize: 11, color: 'var(--muted)', textAlign: 'center', padding: 4,
+            }}
+          >
+            {busy ? 'Uploading…' : `+ Add reference\n(${urls.length}/${max})`}
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              style={{ display: 'none' }}
+              disabled={busy || !profileId}
+              onChange={async (e) => {
+                const file = e.target.files?.[0]
+                e.target.value = ''
+                if (file) await handleFile(file)
+              }}
+            />
+          </label>
+        )}
+      </div>
+      {!profileId && (
+        <div style={{ fontSize: 11, color: 'var(--red)' }}>
+          Save the profile first to enable thumbnail uploads.
+        </div>
+      )}
+    </div>
+  )
+}
+
 function CoverTemplateUpload({ value, profileId, onChange }) {
   const inpRef = useRef(null)
   const [busy, setBusy] = useState(false)
@@ -799,6 +904,27 @@ function VoiceSection({ form, set, setHelper }) {
         />
         <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
           When you schedule a Studio video to YouTube, the description is built as: auto-generated summary + chapter timestamps + this boilerplate. Add your channel links, social handles, hashtags, affiliate disclosures, anything static.
+        </div>
+      </Field>
+
+      {/* YouTube thumbnail references. Up to 6 reference images that
+          Claude analyzes (via vision input) when generating new
+          thumbnails for Studio videos. Captures style/composition/
+          color/text-treatment cues the user wants matched. */}
+      <Field label={
+        <span>
+          YouTube thumbnail references
+          <span className="pill pill-muted" style={{ marginLeft: 6 }}>Style inspiration — Claude analyzes these</span>
+        </span>
+      }>
+        <ThumbnailReferenceUploader
+          profileId={form.id}
+          token={session?.access_token}
+          urls={Array.isArray(form.youtube_thumbnail_references) ? form.youtube_thumbnail_references : []}
+          onChange={(next) => set('youtube_thumbnail_references', next)}
+        />
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
+          Upload 3-6 thumbnail images that represent the style you want for your videos. When you schedule a new Studio video, Claude looks at these (color palette, composition, text treatment, subject framing) and writes 3 new thumbnail prompts that match. Max 5MB per image.
         </div>
       </Field>
     </div>

@@ -90,7 +90,7 @@ export default async function handler(req, res) {
         'instagram_id','tiktok_id','facebook_id','threads_id','youtube_id','linkedin_id',
         'uploadpost_user','uploadpost_platforms',
         // Visual style controls for studio b-roll. See migration 0047.
-        'visual_style_guide', 'visual_keywords', 'visual_avoid', 'youtube_description_default',
+        'visual_style_guide', 'visual_keywords', 'visual_avoid', 'youtube_description_default', 'youtube_thumbnail_references',
       ])
       const insertRow = { is_active: true }
       for (const [k, v] of Object.entries(body)) {
@@ -155,7 +155,7 @@ export default async function handler(req, res) {
         // Visual style controls for studio b-roll / motion graphics.
         // Drives both Claude's image_prompt writing and the worker's
         // hard-appended style anchor. See migration 0047.
-        'visual_style_guide', 'visual_keywords', 'visual_avoid', 'youtube_description_default',
+        'visual_style_guide', 'visual_keywords', 'visual_avoid', 'youtube_description_default', 'youtube_thumbnail_references',
       ])
       const updates = {}
       for (const [k, v] of Object.entries(req.body || {})) {

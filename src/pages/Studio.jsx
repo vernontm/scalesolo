@@ -3094,6 +3094,13 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
   const [metaError, setMetaError] = useState(null)
   const [thumbnailUrl, setThumbnailUrl] = useState('')
   const [uploadingThumb, setUploadingThumb] = useState(false)
+  // Candidates: 3 AI-generated thumbnails (claude picks prompts → kie
+  // renders). Pre-seeded from video.thumbnail_candidates so re-opening
+  // the modal doesn't re-spend.
+  const [thumbCandidates, setThumbCandidates] = useState(
+    Array.isArray(video?.thumbnail_candidates) ? video.thumbnail_candidates : [],
+  )
+  const [generatingThumbs, setGeneratingThumbs] = useState(false)
 
   // Load auto-generated metadata once on mount.
   useEffect(() => {
@@ -3249,7 +3256,113 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
               />
             </Field>
 
-            <Field label={<span>Custom thumbnail <span style={{ color: 'var(--muted)', fontSize: 11, marginLeft: 6 }}>Optional, JPG/PNG/WebP, ≤2MB, 1280×720</span></span>}>
+            <Field label={
+              <span>
+                Auto-generate thumbnails
+                <span style={{ color: 'var(--muted)', fontSize: 11, marginLeft: 6 }}>Claude + Kie: 3 variations using your reference thumbnails + brand colors</span>
+              </span>
+            }>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {thumbCandidates.length > 0 ? (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                    {thumbCandidates.map((c, i) => {
+                      const isSelected = c.url === thumbnailUrl
+                      return (
+                        <button
+                          key={`${i}-${c.url}`}
+                          type="button"
+                          onClick={() => setThumbnailUrl(c.url)}
+                          style={{
+                            position: 'relative', padding: 0, cursor: 'pointer',
+                            background: 'transparent', border: 'none',
+                          }}
+                          title={c.prompt?.slice(0, 200)}
+                        >
+                          <img
+                            src={c.url}
+                            alt={`option ${i + 1}`}
+                            style={{
+                              width: '100%', aspectRatio: '16 / 9', objectFit: 'cover',
+                              borderRadius: 6,
+                              border: `2px solid ${isSelected ? 'var(--red)' : 'transparent'}`,
+                              display: 'block',
+                            }}
+                          />
+                          <div style={{
+                            position: 'absolute', bottom: 4, left: 4, right: 4,
+                            fontSize: 10, fontWeight: 700, color: '#fff',
+                            background: 'rgba(0,0,0,0.6)', padding: '2px 6px',
+                            borderRadius: 3, textAlign: 'center',
+                            textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap',
+                          }}>
+                            {c.style || `Option ${i + 1}`}
+                          </div>
+                          {isSelected && (
+                            <div style={{
+                              position: 'absolute', top: 4, right: 4,
+                              background: 'var(--red)', color: '#fff',
+                              borderRadius: '50%', width: 22, height: 22,
+                              display: 'grid', placeItems: 'center', fontSize: 12, fontWeight: 700,
+                            }}>
+                              ✓
+                            </div>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                    No thumbnails generated yet. Click below to have Claude write 3 prompts based on your brand's reference thumbnails + this video's topic, then Kie will render them. ~$0.08 in API spend.
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!session?.access_token) return
+                    setGeneratingThumbs(true)
+                    try {
+                      const r = await authedFetch('/api/studio/youtube/generate-thumbnails', session.access_token, {
+                        method: 'POST', body: JSON.stringify({ studio_video_id: video.id }),
+                      })
+                      const b = await r.json().catch(() => ({}))
+                      if (!r.ok) {
+                        toast({ message: b.error || `Generation failed (${r.status})`, kind: 'error' })
+                        return
+                      }
+                      const next = Array.isArray(b.candidates) ? b.candidates : []
+                      setThumbCandidates(next)
+                      if (next[0]) setThumbnailUrl(next[0].url)
+                      if (b.errors?.length) {
+                        toast({ message: `${b.errors.length} of 3 failed: ${b.errors[0]?.error?.slice(0, 100)}`, kind: 'warn' })
+                      } else {
+                        toast({ message: 'Generated 3 thumbnails — pick one or click Generate again.', kind: 'success' })
+                      }
+                    } catch (e) {
+                      toast({ message: e.message, kind: 'error' })
+                    } finally {
+                      setGeneratingThumbs(false)
+                    }
+                  }}
+                  disabled={generatingThumbs}
+                  style={{
+                    alignSelf: 'flex-start',
+                    fontSize: 12, padding: '6px 12px',
+                    background: '#a855f7', color: '#fff',
+                    border: 'none', borderRadius: 6, fontWeight: 600,
+                    cursor: generatingThumbs ? 'wait' : 'pointer',
+                  }}
+                >
+                  {generatingThumbs
+                    ? '⏳ Generating (30-90s)…'
+                    : thumbCandidates.length > 0
+                      ? '🔁 Regenerate 3 thumbnails'
+                      : '✨ Generate 3 thumbnails'}
+                </button>
+              </div>
+            </Field>
+
+            <Field label={<span>Or upload your own thumbnail <span style={{ color: 'var(--muted)', fontSize: 11, marginLeft: 6 }}>Optional, JPG/PNG/WebP, ≤2MB, 1280×720</span></span>}>
               <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
                 {thumbnailUrl ? (
                   <img
