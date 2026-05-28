@@ -3588,6 +3588,13 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
                 .replace(/\{\{\s*title\s*\}\}/g, title || '')
                 .replace(/\{\{\s*summary\s*\}\}/g, summary)
                 .replace(/\{\{\s*description\s*\}\}/g, description || '')
+                // {{thumbnail_url}} — substituted with the thumbnail the
+                // user picked in the modal. Falls back to YouTube's auto-
+                // generated thumbnail URL if we have the video ID we can
+                // derive (works for any youtube_url that includes a /vid
+                // path or watch?v= query). Lets the email card show the
+                // exact thumbnail YouTube will display.
+                .replace(/\{\{\s*thumbnail_url\s*\}\}/g, thumbnailUrl || '{{thumbnail_url}}')
               return (
                 <div style={{
                   marginTop: 14, padding: 12, borderRadius: 6,
