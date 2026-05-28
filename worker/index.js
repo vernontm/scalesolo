@@ -1768,7 +1768,7 @@ app.post('/jobs/voice-isolate-segments', requireSecret, async (req, res) => {
     // would just add latency for no quality win.
     const { data: segs, error: fetchErr } = await supabase
       .from('studio_segments')
-      .select('id, profile_id, voice_url, voice_source_start_secs, voice_cleaned')
+      .select('id, profile_id, voice_url, voice_duration_secs, voice_source_start_secs, voice_source_end_secs, voice_cleaned')
       .eq('studio_video_id', videoId)
       .not('voice_url', 'is', null)
       .not('voice_source_start_secs', 'is', null)
@@ -1793,6 +1793,28 @@ app.post('/jobs/voice-isolate-segments', requireSecret, async (req, res) => {
         if (i >= segs.length) return
         const seg = segs[i]
         try {
+          // ElevenLabs Voice Isolator requires audio >= 4.6 seconds.
+          // Short clauses from splits (e.g. "And here's the price tag.")
+          // are below that floor — EL returns audio_too_short and they
+          // sit unceaned forever. They're also too short to have any
+          // meaningful background noise worth isolating. Mark them
+          // already-clean instead of failing the job.
+          //
+          // Prefer voice_duration_secs (probed) over voice_source range
+          // (which can be off by hundreds of ms post-interpolation).
+          const probedDur = Number(seg.voice_duration_secs) || 0
+          const rangeDur = (seg.voice_source_end_secs != null && seg.voice_source_start_secs != null)
+            ? Number(seg.voice_source_end_secs) - Number(seg.voice_source_start_secs)
+            : 0
+          const estDur = probedDur > 0 ? probedDur : rangeDur
+          if (estDur > 0 && estDur < 4.6) {
+            await supabase.from('studio_segments').update({
+              voice_cleaned: true,
+            }).eq('id', seg.id)
+            cleaned++
+            console.log(`[voice-isolate] seg ${seg.id} below EL min (${estDur.toFixed(2)}s) — marked already-clean`)
+            continue
+          }
           // Download the existing voice slice
           const r = await fetch(seg.voice_url)
           if (!r.ok) throw new Error(`download voice_url: ${r.status}`)
