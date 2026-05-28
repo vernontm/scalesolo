@@ -5,12 +5,11 @@
 //   ?action=start
 //     Body: { script_id, edit_instructions? }
 //     Reads the row + brand's cover_template (image + base_prompt),
-//     submits to gpt-image-2-image-to-image via /api/images/generate
-//     with the template as the reference and a prompt that says
-//     "swap the title for X" (plus the user's edits if any). Returns
-//     the KIE taskId so the client can poll /api/images/status. The
-//     underlying endpoint reserves 4000 ai_tokens through
-//     withCreditReservation — failure refunds automatically.
+//     submits to gpt-image-2-image-to-image with the template as the
+//     reference and a prompt that says "swap the title for X" (plus the
+//     user's edits if any). Reserves 4000 ai_tokens through
+//     withCreditReservation — failure refunds automatically. Returns the
+//     KIE taskId so the client can poll /api/images/status.
 //
 //   ?action=commit
 //     Body: { script_id, image_url }
@@ -20,13 +19,33 @@
 //
 // The client polls /api/images/status?taskId=... between start and
 // commit to render the preview as soon as KIE finishes.
+//
+// We used to proxy `start` through an internal HTTP fetch to
+// /api/images/generate so the credit + KIE logic lived in one place.
+// On Vercel preview deployments with Deployment Protection turned on,
+// that self-fetch hits the SSO wall (the server has no Vercel SSO
+// cookie) and comes back 401 — which surfaced to the user as a
+// "session expired" banner during bulk-upload cover-gen, even though
+// the browser's own JWT was perfectly valid. Inline the submit logic
+// here so the call never leaves the function.
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { withCreditReservation } from '../_lib/credits.js'
 
 const DEFAULT_BASE_PROMPT =
   "Keep the existing layout, fonts, colors, and branding exactly the same. " +
   "Only change the title text. Match the original typography weight, kerning, " +
   "and case. Maintain all logos, watermarks, and background imagery as-is."
+
+const COVER_MODEL = 'gpt-image-2-image-to-image'
+const COVER_ASPECT = '9:16'      // Reels / Shorts / TikTok / Stories
+const COVER_FEE = 4000            // same rate /api/images/generate uses
+
+function pickKieError(body, fallbackStatus) {
+  const msg = body?.msg || body?.message || body?.error?.message || body?.error || ''
+  const code = body?.code != null ? ` (code ${body.code})` : ''
+  return msg ? `${msg}${code}` : `KIE error ${fallbackStatus}${code}`
+}
 
 export default async function handler(req, res) {
   setCors(req, res)
@@ -67,7 +86,7 @@ export default async function handler(req, res) {
       })
     }
 
-    // action === 'start' — fetch brand template + submit to image gen.
+    // ── action === 'start' ─────────────────────────────────────────────
     const profileRows = await supaFetch(
       `profiles?id=eq.${row.profile_id}&select=cover_template`
     )
@@ -83,53 +102,78 @@ export default async function handler(req, res) {
     const title = String(row.title || '').trim() || 'Untitled'
     const edits = String(body.edit_instructions || '').trim()
 
-    // Build the prompt. Always lead with the base instruction so the
-    // model preserves the template; then the new title; then the
-    // user's optional edits for this specific render.
     const prompt = [
       basePrompt,
       `New title text: "${title}".`,
       edits ? `Additional edits for this render: ${edits}` : '',
     ].filter(Boolean).join('\n\n')
 
-    // Forward to the existing image-gen endpoint. It handles credit
-    // reservation, KIE submission, and returns { taskId, model }.
-    // Internal call — same host, forward the auth token.
-    const proto = (req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim()
-    const host  = req.headers['x-forwarded-host'] || req.headers.host
-    const base  = `${proto}://${host}`
-    const authToken = req.headers.authorization?.replace(/^Bearer\s+/i, '') || ''
-    const genResp = await fetch(`${base}/api/images/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` },
-      body: JSON.stringify({
-        profile_id: row.profile_id,
-        prompt,
-        model: 'gpt-2',
-        count: 1,
-        aspect: '9:16',                 // Vertical full-frame — matches Reels / Shorts / TikTok / Stories
-        reference_urls: [templateUrl],
-        enhance_prompt: false,          // we already gave it precise instructions, don't let the rewriter drift
-      }),
-    })
-    const genBody = await genResp.json().catch(() => ({}))
-    if (!genResp.ok) {
-      return res.status(genResp.status).json({
-        error: genBody?.error || 'Cover generation submit failed',
-        code: genBody?.code,
-      })
-    }
+    const apiKey = process.env.KIE_API_KEY
+    if (!apiKey) return res.status(500).json({ error: 'KIE_API_KEY not configured' })
 
-    return res.status(202).json({
-      ok: true,
-      taskId: genBody.taskId,
-      model: genBody.model,
-      // Echo back the prompt so the client can show "Generating: …" copy
-      // if it wants, and the title used so the client can confirm we
-      // rendered the right one.
-      title_used: title,
+    // Reserve credits BEFORE submitting to KIE. If the inner fn throws
+    // or KIE rejects, refundIfFailed() unwinds the reservation so the
+    // user isn't charged for a failed render.
+    return await withCreditReservation({
+      userId: auth.user.id,
+      poolType: 'ai_tokens',
+      amount: COVER_FEE,
+      action: 'consume:image-gen',
+      profileId: row.profile_id,
+      metadata: {
+        model: COVER_MODEL,
+        aspect: COVER_ASPECT,
+        count: 1,
+        quality: '1K',
+        prompt: prompt.slice(0, 200),
+        source: 'cover-template',
+        script_id: body.script_id,
+      },
+    }, async ({ refundIfFailed, tagMetadata }) => {
+      const submitResp = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: COVER_MODEL,
+          input: {
+            prompt,
+            input_urls: [templateUrl],
+            aspect_ratio: COVER_ASPECT,
+            num_images: 1,
+          },
+        }),
+      })
+      const submitText = await submitResp.text()
+      let submit = {}
+      try { submit = JSON.parse(submitText) } catch { submit = { raw: submitText } }
+      if (!submitResp.ok || (submit?.code && submit.code !== 200)) {
+        await refundIfFailed()
+        return res.status(502).json({
+          error: pickKieError(submit, submitResp.status),
+          kie_status: submitResp.status,
+          kie_body: submit,
+        })
+      }
+      const taskId = submit?.data?.taskId || submit?.data?.task_id || submit?.taskId
+      if (!taskId) {
+        await refundIfFailed()
+        return res.status(502).json({ error: 'KIE returned no taskId', kie_body: submit })
+      }
+      // Stash taskId so /api/images/status can refund-by-metadata if the
+      // generation later fails inside KIE itself.
+      await tagMetadata({ taskId })
+
+      return res.status(202).json({
+        ok: true,
+        taskId,
+        model: COVER_MODEL,
+        title_used: title,
+      })
     })
   } catch (err) {
+    if (err?.code === 'insufficient_credits') {
+      return res.status(402).json({ error: err.message, code: 'insufficient_credits', need: err.need })
+    }
     return res.status(err.status || 500).json({ error: err.message })
   }
 }
