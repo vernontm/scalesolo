@@ -328,7 +328,7 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
   // containing ancestor instead of the viewport — which made the body
   // / footer render in unexpected places.
   return createPortal(
-    <div style={overlayStyle} onClick={(e) => { if (e.target === e.currentTarget) onClose?.() }}>
+    <div className="new-video-overlay" style={overlayStyle} onClick={(e) => { if (e.target === e.currentTarget) onClose?.() }}>
       <div style={cardStyle}>
         <div style={progressTrack}><div style={{ ...progressFill, width: `${progressPct}%` }} /></div>
         <div style={headerStyle}>
@@ -1091,12 +1091,12 @@ function Recap({ label, value }) {
 
 // ── Styles ───────────────────────────────────────────────────────────
 
-// Full-page overlay — the modal IS the page while open. The header,
-// body, and footer go full-width so there's no inner-frame look.
-// What gets centered is the CONTENT INSIDE each region, via maxWidth
-// on the content wrappers below — not the regions themselves.
+// Overlay positioning lives in the .new-video-overlay CSS rule in
+// global.css so we can use media queries to shift the left edge
+// based on sidebar width (240px desktop, 60px compact, 0px mobile).
+// Inline style just sets the visual treatment.
 const overlayStyle = {
-  position: 'fixed', inset: 0, zIndex: 250,
+  zIndex: 250,
   background: 'var(--bg-base, #0a0a0c)',
   overflowY: 'auto',
 }

@@ -687,6 +687,23 @@ a:focus-visible {
   body.compact-sidebar .space-builder-overlay { left: 60px !important; }
   body.compact-sidebar .app-main          { margin-left: 60px !important; }
 }
+
+/* New-video survey modal (Studio). Same idea as space-builder-overlay —
+   leave the sidebar visible on desktop, full-bleed on mobile. Portaled
+   to document.body so it lives outside the studio page's <main>, but
+   the sidebar lives at <body> level too, so we need to start the
+   overlay AFTER the sidebar's right edge.
+
+   Mobile (<= 900px): sidebar collapses to a drawer, overlay can take
+   the full viewport. */
+.new-video-overlay {
+  position: fixed;
+  top: 0; right: 0; bottom: 0; left: 0;
+}
+@media (min-width: 901px) {
+  .new-video-overlay                          { left: 240px; }
+  body.compact-sidebar .new-video-overlay     { left: 60px; }
+}
 @media (max-width: 600px) {
   .modal-overlay { padding: 16px 8px !important; }
   .modal-card { padding: 18px !important; }
