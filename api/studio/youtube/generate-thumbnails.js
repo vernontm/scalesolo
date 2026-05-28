@@ -203,13 +203,22 @@ export default async function handler(req, res) {
 
     const system =
       'You design YouTube thumbnail PROMPTS for an AI image generator (Kie nano-banana-2, 1280x720). Output 3 distinct thumbnail concepts via the emit_thumbnails tool.\n\n' +
+      '## IMPORTANT — analyzing reference thumbnails\n' +
+      'When reference thumbnails are attached, IGNORE these YouTube UI elements that get captured in screenshots — they are NOT part of the creator\'s design and must never appear in your prompts:\n' +
+      '  - Duration/timestamp badge in the bottom-right corner (e.g. "12:34", "0:58")\n' +
+      '  - "CC" closed-caption badge\n' +
+      '  - 4K / HD / Live badges\n' +
+      '  - Progress bar at the bottom edge (red watched-line)\n' +
+      '  - "From [Channel Name]" overlays\n' +
+      '  - Watermark logos auto-pinned to corners\n' +
+      'Focus ONLY on the artwork the creator designed: subject, composition, lighting, color palette, headline text treatment, framing. Never describe or reproduce any timestamp, runtime, badge, or progress bar in your output prompts.\n\n' +
       '## What makes a thumbnail click\n' +
       '  - ONE clear subject, large in the frame. No tiny details that vanish at small sizes.\n' +
       '  - High contrast: bright subject against dark background, or vice versa.\n' +
       '  - 2-5 word headline TEXT baked into the image, big enough to read on mobile.\n' +
       '  - Strong emotion (surprise, excitement, focus, disbelief) on faces when present.\n' +
       '  - Brand colors used as accents, not the whole canvas.\n' +
-      '  - Avoid: small text walls, generic stock-photo poses, low contrast, busy backgrounds, watermarks.\n\n' +
+      '  - Avoid: small text walls, generic stock-photo poses, low contrast, busy backgrounds, watermarks, timestamps, duration badges, progress bars.\n\n' +
       '## Variety across the 3 concepts\n' +
       '  Concept 1 — Subject-driven (the host or main object front and center, dramatic lighting)\n' +
       '  Concept 2 — Concept/metaphor (abstract visual that illustrates the core idea)\n' +
