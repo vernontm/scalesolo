@@ -3100,6 +3100,8 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
   const [description, setDescription] = useState('')
   const [scheduledAt, setScheduledAt] = useState('')  // 'YYYY-MM-DDTHH:MM' local
   const [metaError, setMetaError] = useState(null)
+  const [thumbnailUrl, setThumbnailUrl] = useState('')
+  const [uploadingThumb, setUploadingThumb] = useState(false)
 
   // Load auto-generated metadata once on mount.
   useEffect(() => {
@@ -3150,6 +3152,10 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
           body.scheduled_iso = new Date(scheduledAt).toISOString()
         } catch { /* ignore — server will post immediately */ }
       }
+      // Custom YouTube thumbnail (optional). When set, upload-post.com
+      // fetches the bytes server-side and pins it as the video's
+      // thumbnail. Empty → YouTube auto-picks a frame.
+      if (thumbnailUrl) body.youtube_thumbnail_url = thumbnailUrl
       const r = await authedFetch('/api/social/upload-post', session.access_token, {
         method: 'POST', body: JSON.stringify(body),
       })
@@ -3249,6 +3255,88 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
                 maxLength={5000}
                 style={{ width: '100%', minHeight: 280, fontFamily: 'monospace', fontSize: 12, lineHeight: 1.5 }}
               />
+            </Field>
+
+            <Field label={<span>Custom thumbnail <span style={{ color: 'var(--muted)', fontSize: 11, marginLeft: 6 }}>Optional, JPG/PNG/WebP, ≤2MB, 1280×720</span></span>}>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                {thumbnailUrl ? (
+                  // eslint-disable-next-line jsx-a11y/img-redundant-alt
+                  <img
+                    src={thumbnailUrl}
+                    alt="Thumbnail preview"
+                    style={{ width: 160, height: 90, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--border)' }}
+                  />
+                ) : (
+                  <div style={{
+                    width: 160, height: 90, borderRadius: 4, border: '1px dashed var(--border)',
+                    background: 'var(--surface-2)', display: 'grid', placeItems: 'center',
+                    fontSize: 10, color: 'var(--muted)',
+                  }}>
+                    No thumbnail
+                  </div>
+                )}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <label
+                    style={{
+                      display: 'inline-block', padding: '6px 12px', fontSize: 12, fontWeight: 600,
+                      background: uploadingThumb ? 'var(--surface-2)' : 'var(--surface)',
+                      border: '1px solid var(--border)', borderRadius: 6,
+                      cursor: uploadingThumb ? 'wait' : 'pointer',
+                    }}
+                  >
+                    {uploadingThumb ? 'Uploading…' : (thumbnailUrl ? 'Replace' : 'Upload thumbnail')}
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      style={{ display: 'none' }}
+                      disabled={uploadingThumb}
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0]
+                        if (!file) return
+                        if (file.size > 2 * 1024 * 1024) {
+                          toast({ message: `Thumbnail too big (${(file.size / 1024 / 1024).toFixed(2)}MB) — YouTube limit is 2MB.`, kind: 'error' })
+                          e.target.value = ''
+                          return
+                        }
+                        setUploadingThumb(true)
+                        try {
+                          const fd = new FormData()
+                          fd.append('file', file)
+                          fd.append('studio_video_id', video.id)
+                          const r = await fetch('/api/studio/youtube/upload-thumbnail', {
+                            method: 'POST',
+                            headers: { Authorization: `Bearer ${session.access_token}` },
+                            body: fd,
+                          })
+                          const b = await r.json().catch(() => ({}))
+                          if (!r.ok) {
+                            toast({ message: b.error || `Upload failed (${r.status})`, kind: 'error' })
+                            return
+                          }
+                          setThumbnailUrl(b.url || '')
+                        } catch (err) {
+                          toast({ message: err.message, kind: 'error' })
+                        } finally {
+                          setUploadingThumb(false)
+                          e.target.value = ''
+                        }
+                      }}
+                    />
+                  </label>
+                  {thumbnailUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setThumbnailUrl('')}
+                      style={{ fontSize: 11, color: 'var(--muted)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left' }}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
+                If empty, YouTube auto-picks a frame from the video.
+              </div>
             </Field>
 
             <Field label={<span>Schedule for <span style={{ color: 'var(--muted)', fontSize: 11, marginLeft: 6 }}>Leave empty to publish now</span></span>}>

@@ -89,6 +89,13 @@ export default async function handler(req, res) {
       // is in platforms, we pass it as instagram_cover_url so the Reel
       // posts with a custom thumbnail. Other platforms ignore it.
       cover_image_url,
+      // Custom YouTube thumbnail (≤2MB, 1280x720 recommended). When
+      // platforms includes 'youtube' and this is set, we pass it to
+      // upload-post.com as `youtube_thumbnail` and they fetch the
+      // bytes server-side. Studio's Schedule-to-YouTube modal uploads
+      // a file via /api/studio/youtube/upload-thumbnail and gets a
+      // public URL back, then sends that URL here.
+      youtube_thumbnail_url,
     } = req.body || {}
 
     if (!profile_id || !Array.isArray(platforms) || !platforms.length) {
@@ -208,6 +215,12 @@ export default async function handler(req, res) {
     if (platforms.includes('youtube')) {
       fd.append('youtube_title', trim(cleanTitle, 100))
       fd.append('youtube_description', trim(fullCaption || cleanTitle, 5000))
+      // Custom thumbnail. upload-post.com accepts a URL here and fetches
+      // the bytes server-side. Skipped silently when not provided —
+      // YouTube auto-picks a frame from the video instead.
+      if (youtube_thumbnail_url) {
+        fd.append('youtube_thumbnail', String(youtube_thumbnail_url))
+      }
     }
     if (platforms.includes('linkedin')) {
       fd.append('linkedin_title', trim(fullCaption || cleanTitle, 3000))
