@@ -89,10 +89,16 @@ function isApiCall(input) {
   }
 }
 
-function fireSessionExpired() {
+function fireSessionExpired(reason, extra) {
   if (suppressBannerForExplicitSignOut) return
   if (typeof window === 'undefined') return
-  window.dispatchEvent(new CustomEvent('scalesolo:session-expired'))
+  // Loud diagnostic so we can tell WHICH path fired the banner the next
+  // time it surfaces. Without this the only signal is the banner itself
+  // and the user is left guessing whether it was a real 401, a retry
+  // 401, or an unsolicited SIGNED_OUT.
+  // eslint-disable-next-line no-console
+  console.warn('[auth-guard] session-expired fired:', reason, extra || '')
+  window.dispatchEvent(new CustomEvent('scalesolo:session-expired', { detail: { reason, extra } }))
 }
 
 // Install the global fetch interceptor. Idempotent — calling twice is a
@@ -113,9 +119,10 @@ export function installAuthGuard() {
 
     // 401 on an /api/ call. Try ONE refresh + retry. If that fails,
     // surface the expiry banner.
+    const url = typeof input === 'string' ? input : (input?.url || '')
     const newToken = await tryRefresh()
     if (!newToken) {
-      fireSessionExpired()
+      fireSessionExpired('initial-401-no-refresh', { url })
       return resp
     }
 
@@ -132,7 +139,7 @@ export function installAuthGuard() {
       // Even with a fresh token, server rejected — refresh must have
       // returned a JWT the server still doesn't accept (signing key
       // rotated, user disabled, etc.). Show the banner.
-      fireSessionExpired()
+      fireSessionExpired('retry-401', { url })
     }
     return retried
   }
@@ -149,7 +156,7 @@ export function installAuthGuard() {
       // If this was triggered by the user clicking Sign Out, don't
       // alarm them with a banner. Otherwise treat it as expiry.
       if (activeUserId && !suppressBannerForExplicitSignOut) {
-        fireSessionExpired()
+        fireSessionExpired('unsolicited-signed-out', { activeUserId })
       }
       activeUserId = null
       // Reset the explicit-signout latch for next time.
