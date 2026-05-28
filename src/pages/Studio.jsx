@@ -1263,6 +1263,34 @@ function StudioVideoEditor({ videoId }) {
     return () => { try { channel.unsubscribe() } catch { /* noop */ } }
   }, [videoId])
 
+  // Trigger ElevenLabs Voice Isolator on every user-sliced segment of
+  // this video. Surfaces via the purple "Clean voice" banner below the
+  // sticky action bar. The fly worker runs each segment through EL's
+  // audio-isolation endpoint and writes voice_url + voice_cleaned=true
+  // back via realtime — segments update one-by-one (~30s each) as they
+  // finish. Used when the auto-trigger during initial segmentation
+  // didn't land (cold worker / network blip / older video predating
+  // the auto-trigger).
+  const triggerVoiceIsolation = async () => {
+    if (!session?.access_token || !video?.id) return
+    try {
+      const r = await authedFetch('/api/studio/voiceover/trigger-isolation', session.access_token, {
+        method: 'POST', body: JSON.stringify({ studio_video_id: video.id }),
+      })
+      const b = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        toast({ message: b.error || 'Voice isolation trigger failed', kind: 'error' })
+        return
+      }
+      toast({
+        message: 'Voice cleaning started. Segments will update as each finishes (~30s/segment).',
+        kind: 'success',
+      })
+    } catch (e) {
+      toast({ message: e.message, kind: 'error' })
+    }
+  }
+
   const regenerate = async (opts = {}) => {
     if (!session?.access_token || !video) return
     const previousVideo = video
@@ -1676,30 +1704,6 @@ function SegmentList({ video, manualMode = false }) {
         return
       }
       toast({ message: 'Segment split. Re-generate assets for the new piece.', kind: 'success' })
-    } catch (e) {
-      toast({ message: e.message, kind: 'error' })
-    }
-  }
-
-  // Trigger ElevenLabs Voice Isolator on every user-sliced segment.
-  // Useful when the auto-trigger during initial segmentation didn't
-  // land (cold worker, network blip). Background job — UI doesn't
-  // block. Watch segment.voice_cleaned in realtime to see progress.
-  const triggerVoiceIsolation = async () => {
-    if (!session?.access_token || !video?.id) return
-    try {
-      const r = await authedFetch('/api/studio/voiceover/trigger-isolation', session.access_token, {
-        method: 'POST', body: JSON.stringify({ studio_video_id: video.id }),
-      })
-      const b = await r.json().catch(() => ({}))
-      if (!r.ok) {
-        toast({ message: b.error || 'Voice isolation trigger failed', kind: 'error' })
-        return
-      }
-      toast({
-        message: 'Voice cleaning started. Segments will update as each finishes (~30s/segment).',
-        kind: 'success',
-      })
     } catch (e) {
       toast({ message: e.message, kind: 'error' })
     }
