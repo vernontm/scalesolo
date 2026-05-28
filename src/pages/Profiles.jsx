@@ -752,6 +752,7 @@ function CoverTemplateUpload({ value, profileId, onChange }) {
 }
 
 function VoiceSection({ form, set, setHelper }) {
+  const { session } = useAuth()
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       <div style={twoColGrid}>
