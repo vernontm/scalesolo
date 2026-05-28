@@ -328,9 +328,9 @@ async function dispatchImage(segment, apiKey, aspectRatio, brandStyleAnchor, ava
   // Use a shallow mutable copy so we don't mutate the segment object
   // the caller passed in.
   segment = { ...segment, image_prompt: basePrompt }
-  // Project aspect ratio → Kie's expected aspect_ratio string. nano-banana-2
-  // accepts 16:9 / 9:16 / 1:1 / 'auto'. Pass-through.
-  const aspect = ['16:9', '9:16', '1:1'].includes(aspectRatio) ? aspectRatio : 'auto'
+  // Project aspect ratio → Kie's expected aspect_ratio string.
+  // gpt-image-2 supports 16:9 / 9:16 / 1:1 / 4:3 / 3:4 / auto.
+  const aspect = ['16:9', '9:16', '1:1', '4:3', '3:4'].includes(aspectRatio) ? aspectRatio : 'auto'
   // Hard-append the brand's style + avoid anchor. The orchestrator
   // computed this once per video from the profile's visual_keywords +
   // visual_avoid. Belt + suspenders: even if Claude wrote a generic
@@ -340,30 +340,39 @@ async function dispatchImage(segment, apiKey, aspectRatio, brandStyleAnchor, ava
     ? `${segment.image_prompt.trim()} ${brandStyleAnchor}`
     : segment.image_prompt
   // Avatar-likeness anchor (PDF #13). When the video uses an avatar
-  // and the b-roll prompt references a person (heuristic: "person",
-  // "founder", "you", "creator", "solopreneur", "they", etc), we
-  // pass the avatar's look image as a Kie image_input reference AND
-  // append a likeness instruction. Kie's nano-banana-2 with a
-  // reference image tries to preserve the subject's face / hair /
-  // build, so b-roll characters look like the host instead of a
-  // random stock person. Falls back to text-only generation when
-  // the avatar reference isn't available.
+  // and the b-roll prompt references a person, we pass the avatar's
+  // look image as a Kie input_urls reference AND append a likeness
+  // instruction. gpt-image-2-image-to-image preserves the subject's
+  // face / hair / build, so b-roll characters look like the host
+  // instead of a random stock person. Falls back to
+  // gpt-image-2-text-to-image when the avatar reference isn't
+  // available or the prompt doesn't mention a person.
   const imageInput = []
   const refersToPerson = /\b(person|founder|creator|solopreneur|host|speaker|founder|she|he|they|you|coder|developer|entrepreneur|woman|man|professional)\b/i.test(styledPrompt)
   if (avatarReferenceImageUrl && refersToPerson) {
     imageInput.push(avatarReferenceImageUrl)
     styledPrompt = `${styledPrompt} The main person in this image should resemble the reference photo (same face, hair, build, age, ethnicity, and overall identity). Clothing, environment, lighting, pose, and what they're doing can change to fit the scene.`
   }
+  // Swap nano-banana-2 → gpt-image-2 for b-roll image generation. Per
+  // Ray, GPT 2.0 produces dramatically better quality than nano-banana
+  // for the kinds of scenes Studio b-roll calls for (people in offices,
+  // hands on keyboards, abstract concepts with overlay text). The two
+  // gpt-image-2 variants:
+  //   text-to-image   — prompt only, faster
+  //   image-to-image  — prompt + input_urls[] for the avatar reference
+  // Request shape change: input_urls (was image_input), resolution: '2K'
+  // (capital), no num_images / output_format (not configurable).
+  const usesImage = imageInput.length > 0
   const body = {
-    model: 'nano-banana-2',
+    model: usesImage ? 'gpt-image-2-image-to-image' : 'gpt-image-2-text-to-image',
     input: {
-      prompt: styledPrompt,
-      image_input: imageInput,
+      prompt: styledPrompt.slice(0, 20000),
       aspect_ratio: aspect,
       resolution: '2K',
-      output_format: 'png',
-      num_images: 1,
     },
+  }
+  if (usesImage) {
+    body.input.input_urls = imageInput.slice(0, 16)
   }
   // 30s timeout — Kie just queues the task; the actual image gen runs
   // async and we poll it separately. The submit call should land in
