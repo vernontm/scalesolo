@@ -37,27 +37,43 @@ export function noteExplicitSignOut() {
   suppressBannerForExplicitSignOut = true
 }
 
-// Try to refresh the Supabase session. Coalesces concurrent calls so a
-// burst of 401s only fires ONE refresh request, not N. Returns the new
-// access token on success, null on failure.
+// Get the freshest access token from Supabase. Uses getSession() rather
+// than refreshSession() on purpose:
+//
+//   - getSession() returns the cached session and lets Supabase decide
+//     whether to refresh internally (it auto-refreshes ~5min before the
+//     JWT expires under its own lock). Calls are cheap and idempotent.
+//
+//   - refreshSession() FORCES a rotation, invalidating the previous
+//     refresh token immediately. If Supabase's own background refresher
+//     fires at the same moment a 401 triggers tryRefresh(), one of them
+//     ends up using a refresh token that the other just invalidated,
+//     Supabase emits SIGNED_OUT, and our auth listener (below) pops the
+//     "session expired" banner -- even though every actual /api/ call
+//     is still returning 200. That was the exact symptom Ray hit during
+//     bulk upload cover-gen: banner up, network panel all 200s.
+//
+// Concurrent callers coalesce on the same in-flight getSession() so a
+// burst of 401s only does ONE round trip. Returns the access token (the
+// freshest one Supabase has) on success, null when there's no session.
 async function tryRefresh() {
   if (inFlightRefresh) return inFlightRefresh
   inFlightRefresh = (async () => {
     try {
-      const { data, error } = await supabase.auth.refreshSession()
+      const { data, error } = await supabase.auth.getSession()
       if (error) {
-        console.warn('[auth-guard] refresh failed:', error?.message)
+        console.warn('[auth-guard] getSession failed:', error?.message)
         return null
       }
       const token = data?.session?.access_token || null
       return token
     } catch (e) {
-      console.warn('[auth-guard] refresh threw:', e?.message)
+      console.warn('[auth-guard] getSession threw:', e?.message)
       return null
     } finally {
       // Reset the coalescer after a short tick so legitimately separate
       // 401 bursts (e.g. after several minutes) each get their own
-      // refresh attempt instead of being told "no" forever.
+      // attempt instead of being told "no" forever.
       setTimeout(() => { inFlightRefresh = null }, 500)
     }
   })()
