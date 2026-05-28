@@ -380,6 +380,12 @@ export default async function handler(req, res) {
         // Don't await — let the fetch fly. AbortSignal.timeout(2000)
         // means we don't even wait for the worker's response body.
         // The bake (which can take 5+ min) lives inside the worker.
+        // 10s timeout (was 2s). The worker only takes ~1s to ACK and
+        // start the background job — but if the fly machine is cold
+        // (auto-suspend was on earlier today), the first request needs
+        // to wake it up which can take 5-8s. A 2s timeout aborted
+        // before the worker accepted the request, leaving voiceovers
+        // un-isolated. 10s covers cold-start with plenty of headroom.
         fetch(`${workerUrl}/jobs/voice-isolate-segments`, {
           method: 'POST',
           headers: {
@@ -387,7 +393,7 @@ export default async function handler(req, res) {
             'x-worker-secret': workerSecret,
           },
           body: JSON.stringify({ studio_video_id: video.id }),
-          signal: AbortSignal.timeout(2000),
+          signal: AbortSignal.timeout(10000),
         }).catch(() => { /* fire-and-forget */ })
       }
     } catch (_) { /* never block the response on cleanup dispatch */ }
