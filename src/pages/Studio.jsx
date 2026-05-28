@@ -3561,19 +3561,33 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
             </Field>
 
             {publishResult && emailTemplate && (() => {
-              // Copy HTML button — only renders when we have a template
-              // AND a successful publish response. Tries to extract any
-              // YouTube URL the upload-post returned; falls back to
-              // leaving the {{youtube_url}} placeholder intact when the
-              // upstream API hasn't given us a live URL yet (typical
-              // for scheduled posts that haven't published).
+              // Copy HTML button — substitutes four placeholders in the
+              // user's template:
+              //   {{youtube_url}}   → URL from upload-post response (or
+              //                        intact if scheduled post w/o URL)
+              //   {{title}}         → currently-selected/edited title
+              //   {{summary}}       → first paragraph of the description
+              //                        (the auto-generated overview,
+              //                        before "Chapters:")
+              //   {{description}}   → full description (summary +
+              //                        chapters + brand boilerplate)
               const youtubeUrlFromResponse =
                 publishResult.youtube_url
                 || publishResult.video_url
                 || publishResult?.results?.youtube?.url
                 || publishResult?.results?.youtube?.video_url
                 || ''
-              const finalHtml = emailTemplate.replace(/\{\{\s*youtube_url\s*\}\}/g, youtubeUrlFromResponse || '{{youtube_url}}')
+              // Extract the summary (first paragraph). Description was
+              // assembled by generate-metadata as:
+              //   <summary>\n\n<chapters>\n\n<boilerplate>
+              // — splitting on the first blank line gives us the
+              // creator-friendly TL;DR.
+              const summary = (description.split(/\n\s*\n/)[0] || '').trim()
+              const finalHtml = emailTemplate
+                .replace(/\{\{\s*youtube_url\s*\}\}/g, youtubeUrlFromResponse || '{{youtube_url}}')
+                .replace(/\{\{\s*title\s*\}\}/g, title || '')
+                .replace(/\{\{\s*summary\s*\}\}/g, summary)
+                .replace(/\{\{\s*description\s*\}\}/g, description || '')
               return (
                 <div style={{
                   marginTop: 14, padding: 12, borderRadius: 6,
@@ -3581,13 +3595,16 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
                 }}>
                   <div style={{ fontSize: 12, color: 'var(--text)', marginBottom: 8 }}>
                     {scheduledAt
-                      ? `📅 Scheduled for ${new Date(scheduledAt).toLocaleString()}. Copy the email HTML to send to your list — when YouTube publishes the video, paste the live URL in place of {{youtube_url}}.`
-                      : '🚀 Publishing now. Copy the email HTML to blast to your list.'}
+                      ? `📅 Scheduled for ${new Date(scheduledAt).toLocaleString()}. Email HTML has the title, summary, and description filled in — paste the live YouTube URL in place of {{youtube_url}} once the video goes up.`
+                      : '🚀 Publishing now. Email HTML has the title, summary, description, and live URL all filled in.'}
                     {youtubeUrlFromResponse && (
                       <span style={{ display: 'block', marginTop: 4, fontSize: 11, color: 'var(--muted)' }}>
-                        Live URL detected and substituted: <code>{youtubeUrlFromResponse}</code>
+                        Live URL detected: <code>{youtubeUrlFromResponse}</code>
                       </span>
                     )}
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 8 }}>
+                    Placeholders substituted: <code>{`{{title}}`}</code> · <code>{`{{summary}}`}</code> · <code>{`{{description}}`}</code> · <code>{`{{youtube_url}}`}</code>
                   </div>
                   <button
                     type="button"

@@ -940,18 +940,25 @@ function VoiceSection({ form, set, setHelper }) {
       <Field label={
         <span>
           YouTube email blast template (HTML)
-          <span className="pill pill-muted" style={{ marginLeft: 6 }}>Use {`{{youtube_url}}`} as a placeholder</span>
+          <span className="pill pill-muted" style={{ marginLeft: 6 }}>Supports {`{{title}}`}, {`{{summary}}`}, {`{{description}}`}, {`{{youtube_url}}`}</span>
         </span>
       }>
         <textarea
           className="textarea"
-          style={{ minHeight: 180, width: '100%', fontFamily: 'monospace', fontSize: 11 }}
+          style={{ minHeight: 220, width: '100%', fontFamily: 'monospace', fontSize: 11 }}
           value={form.youtube_email_template_html || ''}
           onChange={(e) => set('youtube_email_template_html', e.target.value)}
-          placeholder={'<html>\n<body>\n  <h2>New video is live!</h2>\n  <p>Watch it here: <a href="{{youtube_url}}">{{youtube_url}}</a></p>\n  <p>Cheers,<br>Ray</p>\n</body>\n</html>'}
+          placeholder={'<html>\n<body style="font-family: -apple-system, sans-serif; max-width: 600px; margin: 0 auto;">\n  <h1>{{title}}</h1>\n  <p style="color: #555; font-size: 16px;">{{summary}}</p>\n  <p><a href="{{youtube_url}}" style="display: inline-block; padding: 12px 24px; background: #ef4444; color: #fff; text-decoration: none; border-radius: 6px; font-weight: 700;">Watch on YouTube →</a></p>\n  <hr>\n  <h3>What\'s in this video:</h3>\n  <pre style="white-space: pre-wrap;">{{description}}</pre>\n  <p>—Ray</p>\n</body>\n</html>'}
         />
         <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
-          After you schedule a Studio video to YouTube, the Schedule modal will show a "Copy HTML" button. It substitutes <code>{`{{youtube_url}}`}</code> with the live URL (or the scheduled-post link if YouTube hasn't published yet) and copies the full template to your clipboard.
+          After you schedule a Studio video to YouTube, the Schedule modal shows a "Copy HTML" button. It substitutes the placeholders below with the actual values for that video and copies the rendered HTML to your clipboard, ready to paste into ConvertKit / Mailchimp / etc.
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6, padding: 8, background: 'var(--surface-2)', borderRadius: 4, lineHeight: 1.7 }}>
+          <strong>Placeholders:</strong><br />
+          <code>{`{{title}}`}</code> — the viral hook title you picked in the schedule modal<br />
+          <code>{`{{summary}}`}</code> — 2-3 sentence auto-written video summary (first paragraph of description)<br />
+          <code>{`{{description}}`}</code> — full YouTube description (summary + chapter timestamps + your boilerplate)<br />
+          <code>{`{{youtube_url}}`}</code> — live YouTube URL (or left as placeholder for scheduled posts you haven't published yet)
         </div>
       </Field>
     </div>
