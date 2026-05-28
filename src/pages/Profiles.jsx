@@ -57,6 +57,10 @@ const FORM_DEFAULTS = {
   visual_style_guide: '',
   visual_keywords: [],
   visual_avoid: [],
+  // Boilerplate appended to every Studio YouTube video's description
+  // (after the auto-generated summary + chapter timestamps). Channel
+  // links, socials, CTAs, affiliate disclosures — the static stuff.
+  youtube_description_default: '',
   brand_primary_color: '#ef4444',
   brand_secondary_color: '',
   preferred_tone: '',
@@ -774,6 +778,27 @@ function VoiceSection({ form, set, setHelper }) {
         />
         <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
           Comma-separated. Claude is told never to include these in prompts, and the worker hard-appends them as a negative anchor before submitting to the image model.
+        </div>
+      </Field>
+
+      {/* YouTube description boilerplate. Appended to every Studio
+          video's auto-generated description after the summary + chapter
+          markers. Channel links / socials / CTAs / disclosures. */}
+      <Field label={
+        <span>
+          YouTube description boilerplate
+          <span className="pill pill-muted" style={{ marginLeft: 6 }}>Appended after summary + chapters</span>
+        </span>
+      }>
+        <textarea
+          className="textarea"
+          style={{ minHeight: 140, width: '100%' }}
+          value={form.youtube_description_default || ''}
+          onChange={(e) => set('youtube_description_default', e.target.value)}
+          placeholder={'🔗 LINKS\nWebsite: https://example.com\nTwitter: https://twitter.com/handle\nFree resources: https://example.com/resources\n\n#tag1 #tag2 #tag3'}
+        />
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
+          When you schedule a Studio video to YouTube, the description is built as: auto-generated summary + chapter timestamps + this boilerplate. Add your channel links, social handles, hashtags, affiliate disclosures, anything static.
         </div>
       </Field>
     </div>

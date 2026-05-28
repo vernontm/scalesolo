@@ -1132,6 +1132,9 @@ function StudioVideoEditor({ videoId }) {
   const manualMode = useStudioManualMode()
   const [video, setVideo] = useState(null)
   const [error, setError] = useState(null)
+  // Schedule-to-YouTube modal. Opens from the "📤 Schedule to YouTube"
+  // button next to the final-render download link.
+  const [scheduleModalOpen, setScheduleModalOpen] = useState(false)
 
   // Initial load + defensive refetch when the tab regains focus. The
   // Realtime channel below handles ongoing updates, but long renders
@@ -1430,12 +1433,30 @@ function StudioVideoEditor({ videoId }) {
               />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, fontSize: 12, color: 'var(--muted)' }}>
                 <span>Final render</span>
-                <a href={video.final_video_url} download style={{ color: 'var(--red)', fontWeight: 700 }}>
-                  Download MP4 ↓
-                </a>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                  <a href={video.final_video_url} download style={{ color: 'var(--red)', fontWeight: 700 }}>
+                    Download MP4 ↓
+                  </a>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => setScheduleModalOpen(true)}
+                    style={{ fontSize: 12, padding: '6px 12px', background: '#ef4444', color: '#fff', borderRadius: 6, border: 'none', fontWeight: 700, cursor: 'pointer' }}
+                  >
+                    📤 Schedule to YouTube
+                  </button>
+                </div>
               </div>
               <RenderQualityNote video={video} />
             </div>
+          )}
+
+          {scheduleModalOpen && video.status === 'rendered' && video.final_video_url && (
+            <ScheduleYouTubeModal
+              video={video}
+              session={session}
+              onClose={() => setScheduleModalOpen(false)}
+            />
           )}
 
           {(['mapped', 'editing', 'rendering', 'rendered'].includes(video.status)) && (
@@ -3063,6 +3084,177 @@ function DownloadAllVoicesButton({ segments }) {
     >
       ↓ Avatar voices ({avatarVoices.length})
     </button>
+  )
+}
+
+// Schedule-to-YouTube modal. Loads with Claude-generated title +
+// description (summary + chapter timestamps + the profile's
+// youtube_description_default boilerplate). User can edit all three
+// fields before publishing. Schedule datetime is optional — empty
+// = post immediately.
+function ScheduleYouTubeModal({ video, session, onClose }) {
+  const [busy, setBusy] = useState(false)
+  const [loadingMeta, setLoadingMeta] = useState(true)
+  const [title, setTitle] = useState('')
+  const [description, setDescription] = useState('')
+  const [scheduledAt, setScheduledAt] = useState('')  // 'YYYY-MM-DDTHH:MM' local
+  const [metaError, setMetaError] = useState(null)
+
+  // Load auto-generated metadata once on mount.
+  useEffect(() => {
+    if (!session?.access_token || !video?.id) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const r = await authedFetch('/api/studio/youtube/generate-metadata', session.access_token, {
+          method: 'POST', body: JSON.stringify({ studio_video_id: video.id }),
+        })
+        const b = await r.json().catch(() => ({}))
+        if (cancelled) return
+        if (!r.ok) {
+          setMetaError(b.error || 'Could not generate description.')
+          // Still pre-fill title from the video map title if Claude failed
+          setTitle((video.title || '').slice(0, 100))
+          setDescription('')
+          return
+        }
+        setTitle(b.title || (video.title || '').slice(0, 100))
+        setDescription(b.full_description || '')
+      } catch (e) {
+        if (!cancelled) setMetaError(e.message)
+      } finally {
+        if (!cancelled) setLoadingMeta(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [session?.access_token, video?.id])
+
+  const publish = async () => {
+    if (!session?.access_token) return
+    setBusy(true)
+    try {
+      const body = {
+        profile_id: video.profile_id,
+        platforms: ['youtube'],
+        video_url: video.final_video_url,
+        title: title.slice(0, 100),
+        description: description.slice(0, 5000),
+      }
+      // Local datetime → UTC ISO. Empty = post now.
+      if (scheduledAt) {
+        try {
+          body.scheduled_iso = new Date(scheduledAt).toISOString()
+        } catch { /* ignore — server will post immediately */ }
+      }
+      const r = await authedFetch('/api/social/upload-post', session.access_token, {
+        method: 'POST', body: JSON.stringify(body),
+      })
+      const b = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        toast({ message: b.error || `Publish failed (${r.status})`, kind: 'error' })
+        return
+      }
+      toast({
+        message: scheduledAt
+          ? `Scheduled to YouTube for ${new Date(scheduledAt).toLocaleString()}.`
+          : 'Publishing to YouTube now.',
+        kind: 'success',
+      })
+      onClose()
+    } catch (e) {
+      toast({ message: e.message, kind: 'error' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 1000,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="card"
+        style={{
+          maxWidth: 640, width: '100%', maxHeight: '90vh', overflowY: 'auto',
+          padding: 24, background: 'var(--surface)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+          <h2 style={{ margin: 0, fontSize: 18 }}>📤 Schedule to YouTube</h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 20, color: 'var(--muted)', cursor: 'pointer' }}>×</button>
+        </div>
+
+        {loadingMeta ? (
+          <div style={{ padding: 20, textAlign: 'center', color: 'var(--muted)' }}>
+            Generating title + description with Claude…
+          </div>
+        ) : (
+          <>
+            {metaError && (
+              <div className="card-flat" style={{ padding: 8, marginBottom: 12, fontSize: 12, color: 'var(--red)' }}>
+                Auto-generation failed: {metaError}. You can still type a title + description manually and publish.
+              </div>
+            )}
+
+            <Field label={<span>Title <span style={{ color: 'var(--muted)', fontSize: 11, marginLeft: 6 }}>{title.length}/100</span></span>}>
+              <input
+                className="input"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                maxLength={100}
+                style={{ width: '100%' }}
+              />
+            </Field>
+
+            <Field label={<span>Description <span style={{ color: 'var(--muted)', fontSize: 11, marginLeft: 6 }}>{description.length}/5000 — summary + chapters + your boilerplate</span></span>}>
+              <textarea
+                className="textarea"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                maxLength={5000}
+                style={{ width: '100%', minHeight: 280, fontFamily: 'monospace', fontSize: 12, lineHeight: 1.5 }}
+              />
+            </Field>
+
+            <Field label={<span>Schedule for <span style={{ color: 'var(--muted)', fontSize: 11, marginLeft: 6 }}>Leave empty to publish now</span></span>}>
+              <input
+                type="datetime-local"
+                className="input"
+                value={scheduledAt}
+                onChange={(e) => setScheduledAt(e.target.value)}
+                style={{ width: '100%' }}
+              />
+            </Field>
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+              <button
+                type="button"
+                className="btn"
+                onClick={onClose}
+                disabled={busy}
+                style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', padding: '8px 16px', borderRadius: 6, cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={publish}
+                disabled={busy || !title.trim() || !description.trim()}
+                style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: 6, fontWeight: 700, cursor: busy ? 'wait' : 'pointer' }}
+              >
+                {busy ? 'Publishing…' : (scheduledAt ? '📅 Schedule' : '🚀 Publish now')}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   )
 }
 
