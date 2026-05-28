@@ -65,6 +65,10 @@ const FORM_DEFAULTS = {
   // style inspiration. Claude sends these as image blocks when
   // generating new thumbnails for Studio videos.
   youtube_thumbnail_references: [],
+  // Raw HTML template for the "video is live" email blast. Use
+  // {{youtube_url}} as a placeholder — the Schedule modal substitutes
+  // it after the video schedules / publishes.
+  youtube_email_template_html: '',
   brand_primary_color: '#ef4444',
   brand_secondary_color: '',
   preferred_tone: '',
@@ -926,6 +930,28 @@ function VoiceSection({ form, set, setHelper }) {
         />
         <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
           Upload 3-6 thumbnail images that represent the style you want for your videos. When you schedule a new Studio video, Claude looks at these (color palette, composition, text treatment, subject framing) and writes 3 new thumbnail prompts that match. Max 5MB per image.
+        </div>
+      </Field>
+
+      {/* HTML email template — used by the Schedule modal's Copy HTML
+          button. {{youtube_url}} is replaced with the live video URL
+          after scheduling, then copied to clipboard ready to paste
+          into ConvertKit / Mailchimp / wherever the user sends. */}
+      <Field label={
+        <span>
+          YouTube email blast template (HTML)
+          <span className="pill pill-muted" style={{ marginLeft: 6 }}>Use {`{{youtube_url}}`} as a placeholder</span>
+        </span>
+      }>
+        <textarea
+          className="textarea"
+          style={{ minHeight: 180, width: '100%', fontFamily: 'monospace', fontSize: 11 }}
+          value={form.youtube_email_template_html || ''}
+          onChange={(e) => set('youtube_email_template_html', e.target.value)}
+          placeholder={'<html>\n<body>\n  <h2>New video is live!</h2>\n  <p>Watch it here: <a href="{{youtube_url}}">{{youtube_url}}</a></p>\n  <p>Cheers,<br>Ray</p>\n</body>\n</html>'}
+        />
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
+          After you schedule a Studio video to YouTube, the Schedule modal will show a "Copy HTML" button. It substitutes <code>{`{{youtube_url}}`}</code> with the live URL (or the scheduled-post link if YouTube hasn't published yet) and copies the full template to your clipboard.
         </div>
       </Field>
     </div>

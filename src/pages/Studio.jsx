@@ -3104,6 +3104,19 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
   // Lightbox: clicked thumbnail enlarges in a fullscreen overlay so the
   // user can read overlay text + check fine details before picking.
   const [previewUrl, setPreviewUrl] = useState(null)
+  // Edit-mode state. Tracks which thumbnail URL is being edited and
+  // what prompt the user is typing. Submit posts to edit-thumbnail
+  // and appends the result to thumbCandidates.
+  const [editingThumbUrl, setEditingThumbUrl] = useState(null)
+  const [editPrompt, setEditPrompt] = useState('')
+  const [editingBusy, setEditingBusy] = useState(false)
+  // After publish, store the upload-post response so we can substitute
+  // any returned YouTube URL into the email template.
+  const [publishResult, setPublishResult] = useState(null)
+  // Profile boilerplate (loaded once) — we already fetched it server-
+  // side when generating the description, but the email template is a
+  // separate field we need to pull for the Copy HTML button.
+  const [emailTemplate, setEmailTemplate] = useState('')
 
   // Load auto-generated metadata once on mount.
   useEffect(() => {
@@ -3128,6 +3141,14 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
         setTitles(opts)
         setTitle(opts[0] || (video.title || '').slice(0, 100))
         setDescription(b.full_description || '')
+        // Also fetch the email template — separate call so a slow
+        // template lookup doesn't block metadata generation.
+        try {
+          const pr = await authedFetch(`/api/profiles?id=${video.profile_id}`, session.access_token)
+          const pj = await pr.json().catch(() => ({}))
+          const tpl = pj?.profile?.youtube_email_template_html || pj?.youtube_email_template_html || ''
+          setEmailTemplate(tpl)
+        } catch { /* non-critical */ }
       } catch (e) {
         if (!cancelled) setMetaError(e.message)
       } finally {
@@ -3166,13 +3187,19 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
         toast({ message: b.error || `Publish failed (${r.status})`, kind: 'error' })
         return
       }
+      // Stash the response so the Copy HTML button (rendered below
+      // when publishResult is set) can substitute any YouTube URL the
+      // upload-post returned. For scheduled posts the URL usually
+      // isn't available until publish time — Copy HTML falls back to
+      // leaving the {{youtube_url}} placeholder in the template.
+      setPublishResult(b || {})
       toast({
         message: scheduledAt
           ? `Scheduled to YouTube for ${new Date(scheduledAt).toLocaleString()}.`
           : 'Publishing to YouTube now.',
         kind: 'success',
       })
-      onClose()
+      // Don't auto-close — let the user copy the HTML first.
     } catch (e) {
       toast({ message: e.message, kind: 'error' })
     } finally {
@@ -3270,6 +3297,7 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
                     {thumbCandidates.map((c, i) => {
                       const isSelected = c.url === thumbnailUrl
+                      const isEditing = c.url === editingThumbUrl
                       return (
                         <div
                           key={`${i}-${c.url}`}
@@ -3278,6 +3306,7 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
                             border: `2px solid ${isSelected ? 'var(--red)' : 'transparent'}`,
                             borderRadius: 8,
                             overflow: 'hidden',
+                            background: 'var(--surface-2)',
                           }}
                         >
                           <img
@@ -3291,17 +3320,29 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
                             title="Click to preview full size"
                           />
                           <div style={{
-                            position: 'absolute', bottom: 0, left: 0, right: 0,
                             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                            background: 'linear-gradient(to top, rgba(0,0,0,0.85), transparent)',
-                            padding: '12px 6px 4px 6px',
+                            gap: 4, padding: '4px 6px',
                           }}>
                             <span style={{
-                              fontSize: 10, fontWeight: 700, color: '#fff',
-                              flex: 1, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', paddingLeft: 4,
+                              fontSize: 10, fontWeight: 700, color: 'var(--muted)',
+                              flex: 1, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap',
                             }}>
                               {c.style || `Option ${i + 1}`}
                             </span>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); setEditingThumbUrl(isEditing ? null : c.url); setEditPrompt('') }}
+                              title="Edit this thumbnail with a follow-up prompt"
+                              style={{
+                                fontSize: 10, fontWeight: 600,
+                                padding: '3px 6px', borderRadius: 4,
+                                background: isEditing ? 'rgba(168,85,247,0.2)' : 'transparent',
+                                color: 'var(--muted)',
+                                border: '1px solid var(--border)', cursor: 'pointer',
+                              }}
+                            >
+                              ✏ Edit
+                            </button>
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); setThumbnailUrl(c.url) }}
@@ -3314,9 +3355,65 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
                                 whiteSpace: 'nowrap', flexShrink: 0,
                               }}
                             >
-                              {isSelected ? '✓ Selected' : 'Use this'}
+                              {isSelected ? '✓' : 'Use'}
                             </button>
                           </div>
+                          {isEditing && (
+                            <div style={{ padding: '4px 6px 6px 6px', borderTop: '1px solid var(--border)' }}>
+                              <textarea
+                                className="textarea"
+                                placeholder="e.g. 'change the background to deep blue', 'make the text larger', 'remove the laptop'"
+                                value={editPrompt}
+                                onChange={(e) => setEditPrompt(e.target.value)}
+                                style={{ width: '100%', minHeight: 50, fontSize: 11, marginBottom: 4 }}
+                              />
+                              <button
+                                type="button"
+                                disabled={editingBusy || !editPrompt.trim()}
+                                onClick={async (e) => {
+                                  e.stopPropagation()
+                                  if (!editPrompt.trim() || !session?.access_token) return
+                                  setEditingBusy(true)
+                                  try {
+                                    const r = await authedFetch('/api/studio/youtube/edit-thumbnail', session.access_token, {
+                                      method: 'POST',
+                                      body: JSON.stringify({
+                                        studio_video_id: video.id,
+                                        source_url: c.url,
+                                        edit_prompt: editPrompt.trim(),
+                                      }),
+                                    })
+                                    const b = await r.json().catch(() => ({}))
+                                    if (!r.ok) {
+                                      toast({ message: b.error || `Edit failed (${r.status})`, kind: 'error' })
+                                      return
+                                    }
+                                    if (b.candidate) {
+                                      setThumbCandidates((prev) => [...prev, b.candidate])
+                                      setThumbnailUrl(b.candidate.url)
+                                      setEditingThumbUrl(null)
+                                      setEditPrompt('')
+                                      toast({ message: 'New edited thumbnail added below.', kind: 'success' })
+                                    }
+                                  } catch (err) {
+                                    toast({ message: err.message, kind: 'error' })
+                                  } finally {
+                                    setEditingBusy(false)
+                                  }
+                                }}
+                                style={{
+                                  fontSize: 10, fontWeight: 700,
+                                  padding: '4px 8px', borderRadius: 4,
+                                  background: '#a855f7', color: '#fff',
+                                  border: 'none',
+                                  cursor: editingBusy ? 'wait' : 'pointer',
+                                  width: '100%',
+                                }}
+                              >
+                                {editingBusy ? '⏳ Editing…' : '🎨 Generate edit'}
+                              </button>
+                            </div>
+                          )}
                         </div>
                       )
                     })}
@@ -3463,6 +3560,58 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
               />
             </Field>
 
+            {publishResult && emailTemplate && (() => {
+              // Copy HTML button — only renders when we have a template
+              // AND a successful publish response. Tries to extract any
+              // YouTube URL the upload-post returned; falls back to
+              // leaving the {{youtube_url}} placeholder intact when the
+              // upstream API hasn't given us a live URL yet (typical
+              // for scheduled posts that haven't published).
+              const youtubeUrlFromResponse =
+                publishResult.youtube_url
+                || publishResult.video_url
+                || publishResult?.results?.youtube?.url
+                || publishResult?.results?.youtube?.video_url
+                || ''
+              const finalHtml = emailTemplate.replace(/\{\{\s*youtube_url\s*\}\}/g, youtubeUrlFromResponse || '{{youtube_url}}')
+              return (
+                <div style={{
+                  marginTop: 14, padding: 12, borderRadius: 6,
+                  background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.4)',
+                }}>
+                  <div style={{ fontSize: 12, color: 'var(--text)', marginBottom: 8 }}>
+                    {scheduledAt
+                      ? `📅 Scheduled for ${new Date(scheduledAt).toLocaleString()}. Copy the email HTML to send to your list — when YouTube publishes the video, paste the live URL in place of {{youtube_url}}.`
+                      : '🚀 Publishing now. Copy the email HTML to blast to your list.'}
+                    {youtubeUrlFromResponse && (
+                      <span style={{ display: 'block', marginTop: 4, fontSize: 11, color: 'var(--muted)' }}>
+                        Live URL detected and substituted: <code>{youtubeUrlFromResponse}</code>
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(finalHtml)
+                        toast({ message: 'Email HTML copied to clipboard.', kind: 'success' })
+                      } catch {
+                        toast({ message: 'Clipboard write failed. Paste manually below.', kind: 'warn' })
+                      }
+                    }}
+                    style={{
+                      fontSize: 12, fontWeight: 700,
+                      padding: '6px 12px', borderRadius: 6,
+                      background: '#22c55e', color: '#fff',
+                      border: 'none', cursor: 'pointer',
+                    }}
+                  >
+                    📋 Copy HTML
+                  </button>
+                </div>
+              )
+            })()}
+
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
               <button
                 type="button"
@@ -3471,17 +3620,19 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
                 disabled={busy}
                 style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', padding: '8px 16px', borderRadius: 6, cursor: 'pointer' }}
               >
-                Cancel
+                {publishResult ? 'Close' : 'Cancel'}
               </button>
-              <button
-                type="button"
-                className="btn"
-                onClick={publish}
-                disabled={busy || !title.trim() || !description.trim()}
-                style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: 6, fontWeight: 700, cursor: busy ? 'wait' : 'pointer' }}
-              >
-                {busy ? 'Publishing…' : (scheduledAt ? '📅 Schedule' : '🚀 Publish now')}
-              </button>
+              {!publishResult && (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={publish}
+                  disabled={busy || !title.trim() || !description.trim()}
+                  style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: 6, fontWeight: 700, cursor: busy ? 'wait' : 'pointer' }}
+                >
+                  {busy ? 'Publishing…' : (scheduledAt ? '📅 Schedule' : '🚀 Publish now')}
+                </button>
+              )}
             </div>
           </>
         )}
