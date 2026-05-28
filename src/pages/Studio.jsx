@@ -3260,10 +3260,9 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
             <Field label={<span>Custom thumbnail <span style={{ color: 'var(--muted)', fontSize: 11, marginLeft: 6 }}>Optional, JPG/PNG/WebP, ≤2MB, 1280×720</span></span>}>
               <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
                 {thumbnailUrl ? (
-                  // eslint-disable-next-line jsx-a11y/img-redundant-alt
                   <img
                     src={thumbnailUrl}
-                    alt="Thumbnail preview"
+                    alt="thumbnail"
                     style={{ width: 160, height: 90, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--border)' }}
                   />
                 ) : (
