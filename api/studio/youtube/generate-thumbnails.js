@@ -66,10 +66,49 @@ async function submitThumbTask({ prompt, apiKey, imageInput }) {
   return taskId
 }
 
+// Recursively walk a JSON value and return the first string that looks
+// like an image URL. Kie's various models return the output URL under
+// inconsistent keys (resultUrls, output_url, imageUrl, etc.) so a
+// permissive deep-search is more robust than an explicit key list.
+// Picks the FIRST URL found by depth-first walk — Kie always puts the
+// image URL inside the result object once the task completes, so the
+// first one is the right one.
+function deepFindImageUrl(node, depth = 0) {
+  if (depth > 6 || node == null) return null
+  if (typeof node === 'string') {
+    // Quick filter: must look like an http(s) URL pointing at an image
+    // host or with an image extension. Kie's output URLs are typically
+    // on tempfile.aiquickdraw.com / oss-cn-* / cdn-output / similar.
+    if (!/^https?:\/\//i.test(node)) return null
+    if (/\.(png|jpe?g|webp|gif|avif)(\?|$)/i.test(node)) return node
+    // Some Kie hosts don't include the extension in the URL — accept
+    // anything that doesn't look like an auth/callback/heartbeat URL.
+    if (/\b(image|img|thumbnail|cdn|output|result|tempfile|aiquickdraw|oss|amazonaws|cloudfront)\b/i.test(node)) {
+      return node
+    }
+    return null
+  }
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const hit = deepFindImageUrl(item, depth + 1)
+      if (hit) return hit
+    }
+    return null
+  }
+  if (typeof node === 'object') {
+    for (const key of Object.keys(node)) {
+      const hit = deepFindImageUrl(node[key], depth + 1)
+      if (hit) return hit
+    }
+  }
+  return null
+}
+
 // Poll Kie until the task lands a URL or fails. ~90s max to stay inside
 // our 120s function ceiling.
 async function pollThumbTask(taskId, apiKey, maxMs = 90000) {
   const start = Date.now()
+  let lastBody = null
   while (Date.now() - start < maxMs) {
     const r = await fetch(`${KIE_BASE}/api/v1/jobs/recordInfo?taskId=${encodeURIComponent(taskId)}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
@@ -77,25 +116,31 @@ async function pollThumbTask(taskId, apiKey, maxMs = 90000) {
     const text = await r.text()
     let body = {}
     try { body = JSON.parse(text) } catch {}
+    lastBody = body
     const data = body?.data || body
     const state = String(data?.state || data?.status || '').toLowerCase()
     if (state === 'fail' || state === 'failed' || state === 'error') {
       throw new Error(data?.failMsg || data?.errorMessage || 'Kie task failed')
     }
-    // Image URL surfaces under various keys depending on the model — match
-    // generate-assets.js pickKieImageUrl approach.
-    const url = data?.resultJson?.resultUrls?.[0]
-      || data?.resultUrls?.[0]
-      || data?.result?.url
-      || data?.url
-      || data?.imageUrl
-      || data?.image_url
-      || (Array.isArray(data?.images) && data.images[0]?.url)
-      || null
+    const url = deepFindImageUrl(data)
     if (url) return url
+    // If the task reports "success" / "completed" but we couldn't find
+    // a URL, log the shape — this is the bug Ray hit ("images visible
+    // on Kie dashboard but not returned to us"). The deep-search above
+    // is permissive but if the response wraps the URL in a totally new
+    // structure we want diagnostics.
+    if (['success', 'completed', 'done', 'finished'].includes(state)) {
+      console.warn(`[generate-thumbnails] task ${taskId} reports ${state} but no URL found. Body keys: ${JSON.stringify(Object.keys(data || {})).slice(0, 200)}`)
+      // Dump the trimmed body once so the next deploy can extract the right key
+      console.warn(`[generate-thumbnails] task ${taskId} body: ${JSON.stringify(data).slice(0, 800)}`)
+      throw new Error(`Kie task completed but no image URL in response (state=${state}, keys=${Object.keys(data || {}).join(',')})`)
+    }
     await new Promise((r) => setTimeout(r, 2500))
   }
-  throw new Error('Kie task did not complete in time')
+  // Timeout path — surface the last seen body in the error so we can
+  // see what state Kie was reporting.
+  const lastState = (lastBody?.data?.state || lastBody?.data?.status || 'unknown')
+  throw new Error(`Kie task did not complete in time (lastState=${lastState})`)
 }
 
 // Mirror to our own storage so the URL is stable + public + permanent.
