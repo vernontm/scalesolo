@@ -20,6 +20,7 @@
 // and the parent dashboard navigates to the new video.
 
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useAuth } from '../context/AuthContext.jsx'
 import { authedFetch } from '../lib/authedFetch.js'
 import { toast } from './Toast.jsx'
@@ -320,7 +321,13 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
 
   const progressPct = ((stepIdx + 1) / steps.length) * 100
 
-  return (
+  // Render to document.body via portal so the modal escapes the Studio
+  // page's <div maxWidth: 1080> wrapper (and any other ancestor that
+  // might create a transform / contain stacking context). Without this,
+  // the modal's position: fixed becomes relative to the nearest
+  // containing ancestor instead of the viewport — which made the body
+  // / footer render in unexpected places.
+  return createPortal(
     <div style={overlayStyle} onClick={(e) => { if (e.target === e.currentTarget) onClose?.() }}>
       <div style={cardStyle}>
         <div style={progressTrack}><div style={{ ...progressFill, width: `${progressPct}%` }} /></div>
@@ -424,7 +431,8 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
