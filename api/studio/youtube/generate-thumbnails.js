@@ -265,7 +265,11 @@ export default async function handler(req, res) {
       'Each thumbnail in the array has:\n' +
       '  - prompt: 2-4 sentences describing the visual scene. Lead with subject, then environment, then lighting, then text overlay if any. Mention exact text overlays in quotes like \'with the text "MISSED THE SHIFT" in bold yellow\'. Be specific about composition.\n' +
       '  - overlay_text: the 2-5 word headline text that should appear in the image (or empty if no text overlay).\n' +
-      '  - style: short label for this concept (e.g. "Dramatic portrait", "Abstract metaphor", "Reaction shot").\n\n' +
+      '  - style: short label for this concept (e.g. "Dramatic portrait", "Abstract metaphor", "Reaction shot").\n' +
+      '  - features_person: TRUE if the concept features a human (the host, a person, a face, hands) in the image. FALSE if it is purely abstract / objects / environment / text. Be honest — this routes the image generator to use the host\'s actual reference photo when true. Mark TRUE for any portrait, reaction shot, "host doing X", hands-on-keyboard, or anything where you describe a person.\n\n' +
+      (useAvatar
+        ? `When features_person is TRUE, the image generator will be given the host's actual reference photo as an image input. Your prompt should describe the SCENE around the host (lighting, environment, expression, pose, framing) and use "${personHostName}" by name. Do NOT describe their race, hair color, age, or facial features — those come from the reference photo, not your prompt. Words you describe will override the reference, so keep facial description out.\n\n`
+        : '') +
       'No emoji. No quote marks around the whole prompt. Output ONLY via the tool.'
 
     const claudeResp = await anthropicMessage({
@@ -288,8 +292,17 @@ export default async function handler(req, res) {
                   prompt: { type: 'string' },
                   overlay_text: { type: 'string' },
                   style: { type: 'string' },
+                  // Explicit signal: does this concept feature the host
+                  // (or any human face) in the image? Drives whether
+                  // we route to gpt-image-2-image-to-image with the
+                  // avatar reference vs. text-to-image. Don't rely on
+                  // a regex sniff of the prompt — Claude knows best.
+                  features_person: {
+                    type: 'boolean',
+                    description: 'True if this concept features the host or any person/face. False for abstract/object-only concepts.',
+                  },
                 },
-                required: ['prompt', 'style'],
+                required: ['prompt', 'style', 'features_person'],
               },
             },
           },
@@ -310,13 +323,14 @@ export default async function handler(req, res) {
     const kieKey = process.env.KIE_API_KEY
     if (!kieKey) return res.status(500).json({ error: 'KIE_API_KEY not configured.' })
 
-    // Heuristic: does this prompt actually reference a person? If yes
-    // AND we have an avatar look image, send it as image_input so the
-    // face matches the host. Same regex used in dispatchImage.
-    const PERSON_HINT = /\b(person|founder|creator|solopreneur|host|speaker|she|he|they|you|woman|man|guy|girl|professional|portrait|face|hands)\b/i
-
+    // Route to image-to-image whenever Claude flagged the concept as
+    // featuring a person AND we have an avatar reference photo. The
+    // earlier regex-sniff missed concepts that referred to the host
+    // implicitly (e.g. by name without using "face" / "portrait"),
+    // which is how a random stranger ended up in the "Reaction
+    // close-up" tile instead of the actual avatar.
     const results = await Promise.allSettled(thumbnails.map(async (t, i) => {
-      const wantsPerson = useAvatar && PERSON_HINT.test(t.prompt || '')
+      const wantsPerson = useAvatar && t.features_person === true
       const imageInput = wantsPerson ? [avatarReferenceImageUrl] : []
       const taskId = await submitThumbTask({ prompt: t.prompt, apiKey: kieKey, imageInput })
       const remoteUrl = await pollThumbTask(taskId, kieKey)
@@ -326,6 +340,7 @@ export default async function handler(req, res) {
         prompt: t.prompt,
         overlay_text: t.overlay_text || '',
         style: t.style || `Concept ${i + 1}`,
+        features_person: !!t.features_person,
       }
     }))
 

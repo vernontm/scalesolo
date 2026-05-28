@@ -3101,6 +3101,9 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
     Array.isArray(video?.thumbnail_candidates) ? video.thumbnail_candidates : [],
   )
   const [generatingThumbs, setGeneratingThumbs] = useState(false)
+  // Lightbox: clicked thumbnail enlarges in a fullscreen overlay so the
+  // user can read overlay text + check fine details before picking.
+  const [previewUrl, setPreviewUrl] = useState(null)
 
   // Load auto-generated metadata once on mount.
   useEffect(() => {
@@ -3268,46 +3271,53 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
                     {thumbCandidates.map((c, i) => {
                       const isSelected = c.url === thumbnailUrl
                       return (
-                        <button
+                        <div
                           key={`${i}-${c.url}`}
-                          type="button"
-                          onClick={() => setThumbnailUrl(c.url)}
                           style={{
-                            position: 'relative', padding: 0, cursor: 'pointer',
-                            background: 'transparent', border: 'none',
+                            position: 'relative',
+                            border: `2px solid ${isSelected ? 'var(--red)' : 'transparent'}`,
+                            borderRadius: 8,
+                            overflow: 'hidden',
                           }}
-                          title={c.prompt?.slice(0, 200)}
                         >
                           <img
                             src={c.url}
                             alt={`option ${i + 1}`}
+                            onClick={() => setPreviewUrl(c.url)}
                             style={{
                               width: '100%', aspectRatio: '16 / 9', objectFit: 'cover',
-                              borderRadius: 6,
-                              border: `2px solid ${isSelected ? 'var(--red)' : 'transparent'}`,
-                              display: 'block',
+                              display: 'block', cursor: 'zoom-in',
                             }}
+                            title="Click to preview full size"
                           />
                           <div style={{
-                            position: 'absolute', bottom: 4, left: 4, right: 4,
-                            fontSize: 10, fontWeight: 700, color: '#fff',
-                            background: 'rgba(0,0,0,0.6)', padding: '2px 6px',
-                            borderRadius: 3, textAlign: 'center',
-                            textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap',
+                            position: 'absolute', bottom: 0, left: 0, right: 0,
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                            background: 'linear-gradient(to top, rgba(0,0,0,0.85), transparent)',
+                            padding: '12px 6px 4px 6px',
                           }}>
-                            {c.style || `Option ${i + 1}`}
-                          </div>
-                          {isSelected && (
-                            <div style={{
-                              position: 'absolute', top: 4, right: 4,
-                              background: 'var(--red)', color: '#fff',
-                              borderRadius: '50%', width: 22, height: 22,
-                              display: 'grid', placeItems: 'center', fontSize: 12, fontWeight: 700,
+                            <span style={{
+                              fontSize: 10, fontWeight: 700, color: '#fff',
+                              flex: 1, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', paddingLeft: 4,
                             }}>
-                              ✓
-                            </div>
-                          )}
-                        </button>
+                              {c.style || `Option ${i + 1}`}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); setThumbnailUrl(c.url) }}
+                              style={{
+                                fontSize: 10, fontWeight: 700,
+                                padding: '3px 8px', borderRadius: 4,
+                                background: isSelected ? 'var(--red)' : 'rgba(255,255,255,0.9)',
+                                color: isSelected ? '#fff' : '#000',
+                                border: 'none', cursor: 'pointer',
+                                whiteSpace: 'nowrap', flexShrink: 0,
+                              }}
+                            >
+                              {isSelected ? '✓ Selected' : 'Use this'}
+                            </button>
+                          </div>
+                        </div>
                       )
                     })}
                   </div>
@@ -3476,6 +3486,37 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
           </>
         )}
       </div>
+
+      {/* Full-size thumbnail preview lightbox. Click outside (or Esc)
+          to close. Stops modal click-outside from also firing. */}
+      {previewUrl && (
+        <div
+          onClick={(e) => { e.stopPropagation(); setPreviewUrl(null) }}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.92)', zIndex: 1100,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40,
+            cursor: 'zoom-out',
+          }}
+        >
+          <img
+            src={previewUrl}
+            alt="thumbnail full size"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '90vw', maxHeight: '85vh', objectFit: 'contain', borderRadius: 8, boxShadow: '0 8px 40px rgba(0,0,0,0.6)' }}
+          />
+          <button
+            onClick={(e) => { e.stopPropagation(); setPreviewUrl(null) }}
+            style={{
+              position: 'fixed', top: 24, right: 24,
+              background: 'rgba(255,255,255,0.15)', color: '#fff',
+              border: 'none', borderRadius: '50%', width: 40, height: 40,
+              fontSize: 22, cursor: 'pointer', display: 'grid', placeItems: 'center',
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
     </div>
   )
 }
