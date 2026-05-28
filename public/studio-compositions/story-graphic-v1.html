@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Story graphic</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800;900&family=DM+Sans:wght@400;500;700&family=DM+Mono:wght@400;500&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 1080px;
+    height: 1920px;
+    overflow: hidden;
+    background: #0b0b0e;
+    color: #fff;
+    font-family: 'DM Sans', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .canvas {
+    position: relative;
+    width: 1080px;
+    height: 1920px;
+    background-color: #0b0b0e;
+    background-image:
+      radial-gradient(ellipse 80% 60% at 50% 0%, var(--glow-start) 0%, var(--glow-mid) 40%, transparent 75%),
+      linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+    background-size: auto, 60px 60px, 60px 60px;
+    padding: 100px 80px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Top: NEW VIDEO eyebrow ── */
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 14px;
+    font-family: 'DM Mono', monospace;
+    font-size: 22px;
+    letter-spacing: 0.32em;
+    color: var(--accent);
+    text-transform: uppercase;
+    font-weight: 600;
+    margin-bottom: 36px;
+  }
+  .eyebrow .dot {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 24px var(--accent);
+  }
+
+  /* ── Title ── */
+  .title {
+    font-family: 'Sora', sans-serif;
+    font-weight: 800;
+    font-size: 76px;
+    line-height: 1.05;
+    letter-spacing: -2px;
+    color: #ffffff;
+    margin-bottom: 28px;
+    max-width: 920px;
+  }
+
+  /* ── Summary ── */
+  .summary {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 30px;
+    line-height: 1.45;
+    color: #cccccd;
+    margin-bottom: 50px;
+    max-width: 900px;
+    /* Clamp to 4 lines so very long summaries don't push the thumbnail
+       off the bottom of the canvas. */
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* ── Thumbnail card ── */
+  .thumb-wrap {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    border-radius: 28px;
+    overflow: hidden;
+    box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.7);
+    background: #1a1a1a;
+    margin-bottom: 56px;
+  }
+  .thumb-wrap img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .play-overlay {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 160px;
+    height: 160px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-size: 64px;
+    line-height: 160px;
+    text-align: center;
+    text-indent: 10px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55), inset 0 2px 0 rgba(255, 255, 255, 0.25);
+  }
+
+  /* ── CTA strip ── */
+  .cta {
+    margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 24px;
+  }
+  .cta-eyebrow {
+    font-family: 'DM Mono', monospace;
+    font-size: 22px;
+    letter-spacing: 0.28em;
+    color: #888888;
+    text-transform: uppercase;
+    font-weight: 500;
+  }
+  .cta-button {
+    display: inline-block;
+    padding: 32px 56px;
+    border-radius: 18px;
+    font-family: 'Sora', sans-serif;
+    font-weight: 800;
+    font-size: 36px;
+    letter-spacing: 0.02em;
+    color: #ffffff;
+    background: linear-gradient(180deg, var(--accent-light) 0%, var(--accent) 50%, var(--accent-dark) 100%);
+    box-shadow: 0 20px 50px -10px var(--accent-shadow), inset 0 2px 0 rgba(255, 255, 255, 0.25);
+    text-shadow: 0 2px 0 rgba(0, 0, 0, 0.15);
+  }
+  .brand-mark {
+    font-family: 'Sora', sans-serif;
+    font-weight: 800;
+    font-size: 30px;
+    color: #888888;
+    letter-spacing: -0.5px;
+  }
+  .brand-mark span {
+    color: var(--accent);
+  }
+</style>
+</head>
+<body>
+  <div class="canvas" id="canvas">
+    <div class="eyebrow"><span class="dot"></span><span id="eyebrow-text">NEW VIDEO IS LIVE</span></div>
+    <h1 class="title" id="title">Title goes here</h1>
+    <p class="summary" id="summary">Summary or hook for the video appears here. Keep it tight — 2 to 3 sentences max so it reads on a phone in under 2 seconds.</p>
+    <div class="thumb-wrap">
+      <img id="thumb" src="" alt="Video thumbnail" />
+      <span class="play-overlay">&#9654;</span>
+    </div>
+    <div class="cta">
+      <div class="cta-eyebrow" id="cta-eyebrow">Watch the full video on</div>
+      <div class="cta-button" id="cta-button">YouTube &rarr;</div>
+      <div class="brand-mark" id="brand-mark">Brand Name</div>
+    </div>
+  </div>
+
+<script>
+  // Read query params and populate. Driven by worker that opens the
+  // composition at ?title=...&summary=...&thumb=...&brand=...&accent=...
+  // and captures the result as a PNG.
+  (function () {
+    const q = new URLSearchParams(window.location.search)
+    const accent = q.get('accent') || '#ef4444'
+
+    // Derive accent variants. Light = mix with white 30%, dark = mix
+    // with black 25%, shadow = accent at 45% opacity. Simple HSL shift
+    // would be nicer but RGB math keeps the JS tiny.
+    function hexToRgb(h) {
+      const m = h.replace('#', '').match(/.{2}/g)
+      if (!m || m.length < 3) return [239, 68, 68]
+      return m.slice(0, 3).map((s) => parseInt(s, 16))
+    }
+    function rgbToHex(r, g, b) {
+      return '#' + [r, g, b].map((v) => Math.round(v).toString(16).padStart(2, '0')).join('')
+    }
+    const [r, g, b] = hexToRgb(accent)
+    const lighter = rgbToHex(r + (255 - r) * 0.3, g + (255 - g) * 0.3, b + (255 - b) * 0.3)
+    const darker  = rgbToHex(r * 0.65, g * 0.65, b * 0.65)
+    const shadow  = `rgba(${r}, ${g}, ${b}, 0.45)`
+    const glowStart = `rgba(${r}, ${g}, ${b}, 0.55)`
+    const glowMid   = `rgba(${r}, ${g}, ${b}, 0.15)`
+
+    const root = document.documentElement
+    root.style.setProperty('--accent', accent)
+    root.style.setProperty('--accent-light', lighter)
+    root.style.setProperty('--accent-dark', darker)
+    root.style.setProperty('--accent-shadow', shadow)
+    root.style.setProperty('--glow-start', glowStart)
+    root.style.setProperty('--glow-mid', glowMid)
+
+    const title = q.get('title')
+    if (title) document.getElementById('title').textContent = title
+
+    const summary = q.get('summary')
+    if (summary) document.getElementById('summary').textContent = summary
+
+    const thumb = q.get('thumb')
+    if (thumb) document.getElementById('thumb').src = thumb
+
+    const brand = q.get('brand')
+    if (brand) {
+      const parts = brand.split(' ')
+      const last = parts.pop()
+      document.getElementById('brand-mark').innerHTML = parts.length
+        ? `${parts.join(' ')} <span>${last}</span>`
+        : `<span>${last}</span>`
+    }
+
+    const eyebrow = q.get('eyebrow')
+    if (eyebrow) document.getElementById('eyebrow-text').textContent = eyebrow
+
+    const ctaText = q.get('cta_button')
+    if (ctaText) document.getElementById('cta-button').innerHTML = ctaText + ' &rarr;'
+
+    const ctaEyebrow = q.get('cta_eyebrow')
+    if (ctaEyebrow) document.getElementById('cta-eyebrow').textContent = ctaEyebrow
+
+    // Mark ready so the worker knows the page has applied all params.
+    // Worker waits for window.__storyReady before screenshot.
+    window.__storyReady = true
+  })()
+</script>
+</body>
+</html>

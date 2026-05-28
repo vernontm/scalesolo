@@ -19,6 +19,7 @@
 // on Railway and the same value on Vercel; mismatched requests get 401.
 
 import express from 'express'
+import puppeteer from 'puppeteer'
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
@@ -1697,6 +1698,96 @@ async function extractAudioCore(body) {
     if (workdir) { try { await rm(workdir, { recursive: true, force: true }) } catch {} }
   }
 }
+
+// ── Studio story graphic (9:16 PNG from HTML template) ────────────────────
+// Renders public/studio-compositions/story-graphic-v1.html at
+// 1080x1920 with the video's title/summary/thumbnail/brand burned in,
+// captures a PNG, uploads to studio-media, returns the URL. Used by
+// the Schedule modal's "Create Story Graphic" button after publish so
+// the user has a ready-to-post Instagram/TikTok story image.
+//
+// Body: { studio_video_id, title, summary, thumbnail_url, accent_color,
+//         brand_name, eyebrow, cta_button, cta_eyebrow }
+// Response: { url }
+async function getStoryBrowser() {
+  // Reuse the studio-render Puppeteer logic via the same lazy-launch
+  // pattern. Keeping the import + helper inline so this file stays
+  // self-contained.
+  return await puppeteer.launch({
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-web-security',
+      '--hide-scrollbars',
+    ],
+  })
+}
+
+app.post('/jobs/story-graphic', requireSecret, async (req, res) => {
+  const body = req.body || {}
+  const { studio_video_id, title, summary, thumbnail_url, accent_color, brand_name, eyebrow, cta_button, cta_eyebrow } = body
+  if (!studio_video_id) return res.status(400).json({ error: 'studio_video_id required' })
+  if (!title) return res.status(400).json({ error: 'title required' })
+  if (!SUPABASE_URL || !SERVICE_KEY) {
+    return res.status(500).json({ error: 'SUPABASE_URL / SUPABASE_SERVICE_KEY not configured' })
+  }
+  const baseUrl = process.env.STUDIO_RENDER_BASE_URL || 'https://www.scalesolo.ai'
+
+  jobStart()
+  let browser = null
+  try {
+    const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
+    const { data: videoRow } = await supabase
+      .from('studio_videos')
+      .select('profile_id')
+      .eq('id', studio_video_id)
+      .maybeSingle()
+    if (!videoRow) throw new Error('video not found')
+
+    browser = await getStoryBrowser()
+    const page = await browser.newPage()
+    await page.setViewport({ width: 1080, height: 1920, deviceScaleFactor: 1 })
+
+    const params = new URLSearchParams()
+    params.set('title', title)
+    if (summary) params.set('summary', summary)
+    if (thumbnail_url) params.set('thumb', thumbnail_url)
+    if (accent_color) params.set('accent', accent_color)
+    if (brand_name) params.set('brand', brand_name)
+    if (eyebrow) params.set('eyebrow', eyebrow)
+    if (cta_button) params.set('cta_button', cta_button)
+    if (cta_eyebrow) params.set('cta_eyebrow', cta_eyebrow)
+
+    const url = `${baseUrl}/studio-compositions/story-graphic-v1.html?${params.toString()}`
+    await page.goto(url, { waitUntil: 'load', timeout: 30000 })
+    // Wait for the inline script to apply params + flip __storyReady
+    await page.waitForFunction(() => window.__storyReady === true, { timeout: 15000 })
+    // Give the thumbnail image a beat to actually load (waitUntil:load
+    // catches the document, not subresources fetched after script run).
+    await page.waitForFunction(() => {
+      const img = document.getElementById('thumb')
+      return !img || img.complete
+    }, { timeout: 15000 }).catch(() => {})
+
+    const pngBuf = await page.screenshot({ type: 'png', omitBackground: false })
+    await page.close()
+
+    const path = `${videoRow.profile_id}/studio/story-graphics/story-${studio_video_id}-${Date.now()}.png`
+    const { error: upErr } = await supabase.storage.from('studio-media')
+      .upload(path, pngBuf, { contentType: 'image/png', upsert: true })
+    if (upErr) throw new Error(`upload: ${upErr.message}`)
+    const { data: pub } = supabase.storage.from('studio-media').getPublicUrl(path)
+    return res.json({ ok: true, url: pub?.publicUrl })
+  } catch (e) {
+    console.error('story-graphic job error:', e?.stack || e)
+    return res.status(500).json({ error: String(e?.message || e) })
+  } finally {
+    if (browser) await browser.close().catch(() => {})
+    jobEnd()
+  }
+})
 
 // ── Studio voice isolation (ElevenLabs) ────────────────────────────────────
 // Per-segment ElevenLabs Voice Isolator pass. We can't run this from

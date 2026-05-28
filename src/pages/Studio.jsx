@@ -3104,6 +3104,11 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
   // Lightbox: clicked thumbnail enlarges in a fullscreen overlay so the
   // user can read overlay text + check fine details before picking.
   const [previewUrl, setPreviewUrl] = useState(null)
+  // Story graphic state. After publish, user clicks "Create Story
+  // Graphic" → POST to create-story-graphic → URL of the rendered
+  // 1080x1920 PNG appears + can be downloaded/copied.
+  const [storyGraphicUrl, setStoryGraphicUrl] = useState(null)
+  const [generatingStory, setGeneratingStory] = useState(false)
   // Edit-mode state. Tracks which thumbnail URL is being edited and
   // what prompt the user is typing. Submit posts to edit-thumbnail
   // and appends the result to thumbCandidates.
@@ -3635,6 +3640,86 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
                 </div>
               )
             })()}
+
+            {publishResult && (
+              <div style={{
+                marginTop: 10, padding: 12, borderRadius: 6,
+                background: 'rgba(168,85,247,0.08)', border: '1px solid rgba(168,85,247,0.4)',
+              }}>
+                <div style={{ fontSize: 12, color: 'var(--text)', marginBottom: 8 }}>
+                  📸 Generate a 9:16 story graphic for Instagram + TikTok stories — uses your title, summary, and selected thumbnail. Perfect for "new video is up" announcements.
+                </div>
+                {storyGraphicUrl && (
+                  <div style={{ marginBottom: 8 }}>
+                    <img
+                      src={storyGraphicUrl}
+                      alt="story graphic"
+                      onClick={() => setPreviewUrl(storyGraphicUrl)}
+                      style={{ height: 200, borderRadius: 6, border: '1px solid var(--border)', cursor: 'zoom-in' }}
+                    />
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!session?.access_token) return
+                      setGeneratingStory(true)
+                      try {
+                        const r = await authedFetch('/api/studio/youtube/create-story-graphic', session.access_token, {
+                          method: 'POST',
+                          body: JSON.stringify({
+                            studio_video_id: video.id,
+                            title,
+                            summary: (description.split(/\n\s*\n/)[0] || '').trim(),
+                            thumbnail_url: thumbnailUrl,
+                          }),
+                        })
+                        const b = await r.json().catch(() => ({}))
+                        if (!r.ok) {
+                          toast({ message: b.error || `Story graphic failed (${r.status})`, kind: 'error' })
+                          return
+                        }
+                        setStoryGraphicUrl(b.url || null)
+                        toast({ message: 'Story graphic generated. Click to preview, or download.', kind: 'success' })
+                      } catch (e) {
+                        toast({ message: e.message, kind: 'error' })
+                      } finally {
+                        setGeneratingStory(false)
+                      }
+                    }}
+                    disabled={generatingStory}
+                    style={{
+                      fontSize: 12, fontWeight: 700,
+                      padding: '6px 12px', borderRadius: 6,
+                      background: '#a855f7', color: '#fff',
+                      border: 'none',
+                      cursor: generatingStory ? 'wait' : 'pointer',
+                    }}
+                  >
+                    {generatingStory
+                      ? '⏳ Generating…'
+                      : storyGraphicUrl ? '🔁 Regenerate' : '📸 Create Story Graphic'}
+                  </button>
+                  {storyGraphicUrl && (
+                    <a
+                      href={storyGraphicUrl}
+                      download={`story-${video.id}.png`}
+                      style={{
+                        fontSize: 12, fontWeight: 700,
+                        padding: '6px 12px', borderRadius: 6,
+                        background: 'var(--surface)', color: 'var(--text)',
+                        border: '1px solid var(--border)',
+                        textDecoration: 'none',
+                        display: 'inline-flex', alignItems: 'center', gap: 4,
+                      }}
+                    >
+                      ⬇ Download PNG
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
               <button
