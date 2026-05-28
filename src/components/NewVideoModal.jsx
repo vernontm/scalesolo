@@ -338,6 +338,7 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
         </div>
 
         <div style={bodyStyle}>
+          <div style={bodyContentStyle}>
           {error && <div style={errorPanel}>{error}</div>}
 
           {step === 'aspect' && (
@@ -410,6 +411,7 @@ export default function NewVideoModal({ profileId, open, onClose, onCreated }) {
               musicTracks={musicTracks}
             />
           )}
+          </div>
         </div>
 
         <div style={footerStyle}>
@@ -1081,29 +1083,20 @@ function Recap({ label, value }) {
 
 // ── Styles ───────────────────────────────────────────────────────────
 
-// Full-page dim layer with a centered 800px modal card. The card
-// sizes to its content (header + body + footer) rather than stretching
-// to 100vh, so short steps don't leave a huge empty stage between the
-// body and the sticky footer. The page scrolls naturally when content
-// is taller than the viewport.
+// Full-page overlay — the modal IS the page while open. The header,
+// body, and footer go full-width so there's no inner-frame look.
+// What gets centered is the CONTENT INSIDE each region, via maxWidth
+// on the content wrappers below — not the regions themselves.
 const overlayStyle = {
   position: 'fixed', inset: 0, zIndex: 250,
   background: 'var(--bg-base, #0a0a0c)',
   overflowY: 'auto',
-  // Vertical padding so the card has breathing room at the top
-  // even when scrolled to the start.
-  padding: '24px 0',
 }
 const cardStyle = {
   width: '100%',
-  maxWidth: 800,
-  margin: '0 auto',
   background: 'transparent',
   display: 'flex', flexDirection: 'column',
-  // A minimum visible height so the body never collapses to a thin
-  // strip on tall screens. Body content sits at the top of this; any
-  // extra space is below the footer (or scrolls if the body is taller).
-  minHeight: 'min(800px, calc(100vh - 48px))',
+  minHeight: '100vh',
 }
 const progressTrack = { height: 3, background: 'var(--surface-2)' }
 const progressFill = {
@@ -1114,8 +1107,6 @@ const headerStyle = {
   padding: '20px 32px',
   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
   borderBottom: '1px solid var(--border)',
-  maxWidth: 800,
-  margin: '0 auto',
   width: '100%',
   boxSizing: 'border-box',
 }
@@ -1128,28 +1119,36 @@ const closeBtn = {
   background: 'transparent', border: 'none', cursor: 'pointer',
   color: 'var(--muted)', padding: 6, display: 'inline-flex', alignItems: 'center',
 }
+// Body is full-width; the actual step content centers itself via
+// the inner content wrapper below. minHeight guarantees the body
+// has visible vertical presence (~800px on desktop) so sparse steps
+// don't make the modal look empty.
 const bodyStyle = {
   padding: '40px 32px 24px',
-  maxWidth: 800,
-  margin: '0 auto',
   width: '100%',
   boxSizing: 'border-box',
-  // Body sizes to its content. The card's marginTop:auto on footer
-  // handles the bottom-pinning so we don't need flex:1 to stretch.
+  flex: 1,
+  minHeight: 'min(800px, calc(100vh - 220px))',
+  display: 'flex', flexDirection: 'column',
+  alignItems: 'center',
+}
+// Inner wrapper that constrains the readable column width — keeps
+// option cards from stretching to full viewport on wide monitors
+// while leaving the body region itself full-bleed.
+const bodyContentStyle = {
+  width: '100%',
+  maxWidth: 720,
 }
 const footerStyle = {
   padding: '20px 32px 28px',
   borderTop: '1px solid var(--border)',
   display: 'flex', justifyContent: 'space-between',
-  maxWidth: 800,
-  margin: '0 auto',
   width: '100%',
   boxSizing: 'border-box',
-  // marginTop:auto in a flex column pushes the footer to the bottom
-  // of the card so the body always anchors at the top + footer always
-  // pins below — no more giant gap between sparse content and the
-  // navigation buttons.
-  marginTop: 'auto',
+  position: 'sticky',
+  bottom: 0,
+  background: 'var(--bg-base, #0a0a0c)',
+  zIndex: 1,
 }
 const errorPanel = {
   marginBottom: 14, padding: '10px 14px',
