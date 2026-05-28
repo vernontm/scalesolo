@@ -13,6 +13,8 @@
 import { setCors, requireUser, supaFetch, assertProfileAccess } from './_lib/supabase.js'
 import { findNextOpenSlot, syncContentStatusInSpaces } from './_lib/scheduling.js'
 import { uploadpostCancelByRequestId, uploadpostCancelScheduled, uploadpostJobIdViaScheduleMatch, resolveUploadpostUser } from './_lib/uploadpost.js'
+import uploadPostHandler from './social/upload-post.js'
+import { invokeHandler } from './_lib/internal-invoke.js'
 
 // Cancel an existing scheduled Upload-Post job and re-submit it with a
 // new time. Called from the PATCH + action=schedule paths whenever the
@@ -129,23 +131,18 @@ async function rescheduleUploadPostJob({ row, newScheduledIso, authToken, req })
     script_id: row.id,
   }
 
-  // Internal call — same Vercel host, forward the user's auth token so
-  // /api/social/upload-post passes its requireUser check + can debit
-  // the right billing customer. We resolve the absolute URL from the
-  // current request so this works on prod, preview, and localhost.
-  const proto = (req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim()
-  const host  = req.headers['x-forwarded-host'] || req.headers.host
-  const base  = `${proto}://${host}`
-  const r = await fetch(`${base}/api/social/upload-post`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` },
-    body: JSON.stringify(body),
-  })
-  const resp = await r.json().catch(() => ({}))
-  if (!r.ok) {
-    const msg = resp?.error || `upload-post resubmit ${r.status}`
+  // Invoke the upload-post handler IN-PROCESS instead of self-fetching
+  // through Vercel's public URL. This avoids the Deployment-Protection
+  // SSO wall on preview deployments (which would otherwise 401 the
+  // server-side fetch and surface as "upload-post resubmit 401" in the
+  // UI). The synthetic req carries the user's existing auth headers so
+  // upload-post's requireUser + billing checks all pass identically.
+  const captured = await invokeHandler(uploadPostHandler, req, { method: 'POST', body })
+  const resp = captured.body || {}
+  if (captured.statusCode < 200 || captured.statusCode >= 300) {
+    const msg = resp?.error || `upload-post resubmit ${captured.statusCode}`
     const err = new Error(msg)
-    err.status = r.status
+    err.status = captured.statusCode
     throw err
   }
   return { request_id: resp.request_id || null, job_id: resp.job_id || null }

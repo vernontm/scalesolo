@@ -22,6 +22,8 @@ import {
   resolveUploadpostUser,
   uploadpostEnsureUserProfile,
 } from '../_lib/uploadpost.js'
+import uploadPostHandler from '../social/upload-post.js'
+import { invokeHandler } from '../_lib/internal-invoke.js'
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
 
@@ -929,11 +931,9 @@ async function resyncUploadPost({ req, res, profile_id, script_ids }) {
   const rows = await supaFetch(q)
   if (!rows?.length) return res.status(200).json({ resynced: 0, skipped: 0, failed: 0, details: [] })
 
-  const proto = (req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim()
-  const host  = req.headers['x-forwarded-host'] || req.headers.host
-  const base  = `${proto}://${host}`
-  const authToken = req.headers.authorization?.replace(/^Bearer\s+/i, '') || ''
-
+  // In-process invoke instead of self-fetching the public URL. Same
+  // Vercel-preview SSO-wall problem the reschedule path hit: a server-
+  // to-server fetch to our own host gets 401'd by Deployment Protection.
   let resynced = 0, skipped = 0, failed = 0
   const details = []
 
@@ -995,15 +995,11 @@ async function resyncUploadPost({ req, res, profile_id, script_ids }) {
       script_id: row.id,
     }
     try {
-      const r = await fetch(`${base}/api/social/upload-post`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` },
-        body: JSON.stringify(body),
-      })
-      const resp = await r.json().catch(() => ({}))
-      if (!r.ok) {
+      const captured = await invokeHandler(uploadPostHandler, req, { method: 'POST', body })
+      const resp = captured.body || {}
+      if (captured.statusCode < 200 || captured.statusCode >= 300) {
         failed += 1
-        details.push({ id: row.id, status: 'failed', reason: resp?.error || `upload-post ${r.status}` })
+        details.push({ id: row.id, status: 'failed', reason: resp?.error || `upload-post ${captured.statusCode}` })
         continue
       }
       // Patch the row's uploadpost_request_id with the new one so future

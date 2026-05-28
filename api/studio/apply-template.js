@@ -28,6 +28,8 @@
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { gateStudio } from './_lib/gate.js'
 import { getTemplate } from './_lib/templates.js'
+import { invokeHandler } from '../_lib/internal-invoke.js'
+import generateMapHandler from './generate-map.js'
 
 export default async function handler(req, res) {
   setCors(req, res)
@@ -70,21 +72,16 @@ export default async function handler(req, res) {
       // server-side instead of relying on a client-side fan-out. We
       // pass confirm_wipe_render so the destructive-action guard
       // doesn't bounce us.
-      const proto = req.headers['x-forwarded-proto'] || 'https'
-      const host = req.headers['x-forwarded-host'] || req.headers.host
-      const url = `${proto}://${host}/api/studio/generate-map`
-      // Forward the original Authorization header so the called
-      // endpoint sees the same user.
-      fetch(url, {
+      // In-process invoke. Self-fetching the public URL would hit
+      // Vercel Deployment Protection's SSO wall on preview deployments
+      // and 401, surfacing as a silent "deep template apply did nothing"
+      // bug. Fire-and-forget — the per-video poller will surface state.
+      invokeHandler(generateMapHandler, req, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: req.headers.authorization || '',
-        },
-        body: JSON.stringify({
+        body: {
           studio_video_id: videoId,
           confirm_wipe_render: true,
-        }),
+        },
       }).catch(() => { /* surfaces on the per-video poller via status */ })
       return res.status(202).json({
         ok: true,
