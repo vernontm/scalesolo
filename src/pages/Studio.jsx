@@ -3095,7 +3095,8 @@ function DownloadAllVoicesButton({ segments }) {
 function ScheduleYouTubeModal({ video, session, onClose }) {
   const [busy, setBusy] = useState(false)
   const [loadingMeta, setLoadingMeta] = useState(true)
-  const [title, setTitle] = useState('')
+  const [titles, setTitles] = useState([])           // 3 viral variations from Claude
+  const [title, setTitle] = useState('')              // currently-selected (or user-edited) title
   const [description, setDescription] = useState('')
   const [scheduledAt, setScheduledAt] = useState('')  // 'YYYY-MM-DDTHH:MM' local
   const [metaError, setMetaError] = useState(null)
@@ -3115,10 +3116,13 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
           setMetaError(b.error || 'Could not generate description.')
           // Still pre-fill title from the video map title if Claude failed
           setTitle((video.title || '').slice(0, 100))
+          setTitles([])
           setDescription('')
           return
         }
-        setTitle(b.title || (video.title || '').slice(0, 100))
+        const opts = Array.isArray(b.titles) ? b.titles : (b.title ? [b.title] : [])
+        setTitles(opts)
+        setTitle(opts[0] || (video.title || '').slice(0, 100))
         setDescription(b.full_description || '')
       } catch (e) {
         if (!cancelled) setMetaError(e.message)
@@ -3201,12 +3205,38 @@ function ScheduleYouTubeModal({ video, session, onClose }) {
               </div>
             )}
 
-            <Field label={<span>Title <span style={{ color: 'var(--muted)', fontSize: 11, marginLeft: 6 }}>{title.length}/100</span></span>}>
+            <Field label={<span>Title <span style={{ color: 'var(--muted)', fontSize: 11, marginLeft: 6 }}>{title.length}/100 — pick a viral hook or edit your own</span></span>}>
+              {titles.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+                  {titles.map((t, i) => {
+                    const isSelected = t === title
+                    return (
+                      <button
+                        key={`${i}-${t}`}
+                        type="button"
+                        onClick={() => setTitle(t)}
+                        style={{
+                          textAlign: 'left', cursor: 'pointer',
+                          padding: '8px 12px', borderRadius: 6, fontSize: 13,
+                          background: isSelected ? 'rgba(239,68,68,0.15)' : 'var(--surface-2)',
+                          border: `1px solid ${isSelected ? 'var(--red)' : 'var(--border)'}`,
+                          color: 'var(--text)', fontWeight: isSelected ? 600 : 400,
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+                        }}
+                      >
+                        <span style={{ flex: 1 }}>{t}</span>
+                        <span style={{ fontSize: 10, color: 'var(--muted)', flexShrink: 0 }}>{t.length} ch</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
               <input
                 className="input"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 maxLength={100}
+                placeholder="Or type your own title here"
                 style={{ width: '100%' }}
               />
             </Field>

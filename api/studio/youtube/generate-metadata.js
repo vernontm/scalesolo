@@ -84,18 +84,45 @@ export default async function handler(req, res) {
     // Single Claude call returns all three (title, summary, chapter labels)
     // as a structured JSON tool input.
     const system =
-      'You write YouTube metadata for a creator. Given the full transcript of a video, return:\n' +
-      '  - title: 60-70 chars, hook-style. Lead with the most provocative claim or the\n' +
-      '    most concrete benefit. No emoji, no clickbait punctuation like "?!". Title\n' +
-      '    case. Avoid generic "Ultimate Guide to X" phrasing.\n' +
-      '  - summary: 2-3 sentences. First sentence: what the video is about + who it\'s\n' +
-      '    for. Second sentence: the most useful payoff. Third sentence (optional):\n' +
-      '    one-sentence CTA. No "in this video I will" — just state what it covers.\n' +
-      '  - chapters: 4-8 chapter labels that match the narrative beats. Each label\n' +
-      '    is 3-7 words, no leading numbers, no emoji. The FIRST chapter is always\n' +
-      '    "Intro" (mapped to 0:00 by the caller). Labels go in the order they appear\n' +
-      '    in the transcript.\n' +
-      'Return all three via the emit_metadata tool.'
+      'You write VIRAL YouTube metadata. Studied: MrBeast, Ali Abdaal, Veritasium, Hormozi, Cleo Abram. Given the full transcript of a video, return THREE title options + a summary + chapter labels.\n\n' +
+      '## TITLES (3 variations, 50-65 chars each)\n' +
+      'Every title must use ONE of these proven patterns:\n\n' +
+      '  Pattern 1 — Specific number + concrete outcome:\n' +
+      '    "I Made $10K in 30 Days With One AI Skill"\n' +
+      '    "How I Replaced My $80K Job With 3 AI Tools"\n' +
+      '    "The 7-Minute AI Workflow That Replaces a Coder"\n\n' +
+      '  Pattern 2 — Curiosity gap (something hidden / nobody talks about):\n' +
+      '    "The AI Skill Nobody Talks About (But Everyone Is Quietly Using)"\n' +
+      '    "Why AI Engineers Are Losing to AI Plumbers"\n' +
+      '    "Inside the New AI Skill Minting Millionaires"\n\n' +
+      '  Pattern 3 — Contrarian reframe ("X is not Y, X is Z" or "Everyone is wrong about X"):\n' +
+      '    "AI Engineering Is Not The New Skill (This Is)"\n' +
+      '    "Coding Did Not Make Anyone Rich — Building AI Systems Did"\n' +
+      '    "Forget Prompt Engineering — Learn This Instead"\n\n' +
+      '  Pattern 4 — FOMO / threat / "if you are not doing X":\n' +
+      '    "If You Are Not Doing This With AI in 2026, You Are Falling Behind"\n' +
+      '    "The AI Move Most Solopreneurs Are Sleeping On"\n\n' +
+      'TITLE RULES (non-negotiable):\n' +
+      '  - 50-65 characters. Shorter wins on mobile.\n' +
+      '  - Title Case (capitalize main words).\n' +
+      '  - No emoji. No "!!", "?!", or other clickbait punctuation.\n' +
+      '  - No em dashes. Use commas or colons instead.\n' +
+      '  - No generic "Ultimate Guide", "Complete Guide", "Everything You Need to Know" phrasing.\n' +
+      '  - Lead with the most specific or most provocative claim. Strip filler ("How To", "A Guide To").\n' +
+      '  - Use numbers when the script supports them (dollar amounts, days, percentages).\n' +
+      '  - Power words allowed: real, hidden, secret, truth, actually, quietly, nobody, finally, behind.\n' +
+      '  - Each of the 3 titles must use a DIFFERENT pattern from the list above.\n\n' +
+      '## SUMMARY (2-3 sentences)\n' +
+      '  - Sentence 1: what the video is about + who it is for. Be specific.\n' +
+      '  - Sentence 2: the most useful payoff. What will they walk away knowing?\n' +
+      '  - Sentence 3 (optional): one-sentence CTA. Not "subscribe" — something content-driven.\n' +
+      '  - Do not start with "In this video I will". Just state what it covers.\n\n' +
+      '## CHAPTERS (4-8 labels)\n' +
+      '  - Each label 3-7 words. Title Case. No leading numbers, no emoji.\n' +
+      '  - First chapter is always "Intro" (caller maps it to 0:00).\n' +
+      '  - Labels in transcript order. Each label is a HOOK for the section, not a literal heading.\n' +
+      '    Good: "The Skill Coders Are Missing" / Bad: "AI Skills Section".\n\n' +
+      'Return all four via the emit_metadata tool.'
 
     const userContent =
       `Brand: ${profile.business_name || profile.owner_name || 'creator'}\n` +
@@ -112,7 +139,13 @@ export default async function handler(req, res) {
         input_schema: {
           type: 'object',
           properties: {
-            title: { type: 'string', description: '60-70 character title' },
+            titles: {
+              type: 'array',
+              description: 'Three 50-65 char title variations, each using a different viral pattern',
+              items: { type: 'string' },
+              minItems: 3,
+              maxItems: 3,
+            },
             summary: { type: 'string', description: '2-3 sentence summary' },
             chapters: {
               type: 'array',
@@ -121,7 +154,7 @@ export default async function handler(req, res) {
               maxItems: 10,
             },
           },
-          required: ['title', 'summary', 'chapters'],
+          required: ['titles', 'summary', 'chapters'],
         },
       }],
       tool_choice: { type: 'tool', name: 'emit_metadata' },
@@ -130,8 +163,16 @@ export default async function handler(req, res) {
 
     const toolBlock = (claude?.content || []).find((b) => b.type === 'tool_use')
     const input = toolBlock?.input
-    if (!input?.title || !input?.summary || !Array.isArray(input?.chapters)) {
+    if (!Array.isArray(input?.titles) || !input?.summary || !Array.isArray(input?.chapters)) {
       return res.status(502).json({ error: 'Claude did not return usable metadata.' })
+    }
+    // Sanitize titles: trim, drop trailing punctuation that hurts CTR
+    // ("!", "!!", "?!" become just "?" or nothing), enforce 100 cap.
+    const titles = input.titles
+      .map((t) => String(t || '').trim().replace(/[!?]{2,}$/g, (m) => m[0]).slice(0, 100))
+      .filter(Boolean)
+    if (titles.length === 0) {
+      return res.status(502).json({ error: 'Claude returned no usable titles.' })
     }
 
     // Map chapter labels to timestamps. Segment timing comes from
@@ -164,7 +205,8 @@ export default async function handler(req, res) {
     const full_description = sections.join('\n\n')
 
     return res.status(200).json({
-      title: input.title.trim().slice(0, 100),
+      title: titles[0],          // legacy single-title field (back-compat)
+      titles,                    // full set of 3 viral variations
       summary: input.summary.trim(),
       chapters,
       full_description: full_description.slice(0, 5000),
