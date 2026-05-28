@@ -29,18 +29,26 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUP
 // taskId — we poll synchronously below since we only generate 3 images
 // and the user is waiting in the modal.
 async function submitThumbTask({ prompt, apiKey, imageInput }) {
+  // GPT Image-2 on Kie. Two variants:
+  //   - gpt-image-2-text-to-image: prompt only, fastest path
+  //   - gpt-image-2-image-to-image: prompt + reference images, used when
+  //     we have the host's avatar photo to anchor the face
+  //
+  // Picked over nano-banana-2 because GPT-Image-2 is dramatically better
+  // at rendering bold readable text overlays, which is most of the win
+  // on YouTube thumbnails. Resolution stays at 2K so the 1280x720
+  // crop has headroom; aspect_ratio 16:9 matches YouTube native.
+  const usesImage = Array.isArray(imageInput) && imageInput.length > 0
   const body = {
-    model: 'google/nano-banana-2',
+    model: usesImage ? 'gpt-image-2-image-to-image' : 'gpt-image-2-text-to-image',
     input: {
-      prompt: prompt.slice(0, 5000),
-      num_images: 1,
-      output_format: 'jpeg',
-      resolution: '1k',
+      prompt: prompt.slice(0, 20000),
       aspect_ratio: '16:9',
+      resolution: '2K',
     },
   }
-  if (Array.isArray(imageInput) && imageInput.length) {
-    body.input.image_input = imageInput
+  if (usesImage) {
+    body.input.input_urls = imageInput.slice(0, 16)
   }
   const r = await fetch(`${KIE_BASE}/api/v1/jobs/createTask`, {
     method: 'POST',
@@ -303,13 +311,21 @@ export default async function handler(req, res) {
     }
 
     // Persist so the user can re-open the modal without re-spending.
-    await supaFetch(`studio_videos?id=eq.${video.id}`, {
-      method: 'PATCH',
-      body: { thumbnail_candidates: candidates },
-      prefer: 'return=minimal',
-    }).catch(() => {})
+    // Surface persist failures in the response — earlier the silent
+    // catch was hiding the issue while client state showed "success."
+    let persistError = null
+    try {
+      await supaFetch(`studio_videos?id=eq.${video.id}`, {
+        method: 'PATCH',
+        body: { thumbnail_candidates: candidates },
+        prefer: 'return=minimal',
+      })
+    } catch (e) {
+      persistError = e?.message || String(e)
+      console.warn(`[generate-thumbnails] persist failed for video ${video.id}: ${persistError}`)
+    }
 
-    return res.status(200).json({ candidates, errors })
+    return res.status(200).json({ candidates, errors, persistError })
   } catch (err) {
     return res.status(err.status || 500).json({ error: err.message })
   }
