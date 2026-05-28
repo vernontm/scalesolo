@@ -613,10 +613,22 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   // polish silently no-ops returning the source URL — which is exactly
   // the symptom Ray hit: media_url_with_cover identical to the source.
   const polishTemplateRef = useRef(null)
+  // tokenRef mirrors the access token prop so long-running pipeline calls
+  // always read the FRESHEST JWT instead of the one captured in their
+  // closure at mount time. Supabase auto-rotates the access token roughly
+  // every hour. The bulk autopilot (transcribe → captions → covers →
+  // polish → schedule) can easily run past that window. Without this ref,
+  // every fetch inside runAutoPipeline keeps sending the original token;
+  // the auth-guard then hammers refreshSession() once per poll, and a
+  // single transient refresh failure pops the "session expired" banner —
+  // which is exactly the symptom Ray hit when bulk uploads consistently
+  // stalled at the cover-gen step.
+  const tokenRef = useRef(token)
   useEffect(() => { hasCoverTemplateRef.current = hasCoverTemplate }, [hasCoverTemplate])
   useEffect(() => { coverEnabledRef.current = coverEnabled }, [coverEnabled])
   useEffect(() => { polishEnabledRef.current = polishEnabled }, [polishEnabled])
   useEffect(() => { polishTemplateRef.current = polishTemplate }, [polishTemplate])
+  useEffect(() => { tokenRef.current = token }, [token])
   // Mount-time read from localStorage so the FIRST upload after a hard
   // refresh sees the persisted value, not the React-state default.
   useEffect(() => {
@@ -644,7 +656,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     if (!profileId || !token) { setDefaultPlatforms([]); return }
     let cancelled = false
     fetch(`/api/profiles`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${tokenRef.current}` },
     })
       .then((r) => r.json())
       .then((b) => {
@@ -705,7 +717,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     const body = buildPolishBody(videoUrl, { cover_image_url, embed_cover_intro })
     const r = await fetch('/api/videos/polish', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenRef.current}` },
       body: JSON.stringify(body),
     })
     const resp = await r.json().catch(() => ({}))
@@ -804,7 +816,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     try {
       const r = await fetch('/api/videos/polish', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenRef.current}` },
         body: JSON.stringify(body),
       })
       const resp = await r.json().catch(() => ({}))
@@ -830,7 +842,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     try {
       await fetch(`/api/profiles?id=${encodeURIComponent(profileId)}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenRef.current}` },
         body: JSON.stringify({ polish_template: next }),
       })
     } catch (e) {
@@ -852,7 +864,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     if (!profileId || !token) return
     try {
       const r = await fetch(`/api/content?profile_id=${profileId}&filter=library`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${tokenRef.current}` },
       })
       const body = await r.json()
       if (!r.ok) throw new Error(body?.error || `Load failed (${r.status})`)
@@ -882,7 +894,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     let resolvedPlatforms = defaultPlatforms
     if (!resolvedPlatforms.length) {
       try {
-        const r = await fetch(`/api/profiles`, { headers: { Authorization: `Bearer ${token}` } })
+        const r = await fetch(`/api/profiles`, { headers: { Authorization: `Bearer ${tokenRef.current}` } })
         const b = await r.json()
         const p = (b?.profiles || []).find((x) => x.id === profileId)
         const arr = Array.isArray(p?.uploadpost_platforms) ? p.uploadpost_platforms : []
@@ -920,7 +932,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         // Create the content_scripts row.
         const r = await fetch('/api/content', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenRef.current}` },
           body: JSON.stringify({
             profile_id: profileId,
             title: job.name.replace(/\.[^.]+$/, '').slice(0, 80),
@@ -963,7 +975,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
       setAutoStage('captions')
       const c = await fetch(`/api/content/bulk-actions?action=generate-captions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenRef.current}` },
         body: JSON.stringify({ profile_id: profileId, script_ids: ids }),
       })
       const cb = await c.json().catch(() => ({}))
@@ -1039,7 +1051,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           try {
             const startResp = await fetch('/api/content/generate-cover?action=start', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenRef.current}` },
               body: JSON.stringify({ script_id: id }),
             })
             const startBody = await startResp.json().catch(() => ({}))
@@ -1060,7 +1072,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
             while (Date.now() - started < TIMEOUT_MS) {
               await new Promise((r) => setTimeout(r, POLL_MS))
               const statusResp = await fetch(`/api/images/status?taskId=${encodeURIComponent(taskId)}`, {
-                headers: { Authorization: `Bearer ${token}` },
+                headers: { Authorization: `Bearer ${tokenRef.current}` },
               })
               const statusBody = await statusResp.json().catch(() => ({}))
               if (!statusResp.ok) { coverError = statusBody?.error || `status ${statusResp.status}`; break }
@@ -1078,7 +1090,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
             // Commit the chosen URL to the row.
             const commitResp = await fetch('/api/content/generate-cover?action=commit', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenRef.current}` },
               body: JSON.stringify({ script_id: id, image_url: coverUrl }),
             })
             if (!commitResp.ok) {
@@ -1127,7 +1139,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         // endpoint no-ops, returning the source URL unchanged.
         if (!polishTemplateRef.current || Object.keys(polishTemplateRef.current).length === 0) {
           try {
-            const profR = await fetch('/api/profiles', { headers: { Authorization: `Bearer ${token}` } })
+            const profR = await fetch('/api/profiles', { headers: { Authorization: `Bearer ${tokenRef.current}` } })
             const profBody = await profR.json().catch(() => ({}))
             const p = (profBody?.profiles || []).find((x) => x.id === profileId)
             if (p?.polish_template && typeof p.polish_template === 'object') {
@@ -1146,7 +1158,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         try {
           const rRows = await fetch(
             `/api/content?profile_id=${encodeURIComponent(profileId)}&filter=library`,
-            { headers: { Authorization: `Bearer ${token}` } }
+            { headers: { Authorization: `Bearer ${tokenRef.current}` } }
           )
           const rb = await rRows.json().catch(() => ({}))
           const lookup = new Map((rb?.items || []).map((it) => [it.id, it]))
@@ -1176,7 +1188,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                   : { media_urls: [polished.video_url] }
                 await fetch(`/api/content?id=${id}`, {
                   method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenRef.current}` },
                   body: JSON.stringify(patchBody),
                 }).catch(() => {})
                 polishedCount += 1
@@ -1216,7 +1228,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           try {
             const r = await fetch('/api/videos/prepend-cover', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenRef.current}` },
               body: JSON.stringify({ script_id: id }),
             })
             const body = await r.json().catch(() => ({}))
@@ -1239,7 +1251,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         setAutoStage('schedule')
         const s = await fetch(`/api/content/bulk-actions?action=auto-schedule`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenRef.current}` },
           body: JSON.stringify({ profile_id: profileId, script_ids: schedulableIds }),
         })
         const sb = await s.json().catch(() => ({}))
@@ -1397,7 +1409,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     try {
       const r = await fetch(`/api/content?id=${id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenRef.current}` },
         body: JSON.stringify(patch),
       })
       const body = await r.json().catch(() => ({}))
@@ -1451,7 +1463,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     try {
       const r = await fetch('/api/videos/normalize', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenRef.current}` },
         body: JSON.stringify({ profile_id: profileId, video_url: row.media_urls[0] }),
       })
       const body = await r.json().catch(() => ({}))
@@ -1516,7 +1528,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         toast({ kind: 'info', message: 'Step 1/3: Generating cover image…', ttl: 4000 })
         const startResp = await fetch('/api/content/generate-cover?action=start', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenRef.current}` },
           body: JSON.stringify({ script_id: row.id }),
         })
         const startBody = await startResp.json().catch(() => ({}))
@@ -1531,7 +1543,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           await new Promise((r) => setTimeout(r, POLL_MS))
           const statusResp = await fetch(
             `/api/images/status?taskId=${encodeURIComponent(startBody.taskId)}`,
-            { headers: { Authorization: `Bearer ${token}` } }
+            { headers: { Authorization: `Bearer ${tokenRef.current}` } }
           )
           const statusBody = await statusResp.json().catch(() => ({}))
           if (statusBody.state === 'success' && Array.isArray(statusBody.images) && statusBody.images.length) {
@@ -1544,7 +1556,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         // Commit so cover_image_url + instagram_cover_url land on the row.
         const commitResp = await fetch('/api/content/generate-cover?action=commit', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenRef.current}` },
           body: JSON.stringify({ script_id: row.id, image_url: coverUrl }),
         })
         if (!commitResp.ok) throw new Error('Cover commit failed')
@@ -1591,7 +1603,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     const ok = await confirmDialog({ title: 'Delete this row?', confirmText: 'Delete', destructive: true })
     if (!ok) return
     try {
-      const r = await fetch(`/api/content?id=${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
+      const r = await fetch(`/api/content?id=${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${tokenRef.current}` } })
       const body = await r.json().catch(() => ({}))
       setScripts((arr) => arr.filter((r) => r.id !== id))
       setSelected((s) => { const n = new Set(s); n.delete(id); return n })
@@ -1631,7 +1643,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     setBusyAction('delete')
     const results = await Promise.allSettled(
       ids.map((id) => fetch(`/api/content?id=${id}`, {
-        method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+        method: 'DELETE', headers: { Authorization: `Bearer ${tokenRef.current}` },
       }).then((r) => { if (!r.ok) throw new Error(`${r.status}`); return id }))
     )
     const ok_ids = results.filter((r) => r.status === 'fulfilled').map((r) => r.value)
@@ -1654,7 +1666,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     try {
       const r = await fetch(`/api/content/bulk-actions?action=${action}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenRef.current}` },
         body: JSON.stringify({ profile_id: profileId, script_ids: ids }),
       })
       const body = await r.json()
