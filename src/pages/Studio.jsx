@@ -1386,39 +1386,31 @@ function StudioVideoEditor({ videoId }) {
             />
           )}
 
-          {/* Voice cleaning trigger — only for videos built from an
-              uploaded voiceover. Shows the count of un-cleaned sliced
-              segments so the user knows the scope. Fires the fly
-              worker's voice-isolate-segments job; segments flip
-              voice_cleaned=true via realtime as each finishes. Auto-
-              hides once every sliced segment is cleaned. */}
-          {(() => {
-            if (!video.voiceover_source_url) return null
-            const sliced = (video.studio_segments || []).filter(
-              (s) => s.voice_source_start_secs != null && s.voice_source_end_secs != null,
-            )
-            const uncleaned = sliced.filter((s) => !s.voice_cleaned).length
-            if (uncleaned === 0) return null
-            return (
-              <div style={{
-                padding: '10px 14px', marginBottom: 12, borderRadius: 8,
-                background: 'rgba(168,85,247,0.08)', border: '1px solid rgba(168,85,247,0.35)',
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-              }}>
-                <div style={{ fontSize: 12.5, color: 'var(--text)' }}>
-                  <strong>{uncleaned}</strong> of {sliced.length} voice slices haven't been cleaned through ElevenLabs Voice Isolator yet. Run this to strip background noise + room tone before render.
-                </div>
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={triggerVoiceIsolation}
-                  style={{ fontSize: 12, padding: '6px 12px', background: '#a855f7', color: '#fff', borderRadius: 6, border: 'none', fontWeight: 600, cursor: 'pointer', flexShrink: 0 }}
-                >
-                  🎙️ Clean voice
-                </button>
+          {/* Source-level voice cleaning indicator. Shows whenever this
+              video was uploaded as a voiceover AND the source file
+              hasn't been run through EL Voice Isolator yet. One EL call
+              covers the full source — much faster + cheaper than the old
+              per-segment approach. Auto-hides once voiceover_cleaned is
+              true (Realtime drives the toggle). */}
+          {video.voiceover_source_url && !video.voiceover_cleaned && (
+            <div style={{
+              padding: '10px 14px', marginBottom: 12, borderRadius: 8,
+              background: 'rgba(168,85,247,0.08)', border: '1px solid rgba(168,85,247,0.35)',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+            }}>
+              <div style={{ fontSize: 12.5, color: 'var(--text)' }}>
+                Your voiceover source file hasn't been run through ElevenLabs Voice Isolator yet. Cleaning runs on the full file in one pass — strips background noise + room tone, then re-slices all segments. Takes ~30-90s.
               </div>
-            )
-          })()}
+              <button
+                type="button"
+                className="btn"
+                onClick={triggerVoiceIsolation}
+                style={{ fontSize: 12, padding: '6px 12px', background: '#a855f7', color: '#fff', borderRadius: 6, border: 'none', fontWeight: 600, cursor: 'pointer', flexShrink: 0 }}
+              >
+                🎙️ Clean voice
+              </button>
+            </div>
+          )}
 
           {video.status === 'failed' && (
             <FailedCard video={video} onRegenerate={regenerate} />

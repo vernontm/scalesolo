@@ -386,7 +386,7 @@ export default async function handler(req, res) {
         // to wake it up which can take 5-8s. A 2s timeout aborted
         // before the worker accepted the request, leaving voiceovers
         // un-isolated. 10s covers cold-start with plenty of headroom.
-        fetch(`${workerUrl}/jobs/voice-isolate-segments`, {
+        fetch(`${workerUrl}/jobs/clean-source-voiceover`, {
           method: 'POST',
           headers: {
             'content-type': 'application/json',

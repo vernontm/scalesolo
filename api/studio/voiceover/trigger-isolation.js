@@ -44,7 +44,7 @@ export default async function handler(req, res) {
     // Generous timeout — the worker responds immediately after starting
     // the background job (it doesn't wait for isolation to finish), so
     // 15s is plenty to cover a cold-start.
-    const r = await fetch(`${workerUrl}/jobs/voice-isolate-segments`, {
+    const r = await fetch(`${workerUrl}/jobs/clean-source-voiceover`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',

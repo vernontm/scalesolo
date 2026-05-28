@@ -1852,6 +1852,154 @@ app.post('/jobs/voice-isolate-segments', requireSecret, async (req, res) => {
   }
 })
 
+// ── Source-level voice cleaning ─────────────────────────────────────────────
+// Better than per-segment isolation: one EL call on the full uploaded
+// voiceover instead of N calls on N slices. Benefits:
+//   - Cheaper: 1 API call instead of 73 for a long video
+//   - Faster: EL latency is per-call, not per-second-of-audio
+//   - Higher quality: EL has more context (full file) to isolate
+//   - No 4.6s minimum to worry about (full file is always longer)
+//   - All future slices inherit cleanliness for free
+//
+// Body: { studio_video_id }
+// Response: { ok, dispatched: true }
+//
+// Flow:
+//   1. Acknowledge immediately so the Vercel dispatcher can return.
+//   2. Background: download voiceover_source_url, run EL Voice Isolator,
+//      upload the cleaned mp3 alongside the raw one, swap
+//      studio_videos.voiceover_source_url to the cleaned URL.
+//   3. If segments already exist on this video (user already segmented
+//      from raw), re-slice each from the cleaned source so their
+//      voice_url + voice_cleaned flip in place.
+app.post('/jobs/clean-source-voiceover', requireSecret, async (req, res) => {
+  const videoId = req.body?.studio_video_id
+  if (!videoId) return res.status(400).json({ error: 'studio_video_id required' })
+  if (!SUPABASE_URL || !SERVICE_KEY) {
+    return res.status(500).json({ error: 'SUPABASE_URL / SUPABASE_SERVICE_KEY not configured' })
+  }
+  if (!ELEVENLABS_API_KEY) {
+    return res.status(500).json({ error: 'ELEVENLABS_API_KEY not configured on worker' })
+  }
+
+  jobStart()
+  res.json({ ok: true, dispatched: true, studio_video_id: videoId })
+
+  let workdir = null
+  try {
+    const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
+    const { data: videoRow, error: fetchErr } = await supabase
+      .from('studio_videos')
+      .select('id, profile_id, voiceover_source_url, voiceover_cleaned')
+      .eq('id', videoId)
+      .maybeSingle()
+    if (fetchErr) throw new Error(`fetch video: ${fetchErr.message}`)
+    if (!videoRow) throw new Error('video not found')
+    if (!videoRow.voiceover_source_url) {
+      console.log(`[clean-source] video ${videoId} has no voiceover_source_url — skip`)
+      return
+    }
+    if (videoRow.voiceover_cleaned) {
+      console.log(`[clean-source] video ${videoId} already cleaned — skip`)
+      return
+    }
+
+    console.log(`[clean-source] starting clean for video ${videoId}`)
+    workdir = await mkdtemp(join(tmpdir(), 'clean-src-'))
+    const srcPath = join(workdir, 'source.mp3')
+
+    // Step 1: download source
+    const dl = await fetch(videoRow.voiceover_source_url)
+    if (!dl.ok) throw new Error(`download source: ${dl.status}`)
+    const srcBuf = Buffer.from(await dl.arrayBuffer())
+    await writeFile(srcPath, srcBuf)
+
+    // Step 2: send through EL Voice Isolator. The 180s timeout in
+    // isolateAudio covers up to ~30 min files; longer voiceovers should
+    // be split (not supported here yet — rare for solo creator content).
+    const cleanedBuf = await isolateAudio(srcBuf, { apiKey: ELEVENLABS_API_KEY, timeoutMs: 240_000 })
+
+    // Step 3: upload cleaned source alongside raw
+    const cleanedPath = `${videoRow.profile_id}/studio/voiceover/clean-${videoId}-${Date.now()}.mp3`
+    const { error: upErr } = await supabase.storage.from('studio-media')
+      .upload(cleanedPath, cleanedBuf, { contentType: 'audio/mpeg', upsert: true })
+    if (upErr) throw new Error(`upload cleaned: ${upErr.message}`)
+    const { data: pub } = supabase.storage.from('studio-media').getPublicUrl(cleanedPath)
+    const cleanedUrl = pub?.publicUrl
+    if (!cleanedUrl) throw new Error('cleaned url empty')
+
+    // Step 4: swap the video's voiceover_source_url to the cleaned
+    // version. Any future segmentation reads this column, so subsequent
+    // slices will be drawn from the cleaned audio.
+    await supabase.from('studio_videos').update({
+      voiceover_source_url: cleanedUrl,
+      voiceover_cleaned: true,
+    }).eq('id', videoId)
+
+    // Step 5: if segments already exist, re-slice each from the new
+    // cleaned source using its voice_source_*_secs range. This catches
+    // the case where the user kicked off segmentation before cleaning
+    // finished — their slices were from raw, now we replace with clean.
+    const { data: segs } = await supabase
+      .from('studio_segments')
+      .select('id, segment_index, voice_source_start_secs, voice_source_end_secs')
+      .eq('studio_video_id', videoId)
+      .not('voice_source_start_secs', 'is', null)
+      .not('voice_source_end_secs', 'is', null)
+    if (segs?.length) {
+      console.log(`[clean-source] re-slicing ${segs.length} existing segment(s) from cleaned source`)
+      // Use the cleaned mp3 (already downloaded above as cleanedBuf)
+      const cleanSrcPath = join(workdir, 'clean.mp3')
+      await writeFile(cleanSrcPath, cleanedBuf)
+      let resliced = 0
+      let failed = 0
+      for (const seg of segs) {
+        const outPath = join(workdir, `seg-${seg.id}.mp3`)
+        try {
+          await new Promise((resolve, reject) => {
+            const args = [
+              '-y',
+              '-ss', Number(seg.voice_source_start_secs).toFixed(3),
+              '-to', Number(seg.voice_source_end_secs).toFixed(3),
+              '-i', cleanSrcPath,
+              '-vn', '-c:a', 'libmp3lame', '-q:a', '4',
+              outPath,
+            ]
+            const p = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] })
+            let stderr = ''
+            p.stderr.on('data', (b) => { stderr += b.toString() })
+            p.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg ${code}: ${stderr.slice(-200)}`)))
+          })
+          const sliceBuf = await readFile(outPath)
+          const slicePath = `${videoRow.profile_id}/studio/voiceover-slices/clean-${seg.id}-${Date.now()}.mp3`
+          const { error: sliceUpErr } = await supabase.storage.from('studio-media')
+            .upload(slicePath, sliceBuf, { contentType: 'audio/mpeg', upsert: true })
+          if (sliceUpErr) throw new Error(`slice upload: ${sliceUpErr.message}`)
+          const { data: slicePub } = supabase.storage.from('studio-media').getPublicUrl(slicePath)
+          const sliceUrl = slicePub?.publicUrl
+          if (!sliceUrl) throw new Error('slice url empty')
+          await supabase.from('studio_segments').update({
+            voice_url: sliceUrl,
+            voice_cleaned: true,
+            rendered_chunk_url: null,  // invalidate cached chunk
+          }).eq('id', seg.id)
+          resliced++
+        } catch (e) {
+          console.warn(`[clean-source] re-slice seg ${seg.id} failed: ${e?.message || e}`)
+          failed++
+        }
+      }
+      console.log(`[clean-source] done re-slicing: ${resliced} ok, ${failed} failed`)
+    }
+    console.log(`[clean-source] video ${videoId} fully cleaned`)
+  } catch (e) {
+    console.error('clean-source-voiceover error:', e?.stack || e)
+  } finally {
+    if (workdir) try { await rm(workdir, { recursive: true, force: true }) } catch { /* noop */ }
+    jobEnd()
+  }
+})
+
 // ── Studio render-final ────────────────────────────────────────────────────
 // Long-running HyperFrames bake. Replaces the Vercel /api/studio/render-final
 // path that was hitting the 300s function ceiling and the headless-Chrome
