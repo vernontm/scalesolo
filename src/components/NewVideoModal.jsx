@@ -1081,21 +1081,29 @@ function Recap({ label, value }) {
 
 // ── Styles ───────────────────────────────────────────────────────────
 
-// Full-page modal — no card chrome, no surrounding dim layer. The
-// modal IS the page while it's open: solid background, edge-to-edge,
-// content centered in a wide column that still scrolls naturally.
+// Full-page dim layer with a centered 800px modal card. The card
+// sizes to its content (header + body + footer) rather than stretching
+// to 100vh, so short steps don't leave a huge empty stage between the
+// body and the sticky footer. The page scrolls naturally when content
+// is taller than the viewport.
 const overlayStyle = {
   position: 'fixed', inset: 0, zIndex: 250,
   background: 'var(--bg-base, #0a0a0c)',
   overflowY: 'auto',
+  // Vertical padding so the card has breathing room at the top
+  // even when scrolled to the start.
+  padding: '24px 0',
 }
 const cardStyle = {
-  // No max-width card — just a centered content column. The modal
-  // reads as a normal page rather than a popover.
   width: '100%',
-  minHeight: '100vh',
+  maxWidth: 800,
+  margin: '0 auto',
   background: 'transparent',
   display: 'flex', flexDirection: 'column',
+  // A minimum visible height so the body never collapses to a thin
+  // strip on tall screens. Body content sits at the top of this; any
+  // extra space is below the footer (or scrolls if the body is taller).
+  minHeight: 'min(800px, calc(100vh - 48px))',
 }
 const progressTrack = { height: 3, background: 'var(--surface-2)' }
 const progressFill = {
@@ -1126,7 +1134,8 @@ const bodyStyle = {
   margin: '0 auto',
   width: '100%',
   boxSizing: 'border-box',
-  flex: 1,
+  // Body sizes to its content. The card's marginTop:auto on footer
+  // handles the bottom-pinning so we don't need flex:1 to stretch.
 }
 const footerStyle = {
   padding: '20px 32px 28px',
@@ -1136,13 +1145,11 @@ const footerStyle = {
   margin: '0 auto',
   width: '100%',
   boxSizing: 'border-box',
-  // Stick footer at the bottom of the page so the action buttons
-  // are always reachable. position:sticky inside an overflow:auto
-  // overlay does the right thing on long step bodies.
-  position: 'sticky',
-  bottom: 0,
-  background: 'var(--bg-base, #0a0a0c)',
-  zIndex: 1,
+  // marginTop:auto in a flex column pushes the footer to the bottom
+  // of the card so the body always anchors at the top + footer always
+  // pins below — no more giant gap between sparse content and the
+  // navigation buttons.
+  marginTop: 'auto',
 }
 const errorPanel = {
   marginBottom: 14, padding: '10px 14px',
