@@ -1106,7 +1106,7 @@ const headerStyle = {
   padding: '20px 32px',
   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
   borderBottom: '1px solid var(--border)',
-  maxWidth: 1080,
+  maxWidth: 800,
   margin: '0 auto',
   width: '100%',
   boxSizing: 'border-box',
@@ -1122,7 +1122,7 @@ const closeBtn = {
 }
 const bodyStyle = {
   padding: '40px 32px 24px',
-  maxWidth: 1080,
+  maxWidth: 800,
   margin: '0 auto',
   width: '100%',
   boxSizing: 'border-box',
@@ -1132,7 +1132,7 @@ const footerStyle = {
   padding: '20px 32px 28px',
   borderTop: '1px solid var(--border)',
   display: 'flex', justifyContent: 'space-between',
-  maxWidth: 1080,
+  maxWidth: 800,
   margin: '0 auto',
   width: '100%',
   boxSizing: 'border-box',
