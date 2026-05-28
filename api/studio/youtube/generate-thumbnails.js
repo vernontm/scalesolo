@@ -66,42 +66,30 @@ async function submitThumbTask({ prompt, apiKey, imageInput }) {
   return taskId
 }
 
-// Recursively walk a JSON value and return the first string that looks
-// like an image URL. Kie's various models return the output URL under
-// inconsistent keys (resultUrls, output_url, imageUrl, etc.) so a
-// permissive deep-search is more robust than an explicit key list.
-// Picks the FIRST URL found by depth-first walk — Kie always puts the
-// image URL inside the result object once the task completes, so the
-// first one is the right one.
-function deepFindImageUrl(node, depth = 0) {
-  if (depth > 6 || node == null) return null
-  if (typeof node === 'string') {
-    // Quick filter: must look like an http(s) URL pointing at an image
-    // host or with an image extension. Kie's output URLs are typically
-    // on tempfile.aiquickdraw.com / oss-cn-* / cdn-output / similar.
-    if (!/^https?:\/\//i.test(node)) return null
-    if (/\.(png|jpe?g|webp|gif|avif)(\?|$)/i.test(node)) return node
-    // Some Kie hosts don't include the extension in the URL — accept
-    // anything that doesn't look like an auth/callback/heartbeat URL.
-    if (/\b(image|img|thumbnail|cdn|output|result|tempfile|aiquickdraw|oss|amazonaws|cloudfront)\b/i.test(node)) {
-      return node
-    }
-    return null
+// Extract image URLs from a Kie recordInfo response. Same parsing logic
+// used by api/images/generate.js — Kie wraps the URL inside resultJson,
+// which is a JSON-encoded STRING containing { resultUrls: [...] }. My
+// first attempt at this missed that because the URL lives inside a
+// stringified field, not as an object property.
+function parseKieResultUrls(data) {
+  let out = []
+  const rj = data?.resultJson
+  if (typeof rj === 'string') {
+    try {
+      const parsed = JSON.parse(rj)
+      if (Array.isArray(parsed?.resultUrls)) out = parsed.resultUrls
+      else if (Array.isArray(parsed)) out = parsed
+    } catch {}
+  } else if (rj && Array.isArray(rj.resultUrls)) {
+    out = rj.resultUrls
   }
-  if (Array.isArray(node)) {
-    for (const item of node) {
-      const hit = deepFindImageUrl(item, depth + 1)
-      if (hit) return hit
-    }
-    return null
+  if (!out.length) {
+    out = data?.resultUrls
+      || data?.result?.urls
+      || data?.images?.map?.((i) => i.url || i)
+      || []
   }
-  if (typeof node === 'object') {
-    for (const key of Object.keys(node)) {
-      const hit = deepFindImageUrl(node[key], depth + 1)
-      if (hit) return hit
-    }
-  }
-  return null
+  return (Array.isArray(out) ? out : []).filter(Boolean)
 }
 
 // Poll Kie until the task lands a URL or fails. ~90s max to stay inside
@@ -122,16 +110,13 @@ async function pollThumbTask(taskId, apiKey, maxMs = 90000) {
     if (state === 'fail' || state === 'failed' || state === 'error') {
       throw new Error(data?.failMsg || data?.errorMessage || 'Kie task failed')
     }
-    const url = deepFindImageUrl(data)
-    if (url) return url
-    // If the task reports "success" / "completed" but we couldn't find
-    // a URL, log the shape — this is the bug Ray hit ("images visible
-    // on Kie dashboard but not returned to us"). The deep-search above
-    // is permissive but if the response wraps the URL in a totally new
-    // structure we want diagnostics.
+    const urls = parseKieResultUrls(data)
+    if (urls.length) return urls[0]
+    // If the task reports completion but parseKieResultUrls found
+    // nothing, log diagnostics + bail. Should be rare now that we use
+    // the same parser as the working Spaces image-gen flow.
     if (['success', 'completed', 'done', 'finished'].includes(state)) {
       console.warn(`[generate-thumbnails] task ${taskId} reports ${state} but no URL found. Body keys: ${JSON.stringify(Object.keys(data || {})).slice(0, 200)}`)
-      // Dump the trimmed body once so the next deploy can extract the right key
       console.warn(`[generate-thumbnails] task ${taskId} body: ${JSON.stringify(data).slice(0, 800)}`)
       throw new Error(`Kie task completed but no image URL in response (state=${state}, keys=${Object.keys(data || {}).join(',')})`)
     }
