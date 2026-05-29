@@ -4186,6 +4186,14 @@ function RerenderConfirmModal({ video, token, busy, onCancel, onConfirm }) {
     typeof video.music_volume === 'number' ? video.music_volume : 0.12,
   )
   const [tracks, setTracks] = useState([])
+  // Current brand colors on the BRAND PROFILE. studio_videos snapshots
+  // brand_color + brand_color_secondary at create time, so if the user
+  // updated their brand colors AFTER the video was created (or rendered
+  // with template defaults) the video keeps the stale color until
+  // someone PATCHes it. We surface that mismatch here so re-render
+  // can sync in one click.
+  const [profileColors, setProfileColors] = useState(null)
+  const [syncBrandColors, setSyncBrandColors] = useState(false)
   useEffect(() => {
     if (!token) return
     let cancelled = false
@@ -4195,6 +4203,34 @@ function RerenderConfirmModal({ video, token, busy, onCancel, onConfirm }) {
       .catch(() => {})
     return () => { cancelled = true }
   }, [token])
+  useEffect(() => {
+    if (!token || !video?.profile_id) return
+    let cancelled = false
+    fetch(`/api/profiles?id=${encodeURIComponent(video.profile_id)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((b) => {
+        if (cancelled) return
+        const p = Array.isArray(b?.profiles) ? b.profiles[0] : (b?.profile || b)
+        if (!p) return
+        setProfileColors({
+          primary: p.brand_primary_color || null,
+          secondary: p.brand_secondary_color || null,
+        })
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [token, video?.profile_id])
+
+  const norm = (c) => (c || '').toString().trim().toLowerCase()
+  const primaryDrift = profileColors?.primary && norm(profileColors.primary) !== norm(video.brand_color)
+  const secondaryDrift = profileColors?.secondary && norm(profileColors.secondary) !== norm(video.brand_color_secondary)
+  const brandDrift = !!(primaryDrift || secondaryDrift)
+  // Default the sync toggle ON whenever drift is detected so the common
+  // case ("I updated my brand colors, now re-render") works without an
+  // extra click. The user can untick to keep the snapshotted color.
+  useEffect(() => { if (brandDrift) setSyncBrandColors(true) }, [brandDrift])
 
   // Build a diff-only patch — only send fields the user actually changed
   // so an accidental "Render" doesn't overwrite the row with defaults
@@ -4207,6 +4243,10 @@ function RerenderConfirmModal({ video, token, busy, onCancel, onConfirm }) {
     }
     const prevVol = typeof video.music_volume === 'number' ? video.music_volume : 0.12
     if (Math.abs(musicVolume - prevVol) > 0.005) patch.music_volume = musicVolume
+    if (syncBrandColors && brandDrift) {
+      if (primaryDrift) patch.brand_color = profileColors.primary
+      if (secondaryDrift) patch.brand_color_secondary = profileColors.secondary
+    }
     return Object.keys(patch).length ? patch : null
   }
 
@@ -4247,6 +4287,53 @@ function RerenderConfirmModal({ video, token, busy, onCancel, onConfirm }) {
           Re-open this dialog from the <strong>Re-render</strong> button when you're done.
         </p>
 
+        {brandDrift && (
+          <div style={{
+            marginBottom: 16,
+            padding: '12px 14px',
+            background: 'rgba(245, 158, 11, 0.08)',
+            border: '1px solid rgba(245, 158, 11, 0.35)',
+            borderRadius: 10,
+            fontSize: 12.5,
+            color: 'var(--text)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+              <strong style={{ fontFamily: 'var(--font-display)', color: '#f59e0b' }}>
+                Brand colors updated since this video was created
+              </strong>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 11, color: 'var(--text-soft)' }}>This video:</span>
+                <span style={{
+                  width: 18, height: 18, borderRadius: 4,
+                  background: video.brand_color || '#000',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                }} />
+                <code style={{ fontSize: 11 }}>{video.brand_color || '—'}</code>
+              </div>
+              <span style={{ color: 'var(--text-soft)' }}>→</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 11, color: 'var(--text-soft)' }}>Profile now:</span>
+                <span style={{
+                  width: 18, height: 18, borderRadius: 4,
+                  background: profileColors?.primary || '#000',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                }} />
+                <code style={{ fontSize: 11 }}>{profileColors?.primary || '—'}</code>
+              </div>
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12.5 }}>
+              <input
+                type="checkbox"
+                checked={syncBrandColors}
+                onChange={(e) => setSyncBrandColors(e.target.checked)}
+                style={{ cursor: 'pointer' }}
+              />
+              <span>Use my current brand colors for this re-render</span>
+            </label>
+          </div>
+        )}
         <div style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', marginBottom: 8, letterSpacing: 0.2 }}>
             Background music
