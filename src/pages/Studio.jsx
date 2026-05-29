@@ -3785,6 +3785,12 @@ function StickyActionBar({ video, approvedCount, totalCount, segments, manualMod
   const { session } = useAuth()
   const [busy, setBusy] = useState(false)
   const [showRegenOptions, setShowRegenOptions] = useState(false)
+  // Re-render confirm modal. Opens when the user hits "Re-render" on a
+  // done video so they can adjust music settings (and/or step back into
+  // the editor to tweak segments) BEFORE the bake fires. Was previously
+  // a direct call to onRender() — every re-bake reused whatever music
+  // was set at video-creation time, with no way to change it.
+  const [showRerenderModal, setShowRerenderModal] = useState(false)
   // Two-checkbox flow for the initial Generate Assets step. Default:
   // voice + B-roll on, avatar off. Avatar is opt-in because it's the
   // most expensive provider call (HeyGen) and lots of users want to
@@ -3953,7 +3959,16 @@ function StickyActionBar({ video, approvedCount, totalCount, segments, manualMod
   //   rendered-needs-assets → asset gen with same checkbox filter
   //   anything else → asset gen
   const onContinue = () => {
-    if (phase === 'ready-to-bake' || phase === 'done') return onRender()
+    // Re-render flow: don't fire the bake immediately. Open a confirm
+    // modal so the user can adjust background music (and remember they
+    // can tweak segments in the editor below) before committing to a
+    // full re-bake. ready-to-bake = first-time render, no need for the
+    // extra step. done = re-render, definitely needs the extra step.
+    if (phase === 'done') {
+      setShowRerenderModal(true)
+      return
+    }
+    if (phase === 'ready-to-bake') return onRender()
     const ot = onlyTypesFromCheckboxes()
     if (ot === false) {
       toast({ message: 'Tick at least one option to generate.', kind: 'warning' })
@@ -3983,6 +3998,30 @@ function StickyActionBar({ video, approvedCount, totalCount, segments, manualMod
           setShowRegenOptions(false)
         }}
         onClose={() => setShowRegenOptions(false)}
+      />
+    )}
+    {showRerenderModal && (
+      <RerenderConfirmModal
+        video={video}
+        token={session?.access_token}
+        busy={busy}
+        onCancel={() => setShowRerenderModal(false)}
+        onConfirm={async (musicPatch) => {
+          // Persist music tweaks (if any) to the row BEFORE firing the
+          // bake — the worker reads music_mode / track / volume off the
+          // studio_videos row, not from the request body.
+          if (musicPatch && session?.access_token) {
+            try {
+              await authedFetch(`/api/studio/videos?id=${encodeURIComponent(video.id)}`, session.access_token, {
+                method: 'PATCH', body: JSON.stringify(musicPatch),
+              })
+            } catch (e) {
+              toast({ message: `Couldn't save music change: ${e.message}. Re-rendering with previous settings.`, kind: 'warning' })
+            }
+          }
+          setShowRerenderModal(false)
+          await onRender()
+        }}
       />
     )}
     <div style={{
@@ -4123,6 +4162,193 @@ function StickyActionBar({ video, approvedCount, totalCount, segments, manualMod
         creation time). Removing the duplicate strip from the editor
         per product feedback — keeps the action bar a single tight
         row. canRender stays true since we no longer block here. */}
+    </div>
+  )
+}
+
+// Re-render confirm modal. Surfaces between a click on the "Re-render"
+// action button and the actual bake call so the user can:
+//
+//   1. Adjust background music (mode / track / volume) — was previously
+//      locked at video-creation time with no way to change.
+//   2. Be reminded that segments below are still editable and they can
+//      Cancel out to make changes before kicking off the bake.
+//
+// Returns a diff-only PATCH body via onConfirm (or null if music is
+// unchanged) so the caller can decide whether to fire a save before
+// invoking the render.
+function RerenderConfirmModal({ video, token, busy, onCancel, onConfirm }) {
+  // Seed from the saved row so the modal opens with the user's last
+  // choice — no surprise resets between re-renders.
+  const [musicMode, setMusicMode] = useState(video.music_mode || 'off')
+  const [musicTrackId, setMusicTrackId] = useState(video.music_track_id || '')
+  const [musicVolume, setMusicVolume] = useState(
+    typeof video.music_volume === 'number' ? video.music_volume : 0.12,
+  )
+  const [tracks, setTracks] = useState([])
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    fetch('/api/account/music-tracks', { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.json())
+      .then((b) => { if (!cancelled) setTracks(Array.isArray(b?.tracks) ? b.tracks : []) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [token])
+
+  // Build a diff-only patch — only send fields the user actually changed
+  // so an accidental "Render" doesn't overwrite the row with defaults
+  // for fields the modal didn't surface.
+  const buildPatch = () => {
+    const patch = {}
+    if (musicMode !== (video.music_mode || 'off')) patch.music_mode = musicMode
+    if ((musicTrackId || '') !== (video.music_track_id || '')) {
+      patch.music_track_id = musicTrackId || null
+    }
+    const prevVol = typeof video.music_volume === 'number' ? video.music_volume : 0.12
+    if (Math.abs(musicVolume - prevVol) > 0.005) patch.music_volume = musicVolume
+    return Object.keys(patch).length ? patch : null
+  }
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onCancel}
+      style={{
+        position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+        background: 'rgba(0,0,0,0.6)', display: 'grid', placeItems: 'center',
+        zIndex: 9000, padding: 16,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: '100%', maxWidth: 560,
+          background: 'var(--surface)', border: '1px solid var(--border)',
+          borderRadius: 14, padding: 22,
+          boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 4 }}>
+          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 17, margin: 0, color: 'var(--text)' }}>
+            Re-render settings
+          </h3>
+          <button
+            type="button"
+            onClick={onCancel}
+            style={{ background: 'transparent', color: 'var(--text-soft)', border: 'none', fontSize: 18, cursor: 'pointer', padding: 4 }}
+            aria-label="Cancel"
+          >×</button>
+        </div>
+        <p style={{ margin: '0 0 18px 0', fontSize: 12.5, color: 'var(--text-soft)', lineHeight: 1.5 }}>
+          Adjust background music for this bake. Need to tweak a segment?
+          Hit <strong>Cancel</strong> — every segment below is editable.
+          Re-open this dialog from the <strong>Re-render</strong> button when you're done.
+        </p>
+
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', marginBottom: 8, letterSpacing: 0.2 }}>
+            Background music
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+            {[
+              { v: 'off',        label: 'Off' },
+              { v: 'loop_one',   label: 'Loop one song' },
+              { v: 'cycle_all',  label: 'Cycle all songs' },
+            ].map((r) => (
+              <button
+                key={r.v}
+                type="button"
+                onClick={() => setMusicMode(r.v)}
+                className={musicMode === r.v ? 'btn-primary' : 'btn-secondary'}
+                style={{ flex: 1, padding: '10px 8px', fontSize: 12.5, fontWeight: 700 }}
+              >{r.label}</button>
+            ))}
+          </div>
+
+          {musicMode === 'loop_one' && (
+            <div style={{ marginTop: 4 }}>
+              {tracks.length === 0 ? (
+                <div style={{
+                  padding: '8px 10px', fontSize: 12,
+                  background: 'var(--surface)', border: '1px dashed var(--border)',
+                  borderRadius: 6, color: 'var(--muted)',
+                }}>
+                  No tracks in your library yet. Add some on the Profiles page → Music tracks.
+                </div>
+              ) : (
+                <select
+                  className="input"
+                  value={musicTrackId || ''}
+                  onChange={(e) => setMusicTrackId(e.target.value)}
+                  style={{ width: '100%' }}
+                >
+                  <option value="">— Pick a track —</option>
+                  {tracks.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name || t.id}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
+
+          {musicMode === 'cycle_all' && (
+            <div style={{
+              marginTop: 4, padding: '8px 10px', fontSize: 12,
+              background: 'var(--surface)', border: '1px solid var(--border)',
+              borderRadius: 6, color: 'var(--text-soft)',
+            }}>
+              {tracks.length === 0
+                ? 'No tracks in your library yet. Add some on the Profiles page → Music tracks.'
+                : `Will play in order, looping if the video runs past the playlist: ${tracks.map((t) => t.name).filter(Boolean).slice(0, 4).join(' · ')}${tracks.length > 4 ? ` + ${tracks.length - 4} more` : ''}`}
+            </div>
+          )}
+
+          {musicMode !== 'off' && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 11, color: 'var(--text-soft)', marginBottom: 6 }}>Volume</div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {[
+                  { v: 0.08, label: 'Subtle' },
+                  { v: 0.12, label: 'Low (default)' },
+                  { v: 0.18, label: 'Prominent' },
+                ].map((r) => (
+                  <button
+                    key={r.v}
+                    type="button"
+                    onClick={() => setMusicVolume(r.v)}
+                    className={Math.abs(musicVolume - r.v) < 0.005 ? 'btn-primary' : 'btn-secondary'}
+                    style={{ flex: 1, padding: '6px 8px', fontSize: 11.5, fontWeight: 600 }}
+                  >{r.label}</button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={onCancel}
+            disabled={busy}
+            style={{ padding: '10px 16px', fontSize: 13 }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => onConfirm(buildPatch())}
+            disabled={busy}
+            style={{ padding: '10px 18px', fontSize: 13 }}
+          >
+            {busy ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
+            Re-render
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
