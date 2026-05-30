@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { PlatformBadge } from '../components/PlatformBadge.jsx'
 import BulkUploadView from '../components/BulkUploadView.jsx'
+import GenerateMonthModal from '../components/GenerateMonthModal.jsx'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { useCredits } from '../context/CreditsContext.jsx'
@@ -828,7 +829,11 @@ function ItemList({ items, emptyHint, onOpen }) {
 //     resolved against the destination day at the same time of day,
 //     PATCH'd via the existing /api/content endpoint (which auto-
 //     resyncs the Upload-Post job behind the scenes).
-function CalendarView({ items, onOpen, token, onChange }) {
+function CalendarView({ items, onOpen, token, onChange, profileId }) {
+  // Monthly-generation modal. Lives here (not on the parent) so a
+  // toolbar button on the calendar header can open it; the modal
+  // handles its own multi-step flow + chunked /generate-month calls.
+  const [showGenerate, setShowGenerate] = useState(false)
   // viewMonth = first day of the month the calendar is currently
   // showing. Start at today's month; prev / next buttons step it ±1.
   const [viewMonth, setViewMonth] = useState(() => {
@@ -960,6 +965,30 @@ function CalendarView({ items, onOpen, token, onChange }) {
           {viewMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
         </div>
         <button
+          className="btn-primary"
+          onClick={() => setShowGenerate(true)}
+          style={{
+            padding: '6px 14px', fontSize: 12, fontWeight: 700,
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            marginRight: 6,
+          }}
+          title="Plan a full month of posts in one shot — review each in the swipe queue before publish"
+        >
+          <Sparkles size={13} /> Generate content for the month
+        </button>
+        <a
+          href="/schedule/queue"
+          className="btn-ghost"
+          style={{
+            padding: '6px 12px', fontSize: 12, fontWeight: 600,
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+            marginRight: 6, textDecoration: 'none',
+          }}
+          title="Review pending drafts in the swipe queue"
+        >
+          <ClipboardCheck size={13} /> Review queue
+        </a>
+        <button
           className="btn-ghost"
           onClick={goToday}
           style={{ padding: '5px 12px', fontSize: 12 }}
@@ -980,6 +1009,20 @@ function CalendarView({ items, onOpen, token, onChange }) {
           title="Next month"
         >›</button>
       </div>
+
+      {showGenerate && (
+        <GenerateMonthModal
+          profileId={profileId}
+          token={token}
+          onClose={() => setShowGenerate(false)}
+          onComplete={({ inserted }) => {
+            // Leave the modal open so the user sees the completed
+            // progress bar; closing on their click. Refresh the
+            // calendar so the new pending posts appear.
+            onChange?.()
+          }}
+        />
+      )}
 
       {/* Weekday labels — show once at the top, aligned with the grid below */}
       <div style={{
@@ -1461,7 +1504,7 @@ export default function Content() {
       ) : loading ? (
         <div className="card-flat" style={{ padding: 40, textAlign: 'center' }}><span className="spinner" /></div>
       ) : tab === 'calendar' ? (
-        <CalendarView items={items} onOpen={setOpened} token={session?.access_token} onChange={refresh} />
+        <CalendarView items={items} onOpen={setOpened} token={session?.access_token} onChange={refresh} profileId={selectedProfileId} />
       ) : (
         <ItemList items={items} emptyHint={TABS.find((t) => t.value === tab).empty} onOpen={setOpened} />
       )}

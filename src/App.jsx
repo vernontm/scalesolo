@@ -32,8 +32,9 @@ const Pipeline      = lazy(() => import('./pages/Pipeline.jsx'))
 const Forms         = lazy(() => import('./pages/Forms.jsx'))
 const Contacts      = lazy(() => import('./pages/Contacts.jsx'))
 const Profiles      = lazy(() => import('./pages/Profiles.jsx'))
-const Content       = lazy(() => import('./pages/Content.jsx'))
-const Avatars       = lazy(() => import('./pages/Avatars.jsx'))
+const Content        = lazy(() => import('./pages/Content.jsx'))
+const ApprovalQueue  = lazy(() => import('./pages/ApprovalQueue.jsx'))
+const Avatars        = lazy(() => import('./pages/Avatars.jsx'))
 const LandingPages  = lazy(() => import('./pages/LandingPages.jsx'))
 const Spaces        = lazy(() => import('./pages/Spaces.jsx'))
 const Library       = lazy(() => import('./pages/Library.jsx'))
@@ -181,8 +182,9 @@ function AppShell() {
             <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/spaces"    element={<Spaces />} />
-            <Route path="/schedule"  element={<Content />} />
-            <Route path="/content"   element={<Navigate to="/schedule" replace />} />
+            <Route path="/schedule"        element={<Content />} />
+            <Route path="/schedule/queue"  element={<ApprovalQueue />} />
+            <Route path="/content"         element={<Navigate to="/schedule" replace />} />
             <Route path="/avatars"   element={<Avatars />} />
             <Route path="/library"   element={<Library />} />
             <Route path="/profiles"  element={<Profiles />} />
