@@ -185,7 +185,9 @@ export const SLEEK = {
   // land, end card) — see STANDALONE_EVENTS in sfx-bank.js.
   sfx: {
     density: 'medium',
-    master_volume: 0.5,
+    // -6dB from the previous 0.5 default — Ray was hearing SFX too hot
+    // over the voice. 10^(-6/20) ≈ 0.501, so 0.5 × 0.501 ≈ 0.25.
+    master_volume: 0.25,
     pack: 'default',
     overrides: {
       // Ray's hand-picked SFX. Lighter, snappier "designed UI" feel
@@ -317,7 +319,9 @@ export const ATLAS = {
   },
   sfx: {
     density: 'medium',
-    master_volume: 0.5,
+    // -6dB from the previous 0.5 default — Ray was hearing SFX too hot
+    // over the voice. 10^(-6/20) ≈ 0.501, so 0.5 × 0.501 ≈ 0.25.
+    master_volume: 0.25,
     pack: 'default',
     overrides: {
       entrance: 'ux_swipe',
