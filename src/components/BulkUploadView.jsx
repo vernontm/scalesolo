@@ -22,12 +22,13 @@ import { createPortal } from 'react-dom'
 import {
   Upload, Loader2, Sparkles, CalendarClock, Send, Download, Trash2,
   Check, X, AlertCircle, Image as ImageIcon, Video as VideoIcon, ChevronDown, Zap,
-  RefreshCw, Type, Wand2, Settings as SettingsIcon, Film,
+  RefreshCw, Type, Wand2, Settings as SettingsIcon, Film, Maximize2,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase.js'
 import { toast, confirmDialog } from './Toast.jsx'
 import { PlatformBadge, PLATFORMS as PB_PLATFORMS } from './PlatformBadge.jsx'
 import { VideoPolishEditor } from '../lib/space-nodes.jsx'
+import PostPreviewModal from './PostPreviewModal.jsx'
 
 // ── styles ──────────────────────────────────────────────────────────────────
 const cellInput = {
@@ -511,6 +512,11 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   // narrow the queue when you only want to see (say) all text posts
   // landing this week.
   const [kindFilter, setKindFilter] = useState('all')
+  // Expanded-preview modal — set to the row id when the user clicks the
+  // Expand icon on a caption cell. Renders <PostPreviewModal> against
+  // the currently-filtered list so its prev/next arrows page through
+  // exactly what the user sees.
+  const [previewId, setPreviewId] = useState(null)
   // Date-range filter for the scheduled_datetime field. 'all' is the
   // default (everything visible regardless of when it fires). 'today',
   // 'week', '7d' are quick presets — 'custom' arms the two from/to
@@ -2447,7 +2453,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                     <td style={{ padding: 4, verticalAlign: 'top' }}>
                       <EditableCell value={r.title} multiline placeholder="Title" onSave={(v) => patchScript(r.id, { title: v })} />
                     </td>
-                    <td style={{ padding: 4, verticalAlign: 'top' }}>
+                    <td style={{ padding: 4, verticalAlign: 'top', position: 'relative' }}>
                       {hasPerPlatformText ? (
                         <PerPlatformCaptionCell
                           value={r.per_platform_text}
@@ -2456,6 +2462,28 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                       ) : (
                         <EditableCell value={r.caption} placeholder="Caption" onSave={(v) => patchScript(r.id, { caption: v })} />
                       )}
+                      {/* Expand-to-modal trigger. Lives over the top-right
+                          corner of the caption cell so the inline editor
+                          stays clickable. Modal pages through the same
+                          filtered list (`visible`) the user is viewing. */}
+                      <button
+                        type="button"
+                        onClick={() => setPreviewId(r.id)}
+                        title="Open expanded preview (cycle through posts)"
+                        aria-label="Expand post"
+                        style={{
+                          position: 'absolute', top: 4, right: 4,
+                          width: 24, height: 24, borderRadius: 5,
+                          background: 'var(--surface-2)', border: '1px solid var(--border)',
+                          color: 'var(--muted)', cursor: 'pointer',
+                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          opacity: 0.7,
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.color = 'var(--text)' }}
+                        onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.7'; e.currentTarget.style.color = 'var(--muted)' }}
+                      >
+                        <Maximize2 size={11} />
+                      </button>
                     </td>
                     <td className="hide-on-tablet" style={{ padding: 4, verticalAlign: 'top' }}>
                       <EditableCell value={r.hashtags} placeholder="#hashtags" onSave={(v) => patchScript(r.id, { hashtags: v })} />
@@ -2721,6 +2749,24 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         </div>,
         document.body,
       )}
+      {/* Expanded post preview modal — opens when the user clicks the
+          Maximize icon on a caption cell. Paginates through whatever
+          list `visible` currently holds, so it respects all active
+          filters (text-only kind, status tab, search, date range).
+          onSaved refreshes the parent list so the row's new state
+          shows up in the table when the user closes the modal. */}
+      {previewId && (() => {
+        const startIdx = Math.max(0, visible.findIndex((r) => r.id === previewId))
+        return (
+          <PostPreviewModal
+            items={visible}
+            initialIndex={startIdx === -1 ? 0 : startIdx}
+            token={token}
+            onClose={() => setPreviewId(null)}
+            onSaved={() => { onChange?.(); refresh() }}
+          />
+        )
+      })()}
     </div>
   )
 }
