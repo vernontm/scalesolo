@@ -153,10 +153,25 @@ function safeParseJsonArray(raw) {
     const parsed = JSON.parse(cleaned)
     return Array.isArray(parsed) ? parsed : []
   } catch {
-    // Fallback: try to find the first [...] block.
+    // Pull the first [...] block if the model prepended prose.
     const m = cleaned.match(/\[[\s\S]*\]/)
     if (m) {
-      try { return JSON.parse(m[0]) } catch { /* fall through */ }
+      try { return JSON.parse(m[0]) } catch { /* fall through to recovery */ }
+    }
+    // Recovery for truncated arrays — Claude hit max_tokens mid-element.
+    // Slice up to the last complete `}` and close the array. We accept
+    // a partial response (e.g. 6 of 8 posts) rather than failing the
+    // whole chunk; downstream code just gets fewer rows for the day.
+    const arrStart = cleaned.indexOf('[')
+    if (arrStart >= 0) {
+      const lastClose = cleaned.lastIndexOf('}')
+      if (lastClose > arrStart) {
+        const trimmed = cleaned.slice(arrStart, lastClose + 1) + ']'
+        try {
+          const parsed = JSON.parse(trimmed)
+          return Array.isArray(parsed) ? parsed : []
+        } catch { /* give up */ }
+      }
     }
     return []
   }
@@ -198,7 +213,7 @@ export default async function handler(req, res) {
       // by default. Brand context after first call hits the prompt cache
       // (90% discount), so we account ~1500 prompt-input for the first
       // call and ~150 for the rest.
-      const chunkDays = Math.max(1, Math.min(7, Number(body.chunk_days || 3)))
+      const chunkDays = Math.max(1, Math.min(7, Number(body.chunk_days || 1)))
       const chunks = Math.ceil(totalDays / chunkDays)
       const inTokensFirst = 4500
       const inTokensCachedPerChunk = 600
@@ -232,7 +247,7 @@ export default async function handler(req, res) {
     // pre-fills it next month. Skip when offset > 0 (subsequent chunks
     // shouldn't overwrite an in-flight value).
     const offset    = Math.max(0, Number(body.day_offset || 0))
-    const chunkDays = Math.max(1, Math.min(7, Number(body.chunk_days || 3)))
+    const chunkDays = Math.max(1, Math.min(7, Number(body.chunk_days || 1)))
     if (offset === 0) {
       try {
         await supaFetch(`profiles?id=eq.${profileId}`, {
@@ -263,18 +278,26 @@ export default async function handler(req, res) {
       claudeResp = await anthropicMessage({
         system,
         messages: [{ role: 'user', content: user }],
-        max_tokens: 8192,
+        // 16384 (Sonnet 4.5 supports up to 64k). Single-day chunks with
+        // ~16 posts × ~600 tokens of per_platform_text fit comfortably
+        // here without truncation, which was causing "Claude returned no
+        // parseable posts" on multi-day chunks at the previous 8192 cap.
+        max_tokens: 16384,
       })
     } catch (e) {
       return res.status(502).json({ error: `Claude call failed: ${e?.message || e}`, day_offset: offset })
     }
 
     const raw = claudeResp?.content?.find?.((c) => c.type === 'text')?.text || ''
+    const stopReason = claudeResp?.stop_reason
     const posts = safeParseJsonArray(raw)
     if (!posts.length) {
       return res.status(502).json({
-        error: 'Claude returned no parseable posts',
+        error: stopReason === 'max_tokens'
+          ? 'Claude response was truncated by max_tokens — reduce chunk_days or posts_per_day_per_platform.'
+          : 'Claude returned no parseable posts',
         day_offset: offset,
+        stop_reason: stopReason,
         raw_preview: raw.slice(0, 400),
       })
     }

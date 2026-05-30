@@ -152,7 +152,7 @@ export default function GenerateMonthModal({ profileId, token, onClose, onComple
             start_date_iso: new Date(`${startDate}T00:00:00`).toISOString(),
             end_date_iso:   new Date(`${endDate}T23:59:59`).toISOString(),
             day_offset: offset,
-            chunk_days: 3,
+            chunk_days: 1,
           }),
         })
         const body = await r.json()
