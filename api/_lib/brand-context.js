@@ -94,6 +94,18 @@ export async function loadBrandContext(profileId, opts = {}) {
      .catch(() => { out.voiceSummary = null })
   )
 
+  // Visual references — Threads / carousel / graphic screenshots the
+  // brand uploaded. Surfaced as a short list of {kind, url, notes}
+  // entries so social-post writers can cite "we love this Threads
+  // tone" patterns and image-gen prompts can mirror the visual look.
+  if (want('visualRefs')) tasks.push(
+    supaFetch(
+      `brand_visual_references?profile_id=eq.${encodeURIComponent(profileId)}` +
+      '&order=created_at.desc&limit=24&select=kind,public_url,notes,caption'
+    ).then((rows) => { out.visualReferences = rows || [] })
+     .catch(() => { out.visualReferences = [] })
+  )
+
   await Promise.all(tasks)
   return out
 }
@@ -106,6 +118,7 @@ function emptyContext() {
     dislikedScripts: [],
     dislikedHooks: [],
     voiceSummary: null,
+    visualReferences: [],
   }
 }
 
@@ -216,6 +229,31 @@ export function renderHardRulesBlock(ctx) {
   return `\n\n## Brand rules (strict)\n- ${bits.join('\n- ')}`
 }
 
+// Visual references uploaded via the brand-references bucket. Surfaced
+// to social-post writers + image-gen prompts so generated content
+// matches the brand's existing visual + copy patterns. Filtering by
+// kind keeps a single-image Threads prompt from getting carousel
+// slide design references mixed in.
+//
+//   opts.kinds   — array of kinds to include (e.g. ['threads','graphic']).
+//                  Default: include every kind.
+//   opts.limit   — max references in the block. Default 10.
+export function renderVisualReferencesBlock(ctx, opts = {}) {
+  const refs = Array.isArray(ctx.visualReferences) ? ctx.visualReferences : []
+  if (!refs.length) return ''
+  const kinds = opts.kinds ? new Set(opts.kinds) : null
+  const picked = (kinds ? refs.filter((r) => kinds.has(r.kind)) : refs)
+    .slice(0, opts.limit ?? 10)
+  if (!picked.length) return ''
+  const lines = picked.map((r) => {
+    const parts = [`${r.kind}: ${r.public_url}`]
+    if (r.caption) parts.push(`caption: "${truncate(r.caption, 200)}"`)
+    if (r.notes)   parts.push(`note: "${truncate(r.notes, 200)}"`)
+    return `- ${parts.join(' — ')}`
+  })
+  return `\n\n## Visual references (mirror the visual + copy patterns shown in these uploads)\n${lines.join('\n')}`
+}
+
 // Convenience: render every relevant block for a "write content for this
 // brand" use case. Caller can still trim with `include`/`exclude` opts.
 //
@@ -223,8 +261,8 @@ export function renderHardRulesBlock(ctx) {
 //   exclude — render everything except these (blacklist)
 //
 // Block names: 'identity', 'bible', 'summary', 'exemplars', 'hooks',
-// 'bad_patterns', 'rules'.
-export function renderBrandContextMarkdown(ctx, { include, exclude, bibleCharLimit = 2000 } = {}) {
+// 'bad_patterns', 'rules', 'visual_style', 'visual_refs'.
+export function renderBrandContextMarkdown(ctx, { include, exclude, bibleCharLimit = 2000, visualRefKinds } = {}) {
   const all = {
     identity:     () => renderBrandIdentityHeader(ctx),
     bible:        () => renderBrandBibleBlock(ctx, bibleCharLimit),
@@ -234,8 +272,9 @@ export function renderBrandContextMarkdown(ctx, { include, exclude, bibleCharLim
     bad_patterns: () => renderBadPatternsBlock(ctx),
     rules:        () => renderHardRulesBlock(ctx),
     visual_style: () => renderBrandVisualStyleBlock(ctx),
+    visual_refs:  () => renderVisualReferencesBlock(ctx, { kinds: visualRefKinds }),
   }
-  const order = ['identity', 'bible', 'summary', 'exemplars', 'hooks', 'bad_patterns', 'rules', 'visual_style']
+  const order = ['identity', 'bible', 'summary', 'exemplars', 'hooks', 'bad_patterns', 'rules', 'visual_style', 'visual_refs']
   const wanted = include
     ? order.filter((k) => include.includes(k))
     : order.filter((k) => !exclude || !exclude.includes(k))

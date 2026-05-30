@@ -125,6 +125,16 @@ export default async function handler(req, res) {
     // Derive a stable per-profile sub-account username, auto-creating the
     // Upload-Post profile if it doesn't exist yet. Caller can still pass an
     // explicit upload_post_user to override (useful for shared accounts).
+    // Per-platform tag map (e.g. { threads: "aithreads" }). Pulled once
+    // here so each platform branch below can pick out its tag without
+    // additional DB roundtrips. Failure is non-fatal — publish proceeds
+    // without the tag suffix if the profile lookup fails.
+    let profile_social_tags = {}
+    try {
+      const rows = await supaFetch(`profiles?id=eq.${profile_id}&select=social_platform_tags`)
+      profile_social_tags = rows?.[0]?.social_platform_tags || {}
+    } catch { /* default to empty map */ }
+
     const effectiveUser = upload_post_user || await resolveUploadpostUser(profile_id)
     if (!upload_post_user) {
       try { await uploadpostEnsureUserProfile(effectiveUser) } catch (e) {
@@ -228,7 +238,23 @@ export default async function handler(req, res) {
     }
     if (platforms.includes('threads')) {
       // Threads caps at 500. Trim hard — not auto-threaded by Upload-Post.
-      fd.append('threads_title', trim(fullCaption || cleanTitle, 500))
+      // If the brand has a per-platform Threads tag stored on the profile
+      // (e.g. "aithreads" or "@vtm"), append it as a suffix so every
+      // Threads post carries the same attribution / hashtag without the
+      // user having to remember to type it. The value is treated as a
+      // hashtag (prefixed with #) unless it already starts with # or @.
+      let threadsBody = fullCaption || cleanTitle
+      const threadsTag = String(profile_social_tags.threads || '').trim()
+      if (threadsTag) {
+        const formatted = (threadsTag.startsWith('#') || threadsTag.startsWith('@'))
+          ? threadsTag
+          : `#${threadsTag}`
+        // Only append if the tag isn't already present (case-insensitive).
+        if (!threadsBody.toLowerCase().includes(formatted.toLowerCase())) {
+          threadsBody = `${threadsBody.trim()}\n\n${formatted}`
+        }
+      }
+      fd.append('threads_title', trim(threadsBody, 500))
     }
     if (platforms.includes('twitter') || platforms.includes('x')) {
       // Upload-Post auto-threads X posts that exceed 280 chars when
