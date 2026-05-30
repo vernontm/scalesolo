@@ -1408,6 +1408,71 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     })
   }
 
+  // ── bulk approve ──────────────────────────────────────────────────────────
+  // Approves every currently-selected pending row. Each approve hits
+  // /api/content?action=approve which schedules + submits to Upload-Post
+  // on the server side. We run with concurrency=3 so a 50-row approve
+  // takes ~5s end-to-end instead of ~50s sequentially, but doesn't
+  // hammer Upload-Post / Vercel function quota all at once.
+  const [bulkApproveProgress, setBulkApproveProgress] = useState(null) // {done,total,failed}
+  const approveSelected = async () => {
+    const ids = Array.from(selected).filter((id) => {
+      const row = scripts?.find((r) => r.id === id)
+      return row && (row.approval_status === 'pending' || !row.approval_status)
+    })
+    if (!ids.length) {
+      toast({ message: 'Nothing pending in the selection to approve.', kind: 'info' })
+      return
+    }
+    const ok = await confirmDialog({
+      title: `Approve ${ids.length} ${ids.length === 1 ? 'post' : 'posts'}?`,
+      message: 'Each post lands status=scheduled and gets registered with Upload-Post at its scheduled time.',
+      confirmText: 'Approve all',
+    })
+    if (!ok) return
+
+    setBulkApproveProgress({ done: 0, total: ids.length, failed: 0 })
+    const CONCURRENCY = 3
+    let cursor = 0
+    let done = 0
+    let failed = 0
+    const queue = [...ids]
+    const runOne = async () => {
+      while (cursor < queue.length) {
+        const id = queue[cursor++]
+        try {
+          const r = await fetch(`/api/content?id=${id}&action=approve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenRef.current}` },
+          })
+          const body = await r.json().catch(() => ({}))
+          if (!r.ok) throw new Error(body?.error || `Approve failed (${r.status})`)
+          setScripts((arr) => arr.map((row) => row.id === id ? {
+            ...row,
+            approval_status: 'approved',
+            status: body?.status || 'scheduled',
+            uploadpost_request_id: body?.uploadpost_request_id ?? row.uploadpost_request_id,
+            uploadpost_job_id: body?.uploadpost_job_id ?? row.uploadpost_job_id,
+          } : row))
+          done++
+        } catch (e) {
+          console.warn(`bulk approve ${id} failed:`, e?.message)
+          failed++
+        }
+        setBulkApproveProgress({ done: done + failed, total: ids.length, failed })
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, runOne))
+    setBulkApproveProgress(null)
+    toast({
+      message: failed === 0
+        ? `Approved + scheduled ${done} posts.`
+        : `Approved ${done}, ${failed} failed. Check the Error tab.`,
+      kind: failed === 0 ? 'success' : 'warn',
+    })
+    onChange?.()
+  }
+
   // ── per-row approve ───────────────────────────────────────────────────────
   // Routes through /api/content?action=approve so the post lands status
   // ='scheduled' and gets registered with Upload-Post (text-only or
@@ -2136,6 +2201,29 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           onClick={() => callBulk('auto-schedule', 'Auto-schedule')}
           style={{ padding: '8px 12px' }}
         >{busyAction === 'auto-schedule' ? <Loader2 size={13} className="spin" /> : <CalendarClock size={13} />} Auto Schedule</button>
+        {/* Bulk approve — green-styled to match the per-row Approve and
+            signal it's a forward-momentum action. Shows live progress
+            inline while the queue chews through the selection. */}
+        <button
+          disabled={!selected.size || busyAction !== null || bulkApproveProgress !== null}
+          onClick={approveSelected}
+          style={{
+            padding: '8px 12px',
+            background: 'rgba(34,197,94,0.14)',
+            border: '1px solid rgba(34,197,94,0.5)',
+            color: '#22c55e',
+            borderRadius: 6,
+            fontWeight: 700,
+            fontSize: 12.5,
+            cursor: (!selected.size || bulkApproveProgress !== null) ? 'not-allowed' : 'pointer',
+            opacity: (!selected.size || busyAction !== null) ? 0.5 : 1,
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+          }}
+        >
+          {bulkApproveProgress
+            ? <><Loader2 size={13} className="spin" /> {bulkApproveProgress.done} / {bulkApproveProgress.total}</>
+            : <><Check size={13} /> Approve Selected</>}
+        </button>
         <button
           className="btn-primary" disabled={!selected.size || busyAction !== null}
           onClick={async () => {
