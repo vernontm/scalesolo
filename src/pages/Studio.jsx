@@ -1661,12 +1661,37 @@ const SEGMENT_TYPE_OPTIONS = [
   { value: 'pure_motion_graphics',       label: 'Motion graphics only (no VO)' },
   { value: 'screenshot',                 label: 'Use screenshot' },
 ]
+// Composition pool kept in sync with api/studio/_lib/templates.js. When
+// new templates ship, append their composition IDs here so the segment
+// dropdown displays them correctly. If a segment carries an ID outside
+// this list (older video, manual edit), we still show it as a one-off
+// option at render time — see the dropdown below.
 const HF_COMPOSITION_OPTIONS = [
-  '', 'title-card-v1', 'stat-reveal-v1', 'list-overlay-v1',
-  'quote-card-v1', 'lower-third-v1', 'comparison-v1', 'end-card-v1',
+  '',
+  // Sleek v2 pool
+  'sleek-scene-headline-v1',
+  'sleek-scene-list-v1',
+  'sleek-scene-claude-chat-v1',
+  'sleek-scene-cta-v1',
+  // Atlas v1 pool
+  'atlas-scene-headline-v1',
+  'atlas-scene-list-v1',
+  'atlas-scene-claude-chat-v1',
+  'atlas-scene-cta-v1',
+  // Legacy / shared
+  'end-card-v1',
 ]
-const TRANSITION_OPTIONS = ['cut', 'fade', 'crossfade', 'whip', 'zoom', 'wipe', 'dip_to_black']
-const SFX_OPTIONS = ['', 'swoosh', 'whoosh', 'ding', 'pop', 'click', 'impact', 'subtle_chime']
+// Transition vocabulary kept in sync with worker/studio-render.js
+// DEFAULT_TRANSITION_POOL. Names must match exactly — if a segment row
+// carries a transition outside this list we fold it in at render time.
+const TRANSITION_OPTIONS = [
+  'cut',
+  'crossfade',
+  'fade_transition',
+  'swipe_left', 'swipe_right', 'swipe_up', 'swipe_down',
+  'light_flare_wipe', 'light_flare_wipe_fast',
+]
+const SFX_OPTIONS = ['', 'swoosh', 'whoosh', 'ding', 'pop', 'click', 'impact', 'subtle_chime', 'ux_ding']
 
 function SegmentList({ video, manualMode = false }) {
   const { session } = useAuth()
@@ -4628,18 +4653,28 @@ function SegmentRow({ segment, onPatch, onDelete, onRegen, onSplit, onUploadAvat
               ))}
             </select>
 
-            {isMotion && (
-              <select
-                className="input"
-                value={segment.hyperframes_composition_id || ''}
-                onChange={(e) => onPatch({ hyperframes_composition_id: e.target.value || null })}
-                style={{ fontSize: 11.5, padding: '4px 6px', height: 'auto', width: 'auto', minWidth: 140 }}
-              >
-                {HF_COMPOSITION_OPTIONS.map((c) => (
-                  <option key={c} value={c}>{c || 'No template'}</option>
-                ))}
-              </select>
-            )}
+            {isMotion && (() => {
+              // Build the option list, folding in the segment's current
+              // composition ID if it's outside the canonical pool — keeps
+              // the select label honest instead of silently falling back
+              // to "No template" when the value doesn't match an option.
+              const current = segment.hyperframes_composition_id || ''
+              const opts = HF_COMPOSITION_OPTIONS.includes(current)
+                ? HF_COMPOSITION_OPTIONS
+                : [...HF_COMPOSITION_OPTIONS, current]
+              return (
+                <select
+                  className="input"
+                  value={current}
+                  onChange={(e) => onPatch({ hyperframes_composition_id: e.target.value || null })}
+                  style={{ fontSize: 11.5, padding: '4px 6px', height: 'auto', width: 'auto', minWidth: 140 }}
+                >
+                  {opts.map((c) => (
+                    <option key={c} value={c}>{c || 'No template'}</option>
+                  ))}
+                </select>
+              )
+            })()}
 
             {/* B-roll style toggle: image (Ken Burns on Kie nano-banana
                 still) vs video (Grok Imagine image-to-video). Visible
@@ -4674,17 +4709,29 @@ function SegmentRow({ segment, onPatch, onDelete, onRegen, onSplit, onUploadAvat
               </label>
             )}
 
-            <select
-              className="input"
-              value={segment.transition_in}
-              onChange={(e) => onPatch({ transition_in: e.target.value })}
-              style={{ fontSize: 11.5, padding: '4px 6px', height: 'auto', width: 'auto' }}
-              title="Transition in"
-            >
-              {TRANSITION_OPTIONS.map((t) => (
-                <option key={t} value={t}>↪ {t}</option>
-              ))}
-            </select>
+            {(() => {
+              // Same value-preservation pattern as the composition select:
+              // fold the segment's current transition into the list if it
+              // isn't in the canonical pool, so the dropdown always
+              // displays the real value rather than the first fallback.
+              const tCurrent = segment.transition_in || 'cut'
+              const tOpts = TRANSITION_OPTIONS.includes(tCurrent)
+                ? TRANSITION_OPTIONS
+                : [...TRANSITION_OPTIONS, tCurrent]
+              return (
+                <select
+                  className="input"
+                  value={tCurrent}
+                  onChange={(e) => onPatch({ transition_in: e.target.value })}
+                  style={{ fontSize: 11.5, padding: '4px 6px', height: 'auto', width: 'auto' }}
+                  title="Transition in"
+                >
+                  {tOpts.map((t) => (
+                    <option key={t} value={t}>↪ {t}</option>
+                  ))}
+                </select>
+              )
+            })()}
 
             <select
               className="input"
