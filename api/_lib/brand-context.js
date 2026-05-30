@@ -44,7 +44,7 @@ export async function loadBrandContext(profileId, opts = {}) {
       `profiles?id=eq.${encodeURIComponent(profileId)}&select=` +
       'business_name,industry,brand_bible,brand_bible_summary,' +
       'target_audience,preferred_tone,agent_aggressiveness,' +
-      'core_hashtags,do_not_say,always_include,brand_cta,' +
+      'core_hashtags,do_not_say,always_include,brand_cta,brand_ctas,' +
       // Visual style controls — drive studio b-roll image / video
       // prompts so every brand gets a consistent on-brand aesthetic
       // instead of Claude's default sci-fi futurism bias.

@@ -107,6 +107,17 @@ function buildSystemPrompt(ctx, opts) {
     .map((p) => `- ${p} (max ${PLATFORM_RULES[p]?.max ?? 1000} chars): ${PLATFORM_RULES[p]?.tone ?? 'Default brand voice.'}`)
     .join('\n')
 
+  // CTAs come off the profile (profiles.brand_ctas). When present we
+  // tell Claude to pick the best-fit URL per post and weave it into
+  // the closing of every caption + per-platform variant. Without this
+  // generations come out URL-less and the user has to retrofit them.
+  const ctas = Array.isArray(ctx?.profile?.brand_ctas) ? ctx.profile.brand_ctas : []
+  const ctaBlock = ctas.length
+    ? `\n## CTAs — pick the best-fit URL for each post\n${ctas.map((c, i) =>
+        `${i + 1}. "${c.label}" → ${c.url}\n   Best fit: ${c.when || 'general'}`
+      ).join('\n')}\n\n**EVERY post MUST end with one of these CTAs**, appended after a blank line, in the form:\n  {label}: {url}\n\nApply to caption AND every per_platform_text variant. Trim platform variants to fit their char limits BEFORE adding the CTA — never let the CTA push the post past the cap.`
+    : ''
+
   return `You are this brand's social content strategist. You write posts that read like the brand wrote them — never generic AI copy.
 
 ${brand}
@@ -115,7 +126,7 @@ ${brand}
 ${String(opts.goal || '').trim() || 'Drive engagement and consistent presence; reinforce the brand thesis.'}
 
 ## Platforms you'll write for this run
-${platformList}
+${platformList}${ctaBlock}
 
 ## Output rules — read carefully
 - Respond with ONLY a JSON array. No markdown, no commentary, no preface.
