@@ -273,32 +273,50 @@ export default async function handler(req, res) {
     const system = buildSystemPrompt(ctx, { platforms, goal: body.goal })
     const user   = buildUserPrompt(dayWindow, postsPerDay, platforms)
 
-    let claudeResp
-    try {
-      claudeResp = await anthropicMessage({
-        system,
-        messages: [{ role: 'user', content: user }],
-        // 16384 (Sonnet 4.5 supports up to 64k). Single-day chunks with
-        // ~16 posts × ~600 tokens of per_platform_text fit comfortably
-        // here without truncation, which was causing "Claude returned no
-        // parseable posts" on multi-day chunks at the previous 8192 cap.
-        max_tokens: 16384,
-      })
-    } catch (e) {
-      return res.status(502).json({ error: `Claude call failed: ${e?.message || e}`, day_offset: offset })
+    // Two-attempt loop. The first call uses the standard user prompt;
+    // if Claude returns prose / partial JSON / no posts, retry once
+    // with a strict "JSON ONLY, no prose" prefix. Retrying covers the
+    // ~5% of calls where Claude leaks a "Here's the array:" preface or
+    // appends commentary after the closing bracket, both of which our
+    // recovery parser can usually handle but sometimes can't.
+    const attempts = [
+      user,
+      `${user}\n\n# FINAL REMINDER\nReturn ONLY a valid JSON array. No prose, no markdown, no preface. Start with [ and end with ]. The previous attempt was not parseable.`,
+    ]
+    let posts = []
+    let stopReason = null
+    let rawLast = ''
+    let claudeErr = null
+    for (let attempt = 0; attempt < attempts.length; attempt++) {
+      try {
+        const claudeResp = await anthropicMessage({
+          system,
+          messages: [{ role: 'user', content: attempts[attempt] }],
+          // 16384 (Sonnet 4.5 supports up to 64k). Single-day chunks
+          // with ~16 posts × ~600 tokens of per_platform_text fit
+          // comfortably here without truncation.
+          max_tokens: 16384,
+        })
+        rawLast = claudeResp?.content?.find?.((c) => c.type === 'text')?.text || ''
+        stopReason = claudeResp?.stop_reason
+        posts = safeParseJsonArray(rawLast)
+        if (posts.length) break
+      } catch (e) {
+        claudeErr = e
+        // Network / 5xx — fall through to retry. If both attempts hit
+        // network errors we surface the second one below.
+      }
     }
-
-    const raw = claudeResp?.content?.find?.((c) => c.type === 'text')?.text || ''
-    const stopReason = claudeResp?.stop_reason
-    const posts = safeParseJsonArray(raw)
     if (!posts.length) {
       return res.status(502).json({
-        error: stopReason === 'max_tokens'
-          ? 'Claude response was truncated by max_tokens — reduce chunk_days or posts_per_day_per_platform.'
-          : 'Claude returned no parseable posts',
+        error: claudeErr
+          ? `Claude call failed: ${claudeErr?.message || claudeErr}`
+          : stopReason === 'max_tokens'
+            ? 'Claude response was truncated by max_tokens — reduce chunk_days or posts_per_day_per_platform.'
+            : 'Claude returned no parseable posts (retry also failed)',
         day_offset: offset,
         stop_reason: stopReason,
-        raw_preview: raw.slice(0, 400),
+        raw_preview: rawLast.slice(0, 400),
       })
     }
 

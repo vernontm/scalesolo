@@ -135,14 +135,17 @@ export default function GenerateMonthModal({ profileId, token, onClose, onComple
   const runGeneration = async () => {
     setError(null)
     setBusy(true)
-    setProgress({ current_offset: 0, total_days: preview?.total_days || 0, inserted: 0 })
-    try {
-      let offset = 0
-      let inserted = 0
-      const totalDays = preview?.total_days || 0
-      // Chunk loop — each call returns next_offset. Stop when done=true.
-      // Safety cap of 60 iterations so a runaway server doesn't pin us.
-      for (let i = 0; i < 60; i++) {
+    setProgress({ current_offset: 0, total_days: preview?.total_days || 0, inserted: 0, failed_days: 0 })
+    let offset = 0
+    let inserted = 0
+    let failedDays = 0
+    const failedOffsets = []
+    const totalDays = preview?.total_days || 0
+    // Safety cap — at chunk_days=1 the loop is bounded by totalDays.
+    // 64 gives headroom for one or two retries beyond the worst case.
+    const maxIter = Math.min(64, totalDays + 4)
+    for (let i = 0; i < maxIter; i++) {
+      try {
         const r = await fetch('/api/content/generate-month?phase=run', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -156,18 +159,37 @@ export default function GenerateMonthModal({ profileId, token, onClose, onComple
           }),
         })
         const body = await r.json()
-        if (!r.ok) throw new Error(body?.error || `Generation failed at day ${offset} (${r.status})`)
+        if (!r.ok) {
+          // Per-day failure (Claude returned junk, network blip, etc).
+          // Skip this day and advance — better to land 29 days than
+          // none. Surface the cumulative count in the progress card.
+          failedDays += 1
+          failedOffsets.push(offset)
+          offset += 1
+          setProgress({ current_offset: offset, total_days: totalDays, inserted, failed_days: failedDays })
+          if (offset >= totalDays) break
+          continue
+        }
         inserted += (body.inserted?.length || 0)
         offset = body.next_offset
-        setProgress({ current_offset: offset, total_days: totalDays, inserted })
+        setProgress({ current_offset: offset, total_days: totalDays, inserted, failed_days: failedDays })
         if (body.done) break
+      } catch (e) {
+        // Hard network error — also treat as a per-day failure.
+        failedDays += 1
+        failedOffsets.push(offset)
+        offset += 1
+        setProgress({ current_offset: offset, total_days: totalDays, inserted, failed_days: failedDays })
+        if (offset >= totalDays) break
       }
-      onComplete?.({ inserted })
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setBusy(false)
     }
+    setBusy(false)
+    if (failedDays > 0 && inserted > 0) {
+      setError(`Done — but ${failedDays} day${failedDays === 1 ? '' : 's'} failed to generate. ${inserted} posts landed. Re-run the modal to fill the gaps.`)
+    } else if (failedDays > 0) {
+      setError(`Generation failed on every day. Check the API logs for the underlying error.`)
+    }
+    onComplete?.({ inserted, failed_days: failedDays })
   }
 
   return (
@@ -347,6 +369,11 @@ function StepConfirm({ preview, goal, platforms, postsPerDay, progress, busy }) 
         <div style={{ marginTop: 18 }}>
           <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>
             Day {progress.current_offset} / {progress.total_days} — {progress.inserted} posts generated
+            {progress.failed_days > 0 && (
+              <span style={{ color: 'var(--red)', marginLeft: 8 }}>
+                · {progress.failed_days} day{progress.failed_days === 1 ? '' : 's'} skipped
+              </span>
+            )}
           </div>
           <div style={{ height: 6, background: 'var(--surface-2)', borderRadius: 3, overflow: 'hidden' }}>
             <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg, var(--red), var(--red-dark))', transition: 'width 0.3s' }} />
