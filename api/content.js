@@ -37,8 +37,12 @@ async function rescheduleUploadPostJob({ row, newScheduledIso, authToken, req })
   // PATCH still happens so the user's view is consistent.
   const platforms = Array.isArray(row.platforms) ? row.platforms : null
   const mediaUrls = Array.isArray(row.media_urls) ? row.media_urls : []
+  // Text posts (media_type='text') go through Upload-Post's /upload_text
+  // endpoint and intentionally carry no media_urls. Only bail on missing
+  // media when the row is NOT a text post.
+  const isTextPost = row.media_type === 'text'
   if (!platforms || !platforms.length) return null
-  if (!mediaUrls.length) return null
+  if (!mediaUrls.length && !isTextPost) return null
 
   // Cancel old job if there is one. Prefer the stored uploadpost_job_id
   // (direct DELETE — single API call, no list lookup) over the legacy
@@ -113,12 +117,20 @@ async function rescheduleUploadPostJob({ row, newScheduledIso, authToken, req })
   const body = {
     profile_id: row.profile_id,
     platforms,
-    video_url: videoToSend,
-    photo_urls: !isVideo ? mediaUrls : undefined,
+    // Text posts: skip the media url fields entirely and set the flag
+    // that routes /api/social/upload-post to Upload-Post's /upload_text
+    // endpoint. Otherwise pass video / photo media as before.
+    is_text_post: isTextPost || undefined,
+    video_url: isTextPost ? undefined : videoToSend,
+    photo_urls: !isTextPost && !isVideo ? mediaUrls : undefined,
     description: fullCaption || row.full_script || row.title || '',
     title: row.title || undefined,
     caption: row.caption || undefined,
     hashtags: row.hashtags || undefined,
+    // Text posts use per_platform_text variants for per-platform copy;
+    // pass them through so /upload_text + Upload-Post's per-platform
+    // suffix logic can apply the right variant per platform.
+    per_platform_text: row.per_platform_text || undefined,
     script: row.full_script || undefined,
     first_comment: row.first_comment || undefined,
     // Custom Instagram Reel cover when one is set on the row.
