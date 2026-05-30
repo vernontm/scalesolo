@@ -50,16 +50,28 @@
       linear-gradient(var(--grid-color) 1px, transparent 1px),
       linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
     background-size:80px 80px;
-    animation: drift_diagonal 12s linear infinite;
+    /* Finite repeat: scene caps at ~21s of bake; 12s cycle × 2 covers it
+       without burning a per-frame GPU layer on an infinite repeat that
+       Puppeteer's chunk capture has to keep rasterizing. */
+    animation: drift_diagonal 12s linear 2;
     pointer-events:none; z-index:1;
   }
   @keyframes drift_diagonal { from { transform: translate(0,0); } to { transform: translate(-80px,-80px); } }
+  /* The glow used to be a 50px-blurred radial gradient overlay, which
+     forced Puppeteer to rasterize a huge blurred composite layer on
+     every captured frame — that's what was timing the bake out around
+     frame 540. Radial gradients are essentially free, so we just use
+     a softer multi-stop gradient that mimics the same blooming look
+     without `filter: blur`. */
   .scene::after {
     content:''; position:absolute; top:-20%; left:50%;
     transform:translateX(-50%);
     width:90%; height:100%;
-    background: radial-gradient(ellipse, var(--accent-glow) 0%, transparent 55%);
-    pointer-events:none; z-index:2; filter: blur(50px);
+    background: radial-gradient(ellipse,
+      var(--accent-glow) 0%,
+      color-mix(in srgb, var(--accent-glow) 50%, transparent) 30%,
+      transparent 70%);
+    pointer-events:none; z-index:2;
   }
 
   .corner-mark { position:absolute; z-index:5; pointer-events:none; }
@@ -162,18 +174,19 @@
     50%      { text-shadow: 0 0 35px rgba(227,21,30,0.9), 0 0 70px rgba(227,21,30,0.5), 0 0 100px rgba(227,21,30,0.3); }
   }
   @keyframes button_breathe {
+    /* Shrunk the outer blur radii (140 → 70, 180 → 90) so Puppeteer
+       isn't re-rasterizing a 180px-radius shadow on a moving element
+       60 times a second. Visually identical at video bitrate. */
     0%, 100% {
       box-shadow:
         0 12px 40px rgba(227, 21, 30, 0.6),
-        0 0 80px  rgba(227, 21, 30, 0.45),
-        0 0 140px rgba(227, 21, 30, 0.25),
+        0 0 60px  rgba(227, 21, 30, 0.4),
         inset 0 1px 0 rgba(255, 255, 255, 0.2);
     }
     50% {
       box-shadow:
         0 14px 50px rgba(227, 21, 30, 0.75),
-        0 0 110px rgba(227, 21, 30, 0.6),
-        0 0 180px rgba(227, 21, 30, 0.35),
+        0 0 90px  rgba(227, 21, 30, 0.55),
         inset 0 1px 0 rgba(255, 255, 255, 0.25);
     }
   }
@@ -181,9 +194,15 @@
     0%, 100% { transform: translateY(0); }
     50%      { transform: translateY(6px); }
   }
-  .cta-headline .accent { animation: pulse_glow_text 4000ms ease-in-out infinite; }
-  .cta-button           { animation: button_breathe 4000ms ease-in-out infinite; }
-  .cta-button .icon     { animation: arrow_bounce 4000ms ease-in-out infinite; }
+  /* Finite iteration counts. Scene bakes at ~21s; each animation
+     cycle is 4s, so 6 iterations covers the whole clip with margin.
+     Puppeteer's chunk capture can't keep up with `infinite` here
+     because every frame re-rasterizes the animated box-shadow /
+     text-shadow blur — exactly the kind of compounding GPU work
+     that times out a deadline. */
+  .cta-headline .accent { animation: pulse_glow_text 4000ms ease-in-out 6; }
+  .cta-button           { animation: button_breathe 4000ms ease-in-out 6; }
+  .cta-button .icon     { animation: arrow_bounce 4000ms ease-in-out 6; }
 </style>
 </head>
 <body>
