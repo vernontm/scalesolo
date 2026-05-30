@@ -185,7 +185,7 @@ ${platformList}
 
 ## Output rules — read carefully
 - Respond with ONLY a JSON array. No markdown, no commentary, no preface.
-- Each element is one post object: { "date": "YYYY-MM-DD", "title", "hook", "caption", "hashtags", "per_platform_text": { platform: text, ... } }
+- Each element is one post object: { "date": "YYYY-MM-DD", "title": "<3-9 word headline in Title Case, surfaces on Facebook>", "hook", "caption", "hashtags", "per_platform_text": { platform: text, ... } }
 - per_platform_text MUST include an entry for EVERY platform listed above with distinct wording per platform.
 - Vary post structures across the day: list, story, question, hot take. Never repeat opening patterns within 3 days.
 - Never use em dashes. No emojis unless brand exemplars use them.

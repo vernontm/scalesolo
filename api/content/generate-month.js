@@ -133,7 +133,7 @@ ${platformList}${ctaBlock}
 - Each element is one post object with shape:
   {
     "date": "YYYY-MM-DD",
-    "title": "<short slug, used as internal title>",
+    "title": "<3-9 word headline in Title Case — surfaces on Facebook as the post name, must read like a real headline, not a slug>",
     "hook": "<the opening line — must read like the brand on its best day>",
     "caption": "<the long-form base text, no platform suffix>",
     "hashtags": "<space-separated, max 8>",
