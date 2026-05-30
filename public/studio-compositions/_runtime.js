@@ -56,7 +56,17 @@ window.__studioVars = (function () {
     const m = hash.match(/(?:^|&)vars=([^&]+)/)
     if (!m) return {}
     const decoded = decodeURIComponent(m[1])
-    return JSON.parse(atob(decoded))
+    // atob() returns a "binary string" (one JS char per byte). The
+    // encoder side (worker/studio-render.js encodeVarsForUrl) packs UTF-8
+    // bytes, so we have to walk the binary string back into a Uint8Array
+    // and run it through TextDecoder. Calling JSON.parse(atob(...)) directly
+    // would read the raw bytes as Latin-1 and mojibake any non-ASCII
+    // character (e.g. × → Ã + 0x97).
+    const binary = atob(decoded)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+    const json = new TextDecoder('utf-8').decode(bytes)
+    return JSON.parse(json)
   } catch (e) {
     console.warn('[studio] vars parse failed:', e)
     return {}
