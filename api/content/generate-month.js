@@ -372,6 +372,11 @@ export default async function handler(req, res) {
             per_platform_text: p.per_platform_text && typeof p.per_platform_text === 'object'
               ? p.per_platform_text : null,
             post_type: 'text',
+          // media_type='text' (not the DB default 'video') so the
+          // /api/content?action=approve path knows these are text-only
+          // posts that should publish via Upload-Post's /upload_text
+          // endpoint rather than waiting for media to be attached.
+          media_type: 'text',
           }
           const ins = await supaFetch('content_scripts', { method: 'POST', body: row })
           const out = Array.isArray(ins) ? ins[0] : ins

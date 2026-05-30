@@ -92,47 +92,62 @@ export default function ApprovalQueue() {
     }
   }, [cursor, queue.length, fetchBatch])
 
-  const patchStatus = useCallback(async (id, patch) => {
+  // POST to the real /api/content?action=approve|reject path so the
+  // server-side logic runs: approval flips status to 'scheduled',
+  // submits the post to Upload-Post at the row's scheduled_datetime,
+  // and stores the returned job_id. Raw PATCH would skip all that and
+  // leave the row in approval='approved' but status='caption_ready'
+  // (i.e. never publishing).
+  const callAction = useCallback(async (id, action, body = {}) => {
     setBusy(true)
     try {
-      const r = await fetch(`/api/content?id=${id}`, {
-        method: 'PATCH',
+      const r = await fetch(`/api/content?id=${id}&action=${action}`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(patch),
+        body: JSON.stringify(body),
       })
       if (!r.ok) {
         const b = await r.json().catch(() => ({}))
-        throw new Error(b?.error || `Update failed (${r.status})`)
+        throw new Error(b?.error || `${action} failed (${r.status})`)
       }
     } finally {
       setBusy(false)
     }
   }, [token])
 
+  // Inline-edit save still goes through PATCH so we only update the
+  // caption without triggering the approve side effects. Approve runs
+  // right after if the user clicks "Save + approve".
+  const patchCaption = useCallback(async (id, caption) => {
+    const r = await fetch(`/api/content?id=${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ caption }),
+    })
+    if (!r.ok) {
+      const b = await r.json().catch(() => ({}))
+      throw new Error(b?.error || `Update failed (${r.status})`)
+    }
+  }, [token])
+
   const approve = useCallback(async () => {
     if (!current || busy) return
     try {
-      await patchStatus(current.id, {
-        approval_status: 'approved',
-        approved_at: new Date().toISOString(),
-        needs_approval: false,
-        ...(editMode ? { caption: editText } : {}),
-      })
+      if (editMode && editText !== current.caption) {
+        await patchCaption(current.id, editText)
+      }
+      await callAction(current.id, 'approve')
       advance()
     } catch (e) { setError(e.message) }
-  }, [current, busy, editMode, editText, patchStatus, advance])
+  }, [current, busy, editMode, editText, callAction, patchCaption, advance])
 
   const reject = useCallback(async () => {
     if (!current || busy) return
     try {
-      await patchStatus(current.id, {
-        approval_status: 'rejected',
-        needs_approval: false,
-        rejected_reason: 'Skipped from queue',
-      })
+      await callAction(current.id, 'reject', { reason: 'Skipped from queue' })
       advance()
     } catch (e) { setError(e.message) }
-  }, [current, busy, patchStatus, advance])
+  }, [current, busy, callAction, advance])
 
   const skip = useCallback(() => {
     if (!current || busy) return
