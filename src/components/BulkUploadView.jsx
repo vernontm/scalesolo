@@ -517,6 +517,9 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   // the currently-filtered list so its prev/next arrows page through
   // exactly what the user sees.
   const [previewId, setPreviewId] = useState(null)
+  // Per-row approve spinner — the row id currently mid-approve so the
+  // Approve button shows a loader instead of double-firing.
+  const [approvingId, setApprovingId] = useState(null)
   // Date-range filter for the scheduled_datetime field. 'all' is the
   // default (everything visible regardless of when it fires). 'today',
   // 'week', '7d' are quick presets — 'custom' arms the two from/to
@@ -1403,6 +1406,36 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     setSelected((s) => {
       const next = new Set(s); if (next.has(id)) next.delete(id); else next.add(id); return next
     })
+  }
+
+  // ── per-row approve ───────────────────────────────────────────────────────
+  // Routes through /api/content?action=approve so the post lands status
+  // ='scheduled' and gets registered with Upload-Post (text-only or
+  // media). Optimistic local update for the approval pill; the realtime
+  // listener + refresh() will catch the canonical status afterwards.
+  const approveRow = async (id) => {
+    setApprovingId(id)
+    try {
+      const r = await fetch(`/api/content?id=${id}&action=approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenRef.current}` },
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(body?.error || `Approve failed (${r.status})`)
+      setScripts((arr) => arr.map((row) => row.id === id ? {
+        ...row,
+        approval_status: 'approved',
+        status: body?.status || 'scheduled',
+        uploadpost_request_id: body?.uploadpost_request_id ?? row.uploadpost_request_id,
+        uploadpost_job_id: body?.uploadpost_job_id ?? row.uploadpost_job_id,
+      } : row))
+      toast({ message: 'Approved + scheduled', kind: 'success' })
+      onChange?.()
+    } catch (e) {
+      toast({ message: `Approve failed: ${e.message}`, kind: 'error' })
+    } finally {
+      setApprovingId(null)
+    }
   }
 
   // ── inline patch ──────────────────────────────────────────────────────────
@@ -2521,6 +2554,44 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                     </td>
                     <td style={{ padding: 8, verticalAlign: 'middle' }}>
                       <div style={{ display: 'flex', gap: 4, alignItems: 'center', justifyContent: 'center' }}>
+                        {/* Per-row Approve. Pending rows show a green check;
+                            already-approved rows show a dimmed disabled
+                            check so the user can see the row is locked in.
+                            Routes through /api/content?action=approve so
+                            the row picks up scheduled_datetime + gets
+                            registered with Upload-Post (text-only posts
+                            included after the rescheduleUploadPostJob fix). */}
+                        {(r.approval_status === 'pending' || !r.approval_status) ? (
+                          <button
+                            aria-label="Approve + schedule"
+                            disabled={approvingId === r.id}
+                            onClick={() => approveRow(r.id)}
+                            style={{
+                              background: 'rgba(34,197,94,0.14)',
+                              border: '1px solid rgba(34,197,94,0.45)',
+                              color: '#22c55e', cursor: approvingId === r.id ? 'wait' : 'pointer',
+                              padding: '4px 8px', borderRadius: 6,
+                              display: 'inline-flex', alignItems: 'center', gap: 4,
+                              fontSize: 11.5, fontWeight: 700,
+                            }}
+                            title="Approve + schedule this post"
+                          >
+                            {approvingId === r.id ? <Loader2 size={12} className="spin" /> : <Check size={12} />}
+                            Approve
+                          </button>
+                        ) : r.approval_status === 'approved' ? (
+                          <span
+                            title="Already approved"
+                            style={{
+                              padding: '4px 8px', borderRadius: 6,
+                              background: 'rgba(34,197,94,0.10)', color: 'rgba(34,197,94,0.7)',
+                              fontSize: 11.5, fontWeight: 700,
+                              display: 'inline-flex', alignItems: 'center', gap: 4,
+                            }}
+                          >
+                            <Check size={12} /> Approved
+                          </span>
+                        ) : null}
                         {/* Compress / normalize the source video — runs the
                             ffmpeg worker pass that fixes HEVC, HDR, 4K,
                             sideways, and 60fps quirks in one go. Only shown
