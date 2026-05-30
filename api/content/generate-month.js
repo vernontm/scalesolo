@@ -38,17 +38,26 @@ export const config = { maxDuration: 300 }
 
 // Platforms our system understands. Names match upload-post + the
 // social_platform_tags map. Any string outside this set is dropped.
+// Note: "twitter" coming from older callers is normalized to "x" below.
 const VALID_PLATFORMS = new Set([
-  'threads', 'instagram', 'twitter', 'facebook',
+  'threads', 'instagram', 'x', 'facebook',
   'tiktok', 'youtube', 'linkedin', 'pinterest', 'bluesky', 'reddit',
 ])
+// Legacy → canonical platform aliases. Strips any old "twitter" string
+// callers might still send so the row stores "x" everywhere
+// (per_platform_text key, platforms[] entry, Upload-Post submission).
+const PLATFORM_ALIASES = { twitter: 'x' }
+function normalizePlatform(p) {
+  const s = String(p || '').toLowerCase()
+  return PLATFORM_ALIASES[s] || s
+}
 
 // Per-platform copy guardrails: char ceiling + format hints baked into
 // the Claude system prompt so a single response carries per-platform
 // variants without manual trimming.
 const PLATFORM_RULES = {
   threads:   { max: 500,   tone: 'Punchy, short declarative lines. 3-5 lines max. No em dashes. Confident, not hype.' },
-  twitter:   { max: 280,   tone: 'One tight idea per post. Lead with the punchline. No threads (the platform handles cross-posting).' },
+  x:         { max: 280,   tone: 'One tight idea per post. Lead with the punchline. No threads (the platform handles cross-posting).' },
   instagram: { max: 2200,  tone: 'Hook in line 1, breath in line 2, 2-3 supporting beats, then a soft question or invite.' },
   facebook:  { max: 1000,  tone: 'Conversational, slightly longer. Story or insight format. Comfortable with paragraphs.' },
   tiktok:    { max: 2200,  tone: 'High-energy caption that pairs with the video. Hook + payoff.' },
@@ -137,7 +146,7 @@ ${platformList}${ctaBlock}
     "hook": "<the opening line — must read like the brand on its best day>",
     "caption": "<the long-form base text, no platform suffix>",
     "hashtags": "<space-separated, max 8>",
-    "per_platform_text": { "threads": "...", "instagram": "...", "twitter": "...", "facebook": "..." }
+    "per_platform_text": { "threads": "...", "instagram": "...", "x": "...", "facebook": "..." }
   }
 - per_platform_text MUST include an entry for EVERY platform in the platform list above. If the same body works for multiple platforms, write it slightly differently for each — never identical strings. Trim to each platform's char limit.
 - Vary post structures across the day: a list-style post, a story-style post, a question, a hot take. Do not repeat the same opening pattern within a 3-day window.
@@ -203,7 +212,7 @@ export default async function handler(req, res) {
     await assertProfileAccess(auth.user.id, profileId)
 
     const platforms = (Array.isArray(body.platforms) ? body.platforms : [])
-      .map((p) => String(p || '').toLowerCase())
+      .map(normalizePlatform)
       .filter((p) => VALID_PLATFORMS.has(p))
     if (!platforms.length) return res.status(400).json({ error: 'at least one valid platform required' })
 

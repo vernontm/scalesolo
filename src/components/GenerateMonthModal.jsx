@@ -26,7 +26,7 @@ import { X, ChevronLeft, ChevronRight, Sparkles, Check, AlertCircle, Loader2 } f
 
 const ALL_PLATFORMS = [
   { id: 'threads',   label: 'Threads',   primary: true },
-  { id: 'twitter',   label: 'Twitter',   primary: true },
+  { id: 'x',         label: 'X (Twitter)', primary: true },
   { id: 'instagram', label: 'Instagram', primary: true },
   { id: 'facebook',  label: 'Facebook',  primary: true },
   { id: 'linkedin',  label: 'LinkedIn',  primary: false },
@@ -47,7 +47,7 @@ export default function GenerateMonthModal({ profileId, token, onClose, onComple
   const [savedGoal, setSavedGoal] = useState('')
 
   const [goal, setGoal] = useState('')
-  const [platforms, setPlatforms] = useState(['threads', 'twitter', 'instagram', 'facebook'])
+  const [platforms, setPlatforms] = useState(['threads', 'x', 'instagram', 'facebook'])
   const [postsPerDay, setPostsPerDay] = useState(4)
   const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [endDate, setEndDate] = useState(() => {

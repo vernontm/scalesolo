@@ -65,7 +65,8 @@ export default async function handler(req, res) {
 
   try {
     const {
-      profile_id, upload_post_user, platforms,
+      profile_id, upload_post_user,
+      platforms: rawPlatforms,
       video_url, photo_urls,
       description, title,
       scheduling_mode,        // 'now' | 'fixed' | 'auto'
@@ -98,9 +99,19 @@ export default async function handler(req, res) {
       youtube_thumbnail_url,
     } = req.body || {}
 
-    if (!profile_id || !Array.isArray(platforms) || !platforms.length) {
+    if (!profile_id || !Array.isArray(rawPlatforms) || !rawPlatforms.length) {
       return res.status(400).json({ error: 'profile_id, platforms required' })
     }
+    // Legacy alias normalization. Some older rows + the original
+    // generate-month rollout wrote 'twitter' into platforms[];
+    // Upload-Post's /upload_text endpoint only accepts 'x' and rejects
+    // anything else as "Invalid platforms". Normalize once here so the
+    // rest of the file (and Upload-Post itself) only sees canonical names.
+    const platforms = rawPlatforms.map((p) => {
+      const s = String(p || '').toLowerCase()
+      if (s === 'twitter') return 'x'
+      return s
+    })
     // Trial users can generate + preview, but they can't publish.
     // We return the same 402 shape the credit wall uses so the
     // canvas's existing OutOfCreditsModal handler pops the upgrade

@@ -68,7 +68,7 @@ function parseArgs() {
 // ── platform rules (mirror of server) ─────────────────────────────────
 const PLATFORM_RULES = {
   threads:   { max: 500,   tone: 'Punchy, short declarative lines. 3-5 lines max. No em dashes. Confident, not hype.' },
-  twitter:   { max: 280,   tone: 'One tight idea per post. Lead with the punchline.' },
+  x:         { max: 280,   tone: 'One tight idea per post. Lead with the punchline.' },
   instagram: { max: 2200,  tone: 'Hook in line 1, breath in line 2, 2-3 supporting beats, then a soft question or invite.' },
   facebook:  { max: 1000,  tone: 'Conversational, slightly longer. Story or insight format.' },
   tiktok:    { max: 2200,  tone: 'High-energy caption that pairs with the video. Hook + payoff.' },
