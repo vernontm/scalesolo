@@ -10,6 +10,7 @@ import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { supabase } from '../lib/supabase.js'
 import VoiceTrainingSection from '../components/VoiceTrainingSection.jsx'
+import SocialExtrasSection from '../components/SocialExtrasSection.jsx'
 import VoiceSummaryCard from '../components/VoiceSummaryCard.jsx'
 
 const grid = {
@@ -140,6 +141,14 @@ const SECTIONS = [
     icon: Share2,
     description: "Where you post. Used for @mentions, hashtags, and links.",
     isComplete: (f) => !!(f.instagram_handle || f.tiktok_handle || f.youtube_handle || f.linkedin_handle || f.threads_handle || f.x_handle),
+  },
+  {
+    id: 'social_extras',
+    label: 'Tags & references',
+    icon: Sparkles,
+    description: 'Per-platform tags (e.g. Threads hashtag) auto-appended on publish, plus visual references the AI conditions on when generating posts.',
+    isComplete: () => true,
+    requiresSavedProfile: true,
   },
   {
     id: 'music',
@@ -283,6 +292,12 @@ function ProfileEditor({ profile, onClose, onSaved }) {
               {activeSection === 'music' && (
                 <MusicLibrarySection
                   userId={session?.user?.id}
+                  token={session.access_token}
+                />
+              )}
+              {activeSection === 'social_extras' && profile?.id && (
+                <SocialExtrasSection
+                  profileId={profile.id}
                   token={session.access_token}
                 />
               )}
