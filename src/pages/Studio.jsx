@@ -4210,6 +4210,11 @@ function RerenderConfirmModal({ video, token, busy, onCancel, onConfirm }) {
   const [musicVolume, setMusicVolume] = useState(
     typeof video.music_volume === 'number' ? video.music_volume : 0.12,
   )
+  // Sound design toggle. Mirrors the column on studio_videos; defaults
+  // true for any video created before the column existed.
+  const [sfxEnabled, setSfxEnabled] = useState(
+    video.sfx_enabled === undefined || video.sfx_enabled === null ? true : !!video.sfx_enabled,
+  )
   const [tracks, setTracks] = useState([])
   // Current brand colors on the BRAND PROFILE. studio_videos snapshots
   // brand_color + brand_color_secondary at create time, so if the user
@@ -4268,6 +4273,8 @@ function RerenderConfirmModal({ video, token, busy, onCancel, onConfirm }) {
     }
     const prevVol = typeof video.music_volume === 'number' ? video.music_volume : 0.12
     if (Math.abs(musicVolume - prevVol) > 0.005) patch.music_volume = musicVolume
+    const prevSfx = video.sfx_enabled === undefined || video.sfx_enabled === null ? true : !!video.sfx_enabled
+    if (sfxEnabled !== prevSfx) patch.sfx_enabled = sfxEnabled
     if (syncBrandColors && brandDrift) {
       if (primaryDrift) patch.brand_color = profileColors.primary
       if (secondaryDrift) patch.brand_color_secondary = profileColors.secondary
@@ -4359,6 +4366,38 @@ function RerenderConfirmModal({ video, token, busy, onCancel, onConfirm }) {
             </label>
           </div>
         )}
+        {/* Sound design — per-bake on/off. When disabled the worker
+            skips the SFX mix pass entirely, so no entrance whooshes,
+            transition swooshes, button dings, or emphasis cues land on
+            the final MP4. Useful when adding a voiceover that competes
+            with the SFX layer or when the user just wants a quiet cut. */}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', marginBottom: 8, letterSpacing: 0.2 }}>
+            Sound effects
+          </div>
+          <label style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            padding: '10px 12px',
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            borderRadius: 8, cursor: 'pointer', userSelect: 'none',
+          }}>
+            <input
+              type="checkbox"
+              checked={sfxEnabled}
+              onChange={(e) => setSfxEnabled(e.target.checked)}
+              style={{ width: 16, height: 16, margin: 0, accentColor: 'var(--red)' }}
+            />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, color: 'var(--text)', fontWeight: 600 }}>
+                {sfxEnabled ? 'On' : 'Off'} — entrance, transition, and emphasis cues
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-soft)', marginTop: 2 }}>
+                Turn off when the voiceover or music should carry the bake alone.
+              </div>
+            </div>
+          </label>
+        </div>
+
         <div style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', marginBottom: 8, letterSpacing: 0.2 }}>
             Background music

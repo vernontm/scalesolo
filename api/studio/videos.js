@@ -21,7 +21,7 @@ import { gateStudio } from './_lib/gate.js'
 const ALLOWED_CREATE = new Set([
   'profile_id', 'title', 'topic_prompt', 'fixed_script', 'reference_url', 'reference_text',
   'avatar_id', 'look_id', 'voice_id', 'target_duration_secs', 'aspect_ratio',
-  'template_id', 'brand_color', 'brand_color_secondary', 'randomize_look_images', 'captions_enabled', 'overlays_enabled', 'motion_graphics_enabled',
+  'template_id', 'brand_color', 'brand_color_secondary', 'randomize_look_images', 'captions_enabled', 'overlays_enabled', 'motion_graphics_enabled', 'sfx_enabled',
   'music_mode', 'music_track_id', 'music_volume',
   'content_mix',
 ])
@@ -31,7 +31,7 @@ const ALLOWED_CREATE = new Set([
 const ALLOWED_PATCH = new Set([
   'title', 'topic_prompt', 'fixed_script', 'reference_url', 'reference_text',
   'avatar_id', 'look_id', 'voice_id', 'target_duration_secs', 'aspect_ratio',
-  'template_id', 'brand_color', 'brand_color_secondary', 'randomize_look_images', 'captions_enabled', 'overlays_enabled', 'motion_graphics_enabled',
+  'template_id', 'brand_color', 'brand_color_secondary', 'randomize_look_images', 'captions_enabled', 'overlays_enabled', 'motion_graphics_enabled', 'sfx_enabled',
   'music_mode', 'music_track_id', 'music_volume',
   'content_mix',
   'status', 'script_full_text', 'final_video_url', 'error',

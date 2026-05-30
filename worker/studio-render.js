@@ -1823,7 +1823,14 @@ export async function runStudioRender({ supabase, env, studio_video_id }) {
     // and surface the reason in progress.sfx_skipped.
     let deliveredPath = finalPath
     const sfxPlan = resolvedTemplate?._sfx_plan
-    if (sfxPlan && sfxPlan.density !== 'off') {
+    // Per-video kill switch from the re-render modal. Defaults true so
+    // existing videos still mix SFX; flip to false from the UI when the
+    // voiceover should carry the bake alone. Skipping here also skips
+    // the asset downloads, so it's a free shortcut.
+    const sfxEnabledOnVideo = video.sfx_enabled !== false
+    if (!sfxEnabledOnVideo) {
+      progress.sfx_skipped = { reason: 'disabled_on_video' }
+    } else if (sfxPlan && sfxPlan.density !== 'off') {
       try {
         progress.stage = 'sfx_mix'
         await writeProgress()
