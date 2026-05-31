@@ -389,11 +389,19 @@ function StepEnvironment({ envUrl, bgSource, profileId, onChangeEnv, onChangeBgS
 // Pre-tuned text descriptions surfaced as one-tap presets for users
 // who aren't sure what to write. Picking a preset drops the user into
 // 'text' mode with the prompt pre-filled — they can still tweak it.
+// All presets assume avatar-friendly close-up framing (chest-up).
 const POSE_PRESETS = {
   podcast: 'Seated on a podcast set with a professional condenser microphone on a boom arm in front of them, leaning slightly forward toward the mic, hands gesturing naturally mid-sentence as if explaining a point. Engaged, conversational expression, eye contact with the camera. Subtle shoulder turn so they read as in-conversation rather than posed.',
+  presenter: 'Standing confidently in front of the camera, square to frame, one hand gesturing open-palm as if presenting an idea, the other relaxed at their side. Warm, authoritative expression. Subtle smile mid-sentence. Posture upright, shoulders relaxed back. No props in their hands.',
+  casual: 'Seated comfortably in a modern lounge chair, leaning back at a relaxed angle, one arm resting on the armrest, the other hand gesturing softly while speaking. Conversational expression, half-smile, talking as if to a friend off-camera. Loose posture, no tension.',
+  tutorial: 'Seated at a clean desk, slightly angled toward the camera. One hand resting on the desk near a closed laptop, the other hand gesturing while explaining a concept. Focused, helpful expression making eye contact with the camera. Clear teaching energy. No notebook or pen in their hands.',
+  executive: 'Polished executive headshot energy. Standing or seated, hands clasped in front of them or one tucked behind, shoulders square, posture upright. Calm, decisive expression with a soft smile. Direct eye contact with the camera. Confident, no exaggerated gesture.',
 }
 
 function StepPose({ kind, imageUrl, description, profileId, onChangeKind, onChangeImage, onChangeDescription }) {
+  // Order matters: defaults at the top (lowest friction), presets in
+  // the middle, custom paths at the bottom. Presets share an id prefix
+  // so the dispatch loop below can look them up generically.
   const options = [
     {
       id: 'default',
@@ -402,8 +410,33 @@ function StepPose({ kind, imageUrl, description, profileId, onChangeKind, onChan
     },
     {
       id: 'preset_podcast',
-      label: 'Podcast host (preset)',
-      hint: 'Pro condenser mic on a boom arm, leaning into the mic, gesturing mid-sentence. Drops you into the text editor with the prompt pre-filled so you can tweak.',
+      label: 'Podcast host',
+      hint: 'Pro condenser mic on a boom arm, leaning in, gesturing mid-sentence.',
+      isPreset: true,
+    },
+    {
+      id: 'preset_presenter',
+      label: 'Standing presenter',
+      hint: 'On their feet, square to camera, open-palm gesture as if presenting an idea.',
+      isPreset: true,
+    },
+    {
+      id: 'preset_casual',
+      label: 'Casual sit-down',
+      hint: 'Lounge chair, leaning back, talking as if to a friend off-camera.',
+      isPreset: true,
+    },
+    {
+      id: 'preset_tutorial',
+      label: 'Tutorial at desk',
+      hint: 'Seated at a clean desk, one hand resting near the laptop, explaining a concept.',
+      isPreset: true,
+    },
+    {
+      id: 'preset_executive',
+      label: 'Executive headshot',
+      hint: 'Polished, hands clasped, shoulders square. Calm, decisive, no exaggerated gesture.',
+      isPreset: true,
     },
     {
       id: 'image',
@@ -417,13 +450,17 @@ function StepPose({ kind, imageUrl, description, profileId, onChangeKind, onChan
     },
   ]
   // When user picks a preset, switch to text mode and pre-populate
-  // the description. This is a one-way pre-fill — once they edit, it
-  // stays text mode with their tweaks.
+  // the description with the canned prompt. This is a one-way pre-fill —
+  // once they edit, it stays text mode with their tweaks. The chip
+  // highlight below tracks the still-matches-canned state.
   const handleKindChange = (id) => {
-    if (id === 'preset_podcast') {
-      onChangeKind('text')
-      onChangeDescription(POSE_PRESETS.podcast)
-      return
+    if (id.startsWith('preset_')) {
+      const key = id.replace('preset_', '')
+      if (POSE_PRESETS[key]) {
+        onChangeKind('text')
+        onChangeDescription(POSE_PRESETS[key])
+        return
+      }
     }
     onChangeKind(id)
   }
@@ -432,15 +469,28 @@ function StepPose({ kind, imageUrl, description, profileId, onChangeKind, onChan
       title="Pose & body language"
       hint="Avatars stay framed chest-up close to the camera. This step controls how they're sitting / standing and what they're doing with their hands."
     >
+      {/* When kind is 'text' AND the description still equals one of
+          the canned preset prompts, that preset's chip wins the
+          highlight (not the generic "Describe the pose in words"
+          chip). The moment the user edits the text away from the
+          canned version, the generic text chip takes over. */}
+      {(() => null)() /* keep flow simple; logic inline below */}
       <div style={{ display: 'grid', gap: 10 }}>
         {options.map((opt) => {
-          // The preset shows as "active" when we're in text mode and
-          // the description still matches the canned podcast prompt.
-          // Once the user edits the text it falls back to plain text
-          // mode (no preset highlight).
-          const isPresetActive =
-            opt.id === 'preset_podcast' && kind === 'text' && description === POSE_PRESETS.podcast
-          const active = (opt.id === kind) || isPresetActive
+          const matchedPresetKey = kind === 'text'
+            ? Object.keys(POSE_PRESETS).find((k) => POSE_PRESETS[k] === description)
+            : null
+          let isPresetActive = false
+          if (opt.isPreset) {
+            const key = opt.id.replace('preset_', '')
+            isPresetActive = key === matchedPresetKey
+          }
+          // For the plain "text" entry: only active when we're in
+          // text mode AND no preset matches the current description.
+          const isPlainTextActive = opt.id === 'text' && kind === 'text' && !matchedPresetKey
+          // Default + image: active iff their kind matches.
+          const isOtherActive = (opt.id === 'default' || opt.id === 'image') && opt.id === kind
+          const active = isPresetActive || isPlainTextActive || isOtherActive
           return (
             <button
               key={opt.id} type="button"
