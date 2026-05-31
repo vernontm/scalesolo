@@ -61,6 +61,14 @@ export default function NewLookModal({ avatarId, profileId, onClose, onCreated }
     outfit_image_url: '',
     environment_image_url: '',
     background_source: 'avatar',
+    // Pose direction. Either a reference image OR a free-text
+    // description. Both null/empty = sensible default ("speaking to
+    // camera, no props"). When the user uploads a pose ref AND
+    // writes a description, the prompt uses both — image for body /
+    // hand position, text for clarifying detail.
+    pose_kind: 'default',   // 'default' | 'image' | 'text'
+    pose_image_url: '',
+    pose_description: '',
     orientation: 'horizontal', // 'horizontal' | 'vertical'
     mode: 'compose_then_angles',
     hero_image_url: '',                // approved hero (compose output or original avatar in angles_only)
@@ -73,7 +81,11 @@ export default function NewLookModal({ avatarId, profileId, onClose, onCreated }
   const steps = useMemo(() => {
     const out = ['name', 'avatar_upload', 'mode']
     if (a.mode === 'compose_then_angles' || a.mode === 'compose_only') {
-      out.push('outfit_upload', 'environment')
+      // Pose direction lands between Environment and Orientation —
+      // logically it's the last creative-direction choice before the
+      // framing decision, and it only matters when we're actually
+      // composing a new hero shot.
+      out.push('outfit_upload', 'environment', 'pose')
     }
     out.push('orientation')
     if (a.mode === 'compose_then_angles' || a.mode === 'compose_only') {
@@ -106,6 +118,14 @@ export default function NewLookModal({ avatarId, profileId, onClose, onCreated }
     if (step === 'environment') {
       // Either an env photo, or a fallback source picked.
       return !!a.environment_image_url || !!a.background_source
+    }
+    if (step === 'pose') {
+      // Default needs no further input. Image / text variants need
+      // their respective field filled.
+      if (a.pose_kind === 'default') return true
+      if (a.pose_kind === 'image') return !!a.pose_image_url
+      if (a.pose_kind === 'text') return a.pose_description.trim().length >= 4
+      return true
     }
     if (step === 'orientation') return a.orientation === 'horizontal' || a.orientation === 'vertical'
     if (step === 'compose_preview') return !!a.hero_image_url
@@ -218,6 +238,24 @@ export default function NewLookModal({ avatarId, profileId, onClose, onCreated }
               onChangeEnv={(v) => set('environment_image_url', v)}
               onChangeBgSource={(v) => set('background_source', v)}
               hasOutfit={!!a.outfit_image_url}
+            />
+          )}
+          {step === 'pose' && (
+            <StepPose
+              kind={a.pose_kind}
+              imageUrl={a.pose_image_url}
+              description={a.pose_description}
+              profileId={profileId}
+              onChangeKind={(v) => {
+                set('pose_kind', v)
+                // Clear the other field's value when switching modes
+                // so a stale upload from "image" doesn't leak into the
+                // "text" prompt.
+                if (v !== 'image')   set('pose_image_url', '')
+                if (v !== 'text')    set('pose_description', '')
+              }}
+              onChangeImage={(v) => set('pose_image_url', v)}
+              onChangeDescription={(v) => set('pose_description', v)}
             />
           )}
           {step === 'orientation' && (
@@ -348,6 +386,84 @@ function StepEnvironment({ envUrl, bgSource, profileId, onChangeEnv, onChangeBgS
   )
 }
 
+function StepPose({ kind, imageUrl, description, profileId, onChangeKind, onChangeImage, onChangeDescription }) {
+  const options = [
+    {
+      id: 'default',
+      label: 'Default — talking to camera',
+      hint: 'Relaxed natural posture, hands at sides or in lap. No mic, no devices, no extra props.',
+    },
+    {
+      id: 'image',
+      label: 'Match a reference pose',
+      hint: 'Upload a photo of anyone in the pose you want. We use only the body language — identity + outfit stay from your earlier uploads.',
+    },
+    {
+      id: 'text',
+      label: 'Describe the pose in words',
+      hint: 'e.g. "Sitting in a black leather chair, arms resting on the armrests, looking thoughtful."',
+    },
+  ]
+  return (
+    <Section
+      title="Pose & body language"
+      hint="Avatars stay framed chest-up close to the camera. This step controls how they're sitting / standing and what they're doing with their hands."
+    >
+      <div style={{ display: 'grid', gap: 10 }}>
+        {options.map((opt) => {
+          const active = kind === opt.id
+          return (
+            <button
+              key={opt.id} type="button"
+              onClick={() => onChangeKind(opt.id)}
+              style={{
+                padding: '14px 16px', textAlign: 'left',
+                background: active ? 'rgba(239,68,68,0.10)' : 'var(--surface)',
+                border: `1.5px solid ${active ? 'var(--red)' : 'var(--border)'}`,
+                borderRadius: 10, cursor: 'pointer',
+              }}
+            >
+              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{opt.label}</div>
+              <div style={{ fontSize: 12.5, color: 'var(--muted)', lineHeight: 1.5 }}>{opt.hint}</div>
+            </button>
+          )
+        })}
+      </div>
+
+      {kind === 'image' && (
+        <div style={{ marginTop: 18 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.06, textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 8 }}>Pose reference photo</div>
+          <ImageDropzone url={imageUrl} profileId={profileId} onChange={onChangeImage} />
+          <div style={{ marginTop: 8, fontSize: 11.5, color: 'var(--muted)' }}>
+            Only the body pose, hand position, and posture are pulled from this photo. The face, hair, and outfit are ignored.
+          </div>
+        </div>
+      )}
+      {kind === 'text' && (
+        <div style={{ marginTop: 18 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.06, textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 8 }}>Pose description</div>
+          <textarea
+            value={description}
+            onChange={(e) => onChangeDescription(e.target.value)}
+            placeholder="The man is sitting in a black leather chair, leaning slightly forward, hands clasped in his lap. Calm, focused expression."
+            rows={4}
+            style={{
+              width: '100%', padding: 12, fontSize: 14, lineHeight: 1.5,
+              background: 'var(--surface)', border: '1px solid var(--border)',
+              borderRadius: 10, color: 'var(--text)', fontFamily: 'inherit',
+              resize: 'vertical', boxSizing: 'border-box',
+            }}
+            maxLength={500}
+          />
+          <div style={{ marginTop: 6, fontSize: 11, color: 'var(--muted)', textAlign: 'right' }}>
+            {description.length} / 500
+          </div>
+        </div>
+      )}
+    </Section>
+  )
+}
+
 function StepOrientation({ value, onChange }) {
   return (
     <Section
@@ -397,6 +513,10 @@ function StepComposePreview({ a, set, token, profileId }) {
           outfit_image_url: a.outfit_image_url || null,
           environment_image_url: a.environment_image_url || null,
           background_source: a.background_source,
+          // Pose direction. The server picks how to weave these into
+          // the prompt based on which is set.
+          pose_image_url: a.pose_kind === 'image' ? (a.pose_image_url || null) : null,
+          pose_description: a.pose_kind === 'text' ? (a.pose_description || null) : null,
         }),
       })
       const body = await r.json()

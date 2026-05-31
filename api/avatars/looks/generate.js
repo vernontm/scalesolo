@@ -42,35 +42,62 @@ export const config = { maxDuration: 30 }
 // Stable order for the angle pass. The UI grid renders in this exact
 // order so the user sees Hero on the left and ramps L→R as they scan.
 const ANGLE_PROMPTS = {
-  hero: `Front-facing, eye-level hero shot. The subject is looking directly at the camera as if mid-sentence on a podcast. Subtle hand gesture frozen in motion. Same person, same outfit, same environment as the reference. Keep facial features, hair, build, age, ethnicity, clothing details, lighting, and background identical to the reference. Only the camera angle and pose change.`,
-  '45_left': `Three-quarter angle from the subject's LEFT side, roughly 45 degrees off-axis. The camera sees more of the right side of the subject's face. Eye-level. The subject is still talking, mid-sentence, with a subtle hand gesture. Same person, same outfit, same environment as the reference. Keep facial features, hair, build, age, ethnicity, clothing details, lighting, and background identical to the reference. Only the camera angle changes.`,
-  '45_right': `Three-quarter angle from the subject's RIGHT side, roughly 45 degrees off-axis. The camera sees more of the left side of the subject's face. Eye-level. The subject is still talking, mid-sentence, with a subtle hand gesture. Same person, same outfit, same environment as the reference. Keep facial features, hair, build, age, ethnicity, clothing details, lighting, and background identical to the reference. Only the camera angle changes.`,
-  '90_left': `Hard left profile, 90 degrees off-axis. The camera sees only the right side of the subject's face in a clean profile. Eye-level. The subject is still talking, mid-sentence, with a subtle hand gesture. Same person, same outfit, same environment as the reference. Keep facial features, hair, build, age, ethnicity, clothing details, lighting, and background identical to the reference. Only the camera angle changes.`,
+  hero: `Front-facing, eye-level close-up of the person in the reference image. Keep EVERYTHING identical to the reference — face, hair, beard, build, outfit, posture, hand position, environment, lighting, props, expression. Only the camera angle changes: dead-on, looking straight at the subject.`,
+  '45_left': `Three-quarter angle from the subject's LEFT side, roughly 45 degrees off-axis. The camera sees more of the right side of the subject's face. Eye-level close-up. Keep EVERYTHING else identical to the reference — face, hair, beard, build, outfit, posture, hand position, environment, lighting, props, expression. Only the camera angle changes.`,
+  '45_right': `Three-quarter angle from the subject's RIGHT side, roughly 45 degrees off-axis. The camera sees more of the left side of the subject's face. Eye-level close-up. Keep EVERYTHING else identical to the reference — face, hair, beard, build, outfit, posture, hand position, environment, lighting, props, expression. Only the camera angle changes.`,
+  '90_left': `Hard left profile, 90 degrees off-axis. The camera sees only the right side of the subject's face in a clean profile. Eye-level close-up. Keep EVERYTHING else identical to the reference — face, hair, beard, build, outfit, posture, hand position, environment, lighting, props, expression. Only the camera angle changes.`,
 }
 const ANGLE_ORDER = ['hero', '45_left', '45_right', '90_left']
 
-// Compose prompt — builds the hero shot from up to 3 reference photos.
-// We anchor identity (face, hair, build) to the avatar photo, anchor
-// wardrobe to the outfit photo, and anchor background/lighting to
-// either the environment photo or the chosen fallback.
-function buildComposePrompt({ hasOutfit, hasEnv, backgroundSource, orientation }) {
+// Compose prompt — builds the hero shot from the reference photos +
+// optional pose direction.
+//
+// Identity is anchored to the avatar photo, wardrobe to the outfit
+// photo, background/lighting to the environment (or to a fallback).
+// Pose comes from one of three sources, in priority order:
+//   1. A pose reference image (last in the input_urls array)
+//   2. A free-text description ("sitting in a black chair, hands
+//      folded")
+//   3. Sensible default: talking to camera, hands relaxed, no props
+//
+// Earlier versions baked "podcast portrait" + an implicit microphone
+// into the default, which made nano-banana auto-insert a mic even
+// when no environment specified one. The default now stays neutral
+// and only adds props when the user explicitly references them.
+function buildComposePrompt({ hasOutfit, hasEnv, backgroundSource, orientation, hasPoseRef, poseDescription, poseRefSlotIndex }) {
   const parts = []
-  parts.push('Studio-quality podcast portrait of the person from the first reference image. They are seated or standing at podcast distance, looking directly at the camera as if mid-sentence with a subtle hand gesture. Eye-level framing, soft cinematic lighting.')
-  parts.push('Keep their face, hair, build, age, ethnicity, and overall identity IDENTICAL to the first reference. No alterations to their features.')
+  parts.push('Studio-quality close-up portrait of the person in the first reference image. Chest-up framing, eye-level, soft cinematic lighting, sharp focus on the eyes. Photorealistic.')
+  parts.push('Keep their face, hair, beard, build, age, ethnicity, and overall identity IDENTICAL to the first reference image. No alterations to their facial features.')
   if (hasOutfit) {
     parts.push('They are wearing the EXACT outfit from the second reference image — same garment shapes, fabric, colors, patterns, and accessories. Adapt the fit naturally to their body but do not redesign the outfit.')
   }
   if (hasEnv) {
-    parts.push('They are in the environment shown in the third reference image — same room, set dressing, lighting mood, and color palette. The subject sits/stands within the scene, not in front of a cutout.')
+    parts.push('They are in the environment shown in the third reference image — same room, set dressing, props, lighting mood, and color palette. The subject sits or stands within the scene; do not produce a cutout against a flat background.')
   } else if (backgroundSource === 'outfit' && hasOutfit) {
-    parts.push('Use the background and lighting from the outfit reference image as the environment.')
+    parts.push('Use the background, props, and lighting from the outfit reference image as the environment.')
   } else {
     parts.push('Use the background and lighting from the avatar reference image as the environment.')
   }
+
+  // Pose direction. When the user supplied a reference image, point
+  // the model at it by slot number (matches the order we pass to
+  // input_urls). Text description is folded in regardless.
+  if (hasPoseRef && typeof poseRefSlotIndex === 'number') {
+    const ordinal = ['first','second','third','fourth','fifth'][poseRefSlotIndex] || `slot ${poseRefSlotIndex + 1}`
+    parts.push(`POSE: match the body pose, hand position, and overall posture shown in the ${ordinal} reference image. The IDENTITY and outfit must still come from the earlier references; only the pose comes from this one. Ignore that person's face, hair, and clothing.`)
+  }
+  if (poseDescription && poseDescription.trim()) {
+    parts.push(`POSE DIRECTION: ${poseDescription.trim().slice(0, 500)}`)
+  }
+  if (!hasPoseRef && !(poseDescription && poseDescription.trim())) {
+    // Neutral default — no props, no instrument, no microphone.
+    parts.push('POSE: speaking to camera, relaxed natural posture, hands at sides or one resting in lap. No microphones, no devices, no objects in their hands unless the environment reference already shows one.')
+  }
+
   parts.push(orientation === 'vertical'
-    ? 'Vertical 9:16 framing, the subject centered with comfortable headroom and chest-up framing.'
-    : 'Horizontal 16:9 framing, the subject framed chest-up slightly off-center as if they are addressing one of two podcast microphones.')
-  parts.push('Photorealistic. Sharp focus on the eyes. No text, watermarks, or graphic overlays. No extra people in frame.')
+    ? 'Vertical 9:16 framing, the subject centered with comfortable headroom, chest-up.'
+    : 'Horizontal 16:9 framing, the subject framed chest-up.')
+  parts.push('No text, watermarks, or graphic overlays. No extra people in frame.')
   return parts.join(' ')
 }
 
@@ -130,6 +157,7 @@ export default async function handler(req, res) {
       aspect_ratio: rawAspect,
       avatar_image_url, outfit_image_url, environment_image_url,
       background_source,
+      pose_image_url, pose_description,
       hero_image_url,
     } = body
     if (!profile_id) return res.status(400).json({ error: 'profile_id required' })
@@ -142,12 +170,25 @@ export default async function handler(req, res) {
 
     if (mode === 'compose') {
       if (!avatar_image_url) return res.status(400).json({ error: 'avatar_image_url required for compose' })
-      const inputs = [avatar_image_url, outfit_image_url, environment_image_url].filter(Boolean)
+      // Pose ref is the LAST slot so the ordinal hint in the prompt
+      // matches whichever earlier slots are filled. The Boolean filter
+      // skips nulls. Slot order is fixed: avatar, outfit, env, pose.
+      const slots = [
+        { url: avatar_image_url, key: 'avatar' },
+        { url: outfit_image_url, key: 'outfit' },
+        { url: environment_image_url, key: 'env' },
+        { url: pose_image_url, key: 'pose' },
+      ].filter((s) => !!s.url)
+      const inputs = slots.map((s) => s.url)
+      const poseRefSlotIndex = pose_image_url ? slots.findIndex((s) => s.key === 'pose') : -1
       const prompt = buildComposePrompt({
         hasOutfit: !!outfit_image_url,
         hasEnv: !!environment_image_url,
         backgroundSource: background_source || 'avatar',
         orientation,
+        hasPoseRef: !!pose_image_url,
+        poseDescription: pose_description || '',
+        poseRefSlotIndex,
       })
       const taskId = await dispatchKieTask({ apiKey, prompt, inputUrls: inputs, aspect })
       return res.status(200).json({ task_ids: [{ angle: 'compose', task_id: taskId }] })
