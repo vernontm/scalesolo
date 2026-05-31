@@ -10,6 +10,7 @@ import { useCredits } from '../context/CreditsContext.jsx'
 import { supabase } from '../lib/supabase.js'
 import { toast, confirmDialog } from '../components/Toast.jsx'
 import { compressImageIfLarge } from '../lib/image-compress.js'
+import NewLookModal from '../components/NewLookModal.jsx'
 
 // Upload a File directly to Supabase Storage (avatar-media bucket) and return
 // the public URL. Bypasses Vercel's ~4.5MB request body limit entirely.
@@ -712,6 +713,11 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
   const [renders, setRenders] = useState([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  // Survey-style modal for the unified "compose outfit + create 4
+  // angles + save as look" workflow. Replaces the old per-file upload
+  // path as the primary New Look CTA. The simple file picker stays as
+  // "Quick upload" for users who already have a finished image.
+  const [newLookOpen, setNewLookOpen] = useState(false)
 
   const refreshRenders = async () => {
     if (!session) return
@@ -959,8 +965,26 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
               >
                 <RefreshCw size={13} /> Refresh
               </button>
-              <button className="btn-ghost" onClick={() => fileRef.current?.click()} disabled={busy}>
-                {busy ? <span className="spinner" /> : <Plus size={13} />} New look
+              {/* Primary New Look path — opens the survey-style modal
+                  that walks the user through outfit swap + 4 angles +
+                  save. Keep the simple file picker right next to it as
+                  a Quick-upload escape hatch when the user already has
+                  a finished image and just wants to drop it in. */}
+              <button
+                className="btn-primary"
+                onClick={() => setNewLookOpen(true)}
+                disabled={busy}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
+              >
+                <Sparkles size={13} /> New look
+              </button>
+              <button
+                className="btn-ghost"
+                onClick={() => fileRef.current?.click()}
+                disabled={busy}
+                title="Skip the survey — just upload a finished image"
+              >
+                {busy ? <span className="spinner" /> : <Upload size={13} />} Quick upload
               </button>
               <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(e) => uploadLook(e.target.files?.[0])} />
             </div>
@@ -1074,6 +1098,14 @@ function AvatarDetail({ avatar, models, onBack, onChange }) {
       </div>
 
       {renderOpen && <RenderComposer avatar={avatar} models={models} onClose={() => setRenderOpen(false)} onSubmitted={refreshRenders} />}
+      {newLookOpen && (
+        <NewLookModal
+          avatarId={avatar.id}
+          profileId={avatar.profile_id}
+          onClose={() => setNewLookOpen(false)}
+          onCreated={() => { setNewLookOpen(false); onChange?.() }}
+        />
+      )}
     </div>
   )
 }
