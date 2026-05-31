@@ -386,12 +386,24 @@ function StepEnvironment({ envUrl, bgSource, profileId, onChangeEnv, onChangeBgS
   )
 }
 
+// Pre-tuned text descriptions surfaced as one-tap presets for users
+// who aren't sure what to write. Picking a preset drops the user into
+// 'text' mode with the prompt pre-filled — they can still tweak it.
+const POSE_PRESETS = {
+  podcast: 'Seated on a podcast set with a professional condenser microphone on a boom arm in front of them, leaning slightly forward toward the mic, hands gesturing naturally mid-sentence as if explaining a point. Engaged, conversational expression, eye contact with the camera. Subtle shoulder turn so they read as in-conversation rather than posed.',
+}
+
 function StepPose({ kind, imageUrl, description, profileId, onChangeKind, onChangeImage, onChangeDescription }) {
   const options = [
     {
       id: 'default',
       label: 'Default — talking to camera',
       hint: 'Relaxed natural posture, hands at sides or in lap. No mic, no devices, no extra props.',
+    },
+    {
+      id: 'preset_podcast',
+      label: 'Podcast host (preset)',
+      hint: 'Pro condenser mic on a boom arm, leaning into the mic, gesturing mid-sentence. Drops you into the text editor with the prompt pre-filled so you can tweak.',
     },
     {
       id: 'image',
@@ -404,6 +416,17 @@ function StepPose({ kind, imageUrl, description, profileId, onChangeKind, onChan
       hint: 'e.g. "Sitting in a black leather chair, arms resting on the armrests, looking thoughtful."',
     },
   ]
+  // When user picks a preset, switch to text mode and pre-populate
+  // the description. This is a one-way pre-fill — once they edit, it
+  // stays text mode with their tweaks.
+  const handleKindChange = (id) => {
+    if (id === 'preset_podcast') {
+      onChangeKind('text')
+      onChangeDescription(POSE_PRESETS.podcast)
+      return
+    }
+    onChangeKind(id)
+  }
   return (
     <Section
       title="Pose & body language"
@@ -411,11 +434,17 @@ function StepPose({ kind, imageUrl, description, profileId, onChangeKind, onChan
     >
       <div style={{ display: 'grid', gap: 10 }}>
         {options.map((opt) => {
-          const active = kind === opt.id
+          // The preset shows as "active" when we're in text mode and
+          // the description still matches the canned podcast prompt.
+          // Once the user edits the text it falls back to plain text
+          // mode (no preset highlight).
+          const isPresetActive =
+            opt.id === 'preset_podcast' && kind === 'text' && description === POSE_PRESETS.podcast
+          const active = (opt.id === kind) || isPresetActive
           return (
             <button
               key={opt.id} type="button"
-              onClick={() => onChangeKind(opt.id)}
+              onClick={() => handleKindChange(opt.id)}
               style={{
                 padding: '14px 16px', textAlign: 'left',
                 background: active ? 'rgba(239,68,68,0.10)' : 'var(--surface)',
@@ -582,13 +611,23 @@ function StepComposePreview({ a, set, token, profileId }) {
         </div>
       )}
       {a.hero_image_url && (
-        <div>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
+          {/* maxHeight caps the preview to roughly the visible body
+              area so the image never pushes the Back/Next buttons off
+              screen. Object-fit:contain so the full frame is visible
+              even when the aspect ratio is wider/taller than the box. */}
           <div style={{
-            aspectRatio: a.orientation === 'vertical' ? '9 / 16' : '16 / 9',
             background: '#000', borderRadius: 12, overflow: 'hidden',
-            border: '1px solid var(--border)', marginBottom: 14,
+            border: '1px solid var(--border)',
+            maxHeight: 'min(58vh, 520px)',
+            maxWidth: '100%',
+            aspectRatio: a.orientation === 'vertical' ? '9 / 16' : '16 / 9',
           }}>
-            <img src={a.hero_image_url} alt="Hero shot" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+            <img
+              src={a.hero_image_url}
+              alt="Hero shot"
+              style={{ height: '100%', width: 'auto', maxWidth: '100%', objectFit: 'contain', display: 'block' }}
+            />
           </div>
           <button
             onClick={() => { setBusy(true); set('hero_image_url', ''); dispatch() }}
@@ -890,11 +929,14 @@ function ImageDropzone({ url, profileId, onChange, optional }) {
 // ─────────────────────────────────────────────────────────────────
 
 function Section({ title, hint, children }) {
+  // Flex column so step bodies fill the available height. Children
+  // can scroll internally if they really need to, but each step
+  // should be sized to fit so they don't.
   return (
-    <div>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <h2 style={{ fontSize: 20, fontWeight: 800, letterSpacing: -0.4, marginBottom: 4 }}>{title}</h2>
-      {hint && <div style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 16, lineHeight: 1.5 }}>{hint}</div>}
-      {children}
+      {hint && <div style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 14, lineHeight: 1.5 }}>{hint}</div>}
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>{children}</div>
     </div>
   )
 }
@@ -907,22 +949,30 @@ function Recap({ label, value }) {
   )
 }
 
+// Viewport-locked layout — same pattern as NewVideoModal. The whole
+// modal is the page while it's open: header / body (flex:1, no inner
+// scroll) / footer. Step bodies are sized to fit the available height
+// so the user never scrolls inside the modal.
 const overlayStyle = {
   position: 'fixed', inset: 0, zIndex: 260,
-  background: 'rgba(10,10,12,0.86)', backdropFilter: 'blur(6px)',
-  display: 'grid', placeItems: 'center', padding: 20, overflowY: 'auto',
+  background: 'var(--bg-base, #0a0a0c)',
+  overflow: 'hidden',
+  height: '100vh',
 }
 const cardStyle = {
-  width: '100%', maxWidth: 720,
-  background: 'var(--bg-base, #0a0a0c)',
-  border: '1px solid var(--border)', borderRadius: 14,
+  width: '100%',
+  height: '100vh',
+  background: 'transparent',
   display: 'flex', flexDirection: 'column',
-  maxHeight: 'calc(100vh - 40px)',
 }
 const headerStyle = {
-  padding: '18px 24px',
+  padding: '18px 32px',
   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
   borderBottom: '1px solid var(--border)',
+  maxWidth: 1080,
+  margin: '0 auto',
+  width: '100%',
+  boxSizing: 'border-box',
 }
 const brandIcon = {
   width: 30, height: 30, borderRadius: 8,
@@ -934,13 +984,25 @@ const closeBtn = {
   color: 'var(--muted)', padding: 6, display: 'inline-flex', alignItems: 'center',
 }
 const bodyStyle = {
-  padding: '24px 24px 18px',
-  flex: 1, overflowY: 'auto', minHeight: 0,
+  padding: '24px 32px 18px',
+  maxWidth: 1080,
+  margin: '0 auto',
+  width: '100%',
+  boxSizing: 'border-box',
+  flex: 1, minHeight: 0,
+  overflow: 'hidden',
+  display: 'flex', flexDirection: 'column',
 }
 const footerStyle = {
-  padding: '16px 24px',
+  padding: '16px 32px',
   borderTop: '1px solid var(--border)',
   display: 'flex', justifyContent: 'space-between',
+  maxWidth: 1080,
+  margin: '0 auto',
+  width: '100%',
+  boxSizing: 'border-box',
+  background: 'var(--bg-base, #0a0a0c)',
+  flexShrink: 0,
 }
 const errorPanel = {
   marginBottom: 14, padding: '10px 14px',
