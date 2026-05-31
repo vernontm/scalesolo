@@ -17,6 +17,7 @@
 //     avatar_id; same flow minus the avatar-creation prelude.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   X, ChevronLeft, ChevronRight, Upload, Sparkles, Check, Loader2,
   AlertCircle, RotateCcw, Image as ImageIcon, Camera,
@@ -182,7 +183,12 @@ export default function NewLookModal({ avatarId, profileId, onClose, onCreated }
   }
 
   // ── Render ─────────────────────────────────────────────────────
-  return (
+  // Portal into document.body so `position: fixed` actually pins to
+  // the viewport. Without this, an ancestor with a transform or
+  // filter establishes a containing block and the modal renders
+  // inline within the page — which was hiding the footer below the
+  // visible area on the Avatars page.
+  return createPortal(
     <div style={overlayStyle} onClick={(e) => { if (e.target === e.currentTarget) onClose?.() }}>
       <div style={cardStyle}>
         <div style={headerStyle}>
@@ -291,7 +297,8 @@ export default function NewLookModal({ avatarId, profileId, onClose, onCreated }
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
