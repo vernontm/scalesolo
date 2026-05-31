@@ -303,32 +303,38 @@ async function upsertSubscription(sub, eventType) {
     priceAmount: sub.items?.data?.[0]?.price?.unit_amount,
   })
 
-  // M2: keep monthly_grant amounts in sync with the current tier (for the cron).
+  // M2: keep monthly_grant amounts in sync with the user's CURRENT
+  // entitlement. We only bump monthly_grant to tier-level when the sub
+  // is genuinely active (paid). For trialing / past_due / unpaid /
+  // incomplete we hold at trial-baseline so the monthly-reset cron
+  // doesn't refill paid-tier amounts on a non-paid subscription.
+  //
+  // Roemon-bug history: this used to set tier-level grants
+  // unconditionally on customer.subscription.updated, so when Stripe
+  // flipped trialing→active before the renewal invoice settled, a
+  // failed charge still left the user with monthly_grant=1M.
   const tierCredits = TIERS[tier]?.credits || { ai_tokens: 0, video_units: 0, voice_minutes: 0 }
+  const trialGrant  = { ai_tokens: 5_000, video_units: 5, voice_minutes: 0 }
+  const isTrial = sub.status === 'trialing'
+  const isPaidActive = sub.status === 'active'
+  const grantsForCron = isPaidActive ? tierCredits : trialGrant
   await supa('rpc/set_pool_grants', {
     method: 'POST',
     body: {
       p_customer_id: customerRow.id,
-      p_ai_tokens:   tierCredits.ai_tokens,
-      p_video_units: tierCredits.video_units,
-      p_voice_min:   tierCredits.voice_minutes,
+      p_ai_tokens:   grantsForCron.ai_tokens,
+      p_video_units: grantsForCron.video_units,
+      p_voice_min:   grantsForCron.voice_minutes,
     },
   }).catch((e) => console.warn('set_pool_grants failed:', e.message))
 
-  // Trial credit allowance. During the 3-day trial we only grant
-  // enough credits for ONE 30-second avatar video (5 video_units at
-  // V4's 0.15 units/sec rate) plus a small AI-token bucket for the
-  // accompanying caption / script generation. The full tier credits
-  // get granted on the first transition out of trial (covered by the
-  // wasFirstActive check below — same trigger that sends the welcome
-  // email). This protects us from a user who signs up, burns the
-  // full tier allowance during the 3-day window, then cancels.
-  const isTrial = sub.status === 'trialing'
-  const wasJustTrialing = before?.status === 'trialing' && sub.status === 'active'
-  const trialGrant   = { ai_tokens: 5_000, video_units: 5, voice_minutes: 0 }
+  // Initial credit grant. The trial grant is small (5k tokens +
+  // 5 video_units = one 30-sec avatar) so a sign-up-and-cancel can't
+  // drain the full tier. Idempotent on stripe_subscription_id.
+  // NOTE: we no longer grant the conversion topup here. That moved to
+  // invoice.payment_succeeded so the topup only fires once Stripe
+  // actually collects the first paid invoice.
   const grantForInitial = isTrial ? trialGrant : tierCredits
-
-  // Initial credit grant — idempotent on stripe_subscription_id.
   await Promise.all(['ai_tokens','video_units','voice_minutes'].map((p) =>
     supa('rpc/grant_credits', {
       method: 'POST',
@@ -342,29 +348,37 @@ async function upsertSubscription(sub, eventType) {
       },
     }).catch((e) => console.warn(`initial grant ${p} failed:`, e.message))
   ))
+}
 
-  // Conversion grant — fires the moment a trial flips to active. We
-  // top up the difference between what we already granted (trial) and
-  // what the tier actually includes. Ref-id is suffixed with
-  // ':conversion' so this is idempotent per subscription regardless
-  // of how many webhook events flow through.
-  if (wasJustTrialing) {
-    await Promise.all(['ai_tokens','video_units','voice_minutes'].map((p) => {
-      const topup = Math.max(0, (tierCredits[p] || 0) - (trialGrant[p] || 0))
-      if (!topup) return null
-      return supa('rpc/grant_credits', {
-        method: 'POST',
-        body: {
-          p_customer_id: customerRow.id,
-          p_pool_type: p,
-          p_amount: topup,
-          p_action: 'subscription_trial_conversion',
-          p_ref_id: `${sub.id}:conversion`,
-          p_metadata: { tier },
-        },
-      }).catch((e) => console.warn(`conversion grant ${p} failed:`, e.message))
-    }))
-  }
+// Trial→paid conversion topup. Top up the difference between what we
+// already granted (trial allowance) and what the tier actually
+// includes. Called from invoice.payment_succeeded so the topup only
+// fires once Stripe has actually charged the card.
+//
+// Idempotent: ref_id `${sub.id}:conversion` is unique-per-sub. Re-firing
+// on subsequent monthly renewals no-ops because the topup math goes to
+// zero after the first successful application (and the underlying RPC
+// dedupes on ref_id anyway).
+async function grantConversionTopup(customerRow, sub) {
+  const priceId = sub.items?.data?.[0]?.price?.id || sub.items?.data?.[0]?.plan?.id
+  const tier = tierForPriceId(priceId) || sub.metadata?.tier || 'solo_starter'
+  const tierCredits = TIERS[tier]?.credits || { ai_tokens: 0, video_units: 0, voice_minutes: 0 }
+  const trialGrant  = { ai_tokens: 5_000, video_units: 5, voice_minutes: 0 }
+  await Promise.all(['ai_tokens','video_units','voice_minutes'].map((p) => {
+    const topup = Math.max(0, (tierCredits[p] || 0) - (trialGrant[p] || 0))
+    if (!topup) return null
+    return supa('rpc/grant_credits', {
+      method: 'POST',
+      body: {
+        p_customer_id: customerRow.id,
+        p_pool_type: p,
+        p_amount: topup,
+        p_action: 'subscription_trial_conversion',
+        p_ref_id: `${sub.id}:conversion`,
+        p_metadata: { tier },
+      },
+    }).catch((e) => console.warn(`conversion grant ${p} failed:`, e.message))
+  }))
 }
 
 // M2: top-up Checkout completed → grant credits to the matching pool.
@@ -603,9 +617,26 @@ async function routeEvent(event) {
     case 'invoice.payment_failed': {
       const invoice = event.data.object
       const subId = invoice.subscription
+      let sub = null
       if (subId) {
-        const sub = await stripeGet(`/subscriptions/${subId}`)
+        sub = await stripeGet(`/subscriptions/${subId}`)
         await upsertSubscription(sub, event.type)
+      }
+      // Trial → paid conversion topup. Gated here (not on
+      // customer.subscription.updated) because Stripe flips a
+      // subscription's status trialing→active BEFORE the renewal
+      // invoice is actually paid. We only want to top up to tier
+      // credits once Stripe has confirmed the charge cleared.
+      // billing_reason = 'subscription_cycle' is the post-trial first
+      // recurring invoice; later renewals also use this reason but
+      // grant_credits is idempotent on ref_id so they no-op.
+      if (event.type === 'invoice.payment_succeeded' && sub && invoice.billing_reason === 'subscription_cycle') {
+        try {
+          const customerRow = await findCustomerRowByStripeId(sub.customer)
+          if (customerRow) await grantConversionTopup(customerRow, sub)
+        } catch (e) {
+          console.warn('conversion topup on payment_succeeded failed:', e?.message || e)
+        }
       }
       // Affiliate: every paid invoice from a referred user generates a
       // commission row. Logged independently of the upsert so a logging
