@@ -274,7 +274,7 @@ export default function NewLookModal({ avatarId, profileId, onClose, onCreated }
           )}
           {step === 'angles_preview' && (
             <StepAnglesPreview
-              a={a} set={set} token={token} profileId={profileId}
+              a={a} set={set} setA={setA} token={token} profileId={profileId}
             />
           )}
           {step === 'confirm' && (
@@ -697,7 +697,7 @@ function StepComposePreview({ a, set, token, profileId }) {
   )
 }
 
-function StepAnglesPreview({ a, set, token, profileId }) {
+function StepAnglesPreview({ a, set, setA, token, profileId }) {
   const [tasks, setTasks] = useState([])  // [{angle, task_id, error}]
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -706,6 +706,17 @@ function StepAnglesPreview({ a, set, token, profileId }) {
   const aspectRatio = a.orientation === 'horizontal' ? '16:9' : '9:16'
 
   const seedImage = a.hero_image_url || a.avatar_image_url
+
+  // Functional setter so parallel angle polls don't clobber each
+  // other. The four poll loops each capture `a.angle_images` from the
+  // closure when they start; that's an empty {} for all of them, so a
+  // plain `set('angle_images', {...a.angle_images, [k]: url})` makes
+  // them race to overwrite each other and only the last write wins.
+  // Going through setA(prev => …) reads the latest committed state,
+  // so all four merge cleanly into the same object.
+  const setAngleImage = (angle, url) => {
+    setA((prev) => ({ ...prev, angle_images: { ...prev.angle_images, [angle]: url } }))
+  }
 
   const dispatch = async () => {
     setBusy(true); setError(null)
@@ -752,7 +763,7 @@ function StepAnglesPreview({ a, set, token, profileId }) {
           const body = await r.json()
           if (cancelled) return
           if (body.state === 'ready' && body.url) {
-            set('angle_images', { ...a.angle_images, [entry.angle]: body.url })
+            setAngleImage(entry.angle, body.url)
             setAngleState((s) => ({ ...s, [entry.angle]: 'ready' }))
             return
           }
@@ -780,7 +791,7 @@ function StepAnglesPreview({ a, set, token, profileId }) {
   const regenOne = async (angle) => {
     setError(null)
     setAngleState((s) => ({ ...s, [angle]: 'running' }))
-    set('angle_images', { ...a.angle_images, [angle]: null })
+    setAngleImage(angle, null)
     try {
       // Use the same /generate endpoint with a single-angle dispatch
       // pattern. Easiest: fire angles mode and pluck just this angle's
@@ -810,7 +821,7 @@ function StepAnglesPreview({ a, set, token, profileId }) {
         )
         const bb = await rr.json()
         if (bb.state === 'ready' && bb.url) {
-          set('angle_images', { ...a.angle_images, [angle]: bb.url })
+          setAngleImage(angle, bb.url)
           setAngleState((s) => ({ ...s, [angle]: 'ready' }))
           return
         }
