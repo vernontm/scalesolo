@@ -2,7 +2,7 @@
 // Node Functions on Vercel auto-parse req.body, breaking signature verification.
 
 import { TIERS, tierForPriceId, billingCycleForPriceId, profileLimitForTier } from './_lib/billing.js'
-import { sendEmailSafe } from './_lib/email.js'
+import { sendEmailSafe, brandedEmail, ctaButton } from './_lib/email.js'
 import {
   purchaseEmail,
   upgradeEmail,
@@ -645,6 +645,100 @@ async function fireCAPIPurchaseFromSession(session) {
   }
 }
 
+// ── Funnel purchase email delivery ──────────────────────────────────
+// Sends downloads / next-step emails after a funnel purchase so the
+// customer has a permanent inbox copy independent of the welcome page.
+// Best-effort: errors are swallowed inside sendEmailSafe so a Resend
+// hiccup never 500s the webhook.
+const FUNNEL_BLUEPRINT_DL = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/build-your-ai-empire.pdf'
+const FUNNEL_PACK_DL      = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/faceless-content-pack.zip'
+const FUNNEL_BOOK_CALL    = 'https://vernontm.com/book-call'
+
+async function sendFunnelPurchaseEmail({ email, product, bump }) {
+  if (!email) return
+  if (product === 'tripwire') {
+    const parts = [
+      '<p style="margin:0 0 12px;font-size:18px;font-weight:700;color:#0c0c0d;">Welcome to the inside.</p>',
+      '<p style="margin:0 0 6px;">Thanks for grabbing <b>Build Your AI Empire</b>. Your playbook is below. Save this email — the link lives here forever.</p>',
+      ctaButton({ label: 'Download the playbook', url: FUNNEL_BLUEPRINT_DL }),
+    ]
+    if (bump) {
+      parts.push(
+        '<p style="margin:18px 0 4px;font-weight:700;color:#0c0c0d;">You also grabbed the Faceless Content Pack:</p>',
+        ctaButton({ label: 'Download the Content Pack', url: FUNNEL_PACK_DL })
+      )
+    }
+    parts.push(
+      '<p style="margin:18px 0 0;">When you are ready, the next move most readers make is locking in the engine that runs the system. Reply to this email if you have any questions.</p>',
+      '<p style="margin:10px 0 0;">— Rayvaughn · ScaleSolo</p>'
+    )
+    return sendEmailSafe({
+      to: email,
+      subject: bump
+        ? 'Your playbook + Content Pack are inside'
+        : 'Your playbook is here — Build Your AI Empire',
+      html: brandedEmail({
+        preheader: bump ? 'Both download links are inside.' : 'Your download link is inside.',
+        body: parts.join(''),
+      }),
+    })
+  }
+
+  if (product === 'dfy' || product === 'dfy_oto') {
+    const intro = product === 'dfy_oto'
+      ? 'You added the Done-For-You Launch. Smart move.'
+      : 'Your Done-For-You Launch is booked.'
+    return sendEmailSafe({
+      to: email,
+      subject: 'Your Done-For-You Launch — book your kickoff call',
+      html: brandedEmail({
+        preheader: 'Grab a time and we will start the build on the call.',
+        body: [
+          `<p style="margin:0 0 12px;font-size:18px;font-weight:700;color:#0c0c0d;">${intro}</p>`,
+          '<p style="margin:0 0 6px;">Payment received. The fastest next step is to grab a time for your kickoff call — that is where we start the build.</p>',
+          ctaButton({ label: 'Book my kickoff call', url: FUNNEL_BOOK_CALL }),
+          '<p style="margin:18px 0 0;">On the call we map your brand, your avatar, and your voice. Then my team builds it and hands you the keys. Watch your inbox for a short brand questionnaire shortly after.</p>',
+          '<p style="margin:12px 0 0;">— Rayvaughn · ScaleSolo</p>',
+        ].join(''),
+      }),
+    })
+  }
+}
+
+// Pull email + product flags off a Checkout Session and route to the
+// right email template. Handles tripwire, DFY direct, and the OTO 3DS
+// fallback Checkout. Plain OTO PaymentIntents are handled separately
+// in the payment_intent.succeeded case.
+async function sendFunnelCheckoutEmail(session) {
+  const meta = session.metadata || {}
+  const email = session.customer_details?.email || session.customer_email
+  if (!email) return
+  if (meta.source === 'funnel') {
+    const product = meta.funnel_product
+    if (product === 'tripwire' || product === 'dfy') {
+      await sendFunnelPurchaseEmail({ email, product, bump: meta.bump === '1' })
+    }
+  } else if (meta.source === 'funnel_oto_fallback') {
+    // 3DS-required OTO that fell back to a fresh Checkout — DFY upgrade.
+    await sendFunnelPurchaseEmail({ email, product: 'dfy_oto' })
+  }
+}
+
+// One-click OTO upsells charge via PaymentIntent.create (not Checkout),
+// so we listen for payment_intent.succeeded and trigger the DFY booking
+// email when the source flag matches.
+async function sendFunnelOtoEmail(pi) {
+  if (pi?.metadata?.source !== 'funnel_oto') return
+  let email = pi.receipt_email
+  if (!email && pi.customer) {
+    try {
+      const cust = await stripeGet(`/customers/${encodeURIComponent(pi.customer)}`)
+      email = cust?.email
+    } catch { /* swallow — best effort */ }
+  }
+  if (email) await sendFunnelPurchaseEmail({ email, product: 'dfy_oto' })
+}
+
 async function routeEvent(event) {
   switch (event.type) {
     case 'checkout.session.completed':
@@ -652,9 +746,21 @@ async function routeEvent(event) {
       // subscription handling). Server-side dedup-pair with the
       // browser-side fbq Purchase on /login?stripe_session=…
       await fireCAPIPurchaseFromSession(event.data.object)
+      // Funnel: deliver downloads / next-step email (tripwire/DFY/OTO-fallback).
+      // Fire-and-forget — never block topup credit grants on email.
+      try { await sendFunnelCheckoutEmail(event.data.object) }
+      catch (e) { console.warn('funnel email failed:', e?.message || e) }
       // Top-up purchases are one-shot (mode=payment) — grant credits here.
       // Subscription Checkouts trigger customer.subscription.created separately.
       return onTopupCompleted(event.data.object)
+    case 'payment_intent.succeeded':
+      // OTO upsell — the off-session $397 charge from /api/funnel-oto.
+      // Fire the DFY booking email so the buyer gets the kickoff-call
+      // link in their inbox. Fire-and-forget; any other PaymentIntents
+      // are ignored here.
+      try { await sendFunnelOtoEmail(event.data.object) }
+      catch (e) { console.warn('funnel OTO email failed:', e?.message || e) }
+      return
     case 'customer.subscription.created':
     case 'customer.subscription.updated':
     case 'customer.subscription.trial_will_end':
