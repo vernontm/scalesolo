@@ -20,14 +20,14 @@ const APP_URL = process.env.SCALESOLO_DOMAIN || process.env.FRONTEND_URL || 'htt
 const PRODUCTS = {
   tripwire: {
     cents: 1700,
-    name: 'Build Your AI Empire (Playbook)',
-    desc: 'The faceless brand monetization playbook. Instant download.',
+    name: 'Build Your AI Empire — The Faceless Brand Monetization Playbook',
+    desc: 'The step-by-step playbook for turning a faceless AI page into real income: what to sell, how to grow an audience you own, and how to get paid. Instant digital download.',
     cancel: '/funnel/tripwire.html',
   },
   dfy: {
     cents: 39700,
     name: 'Done-For-You Launch',
-    desc: 'We build your faceless brand for you, end to end.',
+    desc: 'We build your faceless brand for you: a trained AI avatar, multiple looks, your brand voice, your first batch of ready-to-post videos, and your auto-posting workflow, handed off on a call. One-time setup service.',
     cancel: '/funnel/dfy.html',
   },
 }
@@ -35,7 +35,7 @@ const PRODUCTS = {
 const BUMP = {
   cents: 900,
   name: 'Faceless Content Pack',
-  desc: '50 ready-to-use outfits, settings, and poses (male & female).',
+  desc: '50 ready-to-use outfit, environment, and pose references (male and female) so you can build your avatar looks in minutes instead of sourcing them yourself. Instant digital download.',
 }
 
 export default async function handler(req, res) {
