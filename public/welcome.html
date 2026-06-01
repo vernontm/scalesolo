@@ -85,23 +85,19 @@
     // (the Founding upsell) we still show because it is a different
     // product (recurring engine, not the build).
     //
-    // The SCALE pitch video sits above the card. The video file should
-    // be uploaded to the landing-media bucket as 'Welcome - video.mp4'
-    // — exact name, hardcoded below. If you change the filename, update
-    // the src here too.
+    // Custom card (not the card() helper) so the SCALE pitch video can
+    // sit INSIDE the box between the description and the CTA. Upload
+    // the video to the landing-media bucket as 'Welcome - video.mp4'
+    // for it to show up here.
     html += ''
-      + '<div style="margin:18px auto 14px;max-width:560px;">'
-      +   '<div style="position:relative;aspect-ratio:16/9;border-radius:14px;overflow:hidden;border:1px solid var(--line);background:#000;box-shadow:0 20px 50px rgba(0,0,0,0.5);">'
+      + '<div class="card">'
+      +   '<div class="t">Lock in Founding with the SCALE bonus</div>'
+      +   '<div class="d">Add the engine that actually runs the system: a ScaleSolo Founding membership at $79/mo locked for life, with +50% credits and a 1-on-1 setup call. Only via the SCALE code.</div>'
+      +   '<div style="position:relative;aspect-ratio:16/9;border-radius:12px;overflow:hidden;border:1px solid var(--line);background:#000;box-shadow:0 16px 40px rgba(0,0,0,0.5);margin:16px 0 6px;">'
       +     '<video src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/Welcome%20-%20video.mp4" controls playsinline preload="metadata" style="width:100%;height:100%;object-fit:cover;display:block;background:#000;"></video>'
       +   '</div>'
-      +   '<p style="text-align:center;font-size:11px;letter-spacing:0.22em;text-transform:uppercase;font-weight:800;color:var(--red);margin-top:10px;">Watch first — your reader-only bonus</p>'
+      +   '<a class="btn" href="#founding-scale">Unlock the SCALE bonus &#8594;</a>'
       + '</div>';
-    html += card(
-      'Lock in Founding with the SCALE bonus',
-      'Add the engine that actually runs the system: a ScaleSolo Founding membership at $79/mo locked for life, with +50% credits and a 1-on-1 setup call. Only via the SCALE code.',
-      '#founding-scale',
-      'Unlock the SCALE bonus &#8594;'
-    );
     if (!upgraded){
       html += '<a class="btn" href="/done-for-you" style="margin-top:18px;">Want it built for you instead? See the launch</a>';
     }
