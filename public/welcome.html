@@ -22,6 +22,15 @@
   .card .d{ color:var(--muted); font-size:14px; margin-top:4px; }
   .btn{ display:flex; align-items:center; justify-content:center; gap:9px; width:100%; max-width:420px; margin:14px auto 0; background:linear-gradient(135deg,var(--red),var(--red-deep)); color:#fff; font-weight:800; font-size:16px; padding:15px; border-radius:12px; border:none; cursor:pointer; box-shadow:0 12px 30px rgba(239,68,68,0.35); text-decoration:none; }
   .btn.ghost{ background:transparent; border:1px solid var(--line); box-shadow:none; color:var(--text); font-weight:700; }
+  .btn.secondary{ background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.85); box-shadow:none; font-weight:700; border:1px solid rgba(255,255,255,0.14); }
+  .btn.secondary:hover{ background:rgba(255,255,255,0.12); color:#fff; }
+  .section-label{ text-align:left; max-width:560px; margin:32px auto 4px; font-size:11px; font-weight:800; letter-spacing:0.22em; text-transform:uppercase; color:var(--muted); padding:0 4px; }
+  .dl-card{ display:flex; gap:18px; align-items:center; background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px; margin:14px auto 0; max-width:560px; text-align:left; }
+  .dl-card .dl-cover{ width:80px; height:auto; aspect-ratio:2/3; flex-shrink:0; border-radius:8px; object-fit:cover; box-shadow:0 8px 18px rgba(0,0,0,0.5); }
+  .dl-card .dl-body{ flex:1; min-width:0; }
+  .dl-card .dl-body .t{ font-weight:800; font-size:15px; }
+  .dl-card .dl-body .d{ color:var(--muted); font-size:13px; margin:2px 0 10px; }
+  .dl-card .dl-body .btn{ margin-top:0; padding:10px 14px; font-size:13.5px; max-width:none; width:auto; display:inline-flex; }
   .nav{ position:relative; display:flex; align-items:center; justify-content:center; gap:11px; margin-bottom:30px; }
   .nav .dot{ width:34px; height:34px; border-radius:9px; background:linear-gradient(135deg,var(--red),var(--red-deep)); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:18px; }
   .nav .brand{ font-weight:800; font-size:18px; }
@@ -57,6 +66,15 @@
     sub.textContent = upgraded
       ? 'Your playbook is below, and your Done-For-You Launch is confirmed. Book your kickoff call to get the build moving.'
       : 'Your purchase is confirmed and a receipt is on the way. Grab your downloads below.';
+    // Layout intent on the post-tripwire welcome page:
+    //   1. (if upgraded) kickoff call — most important next step for DFY buyers
+    //   2. SCALE bonus card with embedded video — primary upsell, red CTA
+    //   3. "Want it built for you instead?" — red secondary CTA (only if not upgraded)
+    //   4. Your Downloads heading
+    //   5. Compact download cards with cover thumbnails + gray secondary buttons
+    //
+    // The downloads are already paid for, so we mute their button color.
+    // The two upgrade CTAs (SCALE + DFY pitch) stay red so they pop.
     var html = '';
     if (upgraded){
       html += card(
@@ -66,29 +84,9 @@
         'Book my kickoff call'
       );
     }
-    html += card(
-      'Build Your AI Empire',
-      'Your monetization playbook. Save it and keep it open while you build.',
-      'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/build-your-ai-empire.pdf',
-      'Download the playbook'
-    );
-    if (bump){
-      html += card(
-        'Faceless Content Pack',
-        '50 ready-to-use outfits, settings, and poses, male and female.',
-        'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/faceless-content-pack.zip',
-        'Download the content pack'
-      );
-    }
-    // Upsells only when they did NOT take the OTO. If they already
-    // bought the DFY launch, do not pitch the DFY page again. SCALE
-    // (the Founding upsell) we still show because it is a different
-    // product (recurring engine, not the build).
-    //
-    // Custom card (not the card() helper) so the SCALE pitch video can
-    // sit INSIDE the box between the description and the CTA. Upload
-    // the video to the landing-media bucket as 'Welcome - video.mp4'
-    // for it to show up here.
+    // SCALE bonus — primary upsell, FIRST. Custom card so the video can
+    // sit inside it. Upload 'Welcome - video.mp4' to the landing-media
+    // bucket to make the player work.
     html += ''
       + '<div class="card">'
       +   '<div class="t">Lock in Founding with the SCALE bonus</div>'
@@ -98,8 +96,33 @@
       +   '</div>'
       +   '<a class="btn" href="#founding-scale">Unlock the SCALE bonus &#8594;</a>'
       + '</div>';
+    // DFY downsell — only if they did not already take the OTO upgrade.
     if (!upgraded){
-      html += '<a class="btn" href="/done-for-you" style="margin-top:18px;">Want it built for you instead? See the launch</a>';
+      html += '<a class="btn" href="/done-for-you" style="max-width:560px;margin-top:14px;">Want it built for you instead? See the launch &#8594;</a>';
+    }
+    // Your Downloads — what they paid for. Compact horizontal cards with
+    // cover thumbnails on the left and a muted gray button on the right
+    // so the eye is naturally drawn to the red upgrade CTAs above.
+    html += '<div class="section-label">Your Downloads</div>';
+    html += ''
+      + '<div class="dl-card">'
+      +   '<img class="dl-cover" src="/media/ai-empire-cover.png" alt="Build Your AI Empire cover" loading="lazy">'
+      +   '<div class="dl-body">'
+      +     '<div class="t">Build Your AI Empire</div>'
+      +     '<div class="d">Your monetization playbook. Save it and keep it open while you build.</div>'
+      +     '<a class="btn secondary" href="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/build-your-ai-empire.pdf" download>Download the playbook</a>'
+      +   '</div>'
+      + '</div>';
+    if (bump){
+      html += ''
+        + '<div class="dl-card">'
+        +   '<img class="dl-cover" src="/media/faceless-content-pack-cover.png" alt="Faceless Content Pack cover" loading="lazy" onerror="this.style.visibility=\'hidden\'">'
+        +   '<div class="dl-body">'
+        +     '<div class="t">Faceless Content Pack</div>'
+        +     '<div class="d">50 ready-to-use outfits, settings, and poses, male and female.</div>'
+        +     '<a class="btn secondary" href="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/faceless-content-pack.zip" download>Download the content pack</a>'
+        +   '</div>'
+        + '</div>';
     }
     c.innerHTML = html;
     // Wire the SCALE button to a public Founding checkout with the bonus code.
