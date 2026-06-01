@@ -288,6 +288,7 @@
     <p class="lead">Hand it to us once. Walk away with a faceless brand that is live, loaded with content, and posting on its own.</p>
     <div class="btnwrap"><a href="#checkout" class="btn big">Book my Done-For-You Launch &#8594;</a></div>
     <div><span class="scarcity">Only a limited number of launches are taken each month.</span></div>
+    <div style="margin-top:14px"><a href="#decline" class="decline-link" style="color:rgba(255,255,255,0.45);font-size:13px;text-decoration:underline;">No thanks, I will pass on having it built for me</a></div>
     <div class="microtrust" style="justify-content:center;margin-top:14px">
       <span><span class="tick">&#10003;</span> Done in days</span>
       <span><span class="tick">&#10003;</span> You own everything</span>
@@ -323,6 +324,61 @@
   }
   document.querySelectorAll('a.btn[href="#checkout"]').forEach(function(a){
     a.addEventListener('click', function(e){ e.preventDefault(); checkout(a); });
+  });
+
+  // ── Decline / "no thanks" modal (DFY) ────────────────────────────
+  // Shame-decline pattern: explicitly confirm declining the high-ticket
+  // launch. We do NOT email the Blueprint here — DFY visitors are later
+  // in the funnel and almost always already have it. We just log the
+  // decline activity and redirect to a soft thanks page.
+  function declineFlow(){
+    var modal = document.createElement('div');
+    modal.id = 'funnel-decline-modal';
+    modal.innerHTML = ''
+      + '<div class="fdm-backdrop"></div>'
+      + '<div class="fdm-card" role="dialog" aria-modal="true" aria-labelledby="fdm-title">'
+      +   '<div id="fdm-title" class="fdm-title">Wait, are you sure?</div>'
+      +   '<p class="fdm-body">A Done-For-You Launch saves you weeks of work and gets you posting this week. Most people who pass on it spend the next month stuck in setup.</p>'
+      +   '<p class="fdm-body fdm-bold">It is a one-time cost, with a satisfaction guarantee, and we only take a few each month.</p>'
+      +   '<div class="fdm-actions">'
+      +     '<button class="fdm-btn fdm-yes" type="button">Yes, take me back to the offer</button>'
+      +     '<button class="fdm-btn fdm-no"  type="button">No, I will build it myself</button>'
+      +   '</div>'
+      + '</div>';
+    document.body.appendChild(modal);
+    var css = document.createElement('style');
+    css.textContent = ''
+      + '#funnel-decline-modal{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;}'
+      + '#funnel-decline-modal .fdm-backdrop{position:absolute;inset:0;background:rgba(8,7,11,0.78);backdrop-filter:blur(4px);}'
+      + '#funnel-decline-modal .fdm-card{position:relative;max-width:520px;width:100%;background:#17141b;border:1px solid rgba(255,255,255,0.12);border-radius:18px;padding:28px;color:#f4f4f6;text-align:center;box-shadow:0 30px 80px rgba(0,0,0,0.6);}'
+      + '#funnel-decline-modal .fdm-title{font-size:24px;font-weight:800;letter-spacing:-0.01em;margin-bottom:10px;}'
+      + '#funnel-decline-modal .fdm-body{font-size:15px;line-height:1.55;color:#cfcfd6;margin:0 0 10px;}'
+      + '#funnel-decline-modal .fdm-bold{color:#fff;font-weight:600;}'
+      + '#funnel-decline-modal .fdm-actions{display:flex;flex-direction:column;gap:10px;margin-top:18px;}'
+      + '#funnel-decline-modal .fdm-btn{padding:14px 18px;border-radius:12px;font-weight:700;font-size:15px;cursor:pointer;border:none;font-family:inherit;}'
+      + '#funnel-decline-modal .fdm-yes{background:linear-gradient(135deg,#ef4444,#b91c1c);color:#fff;box-shadow:0 10px 24px rgba(239,68,68,0.30);}'
+      + '#funnel-decline-modal .fdm-no{background:transparent;border:1px solid rgba(255,255,255,0.20);color:rgba(255,255,255,0.65);font-weight:500;font-size:13.5px;}';
+    document.head.appendChild(css);
+    function close(){ modal.remove(); css.remove(); }
+    modal.querySelector('.fdm-backdrop').addEventListener('click', close);
+    modal.querySelector('.fdm-yes').addEventListener('click', function(){ close(); window.scrollTo({ top: document.querySelector('#book').offsetTop - 40, behavior:'smooth' }); });
+    modal.querySelector('.fdm-no').addEventListener('click', async function(){
+      var email = '';
+      try { email = (localStorage.getItem('funnel_email') || '').toLowerCase(); } catch(_){}
+      // Log the decline if we have an email on file; otherwise just close.
+      if (email){
+        try { await fetch('/api/leads/decline-offer', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: email, offer: 'dfy', source_url: location.href }) }); } catch(_){}
+      }
+      window.location.href = '/build-your-ai-empire';
+    });
+  }
+  document.querySelectorAll('a.decline-link').forEach(function(a){
+    a.addEventListener('click', function(e){ e.preventDefault(); declineFlow(); });
+  });
+  var shown = false;
+  document.addEventListener('mouseout', function(e){
+    if (shown) return;
+    if (e.clientY <= 0 && !e.relatedTarget && !e.toElement){ shown = true; declineFlow(); }
   });
 })();
 </script>

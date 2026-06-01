@@ -294,6 +294,7 @@
     <p class="lead">You already did the hard part by building it. For the price of lunch, get the map that turns it into income.</p>
     <div class="btnwrap"><a href="#checkout" class="btn big">Get Build Your AI Empire for $17 &#8594;</a></div>
     <div><span class="scarcity">This $17 price is for new readers only and will not last.</span></div>
+    <div style="margin-top:14px"><a href="#decline" class="decline-link" style="color:rgba(255,255,255,0.45);font-size:13px;text-decoration:underline;">No thanks, I will pass and just take my free guide</a></div>
     <div class="microtrust" style="justify-content:center;margin-top:14px">
       <span><span class="tick">&#10003;</span> Instant access</span>
       <span><span class="tick">&#10003;</span> 30-day guarantee</span>
@@ -339,6 +340,72 @@
   }
   document.querySelectorAll('a.btn[href="#checkout"]').forEach(function(a){
     a.addEventListener('click', function(e){ e.preventDefault(); checkout(a); });
+  });
+
+  // ── Decline / "no thanks" modal ──────────────────────────────────
+  // Triggers from any .decline-link click OR exit-intent (mouse leaves
+  // the top of the viewport). The visitor must explicitly confirm they
+  // want to pass on the offer before we send them the free guide.
+  function declineFlow(offer){
+    var modal = document.createElement('div');
+    modal.id = 'funnel-decline-modal';
+    modal.innerHTML = ''
+      + '<div class="fdm-backdrop"></div>'
+      + '<div class="fdm-card" role="dialog" aria-modal="true" aria-labelledby="fdm-title">'
+      +   '<div id="fdm-title" class="fdm-title">Wait, are you sure?</div>'
+      +   '<p class="fdm-body">If you pass on this, you get the free Blueprint, but you skip the part that actually shows you how to make money from the page. Most people who pass never come back to it.</p>'
+      +   '<p class="fdm-body fdm-bold">For seventeen dollars, you get the whole playbook plus a thirty-day money-back guarantee. That is the lowest-risk yes you can give.</p>'
+      +   '<div class="fdm-actions">'
+      +     '<button class="fdm-btn fdm-yes" type="button">Yes, take me back to the offer</button>'
+      +     '<button class="fdm-btn fdm-no"  type="button">No, I will pass and just take the free guide</button>'
+      +   '</div>'
+      + '</div>';
+    document.body.appendChild(modal);
+    var css = document.createElement('style');
+    css.textContent = ''
+      + '#funnel-decline-modal{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;}'
+      + '#funnel-decline-modal .fdm-backdrop{position:absolute;inset:0;background:rgba(8,7,11,0.78);backdrop-filter:blur(4px);}'
+      + '#funnel-decline-modal .fdm-card{position:relative;max-width:520px;width:100%;background:#17141b;border:1px solid rgba(255,255,255,0.12);border-radius:18px;padding:28px;color:#f4f4f6;text-align:center;box-shadow:0 30px 80px rgba(0,0,0,0.6);}'
+      + '#funnel-decline-modal .fdm-title{font-size:24px;font-weight:800;letter-spacing:-0.01em;margin-bottom:10px;}'
+      + '#funnel-decline-modal .fdm-body{font-size:15px;line-height:1.55;color:#cfcfd6;margin:0 0 10px;}'
+      + '#funnel-decline-modal .fdm-bold{color:#fff;font-weight:600;}'
+      + '#funnel-decline-modal .fdm-actions{display:flex;flex-direction:column;gap:10px;margin-top:18px;}'
+      + '#funnel-decline-modal .fdm-btn{padding:14px 18px;border-radius:12px;font-weight:700;font-size:15px;cursor:pointer;border:none;font-family:inherit;}'
+      + '#funnel-decline-modal .fdm-yes{background:linear-gradient(135deg,#ef4444,#b91c1c);color:#fff;box-shadow:0 10px 24px rgba(239,68,68,0.30);}'
+      + '#funnel-decline-modal .fdm-no{background:transparent;border:1px solid rgba(255,255,255,0.20);color:rgba(255,255,255,0.65);font-weight:500;font-size:13.5px;}';
+    document.head.appendChild(css);
+    function close(){ modal.remove(); css.remove(); }
+    modal.querySelector('.fdm-backdrop').addEventListener('click', close);
+    modal.querySelector('.fdm-yes').addEventListener('click', function(){ close(); window.scrollTo({ top: document.querySelector('#get,#book').offsetTop - 40, behavior:'smooth' }); });
+    modal.querySelector('.fdm-no').addEventListener('click', async function(){
+      var btn = modal.querySelector('.fdm-no');
+      btn.disabled = true; btn.textContent = 'Sending your guide…';
+      var email = '';
+      try { email = (localStorage.getItem('funnel_email') || '').toLowerCase(); } catch(_){}
+      if (!email){ email = prompt('What email should we send your free guide to?') || ''; email = email.trim().toLowerCase(); }
+      if (!email){ btn.disabled=false; btn.textContent='No, I will pass'; return; }
+      try {
+        var r = await fetch('/api/leads/decline-offer', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ email: email, offer: offer, source_url: location.href })
+        });
+        var j = await r.json().catch(function(){ return {}; });
+        if (!r.ok) throw new Error(j.error || 'Something went wrong.');
+        window.location.href = j.redirect || '/welcome?product=blueprint';
+      } catch(err){
+        btn.disabled=false; btn.textContent='No, I will pass';
+        alert(err.message);
+      }
+    });
+  }
+  document.querySelectorAll('a.decline-link').forEach(function(a){
+    a.addEventListener('click', function(e){ e.preventDefault(); declineFlow('tripwire'); });
+  });
+  // Exit-intent: mouse leaves the top of the viewport, fire once per session.
+  var shown = false;
+  document.addEventListener('mouseout', function(e){
+    if (shown) return;
+    if (e.clientY <= 0 && !e.relatedTarget && !e.toElement){ shown = true; declineFlow('tripwire'); }
   });
 })();
 </script>

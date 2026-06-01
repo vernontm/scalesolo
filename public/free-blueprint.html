@@ -184,6 +184,9 @@
         });
         var data = await resp.json().catch(function(){ return {}; });
         if (!resp.ok) throw new Error(data.error || 'Something went wrong.');
+        // Stash email so the next page can pass it to the decline endpoint
+        // (the free Blueprint is delivered after they decline the tripwire).
+        try { localStorage.setItem('funnel_email', (data.email || (emailEl && emailEl.value) || '').toLowerCase()); } catch(_){}
         window.location.href = data.redirect || '/build-your-ai-empire';
       } catch(err){
         if (btn){ btn.disabled = false; btn.textContent = label; }

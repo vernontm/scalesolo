@@ -8,9 +8,13 @@
 // Requires env FUNNEL_PROFILE_ID = the profile id that should own these leads.
 
 import { setCors, supaFetch } from '../_lib/supabase.js'
-import { brandedEmail, ctaButton, sendEmailSafe } from '../_lib/email.js'
 
-const BLUEPRINT_URL = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/faceless-ai-brand-blueprint.pdf'
+// The free Blueprint email is intentionally NOT sent on opt-in. It is sent
+// from /api/leads/decline-offer when the visitor explicitly declines the
+// tripwire offer, which gives the tripwire page real stakes and converts
+// some "no" clicks back into "yes" via the shame-decline modal. Bouncers
+// (no engagement either way) get the Blueprint from the drip cron (welcome
+// email #1) as a safety net.
 
 // Best-effort per-instance IP rate limit (same approach as forms/submit.js).
 const rateMap = new Map()
@@ -53,13 +57,20 @@ export default async function handler(req, res) {
       return res.status(429).json({ error: 'Too many requests, please slow down.' })
     }
 
-    // Upsert the contact (dedup on profile_id + email).
+    // Upsert the contact (dedup on profile_id + email). Tag with
+    // funnel:lead-opt-in and blueprint:pending so the drip cron and the
+    // decline endpoint know where this contact is in the funnel.
     const existing = await supaFetch(
-      `email_contacts?profile_id=eq.${profileId}&email=eq.${encodeURIComponent(email)}&select=id`
+      `email_contacts?profile_id=eq.${profileId}&email=eq.${encodeURIComponent(email)}&select=id,tags`
     )
     let contactId
     if (existing && existing.length) {
       contactId = existing[0].id
+      const tags = Array.from(new Set([...(existing[0].tags || []), 'funnel:lead-opt-in', 'blueprint:pending']))
+      await supaFetch(`email_contacts?id=eq.${contactId}`, {
+        method: 'PATCH',
+        body: { tags, status: 'active' },
+      }).catch(() => {})
     } else {
       const created = await supaFetch('email_contacts', {
         method: 'POST',
@@ -68,26 +79,12 @@ export default async function handler(req, res) {
           email,
           name,
           source,
+          tags: ['funnel:lead-opt-in', 'blueprint:pending'],
           signed_up_at: new Date().toISOString(),
         },
       })
       contactId = (Array.isArray(created) ? created[0] : created).id
     }
-
-    // Deliver the free guide by email (best-effort, non-fatal).
-    await sendEmailSafe({
-      to: email,
-      subject: 'Here is your Faceless AI Brand Blueprint',
-      html: brandedEmail({
-        preheader: 'Your free Faceless AI Brand Blueprint is inside.',
-        body:
-          '<p style="margin:0 0 12px;font-size:18px;font-weight:700;color:#0c0c0d;">Your Blueprint is ready.</p>' +
-          '<p style="margin:0 0 4px;">Thanks for grabbing the Faceless AI Brand Blueprint. Here it is, yours to keep.</p>' +
-          ctaButton({ label: 'Download the Blueprint', url: BLUEPRINT_URL }) +
-          '<p style="margin:14px 0 0;">One tip: do not skip Chapter 2, the brand voice step. It is the part most people skip, and the reason most pages end up sounding like a robot.</p>' +
-          '<p style="margin:12px 0 0;">See you on the inside,<br>Rayvaughn · ScaleSolo</p>',
-      }),
-    })
 
     // Activity timeline event (non-fatal).
     await supaFetch('rpc/log_activity', {
@@ -101,7 +98,9 @@ export default async function handler(req, res) {
       },
     }).catch(() => {})
 
-    return res.status(200).json({ ok: true, redirect })
+    // Return the email back so the next-page can stash it in localStorage
+    // and pass it to /api/leads/decline-offer if the visitor declines.
+    return res.status(200).json({ ok: true, redirect, email })
   } catch (err) {
     return res.status(err.status || 500).json({ error: err.message || 'Something went wrong.' })
   }

@@ -83,6 +83,15 @@
       'What happens next',
       'On the call we map your brand, then my team builds it and hands you the keys. Watch your inbox for your receipt and a short brand questionnaire.'
     );
+  } else if (product === 'blueprint'){
+    head.textContent = 'Your free Blueprint is on the way.';
+    sub.textContent = 'Check your inbox in the next minute or two. (No worries on passing on the playbook, the door stays open.)';
+    c.innerHTML = card(
+      'While you wait',
+      'When you are ready to actually monetize your faceless page, the playbook is still here. It is what turns views into real income.',
+      '/build-your-ai-empire',
+      'Take another look at the playbook'
+    );
   } else {
     c.innerHTML = card('Order confirmed', 'Check your email for the details and receipt.');
   }
