@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>Thank you — ScaleSolo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{ --dark:#0c0b0f; --card:#17141b; --red:#ef4444; --red-deep:#b91c1c; --text:#f4f4f6; --muted:#a6a6b2; --line:rgba(255,255,255,0.12); --green:#37d27a; }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{ font-family:"Plus Jakarta Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--dark); color:var(--text); line-height:1.6; min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:40px 22px; }
+  .glow{ position:fixed; inset:0; background:radial-gradient(60% 50% at 50% 0%, rgba(239,68,68,0.22), transparent 60%); pointer-events:none; }
+  .wrap{ position:relative; max-width:600px; width:100%; }
+  .check{ width:72px; height:72px; border-radius:50%; background:rgba(55,210,122,0.14); border:1px solid rgba(55,210,122,0.5); color:var(--green); display:flex; align-items:center; justify-content:center; font-size:36px; margin:0 auto 22px; }
+  h1{ font-size:32px; font-weight:800; letter-spacing:-0.02em; line-height:1.1; }
+  p.sub{ color:var(--muted); font-size:17px; margin-top:14px; }
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:24px; margin-top:26px; text-align:left; }
+  .card .t{ font-weight:800; font-size:16px; }
+  .card .d{ color:var(--muted); font-size:14px; margin-top:4px; }
+  .btn{ display:flex; align-items:center; justify-content:center; gap:9px; width:100%; max-width:420px; margin:14px auto 0; background:linear-gradient(135deg,var(--red),var(--red-deep)); color:#fff; font-weight:800; font-size:16px; padding:15px; border-radius:12px; border:none; cursor:pointer; box-shadow:0 12px 30px rgba(239,68,68,0.35); text-decoration:none; }
+  .btn.ghost{ background:transparent; border:1px solid var(--line); box-shadow:none; color:var(--text); font-weight:700; }
+  .nav{ position:relative; display:flex; align-items:center; justify-content:center; gap:11px; margin-bottom:30px; }
+  .nav .dot{ width:34px; height:34px; border-radius:9px; background:linear-gradient(135deg,var(--red),var(--red-deep)); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:18px; }
+  .nav .brand{ font-weight:800; font-size:18px; }
+</style>
+</head>
+<body>
+<div class="glow"></div>
+<div class="wrap">
+  <div class="nav"><span class="dot">S</span><span class="brand">ScaleSolo</span></div>
+  <div class="check">&#10003;</div>
+  <h1 id="headline">Thank you for your purchase.</h1>
+  <p class="sub" id="subline">Your order is confirmed. A receipt is on its way to your email.</p>
+  <div id="content"></div>
+  <a class="btn ghost" href="/funnel/opt-in.html" style="margin-top:22px;">Back to start</a>
+</div>
+
+<script>
+(function(){
+  var q = new URLSearchParams(location.search);
+  var product = q.get('product') || '';
+  var bump = q.get('bump') === '1';
+  var c = document.getElementById('content');
+  var head = document.getElementById('headline');
+  var sub = document.getElementById('subline');
+
+  function card(t, d, href, label){
+    var a = href ? '<a class="btn" href="'+href+'" download>'+label+'</a>' : '';
+    return '<div class="card"><div class="t">'+t+'</div><div class="d">'+d+'</div>'+a+'</div>';
+  }
+
+  if (product === 'tripwire'){
+    head.textContent = 'You are in. Let us build your empire.';
+    sub.textContent = 'Your purchase is confirmed and a receipt is on the way. Grab your downloads below.';
+    var html = card(
+      'Build Your AI Empire',
+      'Your monetization playbook. Save it and keep it open while you build.',
+      '/funnel/build-your-ai-empire.pdf',
+      'Download the playbook'
+    );
+    if (bump){
+      html += card(
+        'Faceless Content Pack',
+        '50 ready-to-use outfits, settings, and poses, male and female.',
+        '/funnel/faceless-content-pack.zip',
+        'Download the content pack'
+      );
+    }
+    html += '<a class="btn" href="/funnel/dfy.html" style="margin-top:18px;">Want it done for you instead? See the launch</a>';
+    c.innerHTML = html;
+  } else if (product === 'dfy'){
+    head.textContent = 'Your Done-For-You Launch is booked.';
+    sub.textContent = 'Payment confirmed. My team will email you within one business day to kick off your build.';
+    c.innerHTML = card(
+      'What happens next',
+      'Watch your inbox for a short questionnaire about your brand. Once you send it back, we build your avatar, looks, first videos, and auto-posting workflow, then hand it off on a call.'
+    );
+  } else {
+    c.innerHTML = card('Order confirmed', 'Check your email for the details and receipt.');
+  }
+})();
+</script>
+</body>
+</html>

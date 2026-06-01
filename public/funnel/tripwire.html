@@ -309,5 +309,38 @@
   </div>
 </footer>
 
+<script>
+(function(){
+  var bump = false;
+  var bumpEl = document.querySelector('.bump');
+  var boxEl  = document.querySelector('.bump .box');
+  function render(){ if(boxEl){ boxEl.innerHTML = bump ? '&#10003;' : ''; boxEl.style.background = bump ? '' : 'transparent'; } }
+  if (bumpEl){
+    bumpEl.style.cursor = 'pointer';
+    bumpEl.setAttribute('role','checkbox');
+    render();
+    bumpEl.addEventListener('click', function(){ bump = !bump; render(); });
+  }
+  async function checkout(el){
+    var label = el.textContent;
+    el.style.pointerEvents = 'none'; el.textContent = 'Loading…';
+    try{
+      var r = await fetch('/api/funnel-checkout', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ product:'tripwire', bump: bump })
+      });
+      var j = await r.json().catch(function(){ return {}; });
+      if(!r.ok || !j.url) throw new Error(j.error || 'Could not start checkout.');
+      window.location.href = j.url;
+    }catch(err){
+      el.style.pointerEvents=''; el.textContent=label;
+      alert(err.message || 'Something went wrong. Please try again.');
+    }
+  }
+  document.querySelectorAll('a.btn[href="#checkout"]').forEach(function(a){
+    a.addEventListener('click', function(e){ e.preventDefault(); checkout(a); });
+  });
+})();
+</script>
 </body>
 </html>
