@@ -8,6 +8,15 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<!-- Analytics: Meta Pixel + GA4 -->
+<script>
+  !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window, document,'script','https://connect.facebook.net/en_US/fbevents.js');
+  fbq('init', '1865831664085007');
+  fbq('track', 'PageView');
+</script>
+<noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=1865831664085007&ev=PageView&noscript=1"/></noscript>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-5QMW64V60M"></script>
+<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','G-5QMW64V60M');</script>
 <style>
   :root{ --dark:#0c0b0f; --card:#17141b; --red:#ef4444; --red-deep:#b91c1c; --text:#f4f4f6; --muted:#a6a6b2; --line:rgba(255,255,255,0.12); --green:#37d27a; }
   *{ box-sizing:border-box; margin:0; padding:0; }
@@ -101,10 +110,17 @@
 
   function showErr(msg){ err.textContent = msg || 'Something went wrong. Please try again.'; err.classList.add('show'); }
 
+  // Conversion tracking — ViewContent (OTO upsell page)
+  try { if (window.fbq) fbq('track', 'ViewContent', { content_name: 'OTO — Done-For-You Upsell', content_category: 'oto', content_ids: ['dfy-oto'], value: 397, currency: 'USD' }); } catch(_){}
+  try { if (window.gtag) gtag('event', 'view_item', { currency: 'USD', value: 397, items: [{ item_id: 'dfy-oto', item_name: 'OTO — Done-For-You' }] }); } catch(_){}
+
   yes.addEventListener('click', async function(){
     if (!sessionId){ showErr('We could not find your order. Please go back and try again.'); return; }
     yes.disabled = true; yes.textContent = 'Adding it…';
     err.classList.remove('show');
+    // Conversion tracking — InitiateCheckout (one-click OTO)
+    try { if (window.fbq) fbq('track', 'InitiateCheckout', { content_name: 'OTO — Done-For-You', content_ids: ['dfy-oto'], contents: [{ id: 'dfy-oto', quantity: 1, item_price: 397 }], value: 397, currency: 'USD', num_items: 1 }); } catch(_){}
+    try { if (window.gtag) gtag('event', 'begin_checkout', { currency: 'USD', value: 397, items: [{ item_id: 'dfy-oto', item_name: 'OTO — Done-For-You', price: 397, quantity: 1 }] }); } catch(_){}
     try {
       var r = await fetch('/api/funnel-oto', {
         method:'POST', headers:{'Content-Type':'application/json'},

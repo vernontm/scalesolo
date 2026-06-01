@@ -7,6 +7,15 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,500&display=swap" rel="stylesheet">
+<!-- Analytics: Meta Pixel + GA4 -->
+<script>
+  !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window, document,'script','https://connect.facebook.net/en_US/fbevents.js');
+  fbq('init', '1865831664085007');
+  fbq('track', 'PageView');
+</script>
+<noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=1865831664085007&ev=PageView&noscript=1"/></noscript>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-5QMW64V60M"></script>
+<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','G-5QMW64V60M');</script>
 <style>
   :root{
     --dark:#0c0b0f; --dark-2:#141118; --card:#17141b;
@@ -310,9 +319,15 @@
 
 <script>
 (function(){
+  // Conversion tracking — ViewContent (page-level)
+  try { if (window.fbq) fbq('track', 'ViewContent', { content_name: 'Done-For-You Launch', content_category: 'dfy', content_ids: ['dfy'], value: 397, currency: 'USD' }); } catch(_){}
+  try { if (window.gtag) gtag('event', 'view_item', { currency: 'USD', value: 397, items: [{ item_id: 'dfy', item_name: 'Done-For-You Launch' }] }); } catch(_){}
   async function checkout(el){
     var label = el.textContent;
     el.style.pointerEvents = 'none'; el.textContent = 'Loading…';
+    // Conversion tracking — InitiateCheckout
+    try { if (window.fbq) fbq('track', 'InitiateCheckout', { content_name: 'Done-For-You Launch', content_ids: ['dfy'], contents: [{ id: 'dfy', quantity: 1, item_price: 397 }], value: 397, currency: 'USD', num_items: 1 }); } catch(_){}
+    try { if (window.gtag) gtag('event', 'begin_checkout', { currency: 'USD', value: 397, items: [{ item_id: 'dfy', item_name: 'Done-For-You Launch', price: 397, quantity: 1 }] }); } catch(_){}
     try{
       var r = await fetch('/api/funnel-checkout', {
         method:'POST', headers:{'Content-Type':'application/json'},

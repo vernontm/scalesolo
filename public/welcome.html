@@ -8,6 +8,15 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<!-- Analytics: Meta Pixel + GA4 -->
+<script>
+  !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window, document,'script','https://connect.facebook.net/en_US/fbevents.js');
+  fbq('init', '1865831664085007');
+  fbq('track', 'PageView');
+</script>
+<noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=1865831664085007&ev=PageView&noscript=1"/></noscript>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-5QMW64V60M"></script>
+<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','G-5QMW64V60M');</script>
 <style>
   :root{ --dark:#0c0b0f; --card:#17141b; --red:#ef4444; --red-deep:#b91c1c; --text:#f4f4f6; --muted:#a6a6b2; --line:rgba(255,255,255,0.12); --green:#37d27a; }
   *{ box-sizing:border-box; margin:0; padding:0; }
@@ -54,6 +63,39 @@
   var c = document.getElementById('content');
   var head = document.getElementById('headline');
   var sub = document.getElementById('subline');
+
+  // ── Conversion tracking — Purchase ─────────────────────────────────
+  // Fires once per /welcome load. Session id is the Stripe checkout id
+  // (or the OTO PaymentIntent id), which the server-side CAPI also uses
+  // as event_id, so Facebook can dedupe browser + server events.
+  (function trackPurchase(){
+    var sessionId = q.get('session') || '';
+    var upgradedNow = q.get('upgraded') === '1';
+    var value = 0, name = '', contentId = '';
+    if (product === 'tripwire'){
+      value = 17 + (bump ? 9 : 0) + (upgradedNow ? 397 : 0);
+      name = upgradedNow ? 'Tripwire + Done-For-You OTO' : (bump ? 'Tripwire + Content Pack' : 'Tripwire');
+      contentId = upgradedNow ? 'tripwire+dfy-oto' : (bump ? 'tripwire+content-pack' : 'tripwire');
+    } else if (product === 'dfy'){
+      value = 397; name = 'Done-For-You Launch'; contentId = 'dfy';
+    } else if (product === 'blueprint'){
+      // Free Blueprint download — fire Lead, not Purchase.
+      try { if (window.fbq) fbq('track', 'Lead', { content_name: 'Faceless AI Brand Blueprint' }); } catch(_){}
+      try { if (window.gtag) gtag('event', 'generate_lead', { method: 'blueprint-download' }); } catch(_){}
+      return;
+    }
+    if (!value) return;
+    try {
+      if (window.fbq) {
+        fbq('track', 'Purchase', { value: value, currency: 'USD', content_name: name, content_ids: [contentId], content_type: 'product' }, sessionId ? { eventID: sessionId } : undefined);
+      }
+    } catch(_){}
+    try {
+      if (window.gtag) {
+        gtag('event', 'purchase', { transaction_id: sessionId || undefined, currency: 'USD', value: value, items: [{ item_id: contentId, item_name: name, price: value, quantity: 1 }] });
+      }
+    } catch(_){}
+  })();
 
   function card(t, d, href, label){
     var a = href ? '<a class="btn" href="'+href+'" download>'+label+'</a>' : '';
