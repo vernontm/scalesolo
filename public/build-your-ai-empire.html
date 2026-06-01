@@ -87,11 +87,18 @@
   .pricerow .note{ color:var(--muted); font-size:13px; margin-top:4px; }
 
   /* order bump */
-  .bump{ border:2px dashed var(--red); background:rgba(239,68,68,0.07); border-radius:14px; padding:18px 20px; margin:18px 0; display:flex; gap:14px; align-items:flex-start; }
+  .bump{ border:2px dashed var(--red); background:rgba(239,68,68,0.07); border-radius:14px; padding:18px 20px; margin:18px 0; display:flex; gap:18px; align-items:center; }
+  .bump-cover{ width:160px; flex-shrink:0; aspect-ratio:2/3; border-radius:10px; box-shadow:0 14px 28px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.06); display:block; object-fit:cover; }
+  .bump-content{ flex:1; min-width:0; display:flex; gap:14px; align-items:flex-start; text-align:left; }
   .bump .box{ flex-shrink:0; width:24px; height:24px; border-radius:6px; border:2px solid var(--red); background:var(--red); display:flex; align-items:center; justify-content:center; color:#fff; font-weight:800; font-size:14px; margin-top:2px; }
   .bump .t{ font-weight:800; font-size:15.5px; }
   .bump .t span{ color:var(--red); }
   .bump .d{ color:var(--muted); font-size:13.5px; margin-top:3px; }
+  @media (max-width:560px){
+    .bump{ flex-direction:column; align-items:center; }
+    .bump-cover{ width:140px; }
+    .bump-content{ text-align:left; }
+  }
 
   .guarantee{ display:flex; gap:20px; align-items:center; max-width:620px; margin:26px auto 0; background:var(--card); border:1px solid var(--line); border-radius:16px; padding:22px 24px; }
   .seal{ flex-shrink:0; width:78px; height:78px; border-radius:50%; border:2px solid var(--red); display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--red); font-weight:800; line-height:1; text-align:center; }
@@ -230,10 +237,13 @@
 
       <!-- ORDER BUMP -->
       <div class="bump">
-        <div class="box">&#10003;</div>
-        <div>
-          <div class="t">YES, add the <span>Faceless Content Pack</span> for just $9</div>
-          <div class="d">50 ready-to-use outfit, environment, and pose references, male and female. Skip the Pinterest hunt and build your looks in minutes. One-time $9, only on this page.</div>
+        <img class="bump-cover" src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/faceless-content-pack.png" alt="Faceless Content Pack cover" loading="lazy">
+        <div class="bump-content">
+          <div class="box">&#10003;</div>
+          <div>
+            <div class="t">YES, add the <span>Faceless Content Pack</span> for just $9</div>
+            <div class="d">50 ready-to-use outfit, environment, and pose references, male and female. Skip the Pinterest hunt and build your looks in minutes. One-time $9, only on this page.</div>
+          </div>
         </div>
       </div>
 
