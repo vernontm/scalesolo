@@ -58,14 +58,14 @@
     var html = card(
       'Build Your AI Empire',
       'Your monetization playbook. Save it and keep it open while you build.',
-      '/downloads/build-your-ai-empire.pdf',
+      'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/build-your-ai-empire.pdf',
       'Download the playbook'
     );
     if (bump){
       html += card(
         'Faceless Content Pack',
         '50 ready-to-use outfits, settings, and poses, male and female.',
-        '/downloads/faceless-content-pack.zip',
+        'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/faceless-content-pack.zip',
         'Download the content pack'
       );
     }
@@ -73,10 +73,15 @@
     c.innerHTML = html;
   } else if (product === 'dfy'){
     head.textContent = 'Your Done-For-You Launch is booked.';
-    sub.textContent = 'Payment confirmed. My team will email you within one business day to kick off your build.';
+    sub.textContent = 'Payment confirmed. The fastest next step is to book your kickoff call so we can start building right away.';
     c.innerHTML = card(
+      'Book your kickoff call',
+      'Grab a time and we will start your build on the call: your avatar, looks, voice, first videos, and auto-posting workflow.',
+      'https://vernontm.com/book-call',
+      'Book my kickoff call'
+    ) + card(
       'What happens next',
-      'Watch your inbox for a short questionnaire about your brand. Once you send it back, we build your avatar, looks, first videos, and auto-posting workflow, then hand it off on a call.'
+      'On the call we map your brand, then my team builds it and hands you the keys. Watch your inbox for your receipt and a short brand questionnaire.'
     );
   } else {
     c.innerHTML = card('Order confirmed', 'Check your email for the details and receipt.');

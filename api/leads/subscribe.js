@@ -8,6 +8,9 @@
 // Requires env FUNNEL_PROFILE_ID = the profile id that should own these leads.
 
 import { setCors, supaFetch } from '../_lib/supabase.js'
+import { brandedEmail, ctaButton, sendEmailSafe } from '../_lib/email.js'
+
+const BLUEPRINT_URL = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/faceless-ai-brand-blueprint.pdf'
 
 // Best-effort per-instance IP rate limit (same approach as forms/submit.js).
 const rateMap = new Map()
@@ -70,6 +73,21 @@ export default async function handler(req, res) {
       })
       contactId = (Array.isArray(created) ? created[0] : created).id
     }
+
+    // Deliver the free guide by email (best-effort, non-fatal).
+    await sendEmailSafe({
+      to: email,
+      subject: 'Here is your Faceless AI Brand Blueprint',
+      html: brandedEmail({
+        preheader: 'Your free Faceless AI Brand Blueprint is inside.',
+        body:
+          '<p style="margin:0 0 12px;font-size:18px;font-weight:700;color:#0c0c0d;">Your Blueprint is ready.</p>' +
+          '<p style="margin:0 0 4px;">Thanks for grabbing the Faceless AI Brand Blueprint. Here it is, yours to keep.</p>' +
+          ctaButton({ label: 'Download the Blueprint', url: BLUEPRINT_URL }) +
+          '<p style="margin:14px 0 0;">One tip: do not skip Chapter 2, the brand voice step. It is the part most people skip, and the reason most pages end up sounding like a robot.</p>' +
+          '<p style="margin:12px 0 0;">See you on the inside,<br>Rayvaughn · ScaleSolo</p>',
+      }),
+    })
 
     // Activity timeline event (non-fatal).
     await supaFetch('rpc/log_activity', {
