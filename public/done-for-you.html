@@ -40,6 +40,8 @@
   .btn{ display:inline-flex; align-items:center; justify-content:center; gap:9px; background:linear-gradient(135deg,var(--red),var(--red-deep)); color:#fff; font-weight:800; font-size:17px; padding:16px 26px; border-radius:13px; border:none; cursor:pointer; box-shadow:0 12px 30px rgba(239,68,68,0.35); transition:transform .12s; max-width:460px; width:100%; text-align:center; }
   .btn:hover{ transform:translateY(-1px); }
   .btn.big{ font-size:19px; padding:19px 28px; }
+  .btn.ghost{ background:transparent; border:1.5px solid rgba(239,68,68,0.45); color:rgba(255,255,255,0.78); font-weight:600; font-size:14.5px; padding:13px 22px; box-shadow:none; margin-top:10px; }
+  .btn.ghost:hover{ background:rgba(239,68,68,0.10); border-color:rgba(239,68,68,0.7); color:#fff; }
   .microtrust{ margin-top:13px; font-size:12.5px; color:var(--muted); display:flex; gap:16px; flex-wrap:wrap; }
   .microtrust span{ display:inline-flex; align-items:center; gap:6px; }
   .tick{ color:var(--green); font-weight:800; }
@@ -149,7 +151,9 @@
         <div class="price-now">$397 <span style="font-size:15px;color:var(--muted);font-weight:600">one time</span></div>
         <div class="price-tag">Built and ready in days, not months.</div>
       </div>
-      <div style="margin-top:18px;max-width:460px;margin-left:auto;margin-right:auto"><a href="#book" class="btn big">Book my Done-For-You Launch &#8594;</a></div>
+      <div style="margin-top:18px;max-width:460px;margin-left:auto;margin-right:auto"><a href="#book" class="btn big">Book my Done-For-You Launch &#8594;</a>
+        <a href="#decline" class="btn ghost decline-link">No, just give me the guide</a>
+      </div>
       <div class="microtrust">
         <span><span class="tick">&#10003;</span> Done in days</span>
         <span><span class="tick">&#10003;</span> Built by our team</span>
@@ -234,6 +238,7 @@
         <div class="note">One-time. Your brand built and running. A ScaleSolo membership runs it from there.</div>
       </div>
       <div style="margin-top:18px"><a href="#checkout" class="btn big">Book my Done-For-You Launch &#8594;</a></div>
+      <div style="max-width:460px;margin:0 auto"><a href="#decline" class="btn ghost decline-link">No, just give me the guide</a></div>
       <div class="microtrust" style="justify-content:center;margin-top:14px">
         <span><span class="tick">&#10003;</span> Limited spots</span>
         <span><span class="tick">&#10003;</span> Built by our team</span>
@@ -286,8 +291,8 @@
     <h2>You could spend weeks figuring it out. Or wake up to a brand that is already built.</h2>
     <p class="lead">Hand it to us once. Walk away with a faceless brand that is live, loaded with content, and posting on its own.</p>
     <div class="btnwrap"><a href="#checkout" class="btn big">Book my Done-For-You Launch &#8594;</a></div>
+    <div style="max-width:460px;margin:10px auto 0"><a href="#decline" class="btn ghost decline-link">No, just give me the guide</a></div>
     <div><span class="scarcity">Only a limited number of launches are taken each month.</span></div>
-    <div style="margin-top:14px"><a href="#decline" class="decline-link" style="color:rgba(255,255,255,0.45);font-size:13px;text-decoration:underline;">No thanks, I will pass on having it built for me</a></div>
     <div class="microtrust" style="justify-content:center;margin-top:14px">
       <span><span class="tick">&#10003;</span> Done in days</span>
       <span><span class="tick">&#10003;</span> You own everything</span>
@@ -326,49 +331,70 @@
   });
 
   // ── Decline / "no thanks" modal (DFY) ────────────────────────────
-  // Shame-decline pattern: explicitly confirm declining the high-ticket
-  // launch. We do NOT email the Blueprint here — DFY visitors are later
-  // in the funnel and almost always already have it. We just log the
-  // decline activity and redirect to a soft thanks page.
+  // Same shape as the tripwire modal: red-pill emphasis on the
+  // deliverables, two clear actions. Second "No" click goes straight
+  // to the welcome page (and fire-and-forgets the decline endpoint).
   function declineFlow(){
+    if (document.getElementById('funnel-decline-modal')) return;
     var modal = document.createElement('div');
     modal.id = 'funnel-decline-modal';
     modal.innerHTML = ''
       + '<div class="fdm-backdrop"></div>'
       + '<div class="fdm-card" role="dialog" aria-modal="true" aria-labelledby="fdm-title">'
-      +   '<div id="fdm-title" class="fdm-title">Wait, are you sure?</div>'
-      +   '<p class="fdm-body">A Done-For-You Launch saves you weeks of work and gets you posting this week. Most people who pass on it spend the next month stuck in setup.</p>'
-      +   '<p class="fdm-body fdm-bold">It is a one-time cost, with a satisfaction guarantee, and we only take a few each month.</p>'
+      +   '<div id="fdm-title" class="fdm-title">Hold on. Are you sure?</div>'
+      +   '<p class="fdm-sub">The Done-For-You Launch is the fastest path to live. Here is what my team hands you:</p>'
+      +   '<ul class="fdm-benefits">'
+      +     '<li><span class="fdm-tick">&#10003;</span><span>A <span class="fdm-pill">custom AI avatar</span>, built and trained.</span></li>'
+      +     '<li><span class="fdm-tick">&#10003;</span><span>Multiple <span class="fdm-pill">looks</span> — outfits, settings, angles.</span></li>'
+      +     '<li><span class="fdm-tick">&#10003;</span><span>Your <span class="fdm-pill">brand voice</span> dialed in.</span></li>'
+      +     '<li><span class="fdm-tick">&#10003;</span><span>Your <span class="fdm-pill">first batch</span> of ready-to-post videos.</span></li>'
+      +     '<li><span class="fdm-tick">&#10003;</span><span>Your <span class="fdm-pill">auto-posting workflow</span>, fully wired.</span></li>'
+      +     '<li><span class="fdm-tick">&#10003;</span><span>A <span class="fdm-pill">1-on-1 handoff call</span> so you know how to run it.</span></li>'
+      +   '</ul>'
+      +   '<div class="fdm-price">Done for you, <span class="fdm-price-pill">$397</span> one time</div>'
       +   '<div class="fdm-actions">'
       +     '<button class="fdm-btn fdm-yes" type="button">Yes, take me back to the offer</button>'
-      +     '<button class="fdm-btn fdm-no"  type="button">No, I will build it myself</button>'
+      +     '<button class="fdm-btn fdm-no"  type="button">No thanks, just send the guide</button>'
       +   '</div>'
       + '</div>';
     document.body.appendChild(modal);
     var css = document.createElement('style');
     css.textContent = ''
-      + '#funnel-decline-modal{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;}'
-      + '#funnel-decline-modal .fdm-backdrop{position:absolute;inset:0;background:rgba(8,7,11,0.78);backdrop-filter:blur(4px);}'
-      + '#funnel-decline-modal .fdm-card{position:relative;max-width:520px;width:100%;background:#17141b;border:1px solid rgba(255,255,255,0.12);border-radius:18px;padding:28px;color:#f4f4f6;text-align:center;box-shadow:0 30px 80px rgba(0,0,0,0.6);}'
-      + '#funnel-decline-modal .fdm-title{font-size:24px;font-weight:800;letter-spacing:-0.01em;margin-bottom:10px;}'
-      + '#funnel-decline-modal .fdm-body{font-size:15px;line-height:1.55;color:#cfcfd6;margin:0 0 10px;}'
-      + '#funnel-decline-modal .fdm-bold{color:#fff;font-weight:600;}'
-      + '#funnel-decline-modal .fdm-actions{display:flex;flex-direction:column;gap:10px;margin-top:18px;}'
-      + '#funnel-decline-modal .fdm-btn{padding:14px 18px;border-radius:12px;font-weight:700;font-size:15px;cursor:pointer;border:none;font-family:inherit;}'
-      + '#funnel-decline-modal .fdm-yes{background:linear-gradient(135deg,#ef4444,#b91c1c);color:#fff;box-shadow:0 10px 24px rgba(239,68,68,0.30);}'
-      + '#funnel-decline-modal .fdm-no{background:transparent;border:1px solid rgba(255,255,255,0.20);color:rgba(255,255,255,0.65);font-weight:500;font-size:13.5px;}';
+      + '#funnel-decline-modal{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;animation:fdmIn .18s ease-out;}'
+      + '@keyframes fdmIn{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}'
+      + '#funnel-decline-modal .fdm-backdrop{position:absolute;inset:0;background:rgba(8,7,11,0.82);backdrop-filter:blur(6px);}'
+      + '#funnel-decline-modal .fdm-card{position:relative;max-width:560px;width:100%;background:#17141b;border:1px solid rgba(255,255,255,0.14);border-radius:20px;padding:30px 28px;color:#f4f4f6;box-shadow:0 30px 80px rgba(0,0,0,0.7),0 0 0 1px rgba(239,68,68,0.18);max-height:92vh;overflow-y:auto;}'
+      + '#funnel-decline-modal .fdm-title{font-size:26px;font-weight:800;letter-spacing:-0.02em;text-align:center;margin-bottom:8px;}'
+      + '#funnel-decline-modal .fdm-sub{font-size:15px;line-height:1.55;color:#cfcfd6;text-align:center;margin:0 0 20px;}'
+      + '#funnel-decline-modal .fdm-benefits{list-style:none;padding:0;margin:0 0 18px;display:flex;flex-direction:column;gap:10px;}'
+      + '#funnel-decline-modal .fdm-benefits li{display:flex;align-items:flex-start;gap:11px;font-size:14.5px;line-height:1.5;color:#e6e6ec;text-align:left;}'
+      + '#funnel-decline-modal .fdm-tick{flex-shrink:0;width:22px;height:22px;border-radius:50%;background:linear-gradient(135deg,#ef4444,#b91c1c);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:12px;margin-top:1px;box-shadow:0 4px 10px rgba(239,68,68,0.30);}'
+      + '#funnel-decline-modal .fdm-pill{display:inline-block;padding:2px 9px;border-radius:6px;background:rgba(239,68,68,0.16);border:1px solid rgba(239,68,68,0.45);color:#ffb4ab;font-weight:700;font-size:13.5px;white-space:nowrap;}'
+      + '#funnel-decline-modal .fdm-price{display:flex;align-items:center;justify-content:center;gap:10px;font-size:16px;color:#cfcfd6;margin:8px 0 20px;text-align:center;}'
+      + '#funnel-decline-modal .fdm-price-pill{display:inline-block;padding:6px 16px;border-radius:10px;background:linear-gradient(135deg,#ef4444,#b91c1c);color:#fff;font-weight:800;font-size:24px;letter-spacing:-0.02em;box-shadow:0 8px 20px rgba(239,68,68,0.35);}'
+      + '#funnel-decline-modal .fdm-actions{display:flex;flex-direction:column;gap:10px;}'
+      + '#funnel-decline-modal .fdm-btn{padding:15px 20px;border-radius:12px;font-weight:700;font-size:15px;cursor:pointer;border:none;font-family:inherit;transition:transform .12s,background .12s;}'
+      + '#funnel-decline-modal .fdm-yes{background:linear-gradient(135deg,#ef4444,#b91c1c);color:#fff;box-shadow:0 12px 28px rgba(239,68,68,0.35);font-size:16px;}'
+      + '#funnel-decline-modal .fdm-yes:hover{transform:translateY(-1px);}'
+      + '#funnel-decline-modal .fdm-no{background:transparent;border:1px solid rgba(255,255,255,0.18);color:rgba(255,255,255,0.55);font-weight:500;font-size:13.5px;}'
+      + '#funnel-decline-modal .fdm-no:hover{background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.85);}';
     document.head.appendChild(css);
     function close(){ modal.remove(); css.remove(); }
     modal.querySelector('.fdm-backdrop').addEventListener('click', close);
-    modal.querySelector('.fdm-yes').addEventListener('click', function(){ close(); window.scrollTo({ top: document.querySelector('#book').offsetTop - 40, behavior:'smooth' }); });
-    modal.querySelector('.fdm-no').addEventListener('click', async function(){
+    modal.querySelector('.fdm-yes').addEventListener('click', function(){
+      close();
+      var anchor = document.querySelector('#book');
+      if (anchor) window.scrollTo({ top: anchor.offsetTop - 40, behavior:'smooth' });
+    });
+    modal.querySelector('.fdm-no').addEventListener('click', function(){
+      var btn = modal.querySelector('.fdm-no');
+      btn.disabled = true; btn.textContent = 'One sec…';
       var email = '';
       try { email = (localStorage.getItem('funnel_email') || '').toLowerCase(); } catch(_){}
-      // Log the decline if we have an email on file; otherwise just close.
       if (email){
-        try { await fetch('/api/leads/decline-offer', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: email, offer: 'dfy', source_url: location.href }) }); } catch(_){}
+        try { fetch('/api/leads/decline-offer', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: email, offer: 'dfy', source_url: location.href }) }); } catch(_){}
       }
-      window.location.href = '/build-your-ai-empire';
+      window.location.href = '/welcome?product=blueprint';
     });
   }
   document.querySelectorAll('a.decline-link').forEach(function(a){
