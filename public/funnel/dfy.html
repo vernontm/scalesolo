@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Done-For-You Faceless Brand Launch — $397</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --dark:#0c0b0f; --dark-2:#141118; --card:#17141b;
+    --red:#ef4444; --red-deep:#b91c1c; --red-soft:rgba(239,68,68,0.12);
+    --text:#f4f4f6; --muted:#a6a6b2; --line:rgba(255,255,255,0.12);
+    --green:#37d27a;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html{ scroll-behavior:smooth; }
+  body{ font-family:"Plus Jakarta Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--dark); color:var(--text); line-height:1.6; -webkit-font-smoothing:antialiased; }
+  a{ color:inherit; text-decoration:none; }
+  .wrap{ max-width:980px; margin:0 auto; padding:0 22px; }
+  .narrow{ max-width:760px; margin:0 auto; padding:0 22px; }
+
+  .bar{ background:linear-gradient(90deg,var(--red-deep),var(--red)); color:#fff; text-align:center; font-size:13.5px; font-weight:700; padding:9px 16px; }
+  .nav{ display:flex; align-items:center; gap:11px; padding:18px 0; }
+  .nav .dot{ width:34px; height:34px; border-radius:9px; background:linear-gradient(135deg,var(--red),var(--red-deep)); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:18px; box-shadow:0 0 24px rgba(239,68,68,0.45); }
+  .nav .brand{ font-weight:800; font-size:18px; }
+
+  .hero{ position:relative; overflow:hidden; padding:18px 0 64px; }
+  .hero::before{ content:""; position:absolute; inset:0; background:radial-gradient(60% 50% at 80% 0%, rgba(239,68,68,0.26), transparent 60%); pointer-events:none; }
+  .hero-grid{ position:relative; display:flex; flex-direction:column; gap:30px; max-width:720px; margin:0 auto; }
+  .hero-grid>.herocard{ max-width:520px; margin:0 auto; width:100%; }
+  .eyebrow{ display:inline-block; font-size:12px; letter-spacing:0.22em; text-transform:uppercase; font-weight:800; color:var(--red); background:var(--red-soft); border:1px solid rgba(239,68,68,0.35); padding:6px 12px; border-radius:999px; margin-bottom:18px; }
+  h1{ font-size:44px; line-height:1.05; font-weight:800; letter-spacing:-0.02em; }
+  h1 .hot{ color:var(--red); }
+  .sub{ margin-top:18px; font-size:18px; color:var(--muted); max-width:30em; }
+  .ptr{ margin-top:24px; }
+  .price-now{ font-size:32px; font-weight:800; }
+  .price-tag{ font-size:13px; color:var(--green); font-weight:700; }
+  .btn{ display:inline-flex; align-items:center; justify-content:center; gap:9px; background:linear-gradient(135deg,var(--red),var(--red-deep)); color:#fff; font-weight:800; font-size:17px; padding:16px 26px; border-radius:13px; border:none; cursor:pointer; box-shadow:0 12px 30px rgba(239,68,68,0.35); transition:transform .12s; max-width:460px; width:100%; text-align:center; }
+  .btn:hover{ transform:translateY(-1px); }
+  .btn.big{ font-size:19px; padding:19px 28px; }
+  .microtrust{ margin-top:13px; font-size:12.5px; color:var(--muted); display:flex; gap:16px; flex-wrap:wrap; }
+  .microtrust span{ display:inline-flex; align-items:center; gap:6px; }
+  .tick{ color:var(--green); font-weight:800; }
+
+  .herocard{ background:var(--card); border:1px solid var(--line); border-radius:18px; padding:26px; box-shadow:0 30px 70px rgba(0,0,0,0.55); }
+  .herocard .ht{ font-size:12px; letter-spacing:0.16em; text-transform:uppercase; font-weight:800; color:var(--red); margin-bottom:14px; }
+  .herocard .li{ display:flex; gap:11px; align-items:flex-start; padding:9px 0; border-bottom:1px solid var(--line); font-size:15px; }
+  .herocard .li:last-child{ border-bottom:none; }
+  .herocard .li .rt{ color:var(--red); font-weight:800; flex-shrink:0; margin-top:1px; }
+
+  section.block{ padding:60px 0; border-top:1px solid var(--line); }
+  .klabel{ font-size:12px; letter-spacing:0.2em; text-transform:uppercase; font-weight:800; color:var(--red); text-align:center; margin-bottom:10px; }
+  h2{ font-size:32px; line-height:1.12; font-weight:800; letter-spacing:-0.015em; text-align:center; }
+  .lead{ font-size:18px; color:var(--muted); text-align:center; max-width:40em; margin:16px auto 0; }
+
+  .pains{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; margin-top:34px; }
+  .pain{ background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px 22px; }
+  .pain .t{ font-weight:800; font-size:16px; margin-bottom:5px; }
+  .pain .d{ color:var(--muted); font-size:14px; }
+
+  .deliver{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:34px; }
+  .deliver .it{ display:flex; gap:13px; align-items:flex-start; background:var(--card); border:1px solid var(--line); border-radius:13px; padding:18px 20px; }
+  .deliver .it .rt{ color:var(--red); font-weight:800; font-size:18px; flex-shrink:0; }
+  .deliver .it .t{ font-weight:800; font-size:15.5px; }
+  .deliver .it .d{ color:var(--muted); font-size:13.5px; margin-top:3px; }
+
+  .steps{ counter-reset:s; max-width:760px; margin:34px auto 0; }
+  .step{ display:flex; gap:18px; align-items:flex-start; padding:18px 0; border-bottom:1px solid var(--line); }
+  .step:last-child{ border-bottom:none; }
+  .step .n{ counter-increment:s; flex-shrink:0; width:42px; height:42px; border-radius:50%; background:linear-gradient(135deg,var(--red),var(--red-deep)); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:18px; }
+  .step .n::before{ content:counter(s); }
+  .step .t{ font-weight:800; font-size:17px; }
+  .step .d{ color:var(--muted); font-size:14.5px; margin-top:3px; }
+
+  .offerwrap{ background:radial-gradient(80% 120% at 50% 0%, rgba(239,68,68,0.14), transparent 70%); }
+  .offer{ max-width:640px; margin:30px auto 0; background:var(--card); border:1px solid var(--line); border-radius:20px; padding:34px; box-shadow:0 30px 70px rgba(0,0,0,0.5); }
+  .offer h3{ font-size:23px; font-weight:800; text-align:center; }
+  .offer .stack{ margin:22px 0; display:flex; flex-direction:column; gap:10px; }
+  .offer .row{ display:flex; align-items:flex-start; gap:11px; font-size:15px; }
+  .offer .row .val{ margin-left:auto; color:var(--muted); font-size:13px; font-weight:700; white-space:nowrap; }
+  .pricerow{ text-align:center; border-top:1px dashed var(--line); padding-top:20px; margin-top:6px; }
+  .pricerow .big{ font-size:46px; font-weight:800; }
+  .pricerow .note{ color:var(--muted); font-size:13px; margin-top:4px; }
+  .totalval{ text-align:center; color:var(--muted); font-size:14px; margin-bottom:4px; }
+  .totalval s{ color:var(--muted); }
+
+  .guarantee{ display:flex; gap:20px; align-items:center; max-width:640px; margin:26px auto 0; background:var(--card); border:1px solid var(--line); border-radius:16px; padding:22px 24px; }
+  .seal{ flex-shrink:0; width:80px; height:80px; border-radius:50%; border:2px solid var(--red); display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--red); font-weight:800; line-height:1; text-align:center; }
+  .seal .big{ font-size:18px; } .seal .sm{ font-size:9px; letter-spacing:0.08em; margin-top:3px; }
+  .guarantee .t{ font-weight:800; font-size:17px; margin-bottom:4px; }
+  .guarantee .d{ color:var(--muted); font-size:14px; }
+
+  .tgrid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; margin-top:34px; }
+  .tcard{ background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px; }
+  .stars{ color:var(--red); font-size:14px; letter-spacing:2px; }
+  .tcard .q{ font-size:14.5px; margin:10px 0 16px; }
+  .who{ display:flex; align-items:center; gap:10px; }
+  .who .av{ width:38px; height:38px; border-radius:50%; background:linear-gradient(135deg,var(--red),var(--red-deep)); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:14px; }
+  .who .nm{ font-weight:700; font-size:13.5px; } .who .rl{ color:var(--muted); font-size:12px; }
+  .ph{ color:var(--red); font-size:11px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; }
+
+  .faq{ max-width:760px; margin:30px auto 0; }
+  .qa{ border:1px solid var(--line); border-radius:13px; padding:18px 22px; margin-bottom:12px; background:var(--card); }
+  .qa .q{ font-weight:800; font-size:16px; }
+  .qa .a{ color:var(--muted); font-size:14.5px; margin-top:7px; }
+
+  .finalcta{ text-align:center; }
+  .btnwrap{ display:flex; justify-content:center; margin-top:24px; }
+  .scarcity{ display:inline-block; margin-top:16px; color:var(--red); font-weight:700; font-size:14px; }
+
+  footer{ border-top:1px solid var(--line); padding:30px 0 50px; color:var(--muted); font-size:13px; text-align:center; }
+  footer a{ color:var(--muted); border-bottom:1px solid var(--line); }
+
+  @media(max-width:820px){
+    .hero-grid{ grid-template-columns:1fr; gap:30px; }
+    h1{ font-size:35px; } h2{ font-size:26px; }
+    .pains,.deliver,.tgrid{ grid-template-columns:1fr; }
+    .btn{ max-width:none; }
+  }
+
+  /* ---- center all content ---- */
+  body{ text-align:center; }
+  .sub, .lead{ margin-left:auto; margin-right:auto; }
+  .btn{ display:flex; margin-left:auto; margin-right:auto; }
+  .herocard{ margin-left:auto; margin-right:auto; }
+  .microtrust, .ptr, .pains .pain, .offer .row, .deliver .it, .step, .guarantee, .who, .herocard .li{ justify-content:center; }
+  .pains .pain, .deliver .it{ text-align:center; }
+</style>
+</head>
+<body>
+
+<div class="bar">Limited launches each month. We build your faceless brand, you start posting this week.</div>
+
+<div class="wrap"><div class="nav"><span class="dot">S</span><span class="brand">ScaleSolo</span></div></div>
+
+<!-- HERO -->
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow">Done-For-You Launch</span>
+      <h1>Skip the setup. <span class="hot">We build your faceless brand for you.</span></h1>
+      <p class="sub">Do not want to learn every step? My team builds your avatar, your looks, your first videos, and your auto-posting workflow. You go from zero to a brand that is live and posting, fast.</p>
+      <div style="position:relative;aspect-ratio:16/9;border-radius:14px;overflow:hidden;border:1px solid var(--line);background:#000;box-shadow:0 20px 50px rgba(0,0,0,0.5);margin:20px auto;max-width:560px;">
+        <video src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/Done%20for%20you%20-%20video.mp4" controls playsinline preload="metadata" style="width:100%;height:100%;object-fit:cover;display:block;background:#000;"></video>
+      </div>
+      <div class="ptr">
+        <div class="price-now">$397 <span style="font-size:15px;color:var(--muted);font-weight:600">one time</span></div>
+        <div class="price-tag">Built and ready in days, not months.</div>
+      </div>
+      <div style="margin-top:18px;max-width:460px;margin-left:auto;margin-right:auto"><a href="#book" class="btn big">Book my Done-For-You Launch &#8594;</a></div>
+      <div class="microtrust">
+        <span><span class="tick">&#10003;</span> Done in days</span>
+        <span><span class="tick">&#10003;</span> Built by our team</span>
+        <span><span class="tick">&#10003;</span> Satisfaction guarantee</span>
+      </div>
+    </div>
+    <div class="herocard">
+      <div class="ht">Your brand, done for you</div>
+      <div class="li"><span class="rt">&#10003;</span> A custom AI avatar, built and trained</div>
+      <div class="li"><span class="rt">&#10003;</span> Multiple looks: outfits, settings, angles</div>
+      <div class="li"><span class="rt">&#10003;</span> Your brand voice and identity, dialed in</div>
+      <div class="li"><span class="rt">&#10003;</span> Your first batch of ready-to-post videos</div>
+      <div class="li"><span class="rt">&#10003;</span> Auto-posting workflow set up to run</div>
+      <div class="li"><span class="rt">&#10003;</span> A handoff call so you know how to run it</div>
+    </div>
+  </div>
+</header>
+
+<!-- WHO IT'S FOR -->
+<section class="block">
+  <div class="wrap">
+    <p class="klabel">Is this you?</p>
+    <h2>You know you should do this. You just do not have the time.</h2>
+    <p class="lead">The Blueprint shows you how to build it yourself. This is for the people who would rather have it handed to them, finished and running.</p>
+    <div class="pains">
+      <div class="pain"><div class="t">You are busy</div><div class="d">A job, a business, a life. You do not have weekends to learn a new system.</div></div>
+      <div class="pain"><div class="t">You want it done right</div><div class="d">No trial and error. You want a brand that looks dialed in from day one.</div></div>
+      <div class="pain"><div class="t">You want to start now</div><div class="d">Not next month. You want to be posting and growing this week.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- WHAT WE BUILD -->
+<section class="block">
+  <div class="wrap">
+    <p class="klabel">What we build for you</p>
+    <h2>Everything, set up and ready to run.</h2>
+    <p class="lead">You answer a few questions about your brand. We handle the rest and hand you a page that is ready to grow.</p>
+    <div class="deliver">
+      <div class="it"><span class="rt">&#10003;</span><div><div class="t">A custom avatar, built and trained</div><div class="d">Your face that is not your face, ready to star in every video.</div></div></div>
+      <div class="it"><span class="rt">&#10003;</span><div><div class="t">A full set of looks</div><div class="d">Different outfits, environments, and camera angles so your feed never looks repetitive.</div></div></div>
+      <div class="it"><span class="rt">&#10003;</span><div><div class="t">Your brand voice, locked in</div><div class="d">We set up your identity so every script sounds like your brand, not a robot.</div></div></div>
+      <div class="it"><span class="rt">&#10003;</span><div><div class="t">Your first batch of videos</div><div class="d">A starter set of finished, ready-to-post videos so you launch with content in the tank.</div></div></div>
+      <div class="it"><span class="rt">&#10003;</span><div><div class="t">The auto-posting workflow</div><div class="d">Your ScaleSolo workflow wired up to generate and run on a schedule, hands free.</div></div></div>
+      <div class="it"><span class="rt">&#10003;</span><div><div class="t">A handoff call</div><div class="d">We walk you through the whole thing so you can run it with confidence.</div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section class="block">
+  <div class="wrap">
+    <p class="klabel">How it works</p>
+    <h2>Four steps. You barely lift a finger.</h2>
+    <div class="steps">
+      <div class="step"><div class="n"></div><div><div class="t">Book your launch</div><div class="d">Claim your spot. Spots are limited each month so we can give every build real attention.</div></div></div>
+      <div class="step"><div class="n"></div><div><div class="t">Tell us about your brand</div><div class="d">A short intake. Your niche, your vibe, who you serve. Takes a few minutes.</div></div></div>
+      <div class="step"><div class="n"></div><div><div class="t">We build it</div><div class="d">Avatar, looks, voice, first videos, and your auto-posting workflow. All done for you.</div></div></div>
+      <div class="step"><div class="n"></div><div><div class="t">Go live</div><div class="d">We hand it off on a call, you hit go, and your faceless brand starts posting.</div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- OFFER -->
+<section class="block offerwrap" id="book">
+  <div class="wrap">
+    <p class="klabel">Claim your build</p>
+    <h2>The Done-For-You Launch</h2>
+    <div class="offer">
+      <h3>Everything included</h3>
+      <div class="stack">
+        <div class="row"><span class="tick">&#10003;</span><div>Custom avatar, built and trained</div><span class="val">included</span></div>
+        <div class="row"><span class="tick">&#10003;</span><div>A full set of looks (outfits, settings, angles)</div><span class="val">included</span></div>
+        <div class="row"><span class="tick">&#10003;</span><div>Brand voice and identity setup</div><span class="val">included</span></div>
+        <div class="row"><span class="tick">&#10003;</span><div>Your first batch of ready-to-post videos</div><span class="val">included</span></div>
+        <div class="row"><span class="tick">&#10003;</span><div>Auto-posting workflow, wired and tested</div><span class="val">included</span></div>
+        <div class="row"><span class="tick">&#10003;</span><div>A 1-on-1 handoff and training call</div><span class="val">included</span></div>
+      </div>
+      <div class="pricerow">
+        <div class="totalval">If you pieced this together yourself: <s>weeks of work</s></div>
+        <div><span class="big">$397</span></div>
+        <div class="note">One-time. Your brand built and running. A ScaleSolo membership runs it from there.</div>
+      </div>
+      <div style="margin-top:18px"><a href="#checkout" class="btn big">Book my Done-For-You Launch &#8594;</a></div>
+      <div class="microtrust" style="justify-content:center;margin-top:14px">
+        <span><span class="tick">&#10003;</span> Limited spots</span>
+        <span><span class="tick">&#10003;</span> Built by our team</span>
+        <span><span class="tick">&#10003;</span> Satisfaction guarantee</span>
+      </div>
+    </div>
+
+    <div class="guarantee">
+      <div class="seal"><span class="big">100%</span><span class="sm">BUILT RIGHT</span></div>
+      <div>
+        <div class="t">We build it until you are happy with it.</div>
+        <div class="d">This is a hands-on build, not a template dump. If something is not right at handoff, we fix it. You walk away with a brand you are proud to post.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TESTIMONIALS -->
+<section class="block">
+  <div class="wrap">
+    <p class="klabel">From people we have launched</p>
+    <h2>Built, handed off, and posting.</h2>
+    <p class="lead ph">Placeholder slots — drop in real client quotes with name, photo, and their page.</p>
+    <div class="tgrid">
+      <div class="tcard"><div class="stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div><div class="q">[Add a real client quote about how fast they got launched and what it felt like to skip the setup.]</div><div class="who"><div class="av">A</div><div><div class="nm">[Name]</div><div class="rl">[Their page / niche]</div></div></div></div>
+      <div class="tcard"><div class="stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div><div class="q">[Add a real client quote here. A specific outcome or timeline converts best.]</div><div class="who"><div class="av">R</div><div><div class="nm">[Name]</div><div class="rl">[Their page / niche]</div></div></div></div>
+      <div class="tcard"><div class="stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div><div class="q">[Add a real client quote here. Before-and-after works great.]</div><div class="who"><div class="av">S</div><div><div class="nm">[Name]</div><div class="rl">[Their page / niche]</div></div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section class="block">
+  <div class="wrap">
+    <p class="klabel">Questions</p>
+    <h2>Before you book.</h2>
+    <div class="faq">
+      <div class="qa"><div class="q">How long does it take?</div><div class="a">Most builds are done within a few days of your intake. We will give you a clear timeline when you book.</div></div>
+      <div class="qa"><div class="q">Do I need a ScaleSolo membership too?</div><div class="a">Yes. The $397 builds your brand and gets it running. A ScaleSolo membership is what keeps it generating and posting after handoff. We will get you set up with Founding Member during the build.</div></div>
+      <div class="qa"><div class="q">What do you need from me?</div><div class="a">A short intake about your niche and vibe, and any preferences for your avatar. That is it. We handle the building.</div></div>
+      <div class="qa"><div class="q">Whose brand is it? Do I own it?</div><div class="a">It is 100% yours. The avatar, the looks, the workflow, all of it lives in your account. We just build it for you.</div></div>
+      <div class="qa"><div class="q">Why are spots limited?</div><div class="a">Because this is a real, hands-on build. We only take a set number each month so every brand gets the attention it deserves.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- FINAL CTA -->
+<section class="block finalcta">
+  <div class="narrow">
+    <p class="klabel">Last thing</p>
+    <h2>You could spend weeks figuring it out. Or wake up to a brand that is already built.</h2>
+    <p class="lead">Hand it to us once. Walk away with a faceless brand that is live, loaded with content, and posting on its own.</p>
+    <div class="btnwrap"><a href="#checkout" class="btn big">Book my Done-For-You Launch &#8594;</a></div>
+    <div><span class="scarcity">Only a limited number of launches are taken each month.</span></div>
+    <div class="microtrust" style="justify-content:center;margin-top:14px">
+      <span><span class="tick">&#10003;</span> Done in days</span>
+      <span><span class="tick">&#10003;</span> You own everything</span>
+      <span><span class="tick">&#10003;</span> Satisfaction guarantee</span>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    By Rayvaughn · Vernon Tech &amp; Media &nbsp;·&nbsp; <a href="https://scalesolo.ai">ScaleSolo.ai</a><br><br>
+    Done-For-You Launch builds your brand assets and setup. Ongoing content runs on a ScaleSolo membership. <a href="#">Privacy Policy</a> · <a href="#">Terms</a>
+  </div>
+</footer>
+
+</body>
+</html>

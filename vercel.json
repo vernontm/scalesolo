@@ -3,7 +3,7 @@
   "outputDirectory": "dist",
   "framework": "vite",
   "rewrites": [
-    { "source": "/((?!api/|studio-compositions/).*)", "destination": "/index.html" }
+    { "source": "/((?!api/|studio-compositions/|funnel/).*)", "destination": "/index.html" }
   ],
   "headers": [
     {

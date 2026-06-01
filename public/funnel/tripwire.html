@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Build Your AI Empire — $17</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --dark:#0c0b0f; --dark-2:#141118; --card:#17141b;
+    --red:#ef4444; --red-deep:#b91c1c; --red-soft:rgba(239,68,68,0.12);
+    --text:#f4f4f6; --muted:#a6a6b2; --line:rgba(255,255,255,0.12);
+    --green:#37d27a;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html{ scroll-behavior:smooth; }
+  body{ font-family:"Plus Jakarta Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--dark); color:var(--text); line-height:1.6; -webkit-font-smoothing:antialiased; }
+  a{ color:inherit; text-decoration:none; }
+  .wrap{ max-width:980px; margin:0 auto; padding:0 22px; }
+  .narrow{ max-width:760px; margin:0 auto; padding:0 22px; }
+
+  /* announcement bar */
+  .bar{ background:linear-gradient(90deg,var(--red-deep),var(--red)); color:#fff; text-align:center; font-size:13.5px; font-weight:700; padding:9px 16px; letter-spacing:0.01em; }
+
+  /* nav */
+  .nav{ display:flex; align-items:center; gap:11px; padding:18px 0; }
+  .nav .dot{ width:34px; height:34px; border-radius:9px; background:linear-gradient(135deg,var(--red),var(--red-deep)); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:18px; box-shadow:0 0 24px rgba(239,68,68,0.45); }
+  .nav .brand{ font-weight:800; font-size:18px; }
+
+  /* hero */
+  .hero{ position:relative; overflow:hidden; padding:18px 0 64px; }
+  .hero::before{ content:""; position:absolute; inset:0; background:radial-gradient(60% 50% at 78% 0%, rgba(239,68,68,0.28), transparent 60%); pointer-events:none; }
+  .hero-grid{ position:relative; display:grid; grid-template-columns:1.15fr 0.85fr; gap:40px; align-items:start; }
+  .eyebrow{ display:inline-block; font-size:12px; letter-spacing:0.22em; text-transform:uppercase; font-weight:800; color:var(--red); background:var(--red-soft); border:1px solid rgba(239,68,68,0.35); padding:6px 12px; border-radius:999px; margin-bottom:18px; }
+  h1{ font-size:46px; line-height:1.04; font-weight:800; letter-spacing:-0.02em; }
+  h1 .hot{ color:var(--red); }
+  .sub{ margin-top:18px; font-size:18px; color:var(--muted); max-width:30em; }
+  .hero .ptr{ margin-top:26px; display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  .price-now{ font-size:34px; font-weight:800; }
+  .price-was{ font-size:18px; color:var(--muted); text-decoration:line-through; }
+  .price-tag{ font-size:13px; color:var(--green); font-weight:700; }
+  .btn{ display:inline-flex; align-items:center; justify-content:center; gap:9px; background:linear-gradient(135deg,var(--red),var(--red-deep)); color:#fff; font-weight:800; font-size:17px; padding:16px 26px; border-radius:13px; border:none; cursor:pointer; box-shadow:0 12px 30px rgba(239,68,68,0.35); transition:transform .12s; width:100%; max-width:420px; text-align:center; }
+  .btn:hover{ transform:translateY(-1px); }
+  .btn.big{ font-size:19px; padding:19px 28px; }
+  .btn .small{ font-size:12px; font-weight:600; opacity:0.85; }
+  .microtrust{ margin-top:12px; font-size:12.5px; color:var(--muted); display:flex; gap:16px; flex-wrap:wrap; }
+  .microtrust span{ display:inline-flex; align-items:center; gap:6px; }
+  .tick{ color:var(--green); font-weight:800; }
+
+  .cover-shot{ position:relative; }
+  .cover-shot img{ width:100%; border-radius:16px; box-shadow:0 30px 70px rgba(0,0,0,0.6), 0 0 0 1px var(--line); display:block; }
+  .cover-badge{ position:absolute; top:-14px; right:-10px; background:var(--red); color:#fff; font-weight:800; font-size:13px; padding:9px 14px; border-radius:999px; box-shadow:0 8px 20px rgba(239,68,68,0.5); transform:rotate(6deg); }
+
+  /* sections */
+  section.block{ padding:62px 0; border-top:1px solid var(--line); }
+  .klabel{ font-size:12px; letter-spacing:0.2em; text-transform:uppercase; font-weight:800; color:var(--red); text-align:center; margin-bottom:10px; }
+  h2{ font-size:33px; line-height:1.12; font-weight:800; letter-spacing:-0.015em; text-align:center; }
+  h2.left{ text-align:left; }
+  .lead{ font-size:18px; color:var(--muted); text-align:center; max-width:38em; margin:16px auto 0; }
+
+  .pains{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:34px; }
+  .pain{ background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px 22px; }
+  .pain .t{ font-weight:800; font-size:16px; margin-bottom:5px; }
+  .pain .d{ color:var(--muted); font-size:14.5px; }
+
+  .inside{ display:grid; grid-template-columns:1fr 1fr; gap:14px 28px; margin-top:34px; }
+  .inside .it{ display:flex; gap:13px; align-items:flex-start; background:var(--card); border:1px solid var(--line); border-radius:13px; padding:16px 18px; }
+  .inside .it .n{ flex-shrink:0; width:30px; height:30px; border-radius:8px; background:var(--red-soft); border:1px solid rgba(239,68,68,0.35); color:var(--red); font-weight:800; font-size:13px; display:flex; align-items:center; justify-content:center; }
+  .inside .it .t{ font-weight:700; font-size:15px; }
+  .inside .it .d{ color:var(--muted); font-size:13.5px; margin-top:2px; }
+
+  /* offer box */
+  .offerwrap{ background:radial-gradient(80% 120% at 50% 0%, rgba(239,68,68,0.14), transparent 70%); }
+  .offer{ max-width:620px; margin:0 auto; background:var(--card); border:1px solid var(--line); border-radius:20px; padding:34px; box-shadow:0 30px 70px rgba(0,0,0,0.5); }
+  .offer h3{ font-size:24px; font-weight:800; text-align:center; }
+  .offer .stack{ margin:22px 0; display:flex; flex-direction:column; gap:10px; }
+  .offer .row{ display:flex; align-items:flex-start; gap:11px; font-size:15px; }
+  .offer .row .tick{ margin-top:1px; }
+  .offer .row .val{ margin-left:auto; color:var(--muted); font-size:13px; font-weight:700; white-space:nowrap; }
+  .pricerow{ text-align:center; border-top:1px dashed var(--line); padding-top:20px; margin-top:6px; }
+  .pricerow .big{ font-size:46px; font-weight:800; }
+  .pricerow .was{ color:var(--muted); text-decoration:line-through; font-size:18px; margin-left:8px; }
+  .pricerow .note{ color:var(--muted); font-size:13px; margin-top:4px; }
+
+  /* order bump */
+  .bump{ border:2px dashed var(--red); background:rgba(239,68,68,0.07); border-radius:14px; padding:18px 20px; margin:18px 0; display:flex; gap:14px; align-items:flex-start; }
+  .bump .box{ flex-shrink:0; width:24px; height:24px; border-radius:6px; border:2px solid var(--red); background:var(--red); display:flex; align-items:center; justify-content:center; color:#fff; font-weight:800; font-size:14px; margin-top:2px; }
+  .bump .t{ font-weight:800; font-size:15.5px; }
+  .bump .t span{ color:var(--red); }
+  .bump .d{ color:var(--muted); font-size:13.5px; margin-top:3px; }
+
+  .guarantee{ display:flex; gap:20px; align-items:center; max-width:620px; margin:26px auto 0; background:var(--card); border:1px solid var(--line); border-radius:16px; padding:22px 24px; }
+  .seal{ flex-shrink:0; width:78px; height:78px; border-radius:50%; border:2px solid var(--red); display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--red); font-weight:800; line-height:1; text-align:center; }
+  .seal .big{ font-size:22px; } .seal .sm{ font-size:9px; letter-spacing:0.1em; margin-top:3px; }
+  .guarantee .t{ font-weight:800; font-size:17px; margin-bottom:4px; }
+  .guarantee .d{ color:var(--muted); font-size:14px; }
+
+  /* testimonials */
+  .tgrid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; margin-top:34px; }
+  .tcard{ background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px; }
+  .stars{ color:var(--red); font-size:14px; letter-spacing:2px; }
+  .tcard .q{ font-size:14.5px; margin:10px 0 16px; }
+  .who{ display:flex; align-items:center; gap:10px; }
+  .who .av{ width:38px; height:38px; border-radius:50%; background:linear-gradient(135deg,var(--red),var(--red-deep)); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:14px; color:#fff; }
+  .who .nm{ font-weight:700; font-size:13.5px; } .who .rl{ color:var(--muted); font-size:12px; }
+  .ph{ color:var(--red); font-size:11px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; }
+
+  /* faq */
+  .faq{ max-width:760px; margin:30px auto 0; }
+  .qa{ border:1px solid var(--line); border-radius:13px; padding:18px 22px; margin-bottom:12px; background:var(--card); }
+  .qa .q{ font-weight:800; font-size:16px; }
+  .qa .a{ color:var(--muted); font-size:14.5px; margin-top:7px; }
+
+  .finalcta{ text-align:center; }
+  .finalcta .btnwrap{ display:flex; justify-content:center; margin-top:24px; }
+  .scarcity{ display:inline-block; margin-top:16px; color:var(--red); font-weight:700; font-size:14px; }
+
+  footer{ border-top:1px solid var(--line); padding:30px 0 50px; color:var(--muted); font-size:13px; text-align:center; }
+  footer a{ color:var(--muted); border-bottom:1px solid var(--line); }
+
+  @media(max-width:820px){
+    .hero-grid{ grid-template-columns:1fr; gap:30px; }
+    .cover-shot{ max-width:330px; margin:0 auto; }
+    h1{ font-size:36px; } h2{ font-size:27px; }
+    .pains,.inside,.tgrid{ grid-template-columns:1fr; }
+    .btn{ max-width:none; }
+  }
+
+  /* ---- center all content ---- */
+  body{ text-align:center; }
+  .sub, .lead{ margin-left:auto; margin-right:auto; }
+  .btn{ display:flex; margin-left:auto; margin-right:auto; }
+  .cover-shot{ margin-left:auto; margin-right:auto; }
+  .microtrust, .ptr, .pains .pain, .offer .row, .stack .row, .bump, .guarantee, .who, .inside .it, .step, .tgrid .t{ justify-content:center; }
+  .pains .pain, .inside .it, .tgrid > *{ text-align:center; }
+</style>
+</head>
+<body>
+
+<div class="bar">For faceless creators: turn a page that gets views into a page that gets paid.</div>
+
+<div class="wrap">
+  <div class="nav"><span class="dot">S</span><span class="brand">ScaleSolo</span></div>
+</div>
+
+<!-- HERO -->
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow">The Monetization Playbook · Instant download</span>
+      <h1>You built the page.<br>Now <span class="hot">make it pay.</span></h1>
+      <p class="sub">Build Your AI Empire is the step-by-step playbook for turning a faceless AI page into real income. What to sell, how to grow it, and how to get paid, in plain language you can act on today.</p>
+      <div style="position:relative;aspect-ratio:16/9;border-radius:14px;overflow:hidden;border:1px solid var(--line);background:#000;box-shadow:0 20px 50px rgba(0,0,0,0.5);margin:20px auto;">
+        <video src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/Tripewire%20-%20video.mp4" controls playsinline preload="metadata" style="width:100%;height:100%;object-fit:cover;display:block;background:#000;"></video>
+      </div>
+      <div class="ptr">
+        <div>
+          <div class="price-now">$17 <span class="price-was">$47</span></div>
+          <div class="price-tag">One time. Yours forever.</div>
+        </div>
+      </div>
+      <div style="margin-top:18px;max-width:420px;margin-left:auto;margin-right:auto">
+        <a href="#get" class="btn big">Get instant access for $17 <span class="small">→</span></a>
+      </div>
+      <div class="microtrust">
+        <span><span class="tick">&#10003;</span> Instant download</span>
+        <span><span class="tick">&#10003;</span> 30-day money-back guarantee</span>
+        <span><span class="tick">&#10003;</span> Secure checkout</span>
+      </div>
+    </div>
+    <div class="cover-shot">
+      <div class="cover-badge">$17 today</div>
+      <img src="playbook-cover.png" alt="Build Your AI Empire playbook cover">
+    </div>
+  </div>
+</header>
+
+<!-- PROBLEM -->
+<section class="block">
+  <div class="wrap">
+    <div class="kalbel"></div>
+    <p class="klabel">Sound familiar?</p>
+    <h2>Views are not the problem. Knowing what to do with them is.</h2>
+    <p class="lead">You can build a faceless page in a weekend now. The hard part is everything after the view. This is the part nobody hands you.</p>
+    <div class="pains">
+      <div class="pain"><div class="t">You post, but nothing sells</div><div class="d">The content goes up, the views trickle in, and your bank account does not move.</div></div>
+      <div class="pain"><div class="t">You do not know what to even sell</div><div class="d">You hear "monetize" everywhere, but no one shows you the actual products and offers.</div></div>
+      <div class="pain"><div class="t">Your audience is borrowed, not owned</div><div class="d">One algorithm change and the following you built disappears overnight.</div></div>
+      <div class="pain"><div class="t">You are stuck on the content treadmill</div><div class="d">Always posting, never building the part of the business that actually pays.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- WHAT IT IS / INSIDE -->
+<section class="block">
+  <div class="wrap">
+    <p class="klabel">What you get</p>
+    <h2>The whole money half of a faceless brand.</h2>
+    <p class="lead">15 chapters, six parts, zero fluff. Everything from getting seen to getting paid to scaling it with ads.</p>
+    <div class="inside">
+      <div class="it"><div class="n">1</div><div><div class="t">The hooks that get you seen</div><div class="d">Stop the scroll in the first three seconds, every time.</div></div></div>
+      <div class="it"><div class="n">2</div><div><div class="t">Own your audience with email</div><div class="d">Turn borrowed followers into a list nobody can take from you.</div></div></div>
+      <div class="it"><div class="n">3</div><div><div class="t">Sequences that sell while you sleep</div><div class="d">Welcome, nurture, and win-back emails you write once.</div></div></div>
+      <div class="it"><div class="n">4</div><div><div class="t">Build your funnel</div><div class="d">The exact path from free follower to paying customer.</div></div></div>
+      <div class="it"><div class="n">5</div><div><div class="t">What to actually sell</div><div class="d">Digital products, paid communities, affiliate, sponsorships, and more.</div></div></div>
+      <div class="it"><div class="n">6</div><div><div class="t">Scale it with ads</div><div class="d">Pour fuel on what already works with Facebook and TikTok ads.</div></div></div>
+    </div>
+    <p class="lead" style="margin-top:30px">Plus a 30-day money plan that tells you exactly what to do each week, and a troubleshooting guide for when it feels slow.</p>
+  </div>
+</section>
+
+<!-- OFFER -->
+<section class="block offerwrap" id="get">
+  <div class="wrap">
+    <p class="klabel">Get it now</p>
+    <h2>Build Your AI Empire</h2>
+    <div class="offer" style="margin-top:30px">
+      <h3>Here is everything you get today</h3>
+      <div class="stack">
+        <div class="row"><span class="tick">&#10003;</span> <div><strong>Build Your AI Empire</strong> — the full 15-chapter playbook (PDF)</div><span class="val">$47 value</span></div>
+        <div class="row"><span class="tick">&#10003;</span> <div>The 30-day money plan, week by week</div><span class="val">included</span></div>
+        <div class="row"><span class="tick">&#10003;</span> <div>The "what is not working" troubleshooting guide</div><span class="val">included</span></div>
+        <div class="row"><span class="tick">&#10003;</span> <div>Lifetime access and every future update</div><span class="val">included</span></div>
+      </div>
+
+      <!-- ORDER BUMP -->
+      <div class="bump">
+        <div class="box">&#10003;</div>
+        <div>
+          <div class="t">YES, add the <span>Faceless Content Pack</span> for just $9</div>
+          <div class="d">50 ready-to-use outfit, environment, and pose references, male and female. Skip the Pinterest hunt and build your looks in minutes. One-time $9, only on this page.</div>
+        </div>
+      </div>
+
+      <div class="pricerow">
+        <div><span class="big">$17</span><span class="was">$47</span></div>
+        <div class="note">One-time payment. Instant access. No subscription.</div>
+      </div>
+      <div style="margin-top:18px"><a href="#checkout" class="btn big">Get instant access now &#8594;</a></div>
+      <div class="microtrust" style="justify-content:center;margin-top:14px">
+        <span><span class="tick">&#10003;</span> Instant download</span>
+        <span><span class="tick">&#10003;</span> Money-back guarantee</span>
+        <span><span class="tick">&#10003;</span> Secure checkout</span>
+      </div>
+    </div>
+
+    <!-- GUARANTEE -->
+    <div class="guarantee">
+      <div class="seal"><span class="big">30</span><span class="sm">DAY</span></div>
+      <div>
+        <div class="t">Read it. Use it. If it does not help, it is free.</div>
+        <div class="d">Go through the whole playbook. If you do not walk away with a clear plan to make money from your page, email us within 30 days and we will refund every penny. The risk is on me, not you.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TESTIMONIALS (replace bracketed text with real quotes) -->
+<section class="block">
+  <div class="wrap">
+    <p class="klabel">What readers say</p>
+    <h2>Real results from real creators.</h2>
+    <p class="lead ph">Placeholder slots — drop in real customer quotes with name, photo, and what they do.</p>
+    <div class="tgrid">
+      <div class="tcard"><div class="stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div><div class="q">[Add a real customer quote about a specific result they got after reading the playbook.]</div><div class="who"><div class="av">A</div><div><div class="nm">[Name]</div><div class="rl">[What they do / their page]</div></div></div></div>
+      <div class="tcard"><div class="stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div><div class="q">[Add a real customer quote here. Specific numbers and outcomes convert best.]</div><div class="who"><div class="av">M</div><div><div class="nm">[Name]</div><div class="rl">[What they do / their page]</div></div></div></div>
+      <div class="tcard"><div class="stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div><div class="q">[Add a real customer quote here. A short before-and-after works great.]</div><div class="who"><div class="av">J</div><div><div class="nm">[Name]</div><div class="rl">[What they do / their page]</div></div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section class="block">
+  <div class="wrap">
+    <p class="klabel">Questions</p>
+    <h2>Before you grab it.</h2>
+    <div class="faq">
+      <div class="qa"><div class="q">Do I need ScaleSolo to use this?</div><div class="a">No. The playbook works for any faceless brand. It pairs perfectly with ScaleSolo, but the marketing, email, and monetization moves apply no matter how you make your content.</div></div>
+      <div class="qa"><div class="q">I am brand new. Is this too advanced?</div><div class="a">No. It is written in plain language and starts from the beginning. The 30-day plan tells you exactly what to do each week.</div></div>
+      <div class="qa"><div class="q">What do I actually get?</div><div class="a">An instant PDF download of the full playbook, plus the 30-day plan and troubleshooting guide. You keep it forever, including future updates.</div></div>
+      <div class="qa"><div class="q">What is the Faceless Content Pack?</div><div class="a">An optional $9 add-on with 50 outfit, environment, and pose references for building your avatar looks fast. Check the box on this page to add it. You will not see this price again.</div></div>
+      <div class="qa"><div class="q">What if it is not for me?</div><div class="a">You have 30 days. If it does not help, email us and we refund you in full. Simple.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- FINAL CTA -->
+<section class="block finalcta">
+  <div class="narrow">
+    <p class="klabel">Last thing</p>
+    <h2>Your page is one good system away from paying you.</h2>
+    <p class="lead">You already did the hard part by building it. For the price of lunch, get the map that turns it into income.</p>
+    <div class="btnwrap"><a href="#checkout" class="btn big">Get Build Your AI Empire for $17 &#8594;</a></div>
+    <div><span class="scarcity">This $17 price is for new readers only and will not last.</span></div>
+    <div class="microtrust" style="justify-content:center;margin-top:14px">
+      <span><span class="tick">&#10003;</span> Instant access</span>
+      <span><span class="tick">&#10003;</span> 30-day guarantee</span>
+      <span><span class="tick">&#10003;</span> Secure checkout</span>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    By Rayvaughn · Vernon Tech &amp; Media &nbsp;·&nbsp; <a href="https://scalesolo.ai">ScaleSolo.ai</a><br><br>
+    This is a digital product. Results depend on the work you put in. <a href="#">Privacy Policy</a> · <a href="#">Terms</a>
+  </div>
+</footer>
+
+</body>
+</html>

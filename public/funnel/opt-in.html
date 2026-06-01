@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Free Guide — The Faceless AI Brand Blueprint</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --dark:#0c0b0f; --card:#17141b; --red:#ef4444; --red-deep:#b91c1c;
+    --red-soft:rgba(239,68,68,0.12); --text:#f4f4f6; --muted:#a6a6b2;
+    --line:rgba(255,255,255,0.12); --green:#37d27a;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{ font-family:"Plus Jakarta Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--dark); color:var(--text); line-height:1.6; -webkit-font-smoothing:antialiased; }
+  a{ color:inherit; text-decoration:none; }
+  .wrap{ max-width:1040px; margin:0 auto; padding:0 22px; }
+
+  .bar{ background:linear-gradient(90deg,var(--red-deep),var(--red)); color:#fff; text-align:center; font-size:13.5px; font-weight:700; padding:9px 16px; }
+  .nav{ display:flex; align-items:center; justify-content:center; gap:11px; padding:20px 0; }
+  .nav .dot{ width:34px; height:34px; border-radius:9px; background:linear-gradient(135deg,var(--red),var(--red-deep)); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:18px; box-shadow:0 0 24px rgba(239,68,68,0.45); }
+  .nav .brand{ font-weight:800; font-size:18px; }
+
+  .hero{ position:relative; overflow:hidden; padding:14px 0 60px; }
+  .hero::before{ content:""; position:absolute; inset:0; background:radial-gradient(60% 55% at 50% -5%, rgba(239,68,68,0.26), transparent 62%); pointer-events:none; }
+  .hgrid{ position:relative; display:flex; flex-direction:column; gap:30px; max-width:680px; margin:0 auto; }
+  .eyebrow{ display:inline-block; font-size:12px; letter-spacing:0.2em; text-transform:uppercase; font-weight:800; color:var(--red); background:var(--red-soft); border:1px solid rgba(239,68,68,0.35); padding:6px 12px; border-radius:999px; margin-bottom:16px; }
+  h1{ font-size:42px; line-height:1.05; font-weight:800; letter-spacing:-0.02em; }
+  h1 .hot{ color:var(--red); }
+  .sub{ margin-top:16px; font-size:17.5px; color:var(--muted); max-width:30em; }
+  ul.bul{ list-style:none; margin:20px 0 0; }
+  ul.bul li{ display:flex; gap:10px; align-items:flex-start; margin:9px 0; font-size:15.5px; }
+  .tick{ color:var(--green); font-weight:800; margin-top:1px; }
+
+  .form{ margin-top:24px; background:var(--card); border:1px solid var(--line); border-radius:16px; padding:22px; max-width:440px; }
+  .form .fh{ font-weight:800; font-size:16px; margin-bottom:12px; }
+  .form input{ width:100%; padding:14px 16px; border-radius:11px; border:1px solid var(--line); background:#0e0c12; color:var(--text); font-size:15px; font-family:inherit; margin-bottom:10px; }
+  .form input::placeholder{ color:#6b6b76; }
+  .btn{ display:flex; align-items:center; justify-content:center; gap:9px; width:100%; background:linear-gradient(135deg,var(--red),var(--red-deep)); color:#fff; font-weight:800; font-size:17px; padding:16px; border-radius:12px; border:none; cursor:pointer; box-shadow:0 12px 30px rgba(239,68,68,0.35); }
+  .micro{ margin-top:11px; font-size:12px; color:var(--muted); text-align:center; }
+
+  /* video */
+  .video{ position:relative; aspect-ratio:16/9; margin:0 auto; width:100%; max-width:520px; border-radius:16px; overflow:hidden; border:1px solid var(--line); background:#000; box-shadow:0 30px 70px rgba(0,0,0,0.6); }
+  .video video{ width:100%; height:100%; object-fit:cover; display:block; background:#000; }
+  .video img{ width:100%; height:100%; object-fit:cover; opacity:0.5; }
+  .video .play{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:12px; }
+  .video .pbtn{ width:74px; height:74px; border-radius:50%; background:rgba(239,68,68,0.95); display:flex; align-items:center; justify-content:center; box-shadow:0 0 40px rgba(239,68,68,0.6); }
+  .video .pbtn::after{ content:""; border-left:22px solid #fff; border-top:13px solid transparent; border-bottom:13px solid transparent; margin-left:5px; }
+  .video .vlabel{ position:absolute; bottom:14px; left:0; right:0; text-align:center; font-size:13px; font-weight:700; color:#fff; text-shadow:0 2px 8px rgba(0,0,0,0.8); }
+  .vcap{ text-align:center; color:var(--muted); font-size:12.5px; margin-top:12px; }
+
+  section.block{ padding:54px 0; border-top:1px solid var(--line); }
+  .klabel{ font-size:12px; letter-spacing:0.2em; text-transform:uppercase; font-weight:800; color:var(--red); text-align:center; margin-bottom:10px; }
+  h2{ font-size:28px; line-height:1.15; font-weight:800; letter-spacing:-0.015em; text-align:center; }
+  .lead{ font-size:17px; color:var(--muted); text-align:center; max-width:38em; margin:14px auto 0; }
+  .cards{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; margin-top:32px; }
+  .c{ background:var(--card); border:1px solid var(--line); border-radius:14px; padding:22px; }
+  .c .t{ font-weight:800; font-size:16px; margin-bottom:5px; }
+  .c .d{ color:var(--muted); font-size:14px; }
+
+  .proof{ text-align:center; max-width:680px; margin:0 auto; }
+  .stars{ color:var(--red); letter-spacing:2px; font-size:15px; }
+  .proof .q{ font-size:18px; font-weight:600; margin:12px 0; }
+  .proof .ph{ color:var(--red); font-size:11px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; }
+
+  .finalcta{ text-align:center; }
+  .finalcta .btn{ max-width:420px; margin:22px auto 0; }
+
+  footer{ border-top:1px solid var(--line); padding:28px 0 48px; color:var(--muted); font-size:13px; text-align:center; }
+  footer a{ color:var(--muted); border-bottom:1px solid var(--line); }
+
+  @media(max-width:820px){
+    .hgrid{ grid-template-columns:1fr; gap:30px; } .hero{ padding-bottom:40px; }
+    h1{ font-size:33px; } .cards{ grid-template-columns:1fr; }
+    .video{ max-width:none; }
+  }
+
+  /* ---- center all content ---- */
+  body{ text-align:center; }
+  .sub, .lead{ margin-left:auto; margin-right:auto; }
+  .btn{ display:flex; margin-left:auto; margin-right:auto; }
+  .form{ margin-left:auto; margin-right:auto; }
+  ul.bul{ align-items:center; }
+  ul.bul li{ justify-content:center; }
+  .cards .c{ text-align:center; }
+</style>
+</head>
+<body>
+
+<div class="bar">Free download · No camera, no editing, no face required.</div>
+<div class="wrap"><div class="nav"><span class="dot">S</span><span class="brand">ScaleSolo</span></div></div>
+
+<header class="hero">
+  <div class="wrap hgrid">
+    <div>
+      <span class="eyebrow">Free Guide · Instant Access</span>
+      <h1>Build a <span class="hot">faceless AI brand</span> that runs without you.</h1>
+      <p class="sub">Get the free Blueprint: the exact step-by-step system to build a faceless brand that posts on its own. No camera. No editing. No face.</p>
+      <div class="video" style="margin:22px auto;">
+        <video src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/Landing%20-%20video.mp4" controls playsinline preload="metadata"></video>
+      </div>
+      <ul class="bul">
+        <li><span class="tick">&#10003;</span> Build an AI avatar that fronts your brand for you</li>
+        <li><span class="tick">&#10003;</span> Set up a workflow that creates and posts content on autopilot</li>
+        <li><span class="tick">&#10003;</span> See exactly what it costs and how much time it saves</li>
+      </ul>
+      <form class="form" action="#" method="post">
+        <div class="fh">Where should I send the free Blueprint?</div>
+        <input type="text" name="name" placeholder="First name" />
+        <input type="email" name="email" placeholder="Your best email" required />
+        <button class="btn" type="submit">Send me the free Blueprint &#8594;</button>
+        <div class="micro">No spam. Unsubscribe anytime. We respect your privacy.</div>
+      </form>
+    </div>
+  </div>
+</header>
+
+<section class="block">
+  <div class="wrap">
+    <p class="klabel">What is inside</p>
+    <h2>Everything you need to launch, in one short guide.</h2>
+    <div class="cards">
+      <div class="c"><div class="t">The faceless build</div><div class="d">Create your avatar, your looks, and your voice, all without showing your face.</div></div>
+      <div class="c"><div class="t">The autopilot system</div><div class="d">Set it up once and let it generate and post your content on a schedule.</div></div>
+      <div class="c"><div class="t">The real numbers</div><div class="d">The honest cost and the hours saved versus doing it the manual way.</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="block">
+  <div class="wrap proof">
+    <p class="klabel">Why grab it now</p>
+    <div class="stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+    <p class="q ph">Placeholder — drop in a real reader quote with name and what they do.</p>
+    <p class="q">"[Add a short, specific quote from a real reader here.]"</p>
+    <p class="lead" style="margin-top:6px">It is free, it takes minutes to read, and by the end you will know exactly how to build a brand that works while you sleep.</p>
+  </div>
+</section>
+
+<section class="block finalcta">
+  <div class="wrap">
+    <p class="klabel">Ready?</p>
+    <h2>Get the free Blueprint and start building today.</h2>
+    <p class="lead">Enter your email and I will send it straight to your inbox.</p>
+    <form class="form" action="#" method="post" style="margin-left:auto;margin-right:auto">
+      <input type="email" name="email" placeholder="Your best email" required />
+      <button class="btn" type="submit">Send me the free Blueprint &#8594;</button>
+      <div class="micro">No spam. Unsubscribe anytime.</div>
+    </form>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    By Rayvaughn · Vernon Tech &amp; Media &nbsp;·&nbsp; <a href="https://scalesolo.ai">ScaleSolo.ai</a><br><br>
+    <a href="#">Privacy Policy</a> · <a href="#">Terms</a>
+  </div>
+</footer>
+
+<script>
+(function(){
+  function wire(form){
+    form.addEventListener('submit', async function(e){
+      e.preventDefault();
+      var btn = form.querySelector('button[type="submit"], button');
+      var emailEl = form.querySelector('input[type="email"]');
+      var nameEl = form.querySelector('input[name="name"]');
+      var hpEl = form.querySelector('input[name="hp"]');
+      var label = btn ? btn.textContent : '';
+      if (btn){ btn.disabled = true; btn.textContent = 'Sending…'; }
+      try{
+        var resp = await fetch('/api/leads/subscribe', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            email: emailEl ? emailEl.value : '',
+            name: nameEl ? nameEl.value : '',
+            hp: hpEl ? hpEl.value : '',
+            source: 'funnel:opt-in',
+            source_url: location.href
+          })
+        });
+        var data = await resp.json().catch(function(){ return {}; });
+        if (!resp.ok) throw new Error(data.error || 'Something went wrong.');
+        window.location.href = data.redirect || '/funnel/tripwire.html';
+      } catch(err){
+        if (btn){ btn.disabled = false; btn.textContent = label; }
+        alert(err.message || 'Something went wrong. Please try again.');
+      }
+    });
+  }
+  document.querySelectorAll('form.form').forEach(wire);
+})();
+</script>
+</body>
+</html>
