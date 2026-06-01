@@ -72,15 +72,35 @@ export default async function handler(req, res) {
       })
     }
 
+    // Where to send them after Stripe collects payment:
+    // - tripwire → /oto?session=… (one-click upsell page for the $397 DFY)
+    // - dfy direct → /welcome?product=dfy (no upsell to chain)
+    // For tripwire we also pass setup_future_usage='off_session' so the
+    // payment method is saved and the OTO endpoint can charge $397 with
+    // a single click instead of re-collecting card details.
+    const successPath = product === 'tripwire'
+      ? `/oto?session={CHECKOUT_SESSION_ID}&bump=${wantBump ? 1 : 0}`
+      : `/welcome?product=${product}&bump=${wantBump ? 1 : 0}&session={CHECKOUT_SESSION_ID}`
+
+    const checkoutBody = {
+      mode: 'payment',
+      line_items,
+      success_url: `${APP_URL}${successPath}`,
+      cancel_url: `${APP_URL}${p.cancel}`,
+      allow_promotion_codes: false,
+      metadata: { funnel_product: product, bump: wantBump ? '1' : '0', source: 'funnel' },
+    }
+    if (product === 'tripwire') {
+      // Save the card on the customer for the one-click OTO upsell.
+      checkoutBody.payment_intent_data = { setup_future_usage: 'off_session' }
+      // Force-create a Customer (Stripe usually does this for us in
+      // mode:'payment' but we make it explicit so the OTO endpoint
+      // can rely on session.customer being non-null).
+      checkoutBody.customer_creation = 'always'
+    }
+
     const session = await stripe.createCheckoutSession(
-      {
-        mode: 'payment',
-        line_items,
-        success_url: `${APP_URL}/welcome?product=${product}&bump=${wantBump ? 1 : 0}&session={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${APP_URL}${p.cancel}`,
-        allow_promotion_codes: false,
-        metadata: { funnel_product: product, bump: wantBump ? '1' : '0', source: 'funnel' },
-      },
+      checkoutBody,
       { idempotencyKey: `funnel-${product}-${wantBump ? 'b' : 'n'}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}` }
     )
 

@@ -52,10 +52,22 @@
     return '<div class="card"><div class="t">'+t+'</div><div class="d">'+d+'</div>'+a+'</div>';
   }
 
+  var upgraded = q.get('upgraded') === '1';
   if (product === 'tripwire'){
-    head.textContent = 'You are in. Let us build your empire.';
-    sub.textContent = 'Your purchase is confirmed and a receipt is on the way. Grab your downloads below.';
-    var html = card(
+    head.textContent = upgraded ? 'You are all set. We will build it.' : 'You are in. Let us build your empire.';
+    sub.textContent = upgraded
+      ? 'Your playbook is below, and your Done-For-You Launch is confirmed. Book your kickoff call to get the build moving.'
+      : 'Your purchase is confirmed and a receipt is on the way. Grab your downloads below.';
+    var html = '';
+    if (upgraded){
+      html += card(
+        'Book your kickoff call',
+        'This is the most important next step. Grab a time and we will start your build on the call: your avatar, looks, voice, first videos, and auto-posting workflow.',
+        'https://vernontm.com/book-call',
+        'Book my kickoff call'
+      );
+    }
+    html += card(
       'Build Your AI Empire',
       'Your monetization playbook. Save it and keep it open while you build.',
       'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/build-your-ai-empire.pdf',
@@ -69,13 +81,19 @@
         'Download the content pack'
       );
     }
+    // Upsells only when they did NOT take the OTO. If they already
+    // bought the DFY launch, do not pitch the DFY page again. SCALE
+    // (the Founding upsell) we still show because it is a different
+    // product (recurring engine, not the build).
     html += card(
       'Lock in Founding with the SCALE bonus',
       'Add the engine that actually runs the system: a ScaleSolo Founding membership at $79/mo locked for life, with +50% credits and a 1-on-1 setup call. Only via the SCALE code.',
       '#founding-scale',
       'Unlock the SCALE bonus &#8594;'
     );
-    html += '<a class="btn" href="/done-for-you" style="margin-top:18px;">Want it built for you instead? See the launch</a>';
+    if (!upgraded){
+      html += '<a class="btn" href="/done-for-you" style="margin-top:18px;">Want it built for you instead? See the launch</a>';
+    }
     c.innerHTML = html;
     // Wire the SCALE button to a public Founding checkout with the bonus code.
     var scaleBtn = c.querySelector('a[href="#founding-scale"]');
