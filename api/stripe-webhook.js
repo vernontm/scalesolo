@@ -348,7 +348,6 @@ async function upsertSubscription(sub, eventType) {
       },
     }).catch((e) => console.warn(`initial grant ${p} failed:`, e.message))
   ))
-}
 
   // SCALE bonus — funnel reader reward. When the marketing-funnel
   // checkout passes bonus_code='scale' on a Founding signup, we grant
