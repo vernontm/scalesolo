@@ -19,7 +19,8 @@
     { "path": "/api/cron/sync-scheduled-posts", "schedule": "*/10 * * * *" },
     { "path": "/api/cron/distill-brand-voice",  "schedule": "30 6 * * *" },
     { "path": "/api/cron/run-scheduled-workflows", "schedule": "* * * * *" },
-    { "path": "/api/cron/cleanup-uploadpost-orphans", "schedule": "*/30 * * * *" }
+    { "path": "/api/cron/cleanup-uploadpost-orphans", "schedule": "*/30 * * * *" },
+    { "path": "/api/cron/funnel-drip",                "schedule": "*/15 * * * *" }
   ],
   "functions": {
     "api/videos/combine.js": {

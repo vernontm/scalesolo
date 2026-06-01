@@ -350,6 +350,65 @@ async function upsertSubscription(sub, eventType) {
   ))
 }
 
+  // SCALE bonus — funnel reader reward. When the marketing-funnel
+  // checkout passes bonus_code='scale' on a Founding signup, we grant
+  // +50% on top of the normal Founding monthly credits ONCE on
+  // creation. Idempotent via ref_id suffix. (The price stays at $79;
+  // SCALE adds value, not a discount — the value-stack model.)
+  const subMeta = sub.metadata || {}
+  const isScaleBonus = (subMeta.bonus_code === 'scale') && tier === 'founding'
+  const isInitialCreation = eventType === 'customer.subscription.created' && !before
+  if (isScaleBonus && isInitialCreation) {
+    const bonusAi = Math.floor((tierCredits.ai_tokens || 0) * 0.5)
+    const bonusVid = Math.floor((tierCredits.video_units || 0) * 0.5)
+    await Promise.all([
+      bonusAi && supa('rpc/grant_credits', {
+        method: 'POST',
+        body: {
+          p_customer_id: customerRow.id,
+          p_pool_type: 'ai_tokens',
+          p_amount: bonusAi,
+          p_action: 'scale_bonus_initial',
+          p_ref_id: `${sub.id}:scale-bonus`,
+          p_metadata: { code: 'SCALE', tier },
+        },
+      }).catch((e) => console.warn('scale bonus ai_tokens failed:', e.message)),
+      bonusVid && supa('rpc/grant_credits', {
+        method: 'POST',
+        body: {
+          p_customer_id: customerRow.id,
+          p_pool_type: 'video_units',
+          p_amount: bonusVid,
+          p_action: 'scale_bonus_initial',
+          p_ref_id: `${sub.id}:scale-bonus`,
+          p_metadata: { code: 'SCALE', tier },
+        },
+      }).catch((e) => console.warn('scale bonus video_units failed:', e.message)),
+    ])
+
+    // Tag the funnel contact (if we have one) so the team books the
+    // 1-on-1 setup call promised in the SCALE stack. Best-effort.
+    const funnelProfileId = process.env.FUNNEL_PROFILE_ID
+    const subEmail = (customerRow.email || sub.customer_email || '').toLowerCase()
+    if (funnelProfileId && subEmail) {
+      try {
+        const found = await supa(
+          `email_contacts?profile_id=eq.${funnelProfileId}&email=eq.${encodeURIComponent(subEmail)}&select=id,tags`
+        )
+        if (found && found.length) {
+          const tagSet = new Set(found[0].tags || [])
+          tagSet.add('founding:scale')
+          tagSet.add('setup-call:pending')
+          await supa(`email_contacts?id=eq.${found[0].id}`, {
+            method: 'PATCH',
+            body: { tags: Array.from(tagSet) },
+          })
+        }
+      } catch (e) { console.warn('scale contact tag failed:', e.message) }
+    }
+  }
+}
+
 // Trial→paid conversion topup. Top up the difference between what we
 // already granted (trial allowance) and what the tier actually
 // includes. Called from invoice.payment_succeeded so the topup only

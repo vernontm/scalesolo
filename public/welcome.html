@@ -69,8 +69,35 @@
         'Download the content pack'
       );
     }
-    html += '<a class="btn" href="/done-for-you" style="margin-top:18px;">Want it done for you instead? See the launch</a>';
+    html += card(
+      'Lock in Founding with the SCALE bonus',
+      'Add the engine that actually runs the system: a ScaleSolo Founding membership at $79/mo locked for life, with +50% credits and a 1-on-1 setup call. Only via the SCALE code.',
+      '#founding-scale',
+      'Unlock the SCALE bonus &#8594;'
+    );
+    html += '<a class="btn" href="/done-for-you" style="margin-top:18px;">Want it built for you instead? See the launch</a>';
     c.innerHTML = html;
+    // Wire the SCALE button to a public Founding checkout with the bonus code.
+    var scaleBtn = c.querySelector('a[href="#founding-scale"]');
+    if (scaleBtn){
+      scaleBtn.addEventListener('click', async function(e){
+        e.preventDefault();
+        var label = scaleBtn.textContent;
+        scaleBtn.style.pointerEvents='none'; scaleBtn.textContent='Loading…';
+        try{
+          var r = await fetch('/api/stripe-checkout-public', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ tier:'founding', billing_cycle:'monthly', skip_trial:true, bonus_code:'SCALE' })
+          });
+          var j = await r.json().catch(function(){ return {}; });
+          if(!r.ok || !j.url) throw new Error(j.error || 'Could not start checkout.');
+          window.location.href = j.url;
+        }catch(err){
+          scaleBtn.style.pointerEvents=''; scaleBtn.textContent=label;
+          alert(err.message);
+        }
+      });
+    }
   } else if (product === 'dfy'){
     head.textContent = 'Your Done-For-You Launch is booked.';
     sub.textContent = 'Payment confirmed. The fastest next step is to book your kickoff call so we can start building right away.';

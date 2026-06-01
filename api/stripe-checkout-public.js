@@ -42,8 +42,23 @@ export default async function handler(req, res) {
       : (typeof body.trial_period_days === 'number' && body.trial_period_days >= 0)
         ? Math.floor(body.trial_period_days)
         : 3
+
+    // Optional bonus code (currently only 'SCALE' is recognized — it
+    // unlocks the funnel value-stack: +50% credits + 1-on-1 setup tag
+    // on the contact). The code does NOT change the price; it just
+    // flags the subscription so the webhook applies the bonus on
+    // subscription.created. Tracked in subscription metadata so the
+    // bonus survives any later subscription update events.
+    const bonusCode = ((body.bonus_code || '').toString().trim().toLowerCase())
+    const isScaleBonus = bonusCode === 'scale' && tier === 'founding'
+
     const subscriptionData = {
-      metadata: { tier, billing_cycle: cycle, public_signup: 'true' },
+      metadata: {
+        tier,
+        billing_cycle: cycle,
+        public_signup: 'true',
+        ...(isScaleBonus ? { bonus_code: 'scale' } : {}),
+      },
     }
     if (requestedTrialDays > 0) subscriptionData.trial_period_days = requestedTrialDays
 
@@ -64,7 +79,13 @@ export default async function handler(req, res) {
       success_url: `${APP_URL}/login?stripe_session={CHECKOUT_SESSION_ID}&tier=${encodeURIComponent(tier)}&cycle=${encodeURIComponent(cycle)}`,
       cancel_url:  `${APP_URL}/pricing`,
       allow_promotion_codes: true,
-      metadata: { tier, billing_cycle: cycle, public_signup: 'true', skip_trial: requestedTrialDays === 0 ? '1' : '0' },
+      metadata: {
+        tier,
+        billing_cycle: cycle,
+        public_signup: 'true',
+        skip_trial: requestedTrialDays === 0 ? '1' : '0',
+        ...(isScaleBonus ? { bonus_code: 'scale' } : {}),
+      },
       payment_method_collection: 'always',
     }, { idempotencyKey: `public-${tier}-${cycle}-${requestedTrialDays}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` })
 
