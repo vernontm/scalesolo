@@ -2,8 +2,9 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": "vite",
+  "cleanUrls": true,
   "rewrites": [
-    { "source": "/((?!api/|studio-compositions/|funnel/).*)", "destination": "/index.html" }
+    { "source": "/((?!api/|studio-compositions/).*)", "destination": "/index.html" }
   ],
   "headers": [
     {

@@ -9,7 +9,7 @@
 //
 // Prices are defined INLINE via price_data, so there is nothing to create
 // in the Stripe dashboard. On success, Stripe redirects to the static
-// /funnel/thank-you.html page which delivers the download / next step.
+// /welcome page which delivers the download / next step.
 // Uses the same STRIPE_SECRET_KEY already wired for the subscription flow.
 
 import { setCors } from './_lib/supabase.js'
@@ -22,13 +22,13 @@ const PRODUCTS = {
     cents: 1700,
     name: 'Build Your AI Empire — The Faceless Brand Monetization Playbook',
     desc: 'The step-by-step playbook for turning a faceless AI page into real income: what to sell, how to grow an audience you own, and how to get paid. Instant digital download.',
-    cancel: '/funnel/tripwire.html',
+    cancel: '/build-your-ai-empire',
   },
   dfy: {
     cents: 39700,
     name: 'Done-For-You Launch',
     desc: 'We build your faceless brand for you: a trained AI avatar, multiple looks, your brand voice, your first batch of ready-to-post videos, and your auto-posting workflow, handed off on a call. One-time setup service.',
-    cancel: '/funnel/dfy.html',
+    cancel: '/done-for-you',
   },
 }
 
@@ -76,7 +76,7 @@ export default async function handler(req, res) {
       {
         mode: 'payment',
         line_items,
-        success_url: `${APP_URL}/funnel/thank-you.html?product=${product}&bump=${wantBump ? 1 : 0}&session={CHECKOUT_SESSION_ID}`,
+        success_url: `${APP_URL}/welcome?product=${product}&bump=${wantBump ? 1 : 0}&session={CHECKOUT_SESSION_ID}`,
         cancel_url: `${APP_URL}${p.cancel}`,
         allow_promotion_codes: false,
         metadata: { funnel_product: product, bump: wantBump ? '1' : '0', source: 'funnel' },

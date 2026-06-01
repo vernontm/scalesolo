@@ -35,7 +35,7 @@ export default async function handler(req, res) {
     const body = req.body || {}
 
     // Honeypot — bots fill hidden fields. Pretend success, save nothing.
-    const redirect = '/funnel/tripwire.html'
+    const redirect = '/build-your-ai-empire'
     if (body.hp) return res.status(200).json({ ok: true, redirect })
 
     const email = (body.email || '').toString().trim().toLowerCase()

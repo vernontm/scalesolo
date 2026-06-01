@@ -184,7 +184,7 @@
         });
         var data = await resp.json().catch(function(){ return {}; });
         if (!resp.ok) throw new Error(data.error || 'Something went wrong.');
-        window.location.href = data.redirect || '/funnel/tripwire.html';
+        window.location.href = data.redirect || '/build-your-ai-empire';
       } catch(err){
         if (btn){ btn.disabled = false; btn.textContent = label; }
         alert(err.message || 'Something went wrong. Please try again.');
