@@ -11,6 +11,7 @@ import {
   paymentFailedEmail,
 } from './_lib/email-templates.js'
 import { sendCAPIPurchase } from './_lib/meta-capi.js'
+import { mailerliteTagBuyer } from './_lib/mailerlite.js'
 
 export const config = { runtime: 'edge' }
 
@@ -712,15 +713,20 @@ async function sendFunnelPurchaseEmail({ email, product, bump }) {
 async function sendFunnelCheckoutEmail(session) {
   const meta = session.metadata || {}
   const email = session.customer_details?.email || session.customer_email
+  const name = session.customer_details?.name || ''
   if (!email) return
   if (meta.source === 'funnel') {
     const product = meta.funnel_product
     if (product === 'tripwire' || product === 'dfy') {
-      await sendFunnelPurchaseEmail({ email, product, bump: meta.bump === '1' })
+      const bump = meta.bump === '1'
+      await sendFunnelPurchaseEmail({ email, product, bump })
+      // Move them into the matching MailerLite BUYER group (non-fatal).
+      mailerliteTagBuyer({ email, name, product, bump }).catch(() => {})
     }
   } else if (meta.source === 'funnel_oto_fallback') {
     // 3DS-required OTO that fell back to a fresh Checkout — DFY upgrade.
     await sendFunnelPurchaseEmail({ email, product: 'dfy_oto' })
+    mailerliteTagBuyer({ email, name, product: 'dfy_oto' }).catch(() => {})
   }
 }
 
@@ -730,13 +736,19 @@ async function sendFunnelCheckoutEmail(session) {
 async function sendFunnelOtoEmail(pi) {
   if (pi?.metadata?.source !== 'funnel_oto') return
   let email = pi.receipt_email
+  let name = ''
   if (!email && pi.customer) {
     try {
       const cust = await stripeGet(`/customers/${encodeURIComponent(pi.customer)}`)
       email = cust?.email
+      name = cust?.name || ''
     } catch { /* swallow — best effort */ }
   }
-  if (email) await sendFunnelPurchaseEmail({ email, product: 'dfy_oto' })
+  if (email) {
+    await sendFunnelPurchaseEmail({ email, product: 'dfy_oto' })
+    // OTO buyer is a DFY buyer — tag in MailerLite (non-fatal).
+    mailerliteTagBuyer({ email, name, product: 'dfy_oto' }).catch(() => {})
+  }
 }
 
 async function routeEvent(event) {

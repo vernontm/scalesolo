@@ -11,6 +11,7 @@
 
 import { setCors, supaFetch } from '../_lib/supabase.js'
 import { brandedEmail, ctaButton, sendEmailSafe } from '../_lib/email.js'
+import { mailerliteTagDeclined } from '../_lib/mailerlite.js'
 
 const BLUEPRINT_URL = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/faceless-ai-brand-blueprint.pdf'
 
@@ -69,6 +70,10 @@ export default async function handler(req, res) {
       method: 'PATCH',
       body: { tags: Array.from(tags) },
     }).catch(() => {})
+
+    // Move them into the matching DECLINED group in MailerLite so the
+    // win-back automation can fire (non-fatal).
+    mailerliteTagDeclined({ email, offer }).catch(() => {})
 
     await supaFetch('rpc/log_activity', {
       method: 'POST',

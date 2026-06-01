@@ -8,6 +8,7 @@
 // Requires env FUNNEL_PROFILE_ID = the profile id that should own these leads.
 
 import { setCors, supaFetch } from '../_lib/supabase.js'
+import { mailerliteTagLead } from '../_lib/mailerlite.js'
 
 // The free Blueprint email is intentionally NOT sent on opt-in. It is sent
 // from /api/leads/decline-offer when the visitor explicitly declines the
@@ -85,6 +86,11 @@ export default async function handler(req, res) {
       })
       contactId = (Array.isArray(created) ? created[0] : created).id
     }
+
+    // Push to MailerLite as a LEAD (non-fatal — funnel keeps working
+    // even if MailerLite is down or unconfigured). Adds the subscriber
+    // to the "lead" group so the welcome automation fires there too.
+    mailerliteTagLead({ email, name }).catch(() => {})
 
     // Activity timeline event (non-fatal).
     await supaFetch('rpc/log_activity', {
