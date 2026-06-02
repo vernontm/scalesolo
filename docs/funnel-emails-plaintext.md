@@ -5,20 +5,35 @@ Convert each automation email to `Plain text` type in the MailerLite
 builder (or use the HTML builder and select the plain-text template,
 no images, no buttons, no header/footer styling).
 
+## How to handle the links
+
+The bodies below use this convention for clickable CTAs:
+
+```
+>> Get the playbook for $17 <<
+```
+
+The `>>` and `<<` are visual signals to the reader. **In the MailerLite
+builder, select only the inner anchor text (e.g. `Get the playbook for $17`)
+and apply the hyperlink — leave the `>>` and `<<` as unlinked text.** That
+way the chevrons read as cues without underlining or coloring.
+
+For the second mention of the same URL inside one email, the body uses
+an inline "click here" or "right here" pattern as part of a sentence,
+rather than another bracketed CTA. That keeps the email from feeling
+button-stacked. Hyperlink just the "click here" / "right here" phrase.
+
 **Personalization tags** (MailerLite syntax):
 - `{$name}` — first name from the opt-in form (blank if not provided)
-- `{$email}` — subscriber's email (used in the tracked redirect URLs)
+- `{$email}` — subscriber's email (use to populate the tracked URL)
 
 **Tracked download URLs** — these go through `/api/r/<asset>` so we log
-every click in `contact_activity`:
+every click in `contact_activity`. Each email has its own `src=<email-id>`
+so we can attribute clicks back to the specific email in the activity log:
+
 - Blueprint: `https://www.scalesolo.ai/api/r/blueprint?src=<email-id>&e={$email}`
 - Playbook:  `https://www.scalesolo.ai/api/r/playbook?src=<email-id>&e={$email}`
 - Content Pack: `https://www.scalesolo.ai/api/r/pack?src=<email-id>&e={$email}`
-
-For each email, replace `<email-id>` in the URL with the slug shown in
-the email title below (e.g. `lead-day2`, `tripwire-buyer-day7`). That
-way every click in the analytics is traceable to which exact email
-drove it.
 
 ---
 
@@ -27,8 +42,8 @@ drove it.
 
 ### E1 · Day 0 — KEEP AS IS (HTML download email)
 
-This is the existing "Your Faceless AI Brand Blueprint is inside" email.
-Leave it untouched. It delivers the magnet on group-join.
+The existing "Your Faceless AI Brand Blueprint is inside" email. Leave it
+untouched. It delivers the magnet on group-join.
 
 ---
 
@@ -46,9 +61,11 @@ avatar style picked and your first three video topics in your head.
 
 How does that feel to say out loud?
 
-If life got in the way and you haven't opened it yet, the Blueprint
-is right here:
+If life got in the way and you haven't opened it yet, grab it here:
 
+>> Open the Blueprint <<
+
+Link the inner phrase to:
 https://www.scalesolo.ai/api/r/blueprint?src=lead-day1&e={$email}
 
 Take 25 minutes today. Open Chapter 2. That's the brand voice step
@@ -58,9 +75,10 @@ sounding like a robot.
 If you follow the chapters in order, you'll have a brand that posts
 on its own and pays you while you sleep.
 
-Just don't jump around. Chapter by chapter:
+Don't jump around. Chapter by chapter, in order. You can pop the
+Blueprint back open right here whenever you need it.
 
-https://www.scalesolo.ai/api/r/blueprint?src=lead-day1&e={$email}
+(Hyperlink "right here" in the line above to the same Blueprint URL.)
 
 You can scroll TikTok for an hour tonight, or you can spend that
 hour building the thing that pays you next year.
@@ -89,9 +107,10 @@ check-in: have you started using it to build your page yet?
 
 Even better, have you posted your first video?
 
-If not, you can open it again here:
+If not, you can open it again right here.
 
-https://www.scalesolo.ai/api/r/blueprint?src=lead-day2&e={$email}
+(Hyperlink "right here" to:
+https://www.scalesolo.ai/api/r/blueprint?src=lead-day2&e={$email})
 
 You'll now know exactly how to build the page (it really is that
 simple).
@@ -99,7 +118,9 @@ simple).
 IMPORTANT: if you actually want this to pay you, take a few minutes
 and read this:
 
-https://www.scalesolo.ai/build-your-ai-empire
+>> See the playbook (Build Your AI Empire, $17) <<
+
+(Hyperlink the inner phrase to https://www.scalesolo.ai/build-your-ai-empire)
 
 The Blueprint shows you HOW to build the page. Build Your AI Empire
 shows you what to actually SELL on it. The two together is the full
@@ -119,16 +140,14 @@ work.
 
 All in for 17 bucks. One time. Yours forever.
 
-https://www.scalesolo.ai/build-your-ai-empire
-
 This is the same process I used to set up my mom's brand. If you're
 serious about making this pay, the playbook is the first step. At
 seventeen bucks it's the tiniest investment you can make and still
 expect real results.
 
-Grab it before it gets buried in your inbox:
+Grab it before it gets buried in your inbox.
 
-https://www.scalesolo.ai/build-your-ai-empire
+(Hyperlink "Grab it" or the full sentence to the same playbook URL.)
 
 Talk soon,
 Rayvaughn
@@ -149,7 +168,9 @@ Hey {$name},
 
 I'm a little surprised you haven't jumped on this yet:
 
-https://www.scalesolo.ai/build-your-ai-empire
+>> Get the playbook for $17 <<
+
+(Hyperlink the inner phrase to https://www.scalesolo.ai/build-your-ai-empire)
 
 If you actually want this faceless brand thing to pay you (and you
 wouldn't have downloaded the Blueprint otherwise), this is the next
@@ -163,9 +184,9 @@ Content Pack as an add-on.
 It's the momentum you need to actually start, instead of "starting
 next month" forever.
 
-So do it now before it gets lost in the noise:
+So do it now before it gets lost in the noise. You can grab it here.
 
-https://www.scalesolo.ai/build-your-ai-empire
+(Hyperlink "here" to the same playbook URL.)
 
 Talk soon,
 Rayvaughn
@@ -173,9 +194,8 @@ Rayvaughn
 P.S. At seventeen bucks this is the tiniest investment you can make
 and still have a realistic shot at building something that pays.
 
-Get it while it's still fresh:
-
-https://www.scalesolo.ai/build-your-ai-empire
+P.P.S. The page price is going up the next time I touch the funnel.
+Get it while it's still cheap.
 ```
 
 ---
@@ -217,20 +237,26 @@ built ScaleSolo in the first place.
 
 Save yourself the two years and twelve grand:
 
-https://www.scalesolo.ai/build-your-ai-empire
+>> Get the playbook ($17) <<
+
+(Hyperlink the inner phrase to https://www.scalesolo.ai/build-your-ai-empire)
 
 Or lock in Founding while the spots last:
 
-https://www.scalesolo.ai/welcome?product=tripwire
+>> Lock in Founding with SCALE <<
+
+(Hyperlink the inner phrase to https://www.scalesolo.ai/welcome?product=tripwire)
 
 Talk soon,
 Rayvaughn
 
 P.S. The playbook works. Founding with the SCALE bonus is the
 cheapest ScaleSolo will ever be. If you've been on the fence, this
-is your sign.
+is your sign. You can grab the playbook right here or lock in Founding
+right here.
 
-https://www.scalesolo.ai/build-your-ai-empire
+(Hyperlink the first "right here" to the playbook URL and the second
+"right here" to the founding/welcome URL.)
 ```
 
 ---
@@ -242,9 +268,9 @@ https://www.scalesolo.ai/build-your-ai-empire
 
 The existing "Your playbook is in" receipt from the Stripe webhook +
 the MailerLite Day 0 email. Leave both as-is for now (canonical
-download record). If you want to dedupe, see the principle 19 note
-in the skill — the cleanest move is to delete the MailerLite Day 0
-and let the Resend Stripe receipt be the sole confirmation. Up to you.
+download record). If you want to dedupe, see principle 19 in the
+skill — the cleanest move is to delete the MailerLite Day 0 and let
+the Resend Stripe receipt be the sole confirmation. Up to you.
 
 ---
 
@@ -271,7 +297,10 @@ today, then write your niche down on paper.
 If you can't say your niche out loud in one sentence, you haven't
 picked one yet, you've picked a category. Pick the slice.
 
-https://www.scalesolo.ai/api/r/playbook?src=tripwire-buyer-day1&e={$email}
+>> Open the playbook <<
+
+(Hyperlink the inner phrase to:
+https://www.scalesolo.ai/api/r/playbook?src=tripwire-buyer-day1&e={$email})
 
 Reply to this email with the niche you pick. I read every reply.
 Even one sentence is fine.
@@ -281,6 +310,9 @@ Rayvaughn
 
 P.S. The biggest reason faceless brands stall is the niche being
 too broad. If you're going to skip one chapter, do not skip this one.
+You can revisit it any time right here.
+
+(Hyperlink "right here" to the same playbook URL.)
 ```
 
 ---
@@ -304,7 +336,9 @@ post a thing because life got in the way. I see that too.
 
 If you're in the second camp, I have an option for you:
 
-https://www.scalesolo.ai/done-for-you
+>> See the Done-For-You launch <<
+
+(Hyperlink the inner phrase to https://www.scalesolo.ai/done-for-you)
 
 My team builds the whole thing for you. Your AI avatar, multiple
 looks, your brand voice, your first batch of ready-to-post videos,
@@ -313,7 +347,7 @@ and the auto-posting workflow wired up. We hand it off on a call.
 You walk away with a brand that is already live, not a project on
 your to-do list.
 
-Here is what is in the box:
+Here's what's in the box:
 
 - A custom AI avatar, trained and ready
 - Multiple looks, outfits, settings, and angles
@@ -324,11 +358,11 @@ Here is what is in the box:
 It's 397 dollars, one time. Cheapest agency I have seen for this
 quotes 5,000.
 
-https://www.scalesolo.ai/done-for-you
-
 If you'd rather build it yourself, the playbook still works. No
 pressure. But if the workflow part is what's stopping you, this
-fixes that.
+fixes that. You can check it out right here.
+
+(Hyperlink "right here" to https://www.scalesolo.ai/done-for-you)
 
 Talk soon,
 Rayvaughn
@@ -354,7 +388,9 @@ Two questions:
 
 If yes to both, this is your sign:
 
-https://www.scalesolo.ai/welcome?product=tripwire
+>> Lock in Founding with SCALE <<
+
+(Hyperlink the inner phrase to https://www.scalesolo.ai/welcome?product=tripwire)
 
 The SCALE code on Founding membership unlocks 50% more video and
 AI credits every month, plus a 1-on-1 setup call where my team
@@ -372,7 +408,9 @@ up at full price later and you can't apply it after the fact.
 REASON #3: you already have the playbook. The page is mapped. The
 only thing missing is the engine that runs it for you.
 
-https://www.scalesolo.ai/welcome?product=tripwire
+If that lands, lock it in right here.
+
+(Hyperlink "right here" to the same Founding URL.)
 
 Talk soon,
 Rayvaughn
@@ -411,7 +449,9 @@ faster your brand goes live.
 
 Here's the intake:
 
-https://vernontm.com/dfy-intake
+>> Fill out the 8-minute intake <<
+
+(Hyperlink the inner phrase to https://vernontm.com/dfy-intake)
 
 Eight minutes. Five questions. The more honest you are about your
 niche, your audience, and what you've tried before, the better the
@@ -429,9 +469,9 @@ The big ones we need:
 If you have a kickoff call booked already, the intake fills in the
 context so we don't waste your call time on basics.
 
-If you haven't booked yet, here's the link:
+If you haven't booked yet, you can do that right here.
 
-https://vernontm.com/book-call
+(Hyperlink "right here" to https://vernontm.com/book-call)
 
 Talk soon,
 Rayvaughn
@@ -478,7 +518,9 @@ you do.
 If you want a walkthrough video of how to use the auto-posting
 workflow once it's live, it's here:
 
-https://vernontm.com/dfy-walkthrough
+>> Watch the workflow walkthrough <<
+
+(Hyperlink the inner phrase to https://vernontm.com/dfy-walkthrough)
 
 Talk soon,
 Rayvaughn
@@ -528,6 +570,8 @@ next call. Reply now. I'd rather knock down a blocker today than
 let it sit for two weeks.
 ```
 
+(No external CTA — this email is a pure reply prompt. Keep it text-only.)
+
 ---
 
 ## ScaleSolo · Declined · Tripwire win-back
@@ -558,7 +602,9 @@ for, on day one.
 
 If that lands with you, the door is still open:
 
-https://www.scalesolo.ai/build-your-ai-empire
+>> Take another look at the playbook <<
+
+(Hyperlink the inner phrase to https://www.scalesolo.ai/build-your-ai-empire)
 
 If not, also fine. The Blueprint is yours either way, and I'll send
 a couple more emails on the bigger picture over the next few days.
@@ -601,7 +647,9 @@ sells" part.
 If you've been spinning on the tools without picking your niche,
 the playbook fixes that:
 
-https://www.scalesolo.ai/build-your-ai-empire
+>> Get the playbook ($17) <<
+
+(Hyperlink the inner phrase to https://www.scalesolo.ai/build-your-ai-empire)
 
 If not, no worries. I will leave you alone after one more email.
 
@@ -628,7 +676,9 @@ to keep nagging.
 If at some point in the next few months you decide you want the
 faceless brand thing to actually pay, the playbook is still here:
 
-https://www.scalesolo.ai/build-your-ai-empire
+>> The playbook lives here <<
+
+(Hyperlink the inner phrase to https://www.scalesolo.ai/build-your-ai-empire)
 
 If not, you've got the free Blueprint, and that's a real start on
 its own.
@@ -668,9 +718,11 @@ now. 397 is real money, and not everyone wants the hand-off path.
 If you want to start smaller and run the build yourself, the
 playbook covers the same outcome at a fraction of the cost:
 
-https://www.scalesolo.ai/build-your-ai-empire
+>> See the playbook ($17) <<
 
-Here is what's in it:
+(Hyperlink the inner phrase to https://www.scalesolo.ai/build-your-ai-empire)
+
+Here's what's in it:
 
 - The 4 ways a faceless page actually makes money
 - The plug-and-play offer pages
@@ -680,9 +732,9 @@ Here is what's in it:
 It's 17 dollars. One time. Yours forever.
 
 The DFY door stays open if you change your mind later, but the
-playbook is the cheapest first step.
+playbook is the cheapest first step. You can grab it right here.
 
-https://www.scalesolo.ai/build-your-ai-empire
+(Hyperlink "right here" to the same playbook URL.)
 
 Talk soon,
 Rayvaughn
@@ -698,9 +750,8 @@ add an Action step:
 - Action: Add to group → `ScaleSolo · Lead · Blueprint`
 - Action: Remove from group → `ScaleSolo · Declined · DFY`
 
-That re-enters them in the general Lead nurture (which will start
-from wherever they were when they entered Declined, or skip ahead
-based on their existing tags). End the automation after this step.
+That re-enters them in the general Lead nurture. End the automation
+after this step.
 
 ---
 
@@ -711,13 +762,28 @@ For each of the 5 automations:
 - [ ] Open in the MailerLite builder
 - [ ] Click each email step → switch builder to "Plain text" template
 - [ ] Paste the body from this doc, replacing existing content
+- [ ] For each `>> Anchor <<` line: select the inner anchor text only
+      (not the chevrons) and apply the hyperlink using the URL noted
+      directly below it
+- [ ] For inline "click here" / "right here" / "open it again" phrases:
+      select that phrase and apply the same URL referenced for that
+      email
 - [ ] Update the subject line(s) — A/B test the top 2 if you like
-- [ ] Confirm sender is `Rayvaughn <ray@vernontm.com>` (or your verified sender)
-- [ ] For the two Declined automations: add "Remove from group: Lead · Blueprint"
-      as the very FIRST step before any delay or email
+- [ ] Confirm sender is `Rayvaughn <ray@vernontm.com>` (or your verified
+      sender)
+- [ ] For the two Declined automations: add "Remove from group:
+      Lead · Blueprint" as the very FIRST step before any delay or email
 - [ ] For the two Buyer onboarding automations: same — add "Remove from
       group: Lead · Blueprint" as the first step (a buyer should not get
       lead nurture)
 - [ ] Hit "Enable automation"
 - [ ] Send yourself a test email from the first step (MailerLite has a
       Test Email feature) before going live
+
+## Quick visual check on each email after pasting
+
+In the MailerLite preview, the `>>` and `<<` should appear as plain
+characters (no underline, no link color). The text between them should
+appear underlined or colored as a link. If the whole `>> Anchor <<`
+string is underlined, you accidentally included the chevrons in the
+hyperlink selection — undo and reselect just the inner text.
