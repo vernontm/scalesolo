@@ -1,23 +1,26 @@
 // PUBLIC endpoint: visitor declined a funnel offer.
 // POST { email, offer: 'tripwire' | 'dfy', source_url? }
 //
-// When a visitor confirms "no thanks" on the tripwire offer, send them
-// the free Blueprint and tag the contact. The Blueprint is held back at
-// opt-in time and delivered here, so the tripwire page has real stakes
-// and the shame-decline modal converts some declines back into yeses.
+// When a visitor confirms "no thanks" on a shame-decline modal, we:
+//   1. Tag the contact 'declined:tripwire' or 'declined:dfy' in Supabase
+//   2. Add the matching MailerLite Declined group so the win-back
+//      automation can fire (mutual-exclusion removal from Lead must be
+//      configured manually in the MailerLite dashboard)
+//   3. Log the activity
 //
-// For DFY decline, we just log the activity (the visitor is later in the
-// funnel and almost always already has the Blueprint).
+// The Blueprint email itself is delivered by the MailerLite "Lead ·
+// Blueprint" automation Day 0 (which fires the moment we add the
+// subscriber to the Lead group on opt-in). We do NOT send a duplicate
+// Blueprint email from Resend here, because every funnel lead is
+// already in the Lead group and the MailerLite Day 0 email lands
+// within a minute or two of group-join.
+//
+// If you ever disable the MailerLite Lead · Blueprint automation, you
+// will need to add the Resend Blueprint send back here as the canonical
+// magnet delivery (or re-enable /api/cron/funnel-drip).
 
 import { setCors, supaFetch } from '../_lib/supabase.js'
-import { brandedEmail, ctaButton, sendEmailSafe } from '../_lib/email.js'
 import { mailerliteTagDeclined } from '../_lib/mailerlite.js'
-
-// Use the tracked-redirect endpoint so we can log every click. The
-// endpoint 302s to the real Supabase URL after writing an activity log
-// row. Pass the contact's email so the endpoint can resolve their id.
-const APP_URL = process.env.SCALESOLO_DOMAIN || process.env.FRONTEND_URL || 'https://scalesolo.ai'
-const blueprintLink = (email) => `${APP_URL}/api/r/blueprint?src=email-decline&e=${encodeURIComponent(email)}`
 
 const isEmail = (s) => typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim())
 
@@ -45,26 +48,11 @@ export default async function handler(req, res) {
     const contactId = existing[0].id
     const tags = new Set(existing[0].tags || [])
 
-    // For the tripwire decline, deliver the Blueprint NOW.
+    // Tag the decline. The actual Blueprint delivery comes from the
+    // MailerLite Lead · Blueprint Day 0 email (fired on group-join from
+    // the opt-in endpoint). We just record the decline state here so
+    // the win-back automation has the right group to trigger from.
     if (offer === 'tripwire') {
-      if (tags.has('blueprint:pending')) {
-        await sendEmailSafe({
-          to: email,
-          subject: 'Here is your Faceless AI Brand Blueprint',
-          html: brandedEmail({
-            preheader: 'Your free Faceless AI Brand Blueprint is inside.',
-            body:
-              '<p style="margin:0 0 12px;font-size:18px;font-weight:700;color:#0c0c0d;">Your Blueprint is ready.</p>' +
-              '<p style="margin:0 0 4px;">No worries on passing on the playbook. Here is the free Blueprint you came for, yours to keep.</p>' +
-              ctaButton({ label: 'Download the Blueprint', url: blueprintLink(email) }) +
-              '<p style="margin:14px 0 0;">One tip: do not skip Chapter 2, the brand voice step. It is the part most people skip, and the reason most pages end up sounding like a robot.</p>' +
-              '<p style="margin:12px 0 0;">When you are ready to make it actually pay, the playbook will still be there.</p>' +
-              '<p style="margin:12px 0 0;">See you on the inside,<br>Rayvaughn · ScaleSolo</p>',
-          }),
-        })
-        tags.delete('blueprint:pending')
-        tags.add('blueprint:sent')
-      }
       tags.add('declined:tripwire')
     } else if (offer === 'dfy') {
       tags.add('declined:dfy')
