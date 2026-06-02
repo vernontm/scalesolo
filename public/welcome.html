@@ -152,7 +152,7 @@
       +   '<div class="dl-body">'
       +     '<div class="t">Build Your AI Empire</div>'
       +     '<div class="d">Your monetization playbook. Save it and keep it open while you build.</div>'
-      +     '<a class="btn secondary" href="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/build-your-ai-empire.pdf" download>Download the playbook</a>'
+      +     '<a class="btn secondary" href="/api/r/playbook?src=welcome" download data-track-download="playbook">Download the playbook</a>'
       +   '</div>'
       + '</div>';
     if (bump){
@@ -162,7 +162,7 @@
         +   '<div class="dl-body">'
         +     '<div class="t">Faceless Content Pack</div>'
         +     '<div class="d">50 ready-to-use outfits, settings, and poses, male and female.</div>'
-        +     '<a class="btn secondary" href="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/faceless-content-pack.zip" download>Download the content pack</a>'
+        +     '<a class="btn secondary" href="/api/r/pack?src=welcome" download data-track-download="pack">Download the content pack</a>'
         +   '</div>'
         + '</div>';
     }
@@ -212,6 +212,21 @@
   } else {
     c.innerHTML = card('Order confirmed', 'Check your email for the details and receipt.');
   }
+
+  // ─── Download click tracking (client-side) ────────────────────────
+  // The download links 302 through /api/r/<asset> which logs the click
+  // to Supabase contact_activity. This delegated handler ALSO fires
+  // GA4 + Meta Pixel custom events so the same click shows up in
+  // analytics dashboards. Defense in depth: if a browser blocks our
+  // tracking pixel, the server-side log still has the click. If a
+  // browser blocks our /api/r call (rare — same origin), GA4 still has it.
+  document.addEventListener('click', function(e){
+    var a = e.target.closest('a[data-track-download]');
+    if (!a) return;
+    var asset = a.getAttribute('data-track-download');
+    try { if (window.fbq) fbq('trackCustom', 'AssetDownload', { asset: asset, source: 'welcome' }); } catch(_){}
+    try { if (window.gtag) gtag('event', 'download', { asset_id: asset, asset_name: asset, source: 'welcome' }); } catch(_){}
+  });
 })();
 </script>
 </body>

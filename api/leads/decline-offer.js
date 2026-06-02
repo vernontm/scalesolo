@@ -13,7 +13,11 @@ import { setCors, supaFetch } from '../_lib/supabase.js'
 import { brandedEmail, ctaButton, sendEmailSafe } from '../_lib/email.js'
 import { mailerliteTagDeclined } from '../_lib/mailerlite.js'
 
-const BLUEPRINT_URL = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/faceless-ai-brand-blueprint.pdf'
+// Use the tracked-redirect endpoint so we can log every click. The
+// endpoint 302s to the real Supabase URL after writing an activity log
+// row. Pass the contact's email so the endpoint can resolve their id.
+const APP_URL = process.env.SCALESOLO_DOMAIN || process.env.FRONTEND_URL || 'https://scalesolo.ai'
+const blueprintLink = (email) => `${APP_URL}/api/r/blueprint?src=email-decline&e=${encodeURIComponent(email)}`
 
 const isEmail = (s) => typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim())
 
@@ -52,7 +56,7 @@ export default async function handler(req, res) {
             body:
               '<p style="margin:0 0 12px;font-size:18px;font-weight:700;color:#0c0c0d;">Your Blueprint is ready.</p>' +
               '<p style="margin:0 0 4px;">No worries on passing on the playbook. Here is the free Blueprint you came for, yours to keep.</p>' +
-              ctaButton({ label: 'Download the Blueprint', url: BLUEPRINT_URL }) +
+              ctaButton({ label: 'Download the Blueprint', url: blueprintLink(email) }) +
               '<p style="margin:14px 0 0;">One tip: do not skip Chapter 2, the brand voice step. It is the part most people skip, and the reason most pages end up sounding like a robot.</p>' +
               '<p style="margin:12px 0 0;">When you are ready to make it actually pay, the playbook will still be there.</p>' +
               '<p style="margin:12px 0 0;">See you on the inside,<br>Rayvaughn · ScaleSolo</p>',

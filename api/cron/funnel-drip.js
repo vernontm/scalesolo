@@ -22,10 +22,16 @@ import { setCors, supaFetch } from '../_lib/supabase.js'
 import { brandedEmail, ctaButton, sendEmailSafe } from '../_lib/email.js'
 
 const APP_URL = process.env.SCALESOLO_DOMAIN || process.env.FRONTEND_URL || 'https://scalesolo.ai'
-const BLUEPRINT_URL = 'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/faceless-ai-brand-blueprint.pdf'
 
-const URLS = {
-  download:  BLUEPRINT_URL,
+// Tracked-redirect builder. Every asset link in a drip email goes
+// through /api/r/<asset> so we can log every click in contact_activity
+// (event_type=asset_downloaded). Pass the contact's email so the
+// redirect endpoint can resolve their contact_id and tie the click
+// back to them.
+const tracked = (asset, email, src) =>
+  `${APP_URL}/api/r/${asset}?src=${encodeURIComponent(src)}&e=${encodeURIComponent(email)}`
+
+const PAGE = {
   playbook:  `${APP_URL}/build-your-ai-empire`,
   founding:  `${APP_URL}/welcome?product=tripwire`, // SCALE upsell card lives on welcome page
   dfy:       `${APP_URL}/done-for-you`,
@@ -60,7 +66,7 @@ const STEPS = [
   {
     id: 'drip:welcome-1-sent',
     gate: (c) => needsTag(c, 'drip:welcome-1-sent'),
-    send: () => ({
+    send: (c) => ({
       subject: 'Here is your Faceless AI Brand Blueprint',
       html: brandedEmail({
         preheader: 'Your free Faceless AI Brand Blueprint is inside.',
@@ -71,7 +77,7 @@ const STEPS = [
             'One tip: do not skip Chapter 2, the brand voice step. It is the part most people skip, and the reason most pages end up sounding like a robot.',
             'Tomorrow I will tell you why I really built this. It might surprise you.',
           ],
-          cta: { label: 'Download the Blueprint', url: URLS.download },
+          cta: { label: 'Download the Blueprint', url: tracked('blueprint', c.email, 'drip-welcome-1') },
         }),
       }),
       newTags: ['blueprint:sent'],
@@ -80,7 +86,7 @@ const STEPS = [
   {
     id: 'drip:welcome-2-sent',
     gate: (c, now) => hasTag(c, 'drip:welcome-1-sent') && needsTag(c, 'drip:welcome-2-sent') && lastSendMs(c, now) >= 1 * DAYS,
-    send: () => ({
+    send: (c) => ({
       subject: 'Why I built this for my mom',
       html: brandedEmail({
         preheader: 'She is not who you would expect.',
@@ -92,7 +98,7 @@ const STEPS = [
             'So I made it simple enough that she could actually do it. She built a faceless brand from scratch, monetizes it, and runs the whole thing herself.',
             'If you have ever felt like this stuff was not for someone like you, that is the line I want you to hear. You do not have a discipline problem. You have a process problem. This is the process.',
           ],
-          cta: { label: 'Open the Blueprint again', url: URLS.download },
+          cta: { label: 'Open the Blueprint again', url: tracked('blueprint', c.email, 'drip-welcome-2') },
         }),
       }),
     }),
@@ -100,7 +106,7 @@ const STEPS = [
   {
     id: 'drip:welcome-3-sent',
     gate: (c, now) => hasTag(c, 'drip:welcome-2-sent') && needsTag(c, 'drip:welcome-3-sent') && lastSendMs(c, now) >= 2 * DAYS,
-    send: () => ({
+    send: (c) => ({
       subject: 'Building the page is the easy part',
       html: brandedEmail({
         preheader: 'It is everything after the view that pays.',
@@ -112,7 +118,7 @@ const STEPS = [
             'That is exactly why I wrote Build Your AI Empire. It is the money half. What to actually sell, how to grow an audience you own, how to turn a viewer into a buyer, and how to scale it with ads.',
             'Seventeen dollars. One time. Yours forever.',
           ],
-          cta: { label: 'Get the playbook for $17', url: URLS.playbook },
+          cta: { label: 'Get the playbook for $17', url: PAGE.playbook },
         }),
       }),
     }),
@@ -120,7 +126,7 @@ const STEPS = [
   {
     id: 'drip:welcome-4-sent',
     gate: (c, now) => hasTag(c, 'drip:welcome-3-sent') && needsTag(c, 'drip:welcome-4-sent') && lastSendMs(c, now) >= 2 * DAYS,
-    send: () => ({
+    send: (c) => ({
       subject: '"But I have no audience yet"',
       html: brandedEmail({
         preheader: 'Good. Build it in the right order.',
@@ -131,7 +137,7 @@ const STEPS = [
             'That is what Build Your AI Empire walks you through, step by step. The offer. The list. The funnel. The four ways a faceless page actually makes money.',
             'It is the difference between a page that collects views and a page that pays your bills.',
           ],
-          cta: { label: 'Grab the playbook', url: URLS.playbook },
+          cta: { label: 'Grab the playbook', url: PAGE.playbook },
         }),
       }),
     }),
@@ -139,7 +145,7 @@ const STEPS = [
   {
     id: 'drip:welcome-5-sent',
     gate: (c, now) => hasTag(c, 'drip:welcome-4-sent') && needsTag(c, 'drip:welcome-5-sent') && lastSendMs(c, now) >= 2 * DAYS,
-    send: () => ({
+    send: (c) => ({
       subject: 'The tool my mom actually used',
       html: brandedEmail({
         preheader: 'And a deal I put together for you.',
@@ -150,7 +156,7 @@ const STEPS = [
             'Because you have been reading along, I want to make starting a no-brainer. Use the code SCALE on Founding Member and you do not get a discount, you get more. Fifty percent more video and AI credits, plus a one-on-one setup call where we help you get your brand live. Same price, more in the box.',
             'One catch. Founding is capped at one hundred spots, and once they are gone, that door closes.',
           ],
-          cta: { label: 'Unlock the SCALE bonus', url: URLS.founding },
+          cta: { label: 'Unlock the SCALE bonus', url: PAGE.founding },
         }),
       }),
       newTags: ['drip:welcome-done'],
