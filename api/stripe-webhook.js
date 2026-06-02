@@ -720,13 +720,16 @@ async function sendFunnelCheckoutEmail(session) {
     if (product === 'tripwire' || product === 'dfy') {
       const bump = meta.bump === '1'
       await sendFunnelPurchaseEmail({ email, product, bump })
-      // Move them into the matching MailerLite BUYER group (non-fatal).
-      mailerliteTagBuyer({ email, name, product, bump }).catch(() => {})
+      // Move them into the matching MailerLite BUYER group. MUST be awaited
+      // on serverless — function can terminate before fire-and-forget lands.
+      try { await mailerliteTagBuyer({ email, name, product, bump }) }
+      catch (e) { console.warn('[webhook] mailerlite tag failed:', e?.message || e) }
     }
   } else if (meta.source === 'funnel_oto_fallback') {
     // 3DS-required OTO that fell back to a fresh Checkout — DFY upgrade.
     await sendFunnelPurchaseEmail({ email, product: 'dfy_oto' })
-    mailerliteTagBuyer({ email, name, product: 'dfy_oto' }).catch(() => {})
+    try { await mailerliteTagBuyer({ email, name, product: 'dfy_oto' }) }
+    catch (e) { console.warn('[webhook] mailerlite tag failed:', e?.message || e) }
   }
 }
 
@@ -746,8 +749,10 @@ async function sendFunnelOtoEmail(pi) {
   }
   if (email) {
     await sendFunnelPurchaseEmail({ email, product: 'dfy_oto' })
-    // OTO buyer is a DFY buyer — tag in MailerLite (non-fatal).
-    mailerliteTagBuyer({ email, name, product: 'dfy_oto' }).catch(() => {})
+    // OTO buyer is a DFY buyer — tag in MailerLite. Awaited so serverless
+    // termination doesn't kill the in-flight fetch.
+    try { await mailerliteTagBuyer({ email, name, product: 'dfy_oto' }) }
+    catch (e) { console.warn('[webhook] mailerlite tag failed:', e?.message || e) }
   }
 }
 

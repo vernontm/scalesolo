@@ -87,10 +87,14 @@ export default async function handler(req, res) {
       contactId = (Array.isArray(created) ? created[0] : created).id
     }
 
-    // Push to MailerLite as a LEAD (non-fatal — funnel keeps working
-    // even if MailerLite is down or unconfigured). Adds the subscriber
-    // to the "lead" group so the welcome automation fires there too.
-    mailerliteTagLead({ email, name }).catch(() => {})
+    // Push to MailerLite as a LEAD. MUST be awaited — Vercel serverless
+    // can terminate the function the moment we return the response, which
+    // kills any in-flight fetch. Fire-and-forget works in long-lived Node
+    // processes but loses calls on serverless. Wrapped so a MailerLite
+    // outage still doesn't 500 the opt-in.
+    try { await mailerliteTagLead({ email, name }) } catch (e) {
+      console.warn('[subscribe] mailerlite sync failed:', e?.message || e)
+    }
 
     // Activity timeline event (non-fatal).
     await supaFetch('rpc/log_activity', {

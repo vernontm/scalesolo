@@ -71,9 +71,13 @@ export default async function handler(req, res) {
       body: { tags: Array.from(tags) },
     }).catch(() => {})
 
-    // Move them into the matching DECLINED group in MailerLite so the
-    // win-back automation can fire (non-fatal).
-    mailerliteTagDeclined({ email, offer }).catch(() => {})
+    // Move them into the matching DECLINED group in MailerLite. MUST be
+    // awaited — Vercel serverless can terminate the function the moment
+    // we return, killing any in-flight fetch. Wrapped so a MailerLite
+    // outage doesn't 500 the decline endpoint.
+    try { await mailerliteTagDeclined({ email, offer }) } catch (e) {
+      console.warn('[decline-offer] mailerlite sync failed:', e?.message || e)
+    }
 
     await supaFetch('rpc/log_activity', {
       method: 'POST',
