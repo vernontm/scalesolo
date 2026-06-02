@@ -60,27 +60,30 @@ export default async function handler(req, res) {
       } catch { /* swallow */ }
     }
     if (resolvedContactId) {
-      // Fire-and-forget the log row — we don't block the redirect on
-      // Supabase being responsive. This is one of the few legitimate
-      // uses of fire-and-forget on serverless: the response (302) is
-      // tiny and ships immediately, the Vercel runtime usually keeps
-      // the function alive a moment after sending headers, and missing
-      // a log row is not catastrophic.
-      supaFetch('rpc/log_activity', {
-        method: 'POST',
-        body: {
-          p_profile_id: profileId,
-          p_contact_id: resolvedContactId,
-          p_event_type: 'asset_downloaded',
-          p_payload: {
-            asset,
-            source: source || null,
-            user_agent: (req.headers['user-agent'] || '').slice(0, 200),
-            ip: ((req.headers['x-forwarded-for'] || '').split(',')[0] || '').trim() || null,
+      // MUST await — fire-and-forget on Vercel serverless loses the
+      // log row because the function terminates the moment we send
+      // the 302 response. ~50ms added latency, fine for a download
+      // click. Wrapped so a Supabase outage cannot stop the file
+      // from reaching the user.
+      try {
+        await supaFetch('rpc/log_activity', {
+          method: 'POST',
+          body: {
+            p_profile_id: profileId,
+            p_contact_id: resolvedContactId,
+            p_event_type: 'asset_downloaded',
+            p_payload: {
+              asset,
+              source: source || null,
+              user_agent: (req.headers['user-agent'] || '').slice(0, 200),
+              ip: ((req.headers['x-forwarded-for'] || '').split(',')[0] || '').trim() || null,
+            },
+            p_source: 'redirect',
           },
-          p_source: 'redirect',
-        },
-      }).catch(() => {})
+        })
+      } catch (e) {
+        console.warn('[r] activity log failed:', e?.message || e)
+      }
     }
   }
 
