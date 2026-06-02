@@ -158,13 +158,18 @@ const STEPS = [
   },
 ]
 
-// Cron auth — Vercel sets the schedule, and we accept either the
-// CRON_SECRET header (preferred) or a no-auth call from the Vercel
-// internal IP (which is what Vercel does by default).
+// Cron auth — Vercel cron sends `Authorization: Bearer <CRON_SECRET>` by
+// convention. We also accept the legacy `x-cron-secret` header so manual
+// curl invocations keep working. If CRON_SECRET is not set we let any
+// caller in (this endpoint has no side effects an attacker would want —
+// the worst they can do is trigger the next due email a bit early).
 function cronAuthed(req) {
   const secret = process.env.CRON_SECRET
   if (!secret) return true
-  return req.headers['x-cron-secret'] === secret
+  const auth = req.headers.authorization || ''
+  if (auth === `Bearer ${secret}`) return true
+  if (req.headers['x-cron-secret'] === secret) return true
+  return false
 }
 
 export default async function handler(req, res) {
