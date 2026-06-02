@@ -65,7 +65,7 @@ it untouched. It delivers the magnet on group-join.
 <p>You can scroll TikTok for an hour tonight, or you can spend that hour building the thing that pays you next year.</p>
 <p>My recommendation: take the time for yourself, do this instead.</p>
 <p>Talk soon,<br>Rayvaughn</p>
-<p><a href="{$unsubscribe}">Unsubscribe</a></p>
+<p><a href="{$unsubscribe}">No longer interested in building an AI brand?</a></p>
 ```
 
 ---
@@ -99,7 +99,7 @@ it untouched. It delivers the magnet on group-join.
 <p>This is the same process I used to set up my mom's brand. If you're serious about making this pay, the playbook is the first step. At seventeen bucks it's the tiniest investment you can make and still expect real results.</p>
 <p><a href="https://www.scalesolo.ai/build-your-ai-empire">Grab it</a> before it gets buried in your inbox.</p>
 <p>Talk soon,<br>Rayvaughn</p>
-<p><a href="{$unsubscribe}">Unsubscribe</a></p>
+<p><a href="{$unsubscribe}">No longer interested in building an AI brand?</a></p>
 ```
 
 ---
@@ -123,7 +123,7 @@ it untouched. It delivers the magnet on group-join.
 <p>Talk soon,<br>Rayvaughn</p>
 <p>P.S. At seventeen bucks this is the tiniest investment you can make and still have a realistic shot at building something that pays.</p>
 <p>P.P.S. The page price is going up the next time I touch the funnel. Get it while it's still cheap.</p>
-<p><a href="{$unsubscribe}">Unsubscribe</a></p>
+<p><a href="{$unsubscribe}">No longer interested in building an AI brand?</a></p>
 ```
 
 ---
@@ -151,7 +151,7 @@ it untouched. It delivers the magnet on group-join.
 <p>&gt;&gt; <a href="https://www.scalesolo.ai/welcome?product=tripwire">Lock in Founding with SCALE</a> &lt;&lt;</p>
 <p>Talk soon,<br>Rayvaughn</p>
 <p>P.S. The playbook works. Founding with the SCALE bonus is the cheapest ScaleSolo will ever be. If you've been on the fence, this is your sign. You can grab the playbook <a href="https://www.scalesolo.ai/build-your-ai-empire">right here</a> or lock in Founding <a href="https://www.scalesolo.ai/welcome?product=tripwire">over here</a>.</p>
-<p><a href="{$unsubscribe}">Unsubscribe</a></p>
+<p><a href="{$unsubscribe}">No longer interested in building an AI brand?</a></p>
 ```
 
 ---
@@ -187,7 +187,7 @@ the Resend Stripe receipt be the sole confirmation.
 <p>Reply to this email with the niche you pick. I read every reply. Even one sentence is fine.</p>
 <p>Talk soon,<br>Rayvaughn</p>
 <p>P.S. The biggest reason faceless brands stall is the niche being too broad. If you're going to skip one chapter, do not skip this one. You can revisit it any time <a href="https://www.scalesolo.ai/api/r/playbook?src=tripwire-buyer-day1&amp;e={$email}">right here</a>.</p>
-<p><a href="{$unsubscribe}">Unsubscribe</a></p>
+<p><a href="{$unsubscribe}">No longer interested in building an AI brand?</a></p>
 ```
 
 ---
@@ -219,7 +219,7 @@ the Resend Stripe receipt be the sole confirmation.
 <p>It's 397 dollars, one time. Cheapest agency I have seen for this quotes 5,000.</p>
 <p>If you'd rather build it yourself, the playbook still works. No pressure. But if the workflow part is what's stopping you, this fixes that. You can check it out <a href="https://www.scalesolo.ai/done-for-you">right here</a>.</p>
 <p>Talk soon,<br>Rayvaughn</p>
-<p><a href="{$unsubscribe}">Unsubscribe</a></p>
+<p><a href="{$unsubscribe}">No longer interested in building an AI brand?</a></p>
 ```
 
 ---
@@ -249,7 +249,7 @@ the Resend Stripe receipt be the sole confirmation.
 <p>If that lands, lock it in <a href="https://www.scalesolo.ai/welcome?product=tripwire">right here</a>.</p>
 <p>Talk soon,<br>Rayvaughn</p>
 <p>P.S. If you're not ready for that, no hard feelings. The playbook still works on its own. But if you've been on the fence about the membership, Founding plus SCALE is the cheapest entry point this will ever have.</p>
-<p><a href="{$unsubscribe}">Unsubscribe</a></p>
+<p><a href="{$unsubscribe}">No longer interested in building an AI brand?</a></p>
 ```
 
 ---
@@ -291,7 +291,7 @@ primary visual focus.
 <p>If you haven't booked yet, you can do that <a href="https://vernontm.com/book-call">right here</a>.</p>
 <p>Talk soon,<br>Rayvaughn</p>
 <p>P.S. The most common mistake at this stage is making the niche too broad. If you find yourself writing "AI for everyone," go narrower. We can always widen later. Going narrow at the start is what makes this work.</p>
-<p><a href="{$unsubscribe}">Unsubscribe</a></p>
+<p><a href="{$unsubscribe}">No longer interested in building an AI brand?</a></p>
 ```
 
 ---
@@ -315,7 +315,7 @@ primary visual focus.
 <p>&gt;&gt; <a href="https://vernontm.com/dfy-walkthrough">Watch the workflow walkthrough</a> &lt;&lt;</p>
 <p>Talk soon,<br>Rayvaughn</p>
 <p>P.S. Most DFY clients want to "tweak" the brand voice the moment they see it. Resist the urge for 30 days. The voice is built for the audience research we did at kickoff, and it usually feels off to the founder for the first two weeks. Trust the audience response data over your gut for the first month.</p>
-<p><a href="{$unsubscribe}">Unsubscribe</a></p>
+<p><a href="{$unsubscribe}">No longer interested in building an AI brand?</a></p>
 ```
 
 ---
@@ -340,7 +340,7 @@ primary visual focus.
 <p>If you have a win to share, even a small one, I would love to hear it. With your permission I drop client wins on the page and in the ads, which helps us land the next round of clients faster.</p>
 <p>Talk soon,<br>Rayvaughn</p>
 <p>P.S. If you are stuck on something specific, do not wait until the next call. Reply now. I'd rather knock down a blocker today than let it sit for two weeks.</p>
-<p><a href="{$unsubscribe}">Unsubscribe</a></p>
+<p><a href="{$unsubscribe}">No longer interested in building an AI brand?</a></p>
 ```
 
 (No external CTA — this email is a pure reply prompt.)
@@ -369,7 +369,7 @@ primary visual focus.
 <p>&gt;&gt; <a href="https://www.scalesolo.ai/build-your-ai-empire">Take another look at the playbook</a> &lt;&lt;</p>
 <p>If not, also fine. The Blueprint is yours either way, and I'll send a couple more emails on the bigger picture over the next few days.</p>
 <p>Talk soon,<br>Rayvaughn</p>
-<p><a href="{$unsubscribe}">Unsubscribe</a></p>
+<p><a href="{$unsubscribe}">No longer interested in building an AI brand?</a></p>
 ```
 
 ---
@@ -393,7 +393,7 @@ primary visual focus.
 <p>&gt;&gt; <a href="https://www.scalesolo.ai/build-your-ai-empire">Get the playbook ($17)</a> &lt;&lt;</p>
 <p>If not, no worries. I will leave you alone after one more email.</p>
 <p>Talk soon,<br>Rayvaughn</p>
-<p><a href="{$unsubscribe}">Unsubscribe</a></p>
+<p><a href="{$unsubscribe}">No longer interested in building an AI brand?</a></p>
 ```
 
 ---
@@ -415,7 +415,7 @@ primary visual focus.
 <p>Either way, good luck on the build. If you ever want to reply with a question, my email goes to my actual inbox.</p>
 <p>Talk soon,<br>Rayvaughn</p>
 <p>P.S. After this email I'll add you back to the regular nurture so you'll see general tips and stories I post, but no more pitches on the playbook. Promise.</p>
-<p><a href="{$unsubscribe}">Unsubscribe</a></p>
+<p><a href="{$unsubscribe}">No longer interested in building an AI brand?</a></p>
 ```
 
 ---
@@ -448,7 +448,7 @@ primary visual focus.
 <p>It's 17 dollars. One time. Yours forever.</p>
 <p>The DFY door stays open if you change your mind later, but the playbook is the cheapest first step. You can grab it <a href="https://www.scalesolo.ai/build-your-ai-empire">right here</a>.</p>
 <p>Talk soon,<br>Rayvaughn</p>
-<p><a href="{$unsubscribe}">Unsubscribe</a></p>
+<p><a href="{$unsubscribe}">No longer interested in building an AI brand?</a></p>
 ```
 
 ---
