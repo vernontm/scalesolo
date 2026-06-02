@@ -78,7 +78,10 @@ export default async function handler(req, res) {
               user_agent: (req.headers['user-agent'] || '').slice(0, 200),
               ip: ((req.headers['x-forwarded-for'] || '').split(',')[0] || '').trim() || null,
             },
-            p_source: 'redirect',
+            // contact_activity.source has a CHECK constraint restricting
+            // to system|user|webhook. The 'source' of the click (email,
+            // welcome page, etc.) lives in payload.source instead.
+            p_source: 'webhook',
           },
         })
       } catch (e) {
