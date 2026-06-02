@@ -384,7 +384,6 @@ primary visual focus.
 
 ```html
 <p>Hey {$name},</p>
-<p>Real example, not a pitch.</p>
 <p>I have a client who came in convinced the hard part was the AI tools. She had tried six of them. None stuck. She kept telling me she "just needed the right tool."</p>
 <p>The thing she actually needed was a niche. We narrowed her brand from "AI for moms" (way too wide) to "AI hacks for moms who run a home daycare." Twelve weeks later her page is doing real numbers and she's converting at almost twice the rate she did before, on smaller traffic.</p>
 <p>The tool was never the problem. The niche was.</p>
