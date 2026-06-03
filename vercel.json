@@ -20,10 +20,6 @@
     { "path": "/api/cron/distill-brand-voice",  "schedule": "30 6 * * *" },
     { "path": "/api/cron/run-scheduled-workflows", "schedule": "* * * * *" },
     { "path": "/api/cron/cleanup-uploadpost-orphans", "schedule": "*/30 * * * *" }
-    // /api/cron/funnel-drip removed 2026-06-02: MailerLite Lead · Blueprint
-    // automation now handles all 5 lead-nurture emails. The cron was the
-    // pre-MailerLite bandaid and would duplicate every send. The endpoint
-    // stays in the repo as reference / fallback if we ever move off ML.
   ],
   "functions": {
     "api/videos/combine.js": {
