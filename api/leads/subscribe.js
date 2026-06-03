@@ -49,7 +49,7 @@ function blueprintEmail() {
     '',
     'Talk soon,',
     'Rayvaughn',
-    'Founder, Vernon Tech and Media',
+    'ScaleSolo',
   ].join('\n')
   const esc = (x) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const html =
