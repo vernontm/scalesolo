@@ -2,20 +2,45 @@
 // POST { email, name?, source?, source_url?, hp? }
 //
 // Saves/dedupes the email into email_contacts under FUNNEL_PROFILE_ID (the
-// brand profile that owns the funnel), logs a contact_activity event, and
-// returns the next funnel step to redirect to. No auth required.
+// brand profile that owns the funnel), logs a contact_activity event, sends
+// the free Blueprint immediately via Resend, and returns the next funnel
+// step to redirect to. No auth required.
 //
 // Requires env FUNNEL_PROFILE_ID = the profile id that should own these leads.
 
 import { setCors, supaFetch } from '../_lib/supabase.js'
 import { mailerliteTagLead } from '../_lib/mailerlite.js'
+import { sendEmailSafe, brandedEmail, ctaButton } from '../_lib/email.js'
 
-// The free Blueprint email is intentionally NOT sent on opt-in. It is sent
-// from /api/leads/decline-offer when the visitor explicitly declines the
-// tripwire offer, which gives the tripwire page real stakes and converts
-// some "no" clicks back into "yes" via the shame-decline modal. Bouncers
-// (no engagement either way) get the Blueprint from the drip cron (welcome
-// email #1) as a safety net.
+// The free Blueprint is delivered HERE, on opt-in, as a Resend transactional
+// email. This is the canonical magnet delivery. It deliberately does NOT
+// depend on the MailerLite Lead nurture surviving a fast tripwire decline:
+// the decline win-back removes the lead from the Lead group, which used to
+// race with and clobber the MailerLite Day-0 email and left fast-decliners
+// with no guide. Sending on opt-in guarantees every lead gets the guide
+// within seconds. Idempotent via the blueprint:sent tag so repeat opt-ins
+// never double-send.
+//
+// NOTE: the MailerLite Lead nurture Day-0 email still also delivers the
+// guide. Repoint that Day-0 to a welcome / "did you get it" message (or
+// remove it) so leads are not emailed the guide twice.
+
+const BLUEPRINT_URL =
+  process.env.FUNNEL_BLUEPRINT_URL ||
+  'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/build-your-ai-empire.pdf'
+
+function blueprintEmailHtml() {
+  return brandedEmail({
+    preheader: 'Your free Faceless AI Brand Blueprint is ready to download.',
+    body: `
+      <p style="margin:0 0 16px;font-size:18px;font-weight:800;color:#0c0c0d;">It is here. Grab it now.</p>
+      <p style="margin:0 0 16px;">You asked for the Faceless AI Brand Blueprint, so here it is. This is the exact framework I use to build faceless AI brands that run without me on camera.</p>
+      ${ctaButton({ label: 'Download the Blueprint', url: BLUEPRINT_URL })}
+      <p style="margin:16px 0 16px;">Open it today while the reason you signed up is still fresh, and start with the brand voice section. That is the part most people skip, and it is the part that makes a faceless brand feel like a real person instead of a content farm.</p>
+      <p style="margin:0;">Talk soon,<br>Rayvaughn<br><span style="color:#74747a;">Founder, Vernon Tech &amp; Media</span></p>
+    `,
+  })
+}
 
 // Best-effort per-instance IP rate limit (same approach as forms/submit.js).
 const rateMap = new Map()
@@ -58,12 +83,11 @@ export default async function handler(req, res) {
       return res.status(429).json({ error: 'Too many requests, please slow down.' })
     }
 
-    // Upsert the contact (dedup on profile_id + email). Tag with
-    // funnel:lead-opt-in and blueprint:pending so the drip cron and the
-    // decline endpoint know where this contact is in the funnel.
+    // Upsert the contact (dedup on profile_id + email).
     const existing = await supaFetch(
       `email_contacts?profile_id=eq.${profileId}&email=eq.${encodeURIComponent(email)}&select=id,tags`
     )
+    const alreadySent = Boolean(existing && existing.length && (existing[0].tags || []).includes('blueprint:sent'))
     let contactId
     if (existing && existing.length) {
       contactId = existing[0].id
@@ -87,11 +111,29 @@ export default async function handler(req, res) {
       contactId = (Array.isArray(created) ? created[0] : created).id
     }
 
-    // Push to MailerLite as a LEAD. MUST be awaited — Vercel serverless
-    // can terminate the function the moment we return the response, which
-    // kills any in-flight fetch. Fire-and-forget works in long-lived Node
-    // processes but loses calls on serverless. Wrapped so a MailerLite
-    // outage still doesn't 500 the opt-in.
+    // Deliver the Blueprint via Resend now (idempotent + best-effort: a
+    // Resend hiccup must not 500 the opt-in).
+    if (!alreadySent) {
+      const sent = await sendEmailSafe({
+        to: email,
+        subject: 'Your Faceless AI Brand Blueprint is inside',
+        html: blueprintEmailHtml(),
+      })
+      if (sent) {
+        const finalTags = new Set(existing && existing.length ? (existing[0].tags || []) : [])
+        finalTags.add('funnel:lead-opt-in')
+        finalTags.delete('blueprint:pending')
+        finalTags.add('blueprint:sent')
+        await supaFetch(`email_contacts?id=eq.${contactId}`, {
+          method: 'PATCH',
+          body: { tags: Array.from(finalTags) },
+        }).catch(() => {})
+      }
+    }
+
+    // Push to MailerLite as a LEAD. MUST be awaited — Vercel serverless can
+    // terminate the function the moment we return, killing in-flight fetches.
+    // Wrapped so a MailerLite outage still doesn't 500 the opt-in.
     try { await mailerliteTagLead({ email, name }) } catch (e) {
       console.warn('[subscribe] mailerlite sync failed:', e?.message || e)
     }
@@ -108,8 +150,6 @@ export default async function handler(req, res) {
       },
     }).catch(() => {})
 
-    // Return the email back so the next-page can stash it in localStorage
-    // and pass it to /api/leads/decline-offer if the visitor declines.
     return res.status(200).json({ ok: true, redirect, email })
   } catch (err) {
     return res.status(err.status || 500).json({ error: err.message || 'Something went wrong.' })
