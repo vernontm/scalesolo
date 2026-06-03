@@ -10,7 +10,7 @@
 
 import { setCors, supaFetch } from '../_lib/supabase.js'
 import { mailerliteTagLead } from '../_lib/mailerlite.js'
-import { sendEmailSafe, brandedEmail, ctaButton } from '../_lib/email.js'
+import { sendEmailSafe } from '../_lib/email.js'
 
 // The free Blueprint is delivered HERE, on opt-in, as a Resend transactional
 // email. This is the canonical magnet delivery. It deliberately does NOT
@@ -29,17 +29,34 @@ const BLUEPRINT_URL =
   process.env.FUNNEL_BLUEPRINT_URL ||
   'https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/build-your-ai-empire.pdf'
 
-function blueprintEmailHtml() {
-  return brandedEmail({
-    preheader: 'Your free Faceless AI Brand Blueprint is ready to download.',
-    body: `
-      <p style="margin:0 0 16px;font-size:18px;font-weight:800;color:#0c0c0d;">It is here. Grab it now.</p>
-      <p style="margin:0 0 16px;">You asked for the Faceless AI Brand Blueprint, so here it is. This is the exact framework I use to build faceless AI brands that run without me on camera.</p>
-      ${ctaButton({ label: 'Download the Blueprint', url: BLUEPRINT_URL })}
-      <p style="margin:16px 0 16px;">Open it today while the reason you signed up is still fresh, and start with the brand voice section. That is the part most people skip, and it is the part that makes a faceless brand feel like a real person instead of a content farm.</p>
-      <p style="margin:0;">Talk soon,<br>Rayvaughn<br><span style="color:#74747a;">Founder, Vernon Tech &amp; Media</span></p>
-    `,
-  })
+// Plain-text Blueprint email. No template, no buttons — reads like a
+// personal note from Rayvaughn, which lands in the primary inbox better.
+// Returns { text, html } where html is a minimal, unstyled fallback with a
+// clickable link (Resend sends multipart; text is the canonical version).
+function blueprintEmail() {
+  const url = BLUEPRINT_URL
+  const text = [
+    'Hey, it is Rayvaughn.',
+    '',
+    'You asked for the Faceless AI Brand Blueprint, so here it is. This is the exact framework I use to build faceless AI brands that run without me on camera.',
+    '',
+    'Download it here:',
+    url,
+    '',
+    'Open it today while the reason you signed up is still fresh, and start with the brand voice section. That is the part most people skip, and it is the part that makes a faceless brand feel like a real person instead of a content farm.',
+    '',
+    'If you ever have a question, just reply to this email. It comes straight to me.',
+    '',
+    'Talk soon,',
+    'Rayvaughn',
+    'Founder, Vernon Tech and Media',
+  ].join('\n')
+  const esc = (x) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const html =
+    '<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;color:#111111;white-space:pre-wrap;">' +
+    esc(text).replace(url, '<a href="' + url + '">' + url + '</a>') +
+    '</div>'
+  return { text, html }
 }
 
 // Best-effort per-instance IP rate limit (same approach as forms/submit.js).
@@ -114,10 +131,12 @@ export default async function handler(req, res) {
     // Deliver the Blueprint via Resend now (idempotent + best-effort: a
     // Resend hiccup must not 500 the opt-in).
     if (!alreadySent) {
+      const { text, html } = blueprintEmail()
       const sent = await sendEmailSafe({
         to: email,
         subject: 'Your Faceless AI Brand Blueprint is inside',
-        html: blueprintEmailHtml(),
+        html,
+        text,
       })
       if (sent) {
         const finalTags = new Set(existing && existing.length ? (existing[0].tags || []) : [])
