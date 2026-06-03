@@ -706,6 +706,24 @@ async function sendFunnelPurchaseEmail({ email, product, bump }) {
   }
 }
 
+// Backfill the buyer's real name (from Stripe) onto their funnel contact
+// row in Supabase. The opt-in form is email-only, so a purchase is the
+// first time we learn the name. Best-effort; only sets it when we have a
+// name and the contact's name is still empty (never clobbers an existing one).
+async function backfillFunnelContactName(email, fullName) {
+  const name = (fullName || '').trim()
+  const profileId = process.env.FUNNEL_PROFILE_ID
+  if (!name || !email || !profileId) return
+  try {
+    const found = await supa(
+      `email_contacts?profile_id=eq.${profileId}&email=eq.${encodeURIComponent(email.toLowerCase())}&select=id,name`
+    )
+    if (found && found.length && !((found[0].name || '').trim())) {
+      await supa(`email_contacts?id=eq.${found[0].id}`, { method: 'PATCH', body: { name } })
+    }
+  } catch (e) { console.warn('[webhook] contact name backfill failed:', e?.message || e) }
+}
+
 // Pull email + product flags off a Checkout Session and route to the
 // right email template. Handles tripwire, DFY direct, and the OTO 3DS
 // fallback Checkout. Plain OTO PaymentIntents are handled separately
@@ -724,12 +742,16 @@ async function sendFunnelCheckoutEmail(session) {
       // on serverless — function can terminate before fire-and-forget lands.
       try { await mailerliteTagBuyer({ email, name, product, bump }) }
       catch (e) { console.warn('[webhook] mailerlite tag failed:', e?.message || e) }
+      try { await backfillFunnelContactName(email, name) }
+      catch (e) { console.warn('[webhook] name backfill failed:', e?.message || e) }
     }
   } else if (meta.source === 'funnel_oto_fallback') {
     // 3DS-required OTO that fell back to a fresh Checkout — DFY upgrade.
     await sendFunnelPurchaseEmail({ email, product: 'dfy_oto' })
     try { await mailerliteTagBuyer({ email, name, product: 'dfy_oto' }) }
     catch (e) { console.warn('[webhook] mailerlite tag failed:', e?.message || e) }
+    try { await backfillFunnelContactName(email, name) }
+    catch (e) { console.warn('[webhook] name backfill failed:', e?.message || e) }
   }
 }
 
@@ -753,6 +775,8 @@ async function sendFunnelOtoEmail(pi) {
     // termination doesn't kill the in-flight fetch.
     try { await mailerliteTagBuyer({ email, name, product: 'dfy_oto' }) }
     catch (e) { console.warn('[webhook] mailerlite tag failed:', e?.message || e) }
+    try { await backfillFunnelContactName(email, name) }
+    catch (e) { console.warn('[webhook] name backfill failed:', e?.message || e) }
   }
 }
 
