@@ -2,7 +2,6 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": "vite",
-  "cleanUrls": true,
   "rewrites": [
     { "source": "/((?!api/|studio-compositions/|free-blueprint|build-your-ai-empire|done-for-you|welcome|oto|media/|downloads/).*)", "destination": "/index.html" }
   ],
