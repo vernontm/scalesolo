@@ -28,7 +28,7 @@ export const config = { maxDuration: 300 }
 
 const CONCURRENCY_PER_BRAND = 5
 
-async function cleanupBrand(profileId) {
+async function cleanupBrand(profileId, agencyOwnedJobIds) {
   const username = await resolveUploadpostUser(profileId)
   if (!username) return { profile_id: profileId, skipped: 'no_username', canceled: 0, failed: 0 }
 
@@ -96,12 +96,19 @@ async function cleanupBrand(profileId) {
   // separate marketplace database — so they are NOT in this app's
   // content_scripts and would look like orphans here. Without this guard the
   // cron DELETEs every agency-scheduled post within 30 min of it staging.
-  // Agency jobs carry a distinctive title shape: "<brand> · Day <N> · <date>".
-  // Never cancel those — they belong to the other system.
+  //
+  // Primary ownership signal: agencyOwnedJobIds, the set of job_ids the
+  // marketplace DB reports as currently scheduled (fetched once per run via a
+  // SECURITY DEFINER RPC). Title-independent, so it keeps working even as the
+  // agency's human-readable titles change. The title-shape check below is a
+  // cheap fallback for legacy "<brand> · Day <N> · <date>" jobs scheduled
+  // before job_ids were tracked.
   const isAgencyJob = (title) => / · Day \d+ · \d{4}-\d{2}-\d{2}/.test(String(title || ''))
+  const isAgencyOwned = (j) =>
+    (agencyOwnedJobIds && agencyOwnedJobIds.has(j.job_id)) || isAgencyJob(j.title)
 
   const orphans = jobs.filter((j) =>
-    !matchedJobIds.has(j.job_id) && !fuzzyMatchesLegacy(j) && !isAgencyJob(j.title)
+    !matchedJobIds.has(j.job_id) && !fuzzyMatchesLegacy(j) && !isAgencyOwned(j)
   )
 
   let canceled = 0, failed = 0
@@ -119,6 +126,33 @@ async function cleanupBrand(profileId) {
   await Promise.all(workers)
 
   return { profile_id: profileId, username, total: jobs.length, orphan: orphans.length, canceled, failed }
+}
+
+// Ask the agency app's marketplace DB which Upload-Post job_ids it currently
+// owns (via a SECURITY DEFINER RPC that returns only opaque job_ids — no post
+// content). Returns { configured, ok, ids }:
+//   configured=false → marketplace env not set; caller relies on the
+//                      title-shape fallback inside cleanupBrand.
+//   configured=true, ok=false → call failed; caller aborts the run so we
+//                               never cancel an agency post we couldn't verify.
+//   ok=true → ids is a Set of job_ids to never cancel.
+async function fetchAgencyOwnedJobIds() {
+  const url = process.env.MARKETPLACE_SUPABASE_URL
+  const key = process.env.MARKETPLACE_SUPABASE_ANON_KEY
+  if (!url || !key) return { configured: false, ok: false, ids: null }
+  try {
+    const r = await fetch(`${url}/rest/v1/rpc/scheduled_uploadpost_job_ids`, {
+      method: 'POST',
+      headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+    if (!r.ok) return { configured: true, ok: false, ids: null }
+    const arr = await r.json().catch(() => null)
+    if (!Array.isArray(arr)) return { configured: true, ok: false, ids: null }
+    return { configured: true, ok: true, ids: new Set(arr.filter(Boolean)) }
+  } catch {
+    return { configured: true, ok: false, ids: null }
+  }
 }
 
 export default async function handler(req, res) {
@@ -149,13 +183,25 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, scanned: 0, results: [] })
     }
 
+    // Fetch the job_ids the agency app (separate marketplace DB) currently
+    // owns, so we never cancel its scheduled posts on the shared Upload-Post
+    // account. If the marketplace is CONFIGURED but unreachable, abort the
+    // whole run rather than risk wiping agency posts — orphan cleanup is not
+    // urgent and resumes next tick. If it isn't configured at all, fall back
+    // to the title-shape guard inside cleanupBrand.
+    const agencyOwned = await fetchAgencyOwnedJobIds()
+    if (agencyOwned.configured && !agencyOwned.ok) {
+      console.warn('[orphan-cleanup] marketplace ownership unavailable — skipping run to avoid cancelling agency posts')
+      return res.status(200).json({ ok: true, skipped: 'marketplace_ownership_unavailable' })
+    }
+
     // Sequential across brands; concurrency lives inside each brand's
     // orphan loop. Keeps Upload-Post's rate-limit budget per-username.
     const results = []
     let totalCanceled = 0, totalFailed = 0, totalOrphan = 0
     for (const pid of profileIds) {
       try {
-        const r = await cleanupBrand(pid)
+        const r = await cleanupBrand(pid, agencyOwned.ids)
         results.push(r)
         totalCanceled += r.canceled || 0
         totalFailed += r.failed || 0
