@@ -510,12 +510,13 @@ async function autoSchedule({ res, profile_id, script_ids, user_id }) {
   //   • deletes couldn't cascade-cancel — the row had no
   //     uploadpost_request_id to call Upload-Post's DELETE against, so
   //     orphan jobs would pile up if any submission EVER did happen.
-  // Now: for video rows, we submit each one to Upload-Post inline with
-  // async_upload=true + scheduled_date, persist the returned request_id
-  // back to the row, and every future DELETE cascade-cancels cleanly.
-  // Photos still need the bytes-multipart path (Upload-Post doesn't accept
-  // URL strings for photos), so we skip them here — they continue to flow
-  // through manual Publish / Resync as before.
+  // Now: every row (video AND image) is submitted to Upload-Post inline
+  // with scheduled_date, the returned request_id is persisted back, and
+  // future DELETEs cascade-cancel cleanly. Videos pass through as a URL
+  // (async_upload=true); images forward their bytes as multipart parts
+  // (Upload-Post doesn't accept URL strings for photos). Any row whose
+  // handoff doesn't complete is rolled back out of 'scheduled' so it
+  // never becomes a handle-less ghost the sync cron can't see.
   const apiKey = process.env.UPLOADPOST_API_KEY
   let submitted = 0
   let submitFailed = 0
@@ -529,22 +530,41 @@ async function autoSchedule({ res, profile_id, script_ids, user_id }) {
     ).catch(() => [])
     const rowById = new Map((fullRows || []).map((r) => [r.id, r]))
 
+    // Roll a row back out of the scheduled state when its Upload-Post
+    // handoff didn't complete. The upfront PATCH (above) optimistically
+    // flips every assigned row to status='scheduled' so the calendar +
+    // double-book guard react immediately, but a row that never reached
+    // Upload-Post (or came back without a request_id) is a ghost: it
+    // shows as scheduled forever yet no job exists and no cron will ever
+    // touch it (sync-scheduled-posts only polls rows WHERE
+    // uploadpost_request_id IS NOT NULL). Knocking it back to
+    // caption_ready — while KEEPING its scheduled_datetime so a retry
+    // re-uses the same slot — surfaces the failure instead of hiding it.
+    const rollback = async (rowId, errText) => {
+      submitFailed++
+      await supaFetch(`content_scripts?id=eq.${rowId}`, {
+        method: 'PATCH',
+        body: {
+          status: 'caption_ready',
+          last_error: errText ? errText.toString().slice(0, 1000) : 'Upload-Post submission did not complete',
+          last_error_at: new Date().toISOString(),
+        },
+        prefer: 'return=minimal',
+      }).catch(() => {})
+    }
+
     const submitOne = async (a) => {
       const row = rowById.get(a.id)
       if (!row) return
-      // Only video rows submit inline. Photos require bytes upload — too
-      // expensive to do 200x in one Vercel function. They keep working
-      // via Publish Selected / Resync.
-      if (row.media_type !== 'video') return
-      // Pick the cover-embedded URL when the user opted in and we
-      // already generated it. Everything-everywhere — IG still gets
-      // its native instagram_cover_url for the Reel thumbnail, so
-      // even though IG viewers see the same 1s intro, the feed cover
-      // is the native one. One submission, no per-platform routing.
-      const mediaUrl = (row.embed_cover_intro !== false && row.media_url_with_cover)
-        ? row.media_url_with_cover
-        : row.media_urls?.[0]
-      if (!mediaUrl) return
+      const isVideoRow = row.media_type === 'video'
+      const isImageRow = row.media_type === 'image'
+      // Anything that isn't a video or image shouldn't have reached here
+      // (the media filter up top drops text + media-less rows), but guard
+      // anyway: don't leave a non-submittable row sitting as scheduled.
+      if (!isVideoRow && !isImageRow) {
+        await rollback(row.id, 'Unsupported media_type for auto-schedule submission')
+        return
+      }
 
       const platforms = Array.isArray(row.platforms) && row.platforms.length ? row.platforms : ['tiktok']
       const desc = [row.caption, row.hashtags].filter(Boolean).join('\n\n').trim()
@@ -560,60 +580,127 @@ async function autoSchedule({ res, profile_id, script_ids, user_id }) {
         || String(row.full_script || '').split(/[.!?\n]/)[0].trim().slice(0, 90)
         || 'Untitled'
 
-      const form = new URLSearchParams()
-      form.append('user', username)
-      for (const p of platforms) form.append('platform[]', p)
-      if (desc) form.append('description', desc)
-      // Generic title fallback — Upload-Post uses this when a platform-
-      // specific title override isn't set. Capped at 100 to match
-      // YouTube's hard limit.
-      form.append('title', cleanTitle.slice(0, 100))
-      // Per-platform title overrides. Matches the mapping in
-      // /api/social/upload-post.js so submissions through this path
-      // behave identically. YouTube's title cap is 100 chars.
-      if (platforms.includes('youtube')) form.append('youtube_title', cleanTitle.slice(0, 100))
-      // TikTok's caption lives in tiktok_title (it ignores `description`).
-      if (hasTikTok && desc) form.append('tiktok_title', desc.slice(0, 2200))
-      if (platforms.includes('instagram')) {
-        if (desc) form.append('instagram_title', desc.slice(0, 2200))
-        // Per-post Instagram Reel cover, set on the Schedule page.
-        if (row.cover_image_url) form.append('instagram_cover_url', String(row.cover_image_url))
-      }
-      if (platforms.includes('facebook')) {
-        const fbSrc = (desc || cleanTitle).replace(/\s*\n+\s*/g, ' ').trim()
-        form.append('facebook_title', fbSrc.slice(0, 240))
-      }
-      if (platforms.includes('linkedin')) form.append('linkedin_title', (desc || cleanTitle).slice(0, 3000))
-      if (platforms.includes('threads')) form.append('threads_title', (desc || cleanTitle).slice(0, 500))
-      if (row.first_comment) form.append('first_comment', String(row.first_comment).slice(0, 2200))
-      form.append('async_upload', 'true')
-      form.append('video', mediaUrl)
-      form.append('scheduled_date', new Date(a.slot).toISOString())
-      // Sensible per-platform defaults (mirrors publishSelected).
-      if (platforms.includes('instagram')) form.append('instagram_media_type', 'REELS')
-      if (platforms.includes('youtube'))   form.append('youtube_privacy', 'PUBLIC')
-      if (hasTikTok)                       form.append('privacy_level', 'PUBLIC_TO_EVERYONE')
-
       try {
-        const upRes = await fetch('https://api.upload-post.com/api/upload', {
-          method: 'POST',
-          headers: { Authorization: `Apikey ${apiKey}` },
-          body: form,
-        })
+        let upRes
+        if (isVideoRow) {
+          // ── VIDEO: URL pass-through. ──────────────────────────────────
+          // Pick the cover-embedded URL when the user opted in and we
+          // already generated it. IG still gets its native
+          // instagram_cover_url for the Reel thumbnail.
+          const mediaUrl = (row.embed_cover_intro !== false && row.media_url_with_cover)
+            ? row.media_url_with_cover
+            : row.media_urls?.[0]
+          if (!mediaUrl) { await rollback(row.id, 'No media URL on row'); return }
+
+          const form = new URLSearchParams()
+          form.append('user', username)
+          for (const p of platforms) form.append('platform[]', p)
+          if (desc) form.append('description', desc)
+          // Generic title fallback — Upload-Post uses this when a platform-
+          // specific title override isn't set. Capped at 100 to match
+          // YouTube's hard limit.
+          form.append('title', cleanTitle.slice(0, 100))
+          // Per-platform title overrides. Matches the mapping in
+          // /api/social/upload-post.js so submissions through this path
+          // behave identically. YouTube's title cap is 100 chars.
+          if (platforms.includes('youtube')) form.append('youtube_title', cleanTitle.slice(0, 100))
+          // TikTok's caption lives in tiktok_title (it ignores `description`).
+          if (hasTikTok && desc) form.append('tiktok_title', desc.slice(0, 2200))
+          if (platforms.includes('instagram')) {
+            if (desc) form.append('instagram_title', desc.slice(0, 2200))
+            // Per-post Instagram Reel cover, set on the Schedule page.
+            if (row.cover_image_url) form.append('instagram_cover_url', String(row.cover_image_url))
+          }
+          if (platforms.includes('facebook')) {
+            const fbSrc = (desc || cleanTitle).replace(/\s*\n+\s*/g, ' ').trim()
+            form.append('facebook_title', fbSrc.slice(0, 240))
+          }
+          if (platforms.includes('linkedin')) form.append('linkedin_title', (desc || cleanTitle).slice(0, 3000))
+          if (platforms.includes('threads')) form.append('threads_title', (desc || cleanTitle).slice(0, 500))
+          if (row.first_comment) form.append('first_comment', String(row.first_comment).slice(0, 2200))
+          form.append('async_upload', 'true')
+          form.append('video', mediaUrl)
+          form.append('scheduled_date', new Date(a.slot).toISOString())
+          // Sensible per-platform defaults (mirrors publishSelected).
+          if (platforms.includes('instagram')) form.append('instagram_media_type', 'REELS')
+          if (platforms.includes('youtube'))   form.append('youtube_privacy', 'PUBLIC')
+          if (hasTikTok)                       form.append('privacy_level', 'PUBLIC_TO_EVERYONE')
+
+          upRes = await fetch('https://api.upload-post.com/api/upload', {
+            method: 'POST',
+            headers: { Authorization: `Apikey ${apiKey}` },
+            body: form,
+          })
+        } else {
+          // ── IMAGE: bytes multipart to /upload_photos. ─────────────────
+          // Upload-Post's photo endpoint does NOT accept URL strings —
+          // the bytes have to be fetched and forwarded as file parts
+          // (mirrors publishSelected's photo branch). Previously this
+          // path early-returned, which is exactly what stranded
+          // auto-scheduled image rows as scheduled-but-never-queued
+          // ghosts. They now submit inline like videos, with the same
+          // scheduled_date so Upload-Post fires them at the slot time.
+          const photoUrls = Array.isArray(row.media_urls) ? row.media_urls.filter(Boolean) : []
+          if (!photoUrls.length) { await rollback(row.id, 'No media URL on row'); return }
+
+          const fd = new FormData()
+          fd.append('user', username)
+          for (const p of platforms) fd.append('platform[]', p)
+          if (desc) fd.append('description', desc)
+          fd.append('title', cleanTitle.slice(0, 100))
+          if (platforms.includes('youtube')) fd.append('youtube_title', cleanTitle.slice(0, 100))
+          if (hasTikTok && desc) {
+            const src = desc.replace(/\s+/g, ' ').trim()
+            fd.append('tiktok_title', src.length <= 90 ? src : src.slice(0, 90).replace(/\s+\S*$/, ''))
+          }
+          if (platforms.includes('instagram') && desc) fd.append('instagram_title', desc.slice(0, 2200))
+          if (platforms.includes('facebook')) {
+            const fbSrc = (desc || cleanTitle).replace(/\s*\n+\s*/g, ' ').trim()
+            fd.append('facebook_title', fbSrc.slice(0, 240))
+          }
+          if (platforms.includes('linkedin')) fd.append('linkedin_title', (desc || cleanTitle).slice(0, 3000))
+          if (platforms.includes('threads')) fd.append('threads_title', (desc || cleanTitle).slice(0, 500))
+          if (row.first_comment) fd.append('first_comment', String(row.first_comment).slice(0, 2200))
+          fd.append('async_upload', 'true')
+          fd.append('scheduled_date', new Date(a.slot).toISOString())
+
+          for (let i = 0; i < photoUrls.length; i++) {
+            const url = photoUrls[i]
+            const fr = await fetch(url)
+            if (!fr.ok) throw new Error(`media fetch ${url} → ${fr.status}`)
+            const ab = await fr.arrayBuffer()
+            const extMatch = (url.match(/\.([a-z0-9]+)(?:\?|#|$)/i)?.[1] || 'jpg').toLowerCase()
+            const mime = extMatch === 'png'  ? 'image/png'
+                       : extMatch === 'webp' ? 'image/webp'
+                       : extMatch === 'gif'  ? 'image/gif'
+                       : 'image/jpeg'
+            fd.append('photos[]', new Blob([ab], { type: mime }), `image_${i + 1}.${extMatch}`)
+          }
+
+          upRes = await fetch('https://api.upload-post.com/api/upload_photos', {
+            method: 'POST',
+            headers: { Authorization: `Apikey ${apiKey}` },
+            body: fd,
+          })
+        }
+
         const body = await upRes.json().catch(() => ({}))
         if (!upRes.ok) {
           const errText = (body?.error || body?.message || `Upload-Post ${upRes.status}`).toString().slice(0, 1000)
           console.warn(`auto-schedule submit failed for ${row.id}:`, errText)
-          submitFailed++
-          await supaFetch(`content_scripts?id=eq.${row.id}`, {
-            method: 'PATCH',
-            body: { last_error: `[${upRes.status}] ${errText}`, last_error_at: new Date().toISOString() },
-            prefer: 'return=minimal',
-          }).catch(() => {})
+          await rollback(row.id, `[${upRes.status}] ${errText}`)
           return
         }
         const requestId = body?.request_id || body?.id || null
-        if (!requestId) return
+        if (!requestId) {
+          // Upload-Post returned 2xx but gave us no handle — without a
+          // request_id the sync cron can never confirm or fail this row,
+          // so treat it as a non-completion and roll back rather than
+          // leaving a handle-less scheduled ghost.
+          console.warn(`auto-schedule: no request_id returned for ${row.id}`, body)
+          await rollback(row.id, 'Upload-Post returned no request_id')
+          return
+        }
         await supaFetch(`content_scripts?id=eq.${row.id}`, {
           method: 'PATCH',
           body: { uploadpost_request_id: requestId, last_error: null, last_error_at: null },
@@ -621,8 +708,8 @@ async function autoSchedule({ res, profile_id, script_ids, user_id }) {
         }).catch(() => {})
         submitted++
       } catch (e) {
-        submitFailed++
         console.warn(`auto-schedule submit threw for ${row.id}:`, e?.message)
+        await rollback(row.id, e?.message || 'submission threw')
       }
     }
 
@@ -641,11 +728,18 @@ async function autoSchedule({ res, profile_id, script_ids, user_id }) {
     await Promise.all(workers)
   }
 
+  // When the Upload-Post handoff ran (apiKey present), the only rows that
+  // truly stayed scheduled are the ones that got a request_id — failures
+  // were rolled back to caption_ready. Report that as the scheduled count
+  // so the UI doesn't claim posts are queued when they were knocked back.
+  // With no apiKey (dev / misconfig) nothing was submitted, so fall back
+  // to the optimistic slot-assignment count.
+  const effectiveScheduled = apiKey ? submitted : scheduled
   return res.status(200).json({
-    scheduled,
+    scheduled: effectiveScheduled,
     submitted,
     submit_failed: submitFailed,
-    skipped: candidates.length - scheduled,
+    skipped: candidates.length - effectiveScheduled,
     skipped_no_media: skippedNoMedia,
   })
 }

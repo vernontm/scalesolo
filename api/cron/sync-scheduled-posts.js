@@ -170,7 +170,33 @@ export default async function handler(req, res) {
     ).catch(() => [])
     const rows = [...(dueScheduled || []), ...(orphanedFails || [])]
 
-    const results = { posted: 0, failed: 0, indeterminate: 0, errors: 0, backfilled: 0 }
+    const results = { posted: 0, failed: 0, indeterminate: 0, errors: 0, backfilled: 0, ghosts: 0 }
+
+    // Ghost sweep. A row marked `scheduled` and already past its fire
+    // time but carrying NO uploadpost_request_id was never actually
+    // queued at Upload-Post (e.g. a crash between the status flip and
+    // the request_id PATCH, or a legacy auto-schedule path that flipped
+    // status without submitting). The primary pass above can't see these
+    // — it filters uploadpost_request_id IS NOT NULL — so without this
+    // sweep they sit as scheduled forever and never publish. Flip them to
+    // failed with a clear reason so they surface in the UI instead of
+    // silently vanishing. Legit scheduled posts are always future-dated,
+    // so a past-due null-handle row is unambiguously stuck.
+    const ghosts = await supaFetch(
+      `content_scripts?status=eq.scheduled&scheduled_datetime=lt.${encodeURIComponent(nowIso)}` +
+      `&uploadpost_request_id=is.null&select=id,scheduled_datetime&limit=200`
+    ).catch(() => [])
+    for (const g of (ghosts || [])) {
+      await supaFetch(`content_scripts?id=eq.${g.id}`, {
+        method: 'PATCH',
+        body: {
+          status: 'failed',
+          last_error: 'Never submitted to Upload-Post (no request_id) and the scheduled time has passed. Re-publish or re-schedule this post.',
+          last_error_at: nowIso,
+        },
+        prefer: 'return=minimal',
+      }).then(() => { results.ghosts += 1 }).catch(() => {})
+    }
 
     for (const row of rows) {
       try {
