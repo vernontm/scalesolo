@@ -91,7 +91,18 @@ async function cleanupBrand(profileId) {
     })
   }
 
-  const orphans = jobs.filter((j) => !matchedJobIds.has(j.job_id) && !fuzzyMatchesLegacy(j))
+  // CRITICAL cross-app guard. The agency app (scalesolo-app) schedules to the
+  // SAME Upload-Post sub-accounts as this app, but its posts live in a
+  // separate marketplace database — so they are NOT in this app's
+  // content_scripts and would look like orphans here. Without this guard the
+  // cron DELETEs every agency-scheduled post within 30 min of it staging.
+  // Agency jobs carry a distinctive title shape: "<brand> · Day <N> · <date>".
+  // Never cancel those — they belong to the other system.
+  const isAgencyJob = (title) => / · Day \d+ · \d{4}-\d{2}-\d{2}/.test(String(title || ''))
+
+  const orphans = jobs.filter((j) =>
+    !matchedJobIds.has(j.job_id) && !fuzzyMatchesLegacy(j) && !isAgencyJob(j.title)
+  )
 
   let canceled = 0, failed = 0
   let cursor = 0
