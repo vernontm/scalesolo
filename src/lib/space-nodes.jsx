@@ -3784,14 +3784,26 @@ async function uploadLogoToBucket(file, profileId, kind = 'logos') {
 
 // ─── AUDIO UPLOAD ───────────────────────────────────────────────────────────
 async function uploadAudioToBucket(file, profileId) {
+  // Path's first segment has to satisfy the landing_media RLS policy:
+  //   - a profile UUID the user has access to (profile context picked
+  //     on the canvas), OR
+  //   - the user's own auth uid (fallback when no profile is wired in)
+  // 'shared' is also allowed by RLS but everyone would dump audio there,
+  // so we prefer the user's own folder when no profile is set.
+  let owner = profileId
+  if (!owner) {
+    const { data } = await supabase.auth.getUser()
+    owner = data?.user?.id
+  }
+  if (!owner) throw new Error('Sign in to upload audio.')
   const ext = (file.name.split('.').pop() || 'mp3').toLowerCase()
-  const path = `${profileId || 'shared'}/audio/${Date.now()}.${ext}`
+  const path = `${owner}/audio/${Date.now()}.${ext}`
   const { error } = await supabase.storage.from('landing-media').upload(path, file, {
     contentType: file.type || 'audio/mpeg', upsert: false,
   })
   if (error) throw new Error(`Upload failed: ${error.message}`)
-  const { data } = supabase.storage.from('landing-media').getPublicUrl(path)
-  return data.publicUrl
+  const { data: pub } = supabase.storage.from('landing-media').getPublicUrl(path)
+  return pub.publicUrl
 }
 
 // Frontend ceiling for the audio uploader. Real gating is server-side
@@ -3834,12 +3846,8 @@ function AudioUploadBody({ data, onPatch }) {
     // re-selected after we surface an error.
     if (inpRef.current) inpRef.current.value = ''
     if (!file) return
-    if (!profileId) {
-      // Silent return was hiding this — surface it so the user knows
-      // they need to set a brand profile context on the canvas first.
-      setErr('Pick a brand profile on the canvas before uploading audio.')
-      return
-    }
+    // uploadAudioToBucket falls back to auth.uid() when profileId is
+    // missing, so no need to gate here.
     setBusy(true); setErr(null)
     try {
       // Reject long audio up front so the user doesn't pay for an
