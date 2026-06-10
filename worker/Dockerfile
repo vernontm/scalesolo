@@ -43,6 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     xdg-utils \
     ffmpeg \
+    aubio-tools \
   && rm -rf /var/lib/apt/lists/*
 
 # Use the modern system ffmpeg (apt) over @ffmpeg-installer/ffmpeg.
@@ -53,6 +54,11 @@ ENV FFMPEG_PATH=/usr/bin/ffmpeg
 
 WORKDIR /app
 COPY package.json ./
+
+# Register bundled fonts (Plus Jakarta Sans 800 used by the brand-content
+# pipeline) so fontconfig / sharp / ffmpeg / resvg can find them by name.
+COPY fonts/ /usr/local/share/fonts/
+RUN fc-cache -fv > /dev/null 2>&1
 
 # Install Node deps. Puppeteer downloads Chrome to /root/.cache/puppeteer
 # during this step, baking it into the image so there's no per-cold-start

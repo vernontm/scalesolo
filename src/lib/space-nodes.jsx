@@ -2756,19 +2756,27 @@ function ImageUploadBody({ data, onPatch }) {
             'Existing clips: re-export from Photos / iMovie / Final Cut with H.264 codec.'
           )
         }
-        // Vertical-only enforcement before we burn bandwidth uploading.
+        // Aspect-ratio classification (no more vertical-only block).
+        // We accept 9:16, 1:1, and 16:9; anything in between snaps to
+        // the closest of those buckets. Truly off-shape inputs (e.g.,
+        // ultra-wide cinema crops, panoramic photos turned into video)
+        // still get rejected so downstream renders don't mangle them.
+        let orientation = null
         const meta = await probeVideoMeta(f).catch(() => null)
         if (meta && meta.width && meta.height) {
           const aspect = meta.width / meta.height
-          if (aspect > 0.65) {
-            throw new Error(`Vertical (9:16) required — got ${meta.width}×${meta.height}`)
+          if (aspect <= 0.7)        orientation = '9:16'      // portrait
+          else if (aspect < 1.4)    orientation = '1:1'       // square-ish
+          else if (aspect <= 2.0)   orientation = '16:9'      // landscape
+          else {
+            throw new Error(`Unsupported aspect ratio (${meta.width}×${meta.height}). Use 9:16, 1:1, or 16:9.`)
           }
         }
         const url = await uploadVideoWithProgress(f, profileId, (p) => {
           updateOne(row.localId, { pct: p.pct })
         })
         updateOne(row.localId, { status: 'done', pct: 100 })
-        return { kind: 'video', url, name: `video ${namedCount.video}` }
+        return { kind: 'video', url, name: `video ${namedCount.video}`, orientation }
       } else {
         // Images go through the JSON+base64 reference-image API. We
         // don't get byte-level progress from that path, but image
@@ -3822,7 +3830,16 @@ function AudioUploadBody({ data, onPatch }) {
 
   async function onPick(e) {
     const file = e.target.files?.[0]
-    if (!file || !profileId) return
+    // Reset the picker no matter what happens so the same file can be
+    // re-selected after we surface an error.
+    if (inpRef.current) inpRef.current.value = ''
+    if (!file) return
+    if (!profileId) {
+      // Silent return was hiding this — surface it so the user knows
+      // they need to set a brand profile context on the canvas first.
+      setErr('Pick a brand profile on the canvas before uploading audio.')
+      return
+    }
     setBusy(true); setErr(null)
     try {
       // Reject long audio up front so the user doesn't pay for an
@@ -3833,8 +3850,12 @@ function AudioUploadBody({ data, onPatch }) {
       }
       const u = await uploadAudioToBucket(file, profileId)
       onPatch({ url: u, name: file.name, duration_secs: Math.round(seconds || 0) })
-    } catch (e) { setErr(e.message) }
-    finally { setBusy(false); if (inpRef.current) inpRef.current.value = '' }
+    } catch (e) {
+      // Bubble up Supabase's specific error so RLS / MIME / size issues
+      // are diagnosable instead of looking like a silent fail.
+      const msg = e?.message || String(e)
+      setErr(`Upload failed: ${msg}`)
+    } finally { setBusy(false) }
   }
   function clear() { onPatch({ url: '', name: '', duration_secs: null }) }
 

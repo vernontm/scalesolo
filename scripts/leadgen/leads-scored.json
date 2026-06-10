@@ -1,0 +1,1840 @@
+[
+  {
+    "title": "Gulf Coast Auto Shield",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 30,
+    "rating_google": 4.6,
+    "phone": "(832) 979-2757",
+    "website": "http://www.gulfcoastauto.us/",
+    "final_url": "http://www.gulfcoastauto.us/",
+    "email": null,
+    "email_source": null,
+    "score": 9,
+    "reasons": [
+      "no mobile viewport meta (not responsive)",
+      "no media queries detected",
+      "no HTTPS",
+      "very thin content (~1 words)",
+      "no modern CSS layout (flex/grid)"
+    ],
+    "error": null
+  },
+  {
+    "title": "Fizz Nail Lounge",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 371,
+    "rating_google": 4.5,
+    "phone": "(832) 409-5606",
+    "website": "https://www.fizznaillounge.com/?utm_source=google&utm_medium=organic&utm_campaign=west_gmb",
+    "final_url": "https://www.fizznaillounge.com/?utm_source=google&utm_medium=organic&utm_campaign=west_gmb",
+    "email": null,
+    "email_source": null,
+    "score": 8,
+    "reasons": [
+      "stale copyright year 2022",
+      "table-based layout",
+      "legacy HTML tags (font/bgcolor)",
+      "very image-heavy"
+    ],
+    "error": null
+  },
+  {
+    "title": "Same Day Mobile Auto Detailing Houston",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 14,
+    "rating_google": 4.4,
+    "phone": "(713) 766-6152",
+    "website": "https://www.samedaymobiledetailing.com/?",
+    "final_url": "https://www.samedaymobiledetailing.com/?",
+    "email": null,
+    "email_source": null,
+    "score": 7,
+    "reasons": [
+      "no mobile viewport meta (not responsive)",
+      "no media queries detected",
+      "very thin content (~83 words)",
+      "no modern CSS layout (flex/grid)"
+    ],
+    "error": null
+  },
+  {
+    "title": "Coco Nail Spa",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 1264,
+    "rating_google": 4.7,
+    "phone": "(713) 239-0601",
+    "website": "http://coconailspahouston.com/",
+    "final_url": "https://coconailspahouston.com/",
+    "email": "coconailspa77005@gmail.com",
+    "email_source": "mailto",
+    "score": 5,
+    "reasons": [
+      "stale copyright year 2019",
+      "very image-heavy",
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Cambrian Coffee",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 528,
+    "rating_google": 4.8,
+    "phone": "(832) 649-5916",
+    "website": "https://cambriancoffeehtx.com/",
+    "final_url": "https://cambriancoffeehtx.com/",
+    "email": "team@latofonts.com",
+    "email_source": "page",
+    "score": 5,
+    "reasons": [
+      "stale copyright year 2019",
+      "platform: GoDaddy builder"
+    ],
+    "error": null
+  },
+  {
+    "title": "Prestige Hand Car Wash",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 496,
+    "rating_google": 3.9,
+    "phone": "(832) 940-1448",
+    "website": "http://www.prestigehandcarwash.com/",
+    "final_url": "https://prestigehandcarwash.com/",
+    "email": "prestigehandcarwash1@gmail.com",
+    "email_source": "mailto",
+    "score": 5,
+    "reasons": [
+      "copyright year 2025",
+      "table-based layout",
+      "platform: GoDaddy builder"
+    ],
+    "error": null
+  },
+  {
+    "title": "Dripped Nails & Spa",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 192,
+    "rating_google": 4.6,
+    "phone": "(713) 814-8189",
+    "website": "http://drippedhtx.org/",
+    "final_url": "https://drippedhtx.org/",
+    "email": "drippedhtx@gmail.com",
+    "email_source": "mailto",
+    "score": 5,
+    "reasons": [
+      "copyright year 2025",
+      "table-based layout",
+      "platform: GoDaddy builder"
+    ],
+    "error": null
+  },
+  {
+    "title": "Mochi Dog Cafe",
+    "category": "Donut shop",
+    "city": "Houston",
+    "reviews": 58,
+    "rating_google": 4.6,
+    "phone": "(281) 803-8890",
+    "website": "https://www.totoromochidonut.com/",
+    "final_url": "https://www.totoromochidonut.com/",
+    "email": "totoromochidonut@gmail.com",
+    "email_source": "mailto",
+    "score": 5,
+    "reasons": [
+      "stale copyright year 2015",
+      "very image-heavy",
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Infinity Nail Spa",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 475,
+    "rating_google": 4.9,
+    "phone": "(713) 492-2547",
+    "website": "http://infinitynailspahouston.com/",
+    "final_url": "https://infinitynailspahouston.com/",
+    "email": "infinitynailspa8@gmail.com",
+    "email_source": "page",
+    "score": 4,
+    "reasons": [
+      "stale copyright year 2023",
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Sofia Grace Nail Boutique",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 346,
+    "rating_google": 4.7,
+    "phone": "(713) 961-2686",
+    "website": "https://sofiagracenails.com/",
+    "final_url": "https://sofiagracenails.com/",
+    "email": "contact@sofiagracenails.com",
+    "email_source": "mailto",
+    "score": 4,
+    "reasons": [
+      "stale copyright year 2021",
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Nail'ori",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 189,
+    "rating_google": 4.6,
+    "phone": "(713) 532-8191",
+    "website": "http://nailori.com/",
+    "final_url": "https://www.nailori.com/",
+    "email": null,
+    "email_source": null,
+    "score": 4,
+    "reasons": [
+      "stale copyright year 2020",
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "The Coffee Garden",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 180,
+    "rating_google": 4.6,
+    "phone": "(713) 955-4420",
+    "website": "https://thecoffeegarden.com/heights-coffee-shop/",
+    "final_url": "https://thecoffeegarden.com/heights-coffee-shop/",
+    "email": "info@thecoffeegarden.com",
+    "email_source": "mailto",
+    "score": 4,
+    "reasons": [
+      "stale copyright year 2023",
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Klutchdetail & Wraps",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 145,
+    "rating_google": 5,
+    "phone": "(832) 209-0155",
+    "website": "https://klutchdetail.com/",
+    "final_url": "https://klutchdetail.com/",
+    "email": null,
+    "email_source": null,
+    "score": 4,
+    "reasons": [
+      "table-based layout",
+      "platform: GoDaddy builder"
+    ],
+    "error": null
+  },
+  {
+    "title": "Plush Nail Bar Kingwood",
+    "category": "Nail salon",
+    "city": "Kingwood",
+    "reviews": 137,
+    "rating_google": 4.9,
+    "phone": "(346) 745-6874",
+    "website": "https://www.plushnailbarus.com/",
+    "final_url": "https://plushnailbarus.com/",
+    "email": "plushnailbartx@gmail.com",
+    "email_source": "mailto",
+    "score": 4,
+    "reasons": [
+      "table-based layout",
+      "very image-heavy",
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "K-TEA",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 126,
+    "rating_google": 4.6,
+    "phone": "(281) 416-4695",
+    "website": "https://ktea.dine.online/",
+    "final_url": "https://ktea.dine.online/",
+    "email": null,
+    "email_source": null,
+    "score": 4,
+    "reasons": [
+      "no media queries detected",
+      "very thin content (~114 words)",
+      "no modern CSS layout (flex/grid)"
+    ],
+    "error": null
+  },
+  {
+    "title": "Kokee Tea",
+    "category": "Bubble tea store",
+    "city": "Houston",
+    "reviews": 84,
+    "rating_google": 4.1,
+    "phone": "(832) 775-5333",
+    "website": "http://www.kokeetea.com/",
+    "final_url": "https://www.kokeetea.com/",
+    "email": "hello@kokeetea.com",
+    "email_source": "contact-page",
+    "score": 4,
+    "reasons": [
+      "stale copyright year 2019",
+      "very image-heavy",
+      "platform: Wix"
+    ],
+    "error": null
+  },
+  {
+    "title": "Hitmen Auto Detailing",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 53,
+    "rating_google": 5,
+    "phone": "(855) 444-8636",
+    "website": "http://www.hitmenautodetailing.com/",
+    "final_url": "http://www.hitmenautodetailing.com/",
+    "email": null,
+    "email_source": null,
+    "score": 4,
+    "reasons": [
+      "no media queries detected",
+      "no HTTPS",
+      "no modern CSS layout (flex/grid)"
+    ],
+    "error": null
+  },
+  {
+    "title": "D’Limo Nail Lounge",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 4217,
+    "rating_google": 4.9,
+    "phone": "(346) 799-7799",
+    "website": "https://dlimonaillounge.com/",
+    "final_url": "https://dlimonaillounge.com/",
+    "email": null,
+    "email_source": null,
+    "score": 3,
+    "reasons": [
+      "copyright year 2024",
+      "very image-heavy",
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Milano Nail Spa Meyerland",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 3324,
+    "rating_google": 4.8,
+    "phone": "(281) 974-2904",
+    "website": "https://milanonailspameyerland.com/",
+    "final_url": "https://milanonailspameyerland.com/",
+    "email": "milanonailspameyerland@gmail.com",
+    "email_source": "page",
+    "score": 3,
+    "reasons": [
+      "copyright year 2024",
+      "very image-heavy",
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Shipley Do-Nuts",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 1213,
+    "rating_google": 4,
+    "phone": "(281) 873-8786",
+    "website": "https://shipleydonuts.com/locations/121-w-rankin-rd",
+    "final_url": "https://shipleydonuts.com/locations/121-w-rankin-rd-houston",
+    "email": null,
+    "email_source": null,
+    "score": 3,
+    "reasons": [
+      "no media queries detected",
+      "platform: WordPress",
+      "no modern CSS layout (flex/grid)"
+    ],
+    "error": null
+  },
+  {
+    "title": "Nails Life Studio",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 586,
+    "rating_google": 4.5,
+    "phone": "(832) 808-8299",
+    "website": "http://nailslifestudio.com/",
+    "final_url": "https://www.nailslifestudio.com/",
+    "email": null,
+    "email_source": null,
+    "score": 3,
+    "reasons": [
+      "stale copyright year 2023",
+      "platform: Wix"
+    ],
+    "error": null
+  },
+  {
+    "title": "Ishine Express Car Wash & Detail",
+    "category": "Car wash",
+    "city": "Houston",
+    "reviews": 460,
+    "rating_google": 4.8,
+    "phone": "(281) 741-9033",
+    "website": "http://www.ishinecarwash.com/SummerLake",
+    "final_url": "https://ishinecarwash.com/SummerLake",
+    "email": null,
+    "email_source": null,
+    "score": 3,
+    "reasons": [
+      "stale copyright year 2019"
+    ],
+    "error": null
+  },
+  {
+    "title": "Dreams Nail Spa",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 337,
+    "rating_google": 4.3,
+    "phone": "(713) 877-9888",
+    "website": "http://dreamsnailspahouston.com/",
+    "final_url": "https://dreamsnailspahouston.com/",
+    "email": null,
+    "email_source": null,
+    "score": 3,
+    "reasons": [
+      "table-based layout",
+      "very image-heavy"
+    ],
+    "error": null
+  },
+  {
+    "title": "Shipley Do-Nuts",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 318,
+    "rating_google": 4.3,
+    "phone": "(281) 931-7000",
+    "website": "https://shipleydonuts.com/locations/1401-w-mt-houston",
+    "final_url": "https://shipleydonuts.com/locations/1401-w-mt-houston-houston",
+    "email": null,
+    "email_source": null,
+    "score": 3,
+    "reasons": [
+      "no media queries detected",
+      "platform: WordPress",
+      "no modern CSS layout (flex/grid)"
+    ],
+    "error": null
+  },
+  {
+    "title": "Palazzio Nail Lounge River Oaks",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 3727,
+    "rating_google": 4.8,
+    "phone": "(713) 942-2525",
+    "website": "https://palazzionailloungeriveroaks.com/",
+    "final_url": "https://palazzionailloungeriveroaks.com/",
+    "email": "palazzionailloungeriveroaks@gmail.com",
+    "email_source": "contact-page",
+    "score": 2,
+    "reasons": [
+      "very image-heavy",
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Lux Nail Spa - Nail Salon Westhimer Houston TX",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 1837,
+    "rating_google": 4.6,
+    "phone": "(713) 782-2121",
+    "website": "https://www.luxnailspaonline.com/",
+    "final_url": "https://luxnailspaonline.com/",
+    "email": null,
+    "email_source": null,
+    "score": 2,
+    "reasons": [
+      "no media queries detected",
+      "very image-heavy"
+    ],
+    "error": null
+  },
+  {
+    "title": "Luce Avenue Coffee Roasters-Garden Oaks",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 815,
+    "rating_google": 4.5,
+    "phone": "(832) 962-8902",
+    "website": "https://www.lucecoffeeroasters.com/",
+    "final_url": "https://lucecoffeeroasters.com/",
+    "email": "info@lucecoffeeroasters.com",
+    "email_source": "mailto",
+    "score": 2,
+    "reasons": [
+      "very image-heavy",
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Dorado Nail Bar",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 800,
+    "rating_google": 4.8,
+    "phone": "(346) 692-2324",
+    "website": "https://doradonailbartx.com/",
+    "final_url": "https://doradonailbartx.com/",
+    "email": "doradonailbar@yahoo.com",
+    "email_source": "mailto",
+    "score": 2,
+    "reasons": [
+      "copyright year 2024",
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Peet's Coffee",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 655,
+    "rating_google": 4,
+    "phone": "(281) 233-7650",
+    "website": "http://www.peets.com/",
+    "final_url": "https://www.peets.com/",
+    "email": null,
+    "email_source": null,
+    "score": 2,
+    "reasons": [
+      "very image-heavy",
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Linh's Luxe Nails",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 511,
+    "rating_google": 4.5,
+    "phone": "(281) 888-5079",
+    "website": "https://luxenails.net/",
+    "final_url": "https://luxenails.net/",
+    "email": null,
+    "email_source": null,
+    "score": 2,
+    "reasons": [
+      "copyright year 2025",
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Pretty Nails & Lashes",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 430,
+    "rating_google": 4.7,
+    "phone": "(346) 446-8420",
+    "website": "https://prettynailslashes.com/",
+    "final_url": "https://prettynailslashes.com/",
+    "email": "prettynailslashes100b@gmail.com",
+    "email_source": "mailto",
+    "score": 2,
+    "reasons": [
+      "copyright year 2024",
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Heavenly Lashes Nail Spa",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 351,
+    "rating_google": 4.5,
+    "phone": "(713) 521-5886",
+    "website": "https://booking.gposdev.net/canaryheavenlynails/book",
+    "final_url": "https://booking.gposdev.net/canaryheavenlynails/book",
+    "email": null,
+    "email_source": null,
+    "score": 2,
+    "reasons": [
+      "very thin content (~42 words)"
+    ],
+    "error": null
+  },
+  {
+    "title": "Naliq Nail Bar",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 314,
+    "rating_google": 4.9,
+    "phone": "(832) 318-1833",
+    "website": "https://naliqnailbar.com/",
+    "final_url": "https://naliqnailbar.com/",
+    "email": null,
+    "email_source": null,
+    "score": 2,
+    "reasons": [
+      "copyright year 2025",
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Brio Hand Carwash & Detail",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 277,
+    "rating_google": 4.5,
+    "phone": "(832) 649-2392",
+    "website": "http://briocarwash.com/",
+    "final_url": "https://briocarwash.com/",
+    "email": "briocarwash@gmail.com",
+    "email_source": "page",
+    "score": 2,
+    "reasons": [
+      "copyright year 2025",
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Car Detailing HTX",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 161,
+    "rating_google": 4.7,
+    "phone": "(713) 309-6421",
+    "website": "https://cardetailinghtx.com/?utm_source=google-business&utm_medium=organic",
+    "final_url": "https://cardetailinghtx.com/?utm_source=google-business&utm_medium=organic",
+    "email": null,
+    "email_source": null,
+    "score": 2,
+    "reasons": [
+      "very image-heavy",
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Zewd Nails & Spa - NEW MANAGEMENT- GRAND OPENING - 20% off on All services",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 153,
+    "rating_google": 4.4,
+    "phone": "(713) 485-0001",
+    "website": "https://www.lldtek.org/salon/appt/VkZoZk1URTNNekU9",
+    "final_url": "https://www.lldtek.org/salon/appt/VkZoZk1URTNNekU9",
+    "email": "info@level3tek.com",
+    "email_source": "contact-page",
+    "score": 2,
+    "reasons": [
+      "no media queries detected",
+      "very image-heavy"
+    ],
+    "error": null
+  },
+  {
+    "title": "Hyde Park Nails",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 99,
+    "rating_google": 4.3,
+    "phone": "(713) 278-2141",
+    "website": "https://hydeparknails.com/",
+    "final_url": "https://hydeparknails.com/",
+    "email": null,
+    "email_source": null,
+    "score": 2,
+    "reasons": [
+      "copyright year 2025",
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Nails of America",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 6190,
+    "rating_google": 4.8,
+    "phone": "(346) 521-4956",
+    "website": "https://noariveroaks.hayven.ai/",
+    "final_url": "https://noariveroaks.hayven.ai/",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "Milano Nail Spa West U",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 3713,
+    "rating_google": 4.8,
+    "phone": "(832) 767-5541",
+    "website": "https://milanonailwestuniversity.com/",
+    "final_url": "https://www.milanonailwestuniversity.com/",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "Starbucks Coffee Company",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 2709,
+    "rating_google": 3.8,
+    "phone": "(281) 931-0269",
+    "website": "https://www.starbucks.com/store-locator/store/8359/",
+    "final_url": "https://www.starbucks.com/store-locator/store/8359/",
+    "email": "press@starbucks.com",
+    "email_source": "contact-page",
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "CAESARS NAILS & SPA",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 2093,
+    "rating_google": 4.8,
+    "phone": "(713) 781-7700",
+    "website": "https://caesarsnailsspa.com/?utm_source=google&utm_medium=gbp&utm_campaign=google_website",
+    "final_url": "https://caesarsnailsspa.com/?utm_source=google&utm_medium=gbp&utm_campaign=google_website",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "Starbucks Coffee Company",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 1189,
+    "rating_google": 4.3,
+    "phone": "(832) 237-7586",
+    "website": "https://www.starbucks.com/store-locator/store/15516/",
+    "final_url": "https://www.starbucks.com/store-locator/store/15516/",
+    "email": "press@starbucks.com",
+    "email_source": "contact-page",
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "Slowpokes",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 1146,
+    "rating_google": 4.6,
+    "phone": "(832) 742-5949",
+    "website": "http://www.imaslowpoke.com/",
+    "final_url": "https://www.imaslowpoke.com/",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [
+      "no media queries detected"
+    ],
+    "error": null
+  },
+  {
+    "title": "Starbucks Coffee Company",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 1050,
+    "rating_google": 3,
+    "phone": "(281) 767-6180",
+    "website": "https://www.starbucks.com/store-locator/store/1016587",
+    "final_url": "https://www.starbucks.com/store-locator/store/1016587",
+    "email": "press@starbucks.com",
+    "email_source": "contact-page",
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "Nails Bar Of American",
+    "category": "Nail salon",
+    "city": "Cypress",
+    "reviews": 864,
+    "rating_google": 4.9,
+    "phone": "(346) 379-8269",
+    "website": "https://nailsbarofamerican.com/",
+    "final_url": "https://nailsbarofamerican.com/",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [
+      "no media queries detected"
+    ],
+    "error": null
+  },
+  {
+    "title": "Starbucks Coffee Company",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 850,
+    "rating_google": 4.1,
+    "phone": "(281) 894-5262",
+    "website": "https://www.starbucks.com/store-locator/store/1008972/",
+    "final_url": "https://www.starbucks.com/store-locator/store/1008972/",
+    "email": "press@starbucks.com",
+    "email_source": "contact-page",
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "The Coffee House at West End",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 817,
+    "rating_google": 4.5,
+    "phone": "",
+    "website": "http://thecoffeehousehtx.com/",
+    "final_url": "https://www.thecoffeehousehtx.com/",
+    "email": "hello@thecoffeehousehtx.com",
+    "email_source": "mailto",
+    "score": 1,
+    "reasons": [
+      "platform: Squarespace"
+    ],
+    "error": null
+  },
+  {
+    "title": "Nails of America Tanglewood",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 816,
+    "rating_google": 4.8,
+    "phone": "(346) 226-5305",
+    "website": "https://tanglewoodnoa.com/",
+    "final_url": "https://tanglewoodnoa.com/",
+    "email": "nailofamerica@gmail.com",
+    "email_source": "mailto",
+    "score": 1,
+    "reasons": [
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Milano Nail Spa - Galleria",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 742,
+    "rating_google": 4.6,
+    "phone": "(832) 934-8790",
+    "website": "https://milanogalleria.hayven.ai/",
+    "final_url": "https://milanogalleria.hayven.ai/",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "Starbucks Coffee Company",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 736,
+    "rating_google": 4.1,
+    "phone": "(281) 897-9912",
+    "website": "https://www.starbucks.com/store-locator/store/15275/",
+    "final_url": "https://www.starbucks.com/store-locator/store/15275/",
+    "email": "press@starbucks.com",
+    "email_source": "contact-page",
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "Tenfold Coffee Company",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 716,
+    "rating_google": 4.6,
+    "phone": "",
+    "website": "https://tenfoldcoffee.com/",
+    "final_url": "https://tenfoldcoffee.com/",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "Eagle Hand Carwash & Detail",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 607,
+    "rating_google": 4.4,
+    "phone": "(713) 637-4808",
+    "website": "http://www.eaglehandcarwash.com/",
+    "final_url": "https://www.eaglehandcarwash.com/",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [
+      "platform: Squarespace"
+    ],
+    "error": null
+  },
+  {
+    "title": "Elegant Nails & Spa",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 600,
+    "rating_google": 4.9,
+    "phone": "(832) 696-6896",
+    "website": "http://elegantnails-spastudio.com/",
+    "final_url": "https://www.elegantnails-spastudio.com/",
+    "email": "elegantnails.spa.77005@gmail.com",
+    "email_source": "contact-page",
+    "score": 1,
+    "reasons": [
+      "platform: Wix"
+    ],
+    "error": null
+  },
+  {
+    "title": "Soap Hand Car Wash",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 568,
+    "rating_google": 3.8,
+    "phone": "(713) 979-7798",
+    "website": "https://soaphandcarwash.com/",
+    "final_url": "https://soaphandcarwash.com/",
+    "email": "soaprich@soaphand.com",
+    "email_source": "mailto",
+    "score": 1,
+    "reasons": [
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Slow Drip TX",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 519,
+    "rating_google": 4.8,
+    "phone": "(713) 230-8359",
+    "website": "https://www.slowdriptx.com/",
+    "final_url": "https://www.slowdriptx.com/",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "Luxury Nails & iLashes(10% off for first time clients on weekdays)",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 517,
+    "rating_google": 4.8,
+    "phone": "(713) 485-6274",
+    "website": "https://luxurynailsilasheshouston.com/",
+    "final_url": "https://luxurynailsilasheshouston.com/",
+    "email": "luxurynailsandilashes@gmail.com",
+    "email_source": "mailto",
+    "score": 1,
+    "reasons": [
+      "very image-heavy"
+    ],
+    "error": null
+  },
+  {
+    "title": "Le Bijou Nails and Spa (10% Off New Customers)",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 505,
+    "rating_google": 4.6,
+    "phone": "(713) 485-0387",
+    "website": "https://lebijounailshouston.zoca.com/?utm_source=googlemaps&utm_medium=googlemapsprofile&utm_campaign=googlemaps",
+    "final_url": "https://lebijounailshouston.zoca.com/?utm_source=googlemaps&utm_medium=googlemapsprofile&utm_campaign=googlemaps",
+    "email": "labijousalonandspa@gmail.com",
+    "email_source": "mailto",
+    "score": 1,
+    "reasons": [
+      "very image-heavy"
+    ],
+    "error": null
+  },
+  {
+    "title": "La Vita Coffee",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 495,
+    "rating_google": 4.8,
+    "phone": "(713) 864-0000",
+    "website": "http://www.lavitacoffee.com/",
+    "final_url": "https://washingtonpatio.com/lavitacoffee/",
+    "email": "contact@lavitacoffee.com",
+    "email_source": "mailto",
+    "score": 1,
+    "reasons": [
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "XELA Coffee Roasters",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 492,
+    "rating_google": 4.8,
+    "phone": "(214) 674-3112",
+    "website": "http://xelaroasters.com/",
+    "final_url": "https://xelaroasters.com/",
+    "email": "benji@xelaroasters.com",
+    "email_source": "page",
+    "score": 1,
+    "reasons": [
+      "platform: Squarespace"
+    ],
+    "error": null
+  },
+  {
+    "title": "Starbucks",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 481,
+    "rating_google": 3.2,
+    "phone": "(281) 767-6177",
+    "website": "https://www.starbucks.com/store-locator/store/10667",
+    "final_url": "https://www.starbucks.com/store-locator/store/10667",
+    "email": "press@starbucks.com",
+    "email_source": "contact-page",
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "Fifth Vessel Coffee Co.",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 453,
+    "rating_google": 4.7,
+    "phone": "",
+    "website": "http://fifth.coffee/",
+    "final_url": "https://thefifthvessel.com/",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [
+      "platform: Squarespace"
+    ],
+    "error": null
+  },
+  {
+    "title": "Katz Coffee",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 446,
+    "rating_google": 4.9,
+    "phone": "(713) 864-3338",
+    "website": "http://www.katzcoffee.com/",
+    "final_url": "https://katzcoffee.com/",
+    "email": "ericjonesmyemail@gmail.com",
+    "email_source": "contact-page",
+    "score": 1,
+    "reasons": [
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Uptown Galleria Nails & Spa Houston",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 408,
+    "rating_google": 4.5,
+    "phone": "(832) 858-7593",
+    "website": "https://www.uptowngallerianails.com/",
+    "final_url": "https://www.uptowngallerianails.com/",
+    "email": "uptowngallerianails@yahoo.com",
+    "email_source": "mailto",
+    "score": 1,
+    "reasons": [
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "M. Vince Nail Spa",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 405,
+    "rating_google": 4.8,
+    "phone": "(281) 974-2315",
+    "website": "https://www.mvincenailspa.com/?fbclid=PAZXh0bgNhZW0CMTEAAabgI0XXNc7oIr0hWCzjbxwxx7w3Ucb067cQPK814NC5CjjLiLixa_28FO8_aem_ksr9PKK6mLKf20ohcIyCsQ",
+    "final_url": "https://www.mvincenailspa.com/?fbclid=PAZXh0bgNhZW0CMTEAAabgI0XXNc7oIr0hWCzjbxwxx7w3Ucb067cQPK814NC5CjjLiLixa_28FO8_aem_ksr9PKK6mLKf20ohcIyCsQ",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [
+      "platform: Wix"
+    ],
+    "error": null
+  },
+  {
+    "title": "Starbucks Coffee Company",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 400,
+    "rating_google": 3.9,
+    "phone": "(281) 970-5129",
+    "website": "https://www.starbucks.com/store-locator/store/13753/",
+    "final_url": "https://www.starbucks.com/store-locator/store/13753/",
+    "email": "press@starbucks.com",
+    "email_source": "contact-page",
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "Cha Nails Spa",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 375,
+    "rating_google": 4.8,
+    "phone": "(713) 622-6245",
+    "website": "https://chanailshouston.com/",
+    "final_url": "https://chanailshouston.com/",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [
+      "no media queries detected"
+    ],
+    "error": null
+  },
+  {
+    "title": "Starbucks Coffee Company",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 354,
+    "rating_google": 4.1,
+    "phone": "(281) 875-2222",
+    "website": "https://www.starbucks.com/store-locator/store/13729",
+    "final_url": "https://www.starbucks.com/store-locator/store/13729",
+    "email": "press@starbucks.com",
+    "email_source": "contact-page",
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "Golden Nails & Spa",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 340,
+    "rating_google": 4.5,
+    "phone": "(832) 688-5884",
+    "website": "https://goldennailshouston.com/",
+    "final_url": "https://goldennailshouston.com/",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [
+      "no media queries detected"
+    ],
+    "error": null
+  },
+  {
+    "title": "D’Luxe Hand Carwash & Detail",
+    "category": "Car wash",
+    "city": "Houston",
+    "reviews": 321,
+    "rating_google": 4.5,
+    "phone": "(832) 242-1885",
+    "website": "http://dluxehandcarwash.com/",
+    "final_url": "https://www.dluxehandcarwash.com/",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [
+      "platform: Wix"
+    ],
+    "error": null
+  },
+  {
+    "title": "Bean Theory Cafe",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 294,
+    "rating_google": 4.7,
+    "phone": "(713) 485-0401",
+    "website": "https://www.beantheorycafe.com/",
+    "final_url": "https://beantheorycafe.com/",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Café Forth",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 279,
+    "rating_google": 4.6,
+    "phone": "(713) 814-8198",
+    "website": "http://cafeforth.com/",
+    "final_url": "https://www.cafeforth.com/",
+    "email": "coffeebar@forthandnomad.com",
+    "email_source": "page",
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "E1 AutoSpa",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 277,
+    "rating_google": 4.9,
+    "phone": "(832) 301-0809",
+    "website": "https://e1autospa.com/",
+    "final_url": "https://e1autospa.com/",
+    "email": "info@e1autospa.com",
+    "email_source": "mailto",
+    "score": 1,
+    "reasons": [
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Kopi Cowboy Coffee",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 272,
+    "rating_google": 5,
+    "phone": "(832) 576-5240",
+    "website": "http://www.kopicowboy.com/",
+    "final_url": "https://www.kopicowboy.com/",
+    "email": "thekopicowboy@gmail.com",
+    "email_source": "contact-page",
+    "score": 1,
+    "reasons": [
+      "platform: Squarespace"
+    ],
+    "error": null
+  },
+  {
+    "title": "Asch Building",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 254,
+    "rating_google": 4.8,
+    "phone": "(281) 658-4901",
+    "website": "http://aschbuilding.com/",
+    "final_url": "https://aschbuilding.com/",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "Brio Hand Car Wash & Detail - Spring Branch",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 251,
+    "rating_google": 4.7,
+    "phone": "(832) 649-7626",
+    "website": "https://www.washwithbrio.com/",
+    "final_url": "https://washwithbrio.com/",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Rest House Cafe",
+    "category": "Restaurant",
+    "city": "Houston",
+    "reviews": 234,
+    "rating_google": 4.6,
+    "phone": "(281) 807-3888",
+    "website": "https://resthousecafe.com/",
+    "final_url": "https://ranch.ranchobuenavistamx.com/",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [
+      "very image-heavy"
+    ],
+    "error": null
+  },
+  {
+    "title": "New Heights Coffee Roasters",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 230,
+    "rating_google": 4.7,
+    "phone": "",
+    "website": "https://www.newheightscoffeeroasters.com/",
+    "final_url": "https://www.newheightscoffee.com/",
+    "email": "coffee@newheightscoffeeroasters.com",
+    "email_source": "mailto",
+    "score": 1,
+    "reasons": [
+      "copyright year 2024",
+      "platform: Wix"
+    ],
+    "error": null
+  },
+  {
+    "title": "Mark of Excellence",
+    "category": "Car detailing service",
+    "city": "Humble",
+    "reviews": 184,
+    "rating_google": 4.6,
+    "phone": "(281) 548-2106",
+    "website": "http://moedetailing.com/",
+    "final_url": "https://www.moedetailing.com/",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "Sunny Nail Spa",
+    "category": "Nail salon",
+    "city": "Tomball",
+    "reviews": 147,
+    "rating_google": 4.7,
+    "phone": "(346) 336-6995",
+    "website": "https://booking.gocheckin.net/v2/11799",
+    "final_url": "https://booking.gocheckin.net/v2/11799",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "Waygood - Coffee Shop",
+    "category": "Coffee shop",
+    "city": "Humble",
+    "reviews": 103,
+    "rating_google": 4.7,
+    "phone": "(833) 697-8955",
+    "website": "https://www.waygoodcompany.com/",
+    "final_url": "https://www.waygoodcompany.com/",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "Faevaa Detail World",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 101,
+    "rating_google": 4.6,
+    "phone": "(346) 532-3822",
+    "website": "http://www.faevaadetailworld.com/",
+    "final_url": "https://faevaadetailworld.com/",
+    "email": "info@faevaadetailworld.com",
+    "email_source": "page",
+    "score": 1,
+    "reasons": [
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Pastel Boutique Bakery",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 101,
+    "rating_google": 4.5,
+    "phone": "(832) 461-1190",
+    "website": "http://www.pastelboutiquehtx.com/",
+    "final_url": "https://pastelboutiquehtx.com/",
+    "email": "ideas.pastel@gmail.com",
+    "email_source": "page",
+    "score": 1,
+    "reasons": [
+      "very image-heavy",
+      "platform: Squarespace"
+    ],
+    "error": null
+  },
+  {
+    "title": "Diamond Auto Spa",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 91,
+    "rating_google": 5,
+    "phone": "(346) 319-5961",
+    "website": "http://diamondautospa.com/",
+    "final_url": "https://www.diamondautospa.com/",
+    "email": "info@diamondautospa.com",
+    "email_source": "mailto",
+    "score": 1,
+    "reasons": [
+      "platform: Wix"
+    ],
+    "error": null
+  },
+  {
+    "title": "Black Rock Coffee Bar",
+    "category": "Coffee shop",
+    "city": "Humble",
+    "reviews": 75,
+    "rating_google": 4.2,
+    "phone": "(833) 843-5776",
+    "website": "https://www.br.coffee/locations/fm-1960",
+    "final_url": "https://www.br.coffee/locations/fm-1960",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [
+      "copyright year 2025"
+    ],
+    "error": null
+  },
+  {
+    "title": "Starbucks Coffee Company",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 75,
+    "rating_google": 2.5,
+    "phone": "(281) 767-6180",
+    "website": "https://www.starbucks.com/store-locator/store/1013994",
+    "final_url": "https://www.starbucks.com/store-locator/store/1013994",
+    "email": "press@starbucks.com",
+    "email_source": "contact-page",
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "Blackwater Coffee Roasters",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 71,
+    "rating_google": 4.9,
+    "phone": "(281) 205-8579",
+    "website": "http://www.bwcroasters.com/",
+    "final_url": "https://bwcroasters.com/",
+    "email": "info@stagheaddesigns.com",
+    "email_source": "page",
+    "score": 1,
+    "reasons": [
+      "very image-heavy"
+    ],
+    "error": null
+  },
+  {
+    "title": "Detail Garage - North Houston",
+    "category": "Car accessories store",
+    "city": "Houston",
+    "reviews": 66,
+    "rating_google": 4.2,
+    "phone": "(346) 219-0880",
+    "website": "http://www.detailgarage.com/location",
+    "final_url": "https://detailgarage.com/pages/store-locator",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "WC Mobile Detailing",
+    "category": "Car detailing service",
+    "city": null,
+    "reviews": 56,
+    "rating_google": 5,
+    "phone": "(281) 543-8507",
+    "website": "https://wcmobiledetail.com/",
+    "final_url": "https://wcmobiledetail.com/",
+    "email": "conor@wcmobiledetail.com",
+    "email_source": "page",
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "Auto Essence Detailing",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 55,
+    "rating_google": 4.9,
+    "phone": "(713) 382-3626",
+    "website": "https://www.autoessencedetailing.com/",
+    "final_url": "https://www.autoessencedetailing.com/",
+    "email": "autoessencedetailing@gmail.com",
+    "email_source": "page",
+    "score": 1,
+    "reasons": [
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Freedom Auto Spa",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 39,
+    "rating_google": 5,
+    "phone": "(832) 726-1940",
+    "website": "http://www.freedomautospa.com/",
+    "final_url": "https://www.freedomautospa.com/",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [
+      "platform: Wix"
+    ],
+    "error": null
+  },
+  {
+    "title": "DISTRICT Roasters (By Appointment Only)",
+    "category": "Coffee roastery",
+    "city": "Houston",
+    "reviews": 28,
+    "rating_google": 5,
+    "phone": "(832) 698-9955",
+    "website": "https://districtroasters.com/",
+    "final_url": "https://districtroasters.com/",
+    "email": null,
+    "email_source": null,
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "Cavallo Auto Salon",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 24,
+    "rating_google": 5,
+    "phone": "(832) 876-8140",
+    "website": "http://cavalloautosalon.com/",
+    "final_url": "https://www.cavalloautosalon.com/",
+    "email": "jason@cavalloautosalon.com",
+    "email_source": "mailto",
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "Sky Coffee & Boba Tea",
+    "category": "Espresso bar",
+    "city": "Houston",
+    "reviews": 14,
+    "rating_google": 4.9,
+    "phone": "(281) 809-5025",
+    "website": "https://sky-coffeeboba-tea.square.site/",
+    "final_url": "https://sky-coffeeboba-tea.square.site/",
+    "email": "skycoffeetx@gmail.com",
+    "email_source": "page",
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "Luxury Details",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 14,
+    "rating_google": 5,
+    "phone": "(832) 265-8744",
+    "website": "https://www.luxurydetails.com/",
+    "final_url": "https://luxurydetails.com/",
+    "email": "info@luxurydetails.com",
+    "email_source": "mailto",
+    "score": 1,
+    "reasons": [
+      "platform: WordPress"
+    ],
+    "error": null
+  },
+  {
+    "title": "Southside Mobile Detail and Tint - Houston",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 13,
+    "rating_google": 5,
+    "phone": "(985) 790-4316",
+    "website": "https://www.southsidetintdetail.com/",
+    "final_url": "https://www.southsidetintdetail.com/",
+    "email": "southsidemobiledetail@gmail.com",
+    "email_source": "mailto",
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "Azure Auto Spa",
+    "category": "Valeting service",
+    "city": null,
+    "reviews": 7,
+    "rating_google": 5,
+    "phone": "+1 281-229-0028",
+    "website": "http://www.azureautospa.com/",
+    "final_url": "https://www.azureautospa.com/",
+    "email": "azureautospa@gmail.com",
+    "email_source": "mailto",
+    "score": 1,
+    "reasons": [],
+    "error": null
+  },
+  {
+    "title": "Gloss Nail Bar",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 1736,
+    "rating_google": 4.6,
+    "phone": "(281) 974-2828",
+    "website": "http://glossnail.bar/",
+    "final_url": null,
+    "email": null,
+    "email_source": null,
+    "score": 0,
+    "reasons": [
+      "fetch failed"
+    ],
+    "error": "HTTPError: HTTP Error 403: Forbidden"
+  },
+  {
+    "title": "Envie Nails and Hair - The Best Nail salon in 249 and Gessner",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 878,
+    "rating_google": 4.7,
+    "phone": "(281) 469-8888",
+    "website": "https://www.facebook.com/share/1Dhn2rAgMb/?mibextid=wwXIfr",
+    "final_url": null,
+    "email": null,
+    "email_source": null,
+    "score": 0,
+    "reasons": [
+      "fetch failed"
+    ],
+    "error": "HTTPError: HTTP Error 400: Bad Request"
+  },
+  {
+    "title": "TeaTonic - West",
+    "category": "Coffee shop",
+    "city": "Houston",
+    "reviews": 654,
+    "rating_google": 4.9,
+    "phone": "(346) 635-6108",
+    "website": "https://www.toasttab.com/local/order/teatonic/r-09c6add9-3665-4887-8164-90c2bf75dead",
+    "final_url": null,
+    "email": null,
+    "email_source": null,
+    "score": 0,
+    "reasons": [
+      "fetch failed"
+    ],
+    "error": "HTTPError: HTTP Error 403: Forbidden"
+  },
+  {
+    "title": "Artisan Nails & Spa",
+    "category": "Nail salon",
+    "city": "Houston",
+    "reviews": 167,
+    "rating_google": 4.4,
+    "phone": "(281) 880-6416",
+    "website": "https://artisannailsspahouston.com/",
+    "final_url": null,
+    "email": null,
+    "email_source": null,
+    "score": 0,
+    "reasons": [
+      "fetch failed"
+    ],
+    "error": "URLError: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1000)>"
+  },
+  {
+    "title": "GDG Detailing, Ceramic Coating & Tint",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 137,
+    "rating_google": 4.9,
+    "phone": "(346) 503-6458",
+    "website": "http://www.godetailergo.com/",
+    "final_url": null,
+    "email": null,
+    "email_source": null,
+    "score": 0,
+    "reasons": [
+      "fetch failed"
+    ],
+    "error": "HTTPError: HTTP Error 404: Not Found"
+  },
+  {
+    "title": "Rising Roll Gourmet Cafe'",
+    "category": "Cafe",
+    "city": "Houston",
+    "reviews": 107,
+    "rating_google": 3.9,
+    "phone": "(281) 872-1100",
+    "website": "https://www.risingroll.com/",
+    "final_url": null,
+    "email": null,
+    "email_source": null,
+    "score": 0,
+    "reasons": [
+      "fetch failed"
+    ],
+    "error": "HTTPError: HTTP Error 403: Forbidden"
+  },
+  {
+    "title": "Alpha and Omega Pro Detail",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 26,
+    "rating_google": 5,
+    "phone": "(832) 498-7435",
+    "website": "https://m.facebook.com/alphaandomegaprodetail/",
+    "final_url": null,
+    "email": null,
+    "email_source": null,
+    "score": 0,
+    "reasons": [
+      "fetch failed"
+    ],
+    "error": "HTTPError: HTTP Error 400: Bad Request"
+  },
+  {
+    "title": "EPPLUS CUSTOM DETAILING",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 26,
+    "rating_google": 4.8,
+    "phone": "(832) 657-2551",
+    "website": "https://www.facebook.com/elias.pacheco.92",
+    "final_url": null,
+    "email": null,
+    "email_source": null,
+    "score": 0,
+    "reasons": [
+      "fetch failed"
+    ],
+    "error": "HTTPError: HTTP Error 400: Bad Request"
+  },
+  {
+    "title": "Detailing",
+    "category": "Car wash",
+    "city": "Houston",
+    "reviews": 22,
+    "rating_google": 5,
+    "phone": "",
+    "website": "https://www.facebook.com/profile.php?id=61562681618938&mibextid=ZbWKwL",
+    "final_url": null,
+    "email": null,
+    "email_source": null,
+    "score": 0,
+    "reasons": [
+      "fetch failed"
+    ],
+    "error": "HTTPError: HTTP Error 400: Bad Request"
+  },
+  {
+    "title": "Project Clean Car Detailing",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 7,
+    "rating_google": 5,
+    "phone": "(832) 551-2889",
+    "website": "https://projectcleancardetailing.site/",
+    "final_url": null,
+    "email": null,
+    "email_source": null,
+    "score": 0,
+    "reasons": [
+      "fetch failed"
+    ],
+    "error": "URLError: <urlopen error [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1000)>"
+  },
+  {
+    "title": "Truly Auto Detail",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 5,
+    "rating_google": 5,
+    "phone": "(346) 260-0542",
+    "website": "https://www.trulyautodetail.com/",
+    "final_url": null,
+    "email": null,
+    "email_source": null,
+    "score": 0,
+    "reasons": [
+      "fetch failed"
+    ],
+    "error": "URLError: <urlopen error [Errno 8] nodename nor servname provided, or not known>"
+  },
+  {
+    "title": "Fusion Clean Auto Car Detailing",
+    "category": "Car detailing service",
+    "city": "Houston",
+    "reviews": 1,
+    "rating_google": 5,
+    "phone": "(281) 982-4812",
+    "website": "https://fusioncareautocardetailing.site/",
+    "final_url": null,
+    "email": null,
+    "email_source": null,
+    "score": 0,
+    "reasons": [
+      "fetch failed"
+    ],
+    "error": "URLError: <urlopen error [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1000)>"
+  }
+]

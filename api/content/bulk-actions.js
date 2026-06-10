@@ -17,6 +17,7 @@ import { findNextOpenSlot } from '../_lib/scheduling.js'
 import { message } from '../_lib/anthropic.js'
 import { loadBrandContext, renderBrandContextMarkdown } from '../_lib/brand-context.js'
 import { transcribeFromUrl } from '../_lib/scribe.js'
+import { extractFramesFromUrl, framesToVisionBlocks } from '../_lib/frames.js'
 import {
   uploadpostCancelByRequestId,
   resolveUploadpostUser,
@@ -94,12 +95,16 @@ async function generateCaptions({ res, profile_id, script_ids, user_id }) {
   const scripts = await supaFetch(q)
   if (!scripts?.length) return res.status(200).json({ updated: 0 })
 
-  // Credit gating. ~3000 ai_tokens per script captures the cost of one
-  // Claude Sonnet call with a vision image block; we consume eagerly
-  // BEFORE the upstream call and refund any unused budget afterwards
-  // if Claude failed entirely. Without this, /generate-captions was a
-  // free Sonnet pipe.
-  const CAPTION_TOKENS_PER_SCRIPT = 3000
+  // Credit gating. Video rows now run hybrid (transcript + 6 keyframes)
+  // by default so Claude can read on-screen text — that pushes input
+  // tokens to ~10-12K per video row (vs ~3K transcript-only). Bumped
+  // from 3000 to 6000 so the pre-debit balance check matches actual
+  // usage on the mixed batches that the UI submits. Image rows still
+  // use one image block (~1.5K) so they're over-charged by ~3x here,
+  // but image-only batches are uncommon enough that flat per-script
+  // pricing keeps the consume call simple. Worth revisiting with
+  // per-media-type pricing if image batches become a hot path.
+  const CAPTION_TOKENS_PER_SCRIPT = 6000
   const fee = scripts.length * CAPTION_TOKENS_PER_SCRIPT
   const cust = user_id ? await supaFetch(`billing_customers?user_id=eq.${user_id}&select=id`).catch(() => []) : []
   const customerId = cust?.[0]?.id || null
@@ -147,7 +152,10 @@ async function generateCaptions({ res, profile_id, script_ids, user_id }) {
 
   // Per-media-type prompt builders. The user message carries the actual
   // image (image rows only) so Claude Vision can read it; for video
-  // rows the transcript is baked into the system prompt directly.
+  // rows with a transcript we bake the transcript into the system
+  // prompt directly. Silent / sound-effect-only videos fall through to
+  // the visual-only path further below which sends sampled keyframes
+  // to Claude Vision in the user message.
   const videoSystemPrompt = (transcript) => `You are a social media content creator. Based on this video transcript and the brand context below, generate content for posting this video on social media.
 
 TODAY'S DATE: ${today}
@@ -171,6 +179,74 @@ RULES:
 - Match the brand voice and tone from the brand bible
 - Make the caption punchy and engaging
 - The title should be curiosity-driven, not generic
+
+Return ONLY valid JSON:
+{"title": "...", "hook": "...", "full_script": "...", "caption": "...", "hashtags": "...", "first_comment": "..."}`
+
+  // Hybrid video prompt — used whenever we can sample frames from the
+  // video URL, which is almost always. Why hybrid by default: on-screen
+  // text ("POV:", "Wait for it...", product labels, prices, location
+  // markers) is invisible to audio transcription but is often THE
+  // headline of the video. Background music with lyrics can also fool
+  // Scribe into transcribing irrelevant words. Hybrid gives Claude both
+  // the spoken transcript AND the visual signal so it can ground the
+  // caption in what's actually shown, not just what was spoken.
+  //
+  // Output shape matches the transcript-only videoSystemPrompt exactly
+  // so the row-patching code downstream stays identical.
+  const videoHybridSystemPrompt = (transcript, frameCount, durationSecs) => `You are a social media content creator. Analyze this video using BOTH of the signals I'm providing:
+  - AUDIO TRANSCRIPT — what was spoken or sung in the audio.
+  - ${frameCount} KEYFRAMES sampled evenly${durationSecs ? ` across the ${Math.round(durationSecs)}-second clip` : ''} — what's shown on screen, INCLUDING any text burned into the video.
+
+CRITICAL: read any on-screen text in the keyframes. Hooks like "POV:", "Wait for it...", price tags, product labels, and location captions are usually the primary message of the video, separate from (or instead of) the audio. When the on-screen text and the audio disagree, the on-screen text usually wins. Quote on-screen text directly when it would make a strong title or caption hook.
+
+TODAY'S DATE: ${today}
+
+BRAND CONTEXT:
+${brandContext}
+
+AUDIO TRANSCRIPT (may be empty, music-only, or unrelated to the visual story):
+${String(transcript || '').slice(0, 8000) || '(no spoken audio detected)'}
+
+Generate the following:
+1. "title" - A short, click-worthy, engaging title for this video (max 12 words). If the keyframes contain on-screen text, the title almost always reflects or builds on it.
+2. "hook" - The opening 1-2 sentences that hook viewers.
+3. "full_script" - A cleaned-up readable script of the spoken content IF there was usable speech; otherwise a brief description of what unfolds visually across the frames.
+4. "caption" - Engaging social caption. Anchor to BOTH the visuals and any spoken content.
+5. "hashtags" - Core brand hashtags first, then 4-6 specific to what's shown.
+6. "first_comment" - Engagement-driving first comment (question or CTA).
+
+RULES:
+- NEVER use em dashes (—). Use commas, periods, or colons.
+- Match the brand voice from the brand bible.
+- Reference things you actually see in the frames, not generic stock phrasing.
+- Make the title curiosity-driven, not generic.
+
+Return ONLY valid JSON:
+{"title": "...", "hook": "...", "full_script": "...", "caption": "...", "hashtags": "...", "first_comment": "..."}`
+
+  // Visual-only prompt — used only when we have keyframes but no usable
+  // transcript at all. Same JSON shape as the hybrid + transcript prompts.
+  const videoVisualSystemPrompt = (frameCount, durationSecs) => `You are a social media content creator. The video below has no usable spoken audio (it may be silent B-roll, music-only, or driven by sound effects). I'm showing you ${frameCount} keyframes${durationSecs ? ` sampled evenly across the ${Math.round(durationSecs)}-second clip` : ''}. Treat them as a sequence and describe what is happening visually. Pay close attention to any on-screen text burned into the frames (POV hooks, captions, prices, labels) — it is usually the primary message.
+
+TODAY'S DATE: ${today}
+
+BRAND CONTEXT:
+${brandContext}
+
+Generate the following:
+1. "title" - A short, click-worthy, engaging title for this video (max 12 words). Reference what you actually see.
+2. "hook" - The opening 1-2 sentences that hook viewers based on the visual story.
+3. "full_script" - A brief description of what unfolds visually across the frames, in order.
+4. "caption" - An engaging social media caption to post with this video. Match the brand voice. Anchor it to what is shown.
+5. "hashtags" - Include any core brand hashtags from the brand bible first, then 4-6 topic-specific ones drawn from what's visible.
+6. "first_comment" - An engagement-driving first comment (question or call to action).
+
+RULES:
+- NEVER use em dashes. Use commas, periods, or colons instead.
+- Match the brand voice and tone from the brand bible.
+- Only reference things visible in the frames. Do not invent dialogue.
+- The title should be curiosity-driven, not generic.
 
 Return ONLY valid JSON:
 {"title": "...", "hook": "...", "full_script": "...", "caption": "...", "hashtags": "...", "first_comment": "..."}`
@@ -257,27 +333,70 @@ Return ONLY valid JSON:
     // prompt when neither is available (rare; the upstream filter
     // mostly catches this).
     if (s.media_type === 'video' || (s.full_script && !isImage)) {
-      // Transcript is the ONLY topic signal for videos. We deliberately
-      // do not fall back to s.hook / s.title here anymore — those are
-      // often empty or contain stale auto-generated text, and Claude
-      // ends up writing from the brand context alone.
       const transcript = (s.full_script || '').trim()
-      if (!transcript) {
-        // Silent or music-only video. Return a sentinel so the caller
-        // can skip the row entirely (no caption patch, no status flip
-        // to caption_ready) and surface a clear "needs manual caption"
-        // failure to the user.
-        return { _no_transcript: true }
+      const transcriptUsable = transcript.length >= 30
+      const videoUrl = Array.isArray(s.media_urls) ? s.media_urls[0] : null
+      const canSampleFrames = videoUrl && /^https?:\/\//.test(videoUrl)
+
+      // Hybrid by default: sample keyframes whenever we can, regardless
+      // of transcript. On-screen text (POV hooks, prices, product
+      // labels) is invisible to Scribe but is often the actual
+      // headline of the video, so we want Claude to see it every time.
+      let frames = null
+      let durationSecs = null
+      if (canSampleFrames) {
+        try {
+          const sample = await extractFramesFromUrl(videoUrl, { count: 6, profileId: profile_id })
+          if (sample?.frames?.length) {
+            frames = sample.frames
+            durationSecs = sample.duration_secs
+          }
+        } catch (e) {
+          console.warn(`[generate-captions] frame extract failed for ${s.id}:`, e?.message)
+        }
       }
+
+      // If we got nothing on either signal, bail with the legacy
+      // sentinel so the UI surfaces "needs manual caption."
+      if (!transcriptUsable && !frames) {
+        return { _no_transcript: true, _visual_fallback_attempted: canSampleFrames }
+      }
+
+      // Pick the prompt + message shape based on which signals we have.
+      let systemPrompt
+      let messageContent
+      let captionSource
+      if (frames && transcriptUsable) {
+        systemPrompt = videoHybridSystemPrompt(transcript, frames.length, durationSecs)
+        messageContent = [
+          ...framesToVisionBlocks(frames),
+          { type: 'text', text: 'Read any on-screen text in the keyframes above, combine with the transcript in the system prompt, and generate the JSON now.' },
+        ]
+        captionSource = 'hybrid'
+      } else if (frames) {
+        systemPrompt = videoVisualSystemPrompt(frames.length, durationSecs)
+        messageContent = [
+          ...framesToVisionBlocks(frames),
+          { type: 'text', text: 'Analyze these keyframes as a sequence and generate the JSON now.' },
+        ]
+        captionSource = 'visual'
+      } else {
+        systemPrompt = videoSystemPrompt(transcript)
+        messageContent = 'Generate the JSON now.'
+        captionSource = 'transcript'
+      }
+
       try {
         const ai = await message({
-          system: videoSystemPrompt(transcript),
-          messages: [{ role: 'user', content: 'Generate the JSON now.' }],
+          system: systemPrompt,
+          messages: [{ role: 'user', content: messageContent }],
           max_tokens: 1500,
         })
-        return parseJsonObject(ai?.content?.[0]?.text)
+        const parsed = parseJsonObject(ai?.content?.[0]?.text)
+        if (!parsed) return null
+        return { ...parsed, _caption_source: captionSource }
       } catch (e) {
-        console.warn(`[generate-captions] video Claude failed for ${s.id}:`, e?.message)
+        console.warn(`[generate-captions] video Claude failed for ${s.id} (${captionSource}):`, e?.message)
         return null
       }
     }
@@ -411,13 +530,23 @@ Return ONLY valid JSON:
   // of what Scribe returned for video rows (or whatever we used as
   // the topic signal). Useful in DevTools and we'll surface it in the
   // UI when results look off.
-  const debug = scripts.map((s, i) => ({
-    id: s.id,
-    media_type: s.media_type,
-    transcript_chars: (s.full_script || '').length,
-    transcript_preview: (s.full_script || '').slice(0, 200),
-    ai_status: captionResults[i] ? (captionResults[i]._no_transcript ? 'placeholder_no_transcript' : 'ok') : 'failed',
-  }))
+  const debug = scripts.map((s, i) => {
+    const r = captionResults[i]
+    let ai_status = 'failed'
+    if (r) {
+      if (r._no_transcript) ai_status = 'placeholder_no_transcript'
+      else if (r._caption_source === 'visual') ai_status = 'ok_visual_fallback'
+      else ai_status = 'ok'
+    }
+    return {
+      id: s.id,
+      media_type: s.media_type,
+      transcript_chars: (s.full_script || '').length,
+      transcript_preview: (s.full_script || '').slice(0, 200),
+      caption_source: r?._caption_source || (r?._no_transcript ? null : 'transcript'),
+      ai_status,
+    }
+  })
   return res.status(200).json({
     updated,
     total: scripts.length,

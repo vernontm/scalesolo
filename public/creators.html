@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Get booked. Get paid. Even while you sleep. — ScaleSolo Creators</title>
+<meta name="description" content="Local creators: get booked for real shoots and earn passive income from your licensed likeness. See exactly how much you could make." />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --dark:#0c0b0f; --card:#17141b; --red:#ef4444; --red-deep:#b91c1c;
+    --red-soft:rgba(239,68,68,0.12); --text:#f4f4f6; --muted:#a6a6b2;
+    --line:rgba(255,255,255,0.12); --green:#37d27a;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{ font-family:"Plus Jakarta Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--dark); color:var(--text); line-height:1.6; -webkit-font-smoothing:antialiased; }
+  a{ color:inherit; text-decoration:none; }
+  .wrap{ max-width:1040px; margin:0 auto; padding:0 22px; }
+
+  .bar{ background:linear-gradient(90deg,var(--red-deep),var(--red)); color:#fff; text-align:center; font-size:13.5px; font-weight:700; padding:9px 16px; }
+  .nav{ display:flex; align-items:center; justify-content:center; gap:11px; padding:14px 0; }
+  .nav .dot{ width:34px; height:34px; border-radius:9px; background:linear-gradient(135deg,var(--red),var(--red-deep)); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:18px; box-shadow:0 0 24px rgba(239,68,68,0.45); }
+  .nav .brand{ font-weight:800; font-size:18px; }
+
+  .hero{ position:relative; overflow:hidden; padding:18px 0 40px; }
+  .hero::before{ content:""; position:absolute; inset:0; background:radial-gradient(60% 55% at 50% -5%, rgba(239,68,68,0.26), transparent 62%); pointer-events:none; }
+  .hgrid{ position:relative; display:flex; flex-direction:column; gap:14px; max-width:720px; margin:0 auto; text-align:center; }
+  .eyebrow{ display:inline-block; font-size:12px; letter-spacing:0.2em; text-transform:uppercase; font-weight:800; color:var(--red); background:var(--red-soft); border:1px solid rgba(239,68,68,0.35); padding:6px 12px; border-radius:999px; margin:0 auto; }
+  h1{ font-size:clamp(32px,7vw,52px); line-height:1.05; font-weight:800; letter-spacing:-0.02em; }
+  h1 .hot{ color:var(--red); }
+  .sub{ margin:6px auto 0; font-size:17px; color:var(--muted); max-width:34em; }
+
+  /* Calculator */
+  .calc{ margin-top:36px; background:var(--card); border:1px solid var(--line); border-radius:20px; padding:28px; max-width:780px; margin-left:auto; margin-right:auto; box-shadow:0 30px 80px rgba(0,0,0,0.45); }
+  .calc h2{ font-size:22px; font-weight:800; text-align:left; letter-spacing:-0.01em; }
+  .calc .csub{ color:var(--muted); font-size:14px; margin-top:4px; text-align:left; }
+  .row{ margin-top:24px; }
+  .rowhead{ display:flex; justify-content:space-between; align-items:baseline; gap:12px; margin-bottom:10px; }
+  .rowlabel{ font-weight:700; font-size:15px; }
+  .rowhint{ color:var(--muted); font-size:12.5px; }
+  .rowvalue{ font-weight:800; font-size:18px; color:#fff; background:var(--red-soft); border:1px solid rgba(239,68,68,0.35); padding:4px 12px; border-radius:8px; min-width:90px; text-align:center; }
+  input[type=range]{ -webkit-appearance:none; appearance:none; width:100%; height:8px; background:linear-gradient(90deg,var(--red) var(--p,0%), rgba(255,255,255,0.08) var(--p,0%)); border-radius:999px; outline:none; }
+  input[type=range]::-webkit-slider-thumb{ -webkit-appearance:none; appearance:none; width:24px; height:24px; border-radius:50%; background:#fff; border:3px solid var(--red); cursor:grab; box-shadow:0 4px 14px rgba(239,68,68,0.5); }
+  input[type=range]::-moz-range-thumb{ width:24px; height:24px; border-radius:50%; background:#fff; border:3px solid var(--red); cursor:grab; box-shadow:0 4px 14px rgba(239,68,68,0.5); }
+  .rowfoot{ display:flex; justify-content:space-between; color:#6b6b76; font-size:12px; margin-top:6px; }
+
+  .total{ margin-top:30px; padding:22px; background:linear-gradient(135deg, rgba(239,68,68,0.18), rgba(185,28,28,0.08)); border:1px solid rgba(239,68,68,0.4); border-radius:14px; text-align:center; }
+  .total .tl{ font-size:13px; letter-spacing:0.18em; text-transform:uppercase; font-weight:800; color:var(--red); }
+  .total .tnum{ font-size:48px; font-weight:800; letter-spacing:-0.02em; margin:6px 0 4px; }
+  .total .tnote{ color:var(--muted); font-size:13px; }
+  .breakdown{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin-top:18px; }
+  .bd{ background:rgba(255,255,255,0.04); border:1px solid var(--line); border-radius:10px; padding:12px; text-align:center; }
+  .bd .l{ font-size:11px; letter-spacing:0.12em; text-transform:uppercase; color:var(--muted); font-weight:700; }
+  .bd .n{ font-size:20px; font-weight:800; margin-top:4px; }
+
+  .ctawrap{ text-align:center; margin-top:26px; }
+  .btn{ display:inline-flex; align-items:center; justify-content:center; gap:9px; background:linear-gradient(135deg,var(--red),var(--red-deep)); color:#fff; font-weight:800; font-size:17px; padding:16px 32px; border-radius:12px; border:none; cursor:pointer; box-shadow:0 12px 30px rgba(239,68,68,0.35); text-decoration:none; }
+  .micro{ margin-top:11px; font-size:12px; color:var(--muted); }
+
+  section.block{ padding:60px 0; border-top:1px solid var(--line); }
+  .klabel{ font-size:12px; letter-spacing:0.2em; text-transform:uppercase; font-weight:800; color:var(--red); text-align:center; margin-bottom:10px; }
+  h2.center{ font-size:30px; line-height:1.15; font-weight:800; letter-spacing:-0.015em; text-align:center; }
+  .lead{ font-size:16.5px; color:var(--muted); text-align:center; max-width:38em; margin:14px auto 0; }
+  .cards{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; margin-top:36px; }
+  .c{ background:var(--card); border:1px solid var(--line); border-radius:14px; padding:24px; }
+  .c .step{ font-size:11px; color:var(--red); letter-spacing:0.18em; font-weight:800; }
+  .c .t{ font-weight:800; font-size:17px; margin:6px 0 6px; }
+  .c .d{ color:var(--muted); font-size:14.5px; line-height:1.55; }
+
+  .twocol{ display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-top:32px; }
+  .way{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:26px; }
+  .way .tag{ display:inline-block; font-size:11px; font-weight:800; letter-spacing:0.16em; text-transform:uppercase; color:var(--red); background:var(--red-soft); padding:4px 10px; border-radius:999px; margin-bottom:10px; }
+  .way h3{ font-size:20px; font-weight:800; letter-spacing:-0.01em; }
+  .way p{ color:var(--muted); font-size:14.5px; margin-top:8px; }
+  .way ul{ list-style:none; margin-top:14px; }
+  .way ul li{ display:flex; gap:9px; align-items:flex-start; margin:8px 0; font-size:14.5px; }
+  .tick{ color:var(--green); font-weight:800; margin-top:2px; }
+
+  .faq{ max-width:720px; margin:0 auto; }
+  .q{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin-top:12px; }
+  .q .qq{ font-weight:800; font-size:15.5px; }
+  .q .qa{ color:var(--muted); font-size:14.5px; margin-top:6px; }
+
+  .finalcta{ text-align:center; }
+  footer{ border-top:1px solid var(--line); padding:28px 0 48px; color:var(--muted); font-size:13px; text-align:center; }
+
+  @media (max-width:680px){
+    .cards{ grid-template-columns:1fr; }
+    .twocol{ grid-template-columns:1fr; }
+    .breakdown{ grid-template-columns:1fr; }
+    .calc{ padding:22px; }
+    .total .tnum{ font-size:40px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="bar">Local creators in Houston, now booking. Apply to join the roster.</div>
+
+<header class="wrap">
+  <div class="nav">
+    <div class="dot">S</div>
+    <div class="brand">ScaleSolo</div>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap hgrid">
+    <span class="eyebrow">For Creators</span>
+    <h1>Get booked. Get paid. <span class="hot">Even while you sleep.</span></h1>
+    <p class="sub">We connect you to local brands that need real content. Show up for the shoot, get paid. License your likeness, and keep earning long after you go home.</p>
+
+    <!-- Calculator -->
+    <div class="calc">
+      <h2>See what you could make</h2>
+      <p class="csub">Slide to match your real numbers. Numbers update live.</p>
+
+      <div class="row">
+        <div class="rowhead">
+          <div>
+            <div class="rowlabel">Your day rate</div>
+            <div class="rowhint">What you charge brands per shoot day</div>
+          </div>
+          <div class="rowvalue" id="rateOut">$500</div>
+        </div>
+        <input type="range" id="rate" min="200" max="2000" step="50" value="500" />
+        <div class="rowfoot"><span>$200</span><span>$2,000</span></div>
+      </div>
+
+      <div class="row">
+        <div class="rowhead">
+          <div>
+            <div class="rowlabel">Shoot days per month</div>
+            <div class="rowhint">How many local brand bookings you take</div>
+          </div>
+          <div class="rowvalue" id="shootsOut">3</div>
+        </div>
+        <input type="range" id="shoots" min="0" max="12" step="1" value="3" />
+        <div class="rowfoot"><span>0</span><span>12</span></div>
+      </div>
+
+      <div class="row">
+        <div class="rowhead">
+          <div>
+            <div class="rowlabel">Licensed photos used per month</div>
+            <div class="rowhint">Brands generate AI photos using your likeness. You earn $10 each.</div>
+          </div>
+          <div class="rowvalue" id="photosOut">40</div>
+        </div>
+        <input type="range" id="photos" min="0" max="300" step="5" value="40" />
+        <div class="rowfoot"><span>0</span><span>300</span></div>
+      </div>
+
+      <div class="row">
+        <div class="rowhead">
+          <div>
+            <div class="rowlabel">Licensed videos used per month</div>
+            <div class="rowhint">Brands generate AI videos using your likeness. You earn $25 each.</div>
+          </div>
+          <div class="rowvalue" id="videosOut">15</div>
+        </div>
+        <input type="range" id="videos" min="0" max="150" step="1" value="15" />
+        <div class="rowfoot"><span>0</span><span>150</span></div>
+      </div>
+
+      <div class="total">
+        <div class="tl">Your estimated monthly earnings</div>
+        <div class="tnum" id="totalOut">$1,955</div>
+        <div class="tnote">After ScaleSolo's 15% platform fee on bookings. Licensing royalties paid flat.</div>
+        <div class="breakdown">
+          <div class="bd"><div class="l">From shoots</div><div class="n" id="bdShoots">$1,275</div></div>
+          <div class="bd"><div class="l">From photo licensing</div><div class="n" id="bdPhotos">$200</div></div>
+          <div class="bd"><div class="l">From video licensing</div><div class="n" id="bdVideos">$180</div></div>
+        </div>
+      </div>
+
+      <div class="ctawrap">
+        <a class="btn" href="#apply">Apply to join the roster</a>
+        <div class="micro">Free to join. We only earn when you earn.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block">
+  <div class="wrap">
+    <div class="klabel">How it works</div>
+    <h2 class="center">Two ways to get paid</h2>
+    <p class="lead">You decide how active or passive you want to be. Most creators do both.</p>
+
+    <div class="twocol">
+      <div class="way">
+        <span class="tag">Way 1</span>
+        <h3>Show up. Get paid.</h3>
+        <p>Brands in your city need content. We book you, hand you the script and shot list, and you show up and shoot. We handle the rest.</p>
+        <ul>
+          <li><span class="tick">✓</span><span>You set your day rate. We mark it up to the brand, you keep 85% of your quoted rate.</span></li>
+          <li><span class="tick">✓</span><span>One day on location can produce a full month of content for the brand. You get paid the same.</span></li>
+          <li><span class="tick">✓</span><span>We bring the concept, scripts, and creative direction so you can focus on the camera.</span></li>
+        </ul>
+      </div>
+      <div class="way">
+        <span class="tag">Way 2</span>
+        <h3>License your likeness.</h3>
+        <p>Opt in once. Brands can then generate AI photos and videos using your likeness for their campaigns, and you earn a royalty every time.</p>
+        <ul>
+          <li><span class="tick">✓</span><span>$10 per licensed photo. $25 per licensed video. Paid flat, every use.</span></li>
+          <li><span class="tick">✓</span><span>You approve which brand categories can use you. Block competitors, block anything off-brand.</span></li>
+          <li><span class="tick">✓</span><span>Revoke any time. Your face, your call.</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block">
+  <div class="wrap">
+    <div class="klabel">The process</div>
+    <h2 class="center">From application to first paycheck</h2>
+    <div class="cards">
+      <div class="c">
+        <div class="step">STEP 1</div>
+        <div class="t">Apply to the roster</div>
+        <div class="d">Tell us your city, your day rate, and drop a link to your work. We review every application.</div>
+      </div>
+      <div class="c">
+        <div class="step">STEP 2</div>
+        <div class="t">Get matched to brands</div>
+        <div class="d">We find local businesses that fit your style. You get booking offers. Accept the ones you want.</div>
+      </div>
+      <div class="c">
+        <div class="step">STEP 3</div>
+        <div class="t">Shoot, license, get paid</div>
+        <div class="d">Show up to the shoot, optionally license your likeness, and earn from both lanes. Paid out weekly.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block">
+  <div class="wrap">
+    <div class="klabel">FAQ</div>
+    <h2 class="center">The honest questions</h2>
+    <div class="faq" style="margin-top:32px;">
+      <div class="q"><div class="qq">Do I have to license my likeness?</div><div class="qa">No. You can take bookings only and never opt into licensing. The two are completely separate.</div></div>
+      <div class="q"><div class="qq">What if a brand uses my likeness in a way I don't like?</div><div class="qa">You pick the categories you're open to up front, and you can revoke licensing on any brand, any time. We never use your likeness in adult, political, or controversial content.</div></div>
+      <div class="q"><div class="qq">How fast do I get paid?</div><div class="qa">Shoot bookings paid 7 days after the shoot completes. Licensing royalties paid weekly on whatever you earned that week.</div></div>
+      <div class="q"><div class="qq">Does ScaleSolo also take from the brand?</div><div class="qa">Yes. We price the brand separately based on the value of the campaign. Our 15% fee on your side is the only thing that comes out of your earnings.</div></div>
+      <div class="q"><div class="qq">What's the catch?</div><div class="qa">There isn't one. We make money when you make money. If we don't book you, we don't earn.</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="block finalcta" id="apply">
+  <div class="wrap">
+    <div class="klabel">Apply now</div>
+    <h2 class="center">Houston creators, this is for you.</h2>
+    <p class="lead">We're hand-picking the first 50 creators for the Houston launch. Apply and we'll be in touch within 48 hours.</p>
+    <div class="ctawrap" style="margin-top:28px;">
+      <a class="btn" href="mailto:ray@vernontm.com?subject=ScaleSolo%20Creator%20Application">Apply to the roster</a>
+      <div class="micro">Or text Ray at <strong style="color:#fff;">vernontm.com</strong></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    &copy; ScaleSolo, a Vernon Tech &amp; Media company.
+  </div>
+</footer>
+
+<script>
+  const rate = document.getElementById('rate');
+  const shoots = document.getElementById('shoots');
+  const photos = document.getElementById('photos');
+  const videos = document.getElementById('videos');
+
+  const rateOut = document.getElementById('rateOut');
+  const shootsOut = document.getElementById('shootsOut');
+  const photosOut = document.getElementById('photosOut');
+  const videosOut = document.getElementById('videosOut');
+
+  const totalOut = document.getElementById('totalOut');
+  const bdShoots = document.getElementById('bdShoots');
+  const bdPhotos = document.getElementById('bdPhotos');
+  const bdVideos = document.getElementById('bdVideos');
+
+  const PHOTO_RATE = 10;
+  const VIDEO_RATE = 25;
+  const PLATFORM_TAKE = 0.15;
+
+  const fmt = (n) => '$' + Math.round(n).toLocaleString();
+
+  function paintFill(el){
+    const min = +el.min, max = +el.max, val = +el.value;
+    const p = ((val - min) / (max - min)) * 100;
+    el.style.setProperty('--p', p + '%');
+  }
+
+  function update(){
+    const r = +rate.value;
+    const s = +shoots.value;
+    const p = +photos.value;
+    const v = +videos.value;
+
+    const shootEarnings = r * s * (1 - PLATFORM_TAKE);
+    const photoEarnings = p * PHOTO_RATE;
+    const videoEarnings = v * VIDEO_RATE;
+    const total = shootEarnings + photoEarnings + videoEarnings;
+
+    rateOut.textContent = fmt(r);
+    shootsOut.textContent = s;
+    photosOut.textContent = p;
+    videosOut.textContent = v;
+
+    bdShoots.textContent = fmt(shootEarnings);
+    bdPhotos.textContent = fmt(photoEarnings);
+    bdVideos.textContent = fmt(videoEarnings);
+    totalOut.textContent = fmt(total);
+
+    [rate, shoots, photos, videos].forEach(paintFill);
+  }
+
+  [rate, shoots, photos, videos].forEach(el => el.addEventListener('input', update));
+  update();
+</script>
+
+</body>
+</html>

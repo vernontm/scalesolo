@@ -107,3 +107,55 @@ curl -X POST http://localhost:3000/api/leads/decline-offer \
 
 Then check MailerLite ▸ Subscribers and confirm the email landed in
 the right groups.
+
+## 6. Live build (account 2286074, ray@vernontm.com)
+
+Built end-to-end on 2026-06-01. Email bodies are source-controlled in
+`scripts/build-funnel-emails.mjs` (run it to regenerate the rendered HTML
+under `scripts/funnel-emails/`). The dark branded wrapper mirrors
+`api/_lib/email.js` in the funnel's dark theme (#0c0b0f bg, #ef4444
+accents, Plus Jakarta Sans, red gradient CTA).
+
+### Group ids → Vercel env vars
+
+Paste this block into Vercel Project Settings ▸ Environment Variables
+(Production + Preview):
+
+```
+MAILERLITE_GROUP_LEAD=189087584860767671
+MAILERLITE_GROUP_BUYER_TRIPWIRE=189087622956582636
+MAILERLITE_GROUP_BUYER_PACK=189087645266085304
+MAILERLITE_GROUP_BUYER_DFY=189087669801715346
+MAILERLITE_GROUP_DECLINED_TRIPWIRE=189087683971122730
+MAILERLITE_GROUP_DECLINED_DFY=189087697198908619
+```
+
+(`MAILERLITE_API_KEY` is the `scalesolo-funnel` token from step 1.)
+
+### Automations created (all start DISABLED — activate in dashboard)
+
+| Flow | Trigger group | Emails | Automation id |
+|------|---------------|--------|---------------|
+| Lead · Blueprint nurture        | Lead · Blueprint     | 5 / 7 days  | 189089162756883966 |
+| Buyer · Tripwire onboarding     | Buyer · Tripwire     | 4 / 7 days  | 189089271190127704 |
+| Buyer · Done-For-You onboarding | Buyer · Done-For-You | 4 / 14 days | 189089370562626790 |
+| Declined · Tripwire win-back    | Declined · Tripwire  | 3           | 189089447642399824 |
+| Declined · DFY win-back         | Declined · DFY       | 2           | 189089503219025757 |
+
+### Manual steps the API cannot do
+
+The MailerLite automation API (and this MCP) only supports **email** and
+**delay** steps. Two things must be set by hand in the dashboard:
+
+1. **Activate each automation.** Open each automation, confirm the sending
+   identity, click into each email once so it leaves "needs design", then
+   toggle the automation on. They are all disabled until you do this.
+
+2. **Mutual exclusion on the decline flows.** Add these action steps so a
+   decliner does not get the win-back AND the lead nurture at once:
+   - `Declined · Tripwire win-back`: add **Action ▸ Remove from group →
+     Lead · Blueprint** as the very first step, and **Action ▸ Add to group
+     → Lead · Blueprint** as the final step (after the last email) to drop
+     them back into the regular nurture.
+   - `Declined · DFY win-back`: same pattern (remove from Lead first, add
+     back to Lead last).

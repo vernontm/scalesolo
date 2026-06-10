@@ -29,6 +29,7 @@ import { createClient } from '@supabase/supabase-js'
 import sharp from 'sharp'
 import { Resvg } from '@resvg/resvg-js'
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg'
+import Anthropic from '@anthropic-ai/sdk'
 import { zapcapAddVideoByUrl, zapcapCreateTask, zapcapPollTask } from './zapcap.js'
 import { runWorkflow } from './workflow-runner.js'
 import { runStudioRender } from './studio-render.js'
@@ -295,6 +296,171 @@ function escapeXml(s) {
     .replace(/'/g, '&apos;')
 }
 
+// ─── Image-to-video conversion ────────────────────────────────────────
+// Image + audio → 9:16 mp4 with beat-synced motion.
+//
+// fullbleed_beat template (current default):
+//   1. Scale source to 1300x2310 (1.2× headroom so rotation + zoom
+//      never reveal black edges)
+//   2. Continuous ±2° sine rotation, 2.5 sec cycle
+//   3. Ambient sine zoom drift 1.02 → 1.10
+//   4. Beat-synced zoom PUNCHES: brief +0.06 spike every 4 beats
+//      (BPM auto-detected via aubio, fallback 120)
+//   5. Composite hook-text + logo overlay at canonical positions
+//   6. Audio: stream-loop or trim to duration, 1.5s fade-out
+//
+// Body params:
+//   image_url, audio_url?, duration_sec?, hook_text?, logo_url?,
+//   hook_scale?, hook_y_pct?, bpm? (override auto-detect),
+//   motion_template? (currently only 'fullbleed_beat')
+//
+// Returns: video/mp4 bytes + X-BPM + X-Template response headers
+app.post('/jobs/image-to-video', requireSecret, async (req, res) => {
+  const t0 = Date.now()
+  const {
+    image_url,
+    audio_url = null,
+    duration_sec = 10,
+    hook_text = '',
+    logo_url = null,
+    hook_scale = 0.5,
+    hook_y_pct = 25,
+    bpm: bpmOverride = null,
+    motion_template = 'fullbleed_beat',
+  } = req.body || {}
+
+  if (!image_url) return res.status(400).json({ error: 'image_url required' })
+
+  const dur = Math.max(4, Math.min(30, Number(duration_sec) || 10))
+  const workDir = await mkdtemp(join(tmpdir(), 'i2v-'))
+  try {
+    const imgPath = join(workDir, 'in.png')
+    await downloadToFile(image_url, imgPath)
+
+    let audioPath = null
+    if (audio_url) {
+      try {
+        audioPath = join(workDir, 'audio')
+        await downloadToFile(audio_url, audioPath)
+      } catch (e) { console.warn('[i2v] audio dl failed:', e.message); audioPath = null }
+    }
+
+    let logoPath = null
+    if (logo_url) {
+      try {
+        logoPath = join(workDir, 'logo.png')
+        await downloadToFile(logo_url, logoPath)
+      } catch (e) { console.warn('[i2v] logo dl failed:', e.message); logoPath = null }
+    }
+
+    // Detect BPM from the audio track (aubio). Caller can override.
+    // Fallback 120 (matches typical pop / promo tempo) on detect failure.
+    let bpm = Number(bpmOverride) || null
+    if (!bpm && audioPath) {
+      bpm = await detectBPM(audioPath).catch(() => null)
+    }
+    bpm = bpm && Number.isFinite(bpm) ? bpm : 120
+
+    // Build the text + logo overlay PNG (transparent 1080x1920).
+    const overlayBuf = await renderHookOverlayPng({
+      hook_text, logo_path: logoPath, hook_scale: clampScale(hook_scale), hook_y_pct,
+    })
+    const overlayPath = join(workDir, 'overlay.png')
+    await writeFile(overlayPath, overlayBuf)
+
+    // Beat-sync schedule for the zoompan punch math.
+    //   beat_frames = (60/BPM) * 30
+    //   punch_interval = beat_frames * 4   (every 4 beats)
+    //   punch_duration = 5 frames (~0.17s spike)
+    //   punch_offset   = 60 (first beat 2s in, lets intro settle)
+    const beatFrames = (60 / bpm) * 30
+    const punchInterval = Math.round(beatFrames * 4)
+    const punchDuration = 5
+    const punchOffset = 60
+
+    const filter = buildMotionFilter(motion_template, {
+      punchInterval, punchDuration, punchOffset, hasAudio: !!audioPath,
+    })
+    console.log(`[i2v] template=${motion_template} bpm=${bpm} dur=${dur} hasAudio=${!!audioPath}`)
+
+    const ffArgs = ['-y', '-loop', '1', '-framerate', '30', '-i', imgPath]
+    if (audioPath) ffArgs.push('-stream_loop', '-1', '-i', audioPath)
+    ffArgs.push('-i', overlayPath)
+    ffArgs.push('-filter_complex', filter)
+    ffArgs.push('-map', '[v]')
+    if (audioPath) {
+      const fadeStart = Math.max(0, dur - 1.5)
+      ffArgs.push('-map', '1:a', '-af', `afade=t=out:st=${fadeStart}:d=1.5,volume=0.8`)
+      ffArgs.push('-c:a', 'aac', '-b:a', '128k')
+    }
+    ffArgs.push(
+      '-t', String(dur),
+      '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-pix_fmt', 'yuv420p',
+      '-r', '30',
+      '-movflags', '+faststart',
+    )
+    const outPath = join(workDir, 'out.mp4')
+    ffArgs.push(outPath)
+
+    await runFFmpegArgs(ffArgs)
+
+    const buf = await readFile(outPath)
+    res.set('Content-Type', 'video/mp4')
+    res.set('Content-Length', String(buf.length))
+    res.set('X-Elapsed-Ms', String(Date.now() - t0))
+    res.set('X-BPM', String(bpm))
+    res.set('X-Template', motion_template)
+    res.send(buf)
+  } catch (err) {
+    console.error('[image-to-video]', err)
+    res.status(500).json({ error: err.message })
+  } finally {
+    await rm(workDir, { recursive: true, force: true }).catch(() => {})
+  }
+})
+
+// Run aubio tempo detection. Returns BPM as a number, throws on failure.
+// Typical wall-clock: 0.5-1.5 sec for a 1-2 minute track.
+function detectBPM(audioPath) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('aubio', ['tempo', audioPath], { stdio: ['ignore', 'pipe', 'pipe'] })
+    let out = ''
+    proc.stdout.on('data', (d) => { out += d.toString('utf8') })
+    proc.on('error', reject)
+    proc.on('close', (code) => {
+      if (code !== 0) return reject(new Error(`aubio exit ${code}`))
+      const m = out.match(/^([\d.]+)/m)
+      if (!m) return reject(new Error('no bpm in aubio output'))
+      const n = parseFloat(m[1])
+      if (!Number.isFinite(n) || n < 40 || n > 220) return reject(new Error(`unrealistic bpm ${n}`))
+      resolve(n)
+    })
+  })
+}
+
+// Motion template library. Each entry takes the timing/audio params and
+// returns the full filter_complex string for ffmpeg.
+// Inputs assumed: [0]=image (still), [1]=audio (if hasAudio), [last]=overlay PNG.
+const MOTION_TEMPLATES = {
+  // fullbleed_beat — image fills 9:16, ±2° sine rotation, ambient zoom
+  // drift, beat-synced zoom punches every 4 beats. The production default.
+  fullbleed_beat: ({ punchInterval, punchDuration, punchOffset, hasAudio }) => {
+    const overlayInput = hasAudio ? '2' : '1'
+    const zoomExpr = `1.06+0.04*sin(2*PI*on/360)+0.06*if(lt(mod(on-${punchOffset}\\,${punchInterval})\\,${punchDuration})\\,1\\,0)`
+    return [
+      `[0:v]scale=1300:2310,setsar=1[scaled]`,
+      `[scaled]rotate=2*sin(2*PI*t/2.5)*PI/180:c=black@1.0:ow=1300:oh=2310[rotated]`,
+      `[rotated]zoompan=z='${zoomExpr}':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30[zoomed]`,
+      `[zoomed][${overlayInput}:v]overlay=0:0[v]`,
+    ].join(';')
+  },
+}
+
+function buildMotionFilter(templateName, params) {
+  const fn = MOTION_TEMPLATES[templateName] || MOTION_TEMPLATES.fullbleed_beat
+  return fn(params)
+}
+
 app.post('/jobs/title-png', requireSecret, async (req, res) => {
   try {
     const png = await renderTitlePng(req.body || {})
@@ -304,6 +470,790 @@ app.post('/jobs/title-png', requireSecret, async (req, res) => {
     res.status(500).json({ error: err.message })
   }
 })
+
+// ─── Brand-content video composite ─────────────────────────────────────
+// Bakes hook text + brand logo onto a brand-content video using the same
+// canonical TEXT_COMPOSITION spec the in-app canvas compositor uses.
+// SVG → resvg → PNG overlay → ffmpeg overlay filter. One pass.
+//
+// Body:
+//   video_url     — source mp4
+//   hook_text     — overlay copy
+//   logo_url?     — bottom-center brand mark
+//   hook_scale?   — 0.5-1.5, default 0.5
+//   bucket?       — supabase storage bucket. default 'brand-assets'
+//   out_path?     — explicit storage key
+//
+// Returns: { url, bytes, elapsed_ms }
+// ─── Brand visual brief analyzer ──────────────────────────────────────
+// Reads N reference images (already downloaded by the caller, passed as
+// public URLs), feeds them to Claude Sonnet 4.6 vision, returns the
+// structured brief. Worker runs this because Vercel hobby caps at 60s
+// and an adaptive-thinking pass over 19 images can run ~90-120s.
+//
+// Body: { images: [{url, kind, title}, ...] }
+// Returns: { brief, model, usage }
+const BRAND_BRIEF_PROMPT = `You are a senior brand photo art director. The user is uploading their reference library — every photo represents what their brand actually looks like in the real world. Distill the patterns into a tight visual brief the AI image generator will use as ground truth for every future post.
+
+Look at all images together. Find the patterns, not the outliers. Then output a SINGLE JSON object:
+
+{
+  "summary": "1-2 sentence high-level vibe",
+  "lighting": "specific lighting signature (direction, temperature, intensity, mood)",
+  "color_palette": ["3-6 dominant colors as descriptive strings, not hex"],
+  "subject_focus": "what the camera typically centers on",
+  "plating_style": "how food/product is presented",
+  "environment_cues": ["3-6 specific environment elements that recur"],
+  "human_cues": ["if people appear: who they are, how framed, what doing"],
+  "props_seen": ["recurring props that signal this brand"],
+  "shot_styles": ["overhead 90, 45 hero, candid portrait, etc."],
+  "texture_finish": "matte / glossy / rustic / polished / etc.",
+  "off_brand_warnings": ["3-5 things that would clearly NOT belong"],
+  "generation_directives": "1-3 sentences telling the image AI exactly what to bake into every image to keep it on-brand"
+}
+
+Hard rules:
+- Output ONLY the JSON object. No prose.
+- Be specific. "Golden hour through windows from camera left" beats "warm lighting."
+- Don't invent details you don't see. Empty arrays are fine.
+- Off-brand warnings should be specific to what this brand is NOT.`;
+
+app.post('/jobs/analyze-brand-visuals', requireSecret, async (req, res) => {
+  const t0 = Date.now()
+  const { images = [] } = req.body || {}
+  if (!images.length) return res.status(400).json({ error: 'images[] required' })
+
+  const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY
+  if (!ANTHROPIC_KEY) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not set on worker' })
+
+  try {
+    // Download each image and base64-encode for Claude.
+    const blocks = (await Promise.all(images.slice(0, 20).map(async (img) => {
+      try {
+        const r = await fetch(img.url)
+        if (!r.ok) return null
+        const ct = r.headers.get('content-type') || 'image/jpeg'
+        if (!/^image\/(jpeg|png|gif|webp)$/.test(ct)) return null
+        const buf = Buffer.from(await r.arrayBuffer())
+        if (buf.length > 5 * 1024 * 1024) return null
+        return { type: 'image', source: { type: 'base64', media_type: ct, data: buf.toString('base64') } }
+      } catch { return null }
+    }))).filter(Boolean)
+
+    if (!blocks.length) return res.status(400).json({ error: 'No analyzable images' })
+
+    const anthropic = new Anthropic({ apiKey: ANTHROPIC_KEY })
+    // Thinking disabled to keep wall-clock under ~30s. The task is
+    // structured extraction from images — adaptive thinking buys little
+    // here compared to the latency cost.
+    const msg = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 4096,
+      thinking: { type: 'disabled' },
+      messages: [{
+        role: 'user',
+        content: [...blocks, { type: 'text', text: BRAND_BRIEF_PROMPT }],
+      }],
+    })
+
+    const textBlock = msg.content.find((c) => c.type === 'text')
+    if (!textBlock) return res.status(500).json({ error: 'Claude returned no text', stop_reason: msg.stop_reason })
+
+    let brief
+    try {
+      const txt = textBlock.text
+      const firstBrace = txt.indexOf('{')
+      const lastBrace = txt.lastIndexOf('}')
+      if (firstBrace === -1 || lastBrace === -1) throw new Error('No JSON object in response')
+      brief = JSON.parse(txt.slice(firstBrace, lastBrace + 1))
+    } catch (e) {
+      return res.status(500).json({ error: `Parse failed: ${e.message}`, stop_reason: msg.stop_reason, raw: textBlock.text.slice(0, 2000) })
+    }
+
+    res.json({
+      brief,
+      analyzed_count: blocks.length,
+      model: 'claude-sonnet-4-6',
+      usage: { input: msg.usage.input_tokens, output: msg.usage.output_tokens },
+      elapsed_ms: Date.now() - t0,
+    })
+  } catch (err) {
+    console.error('[analyze-brand-visuals]', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── Regenerate monthly brand content ─────────────────────────────────
+// Wipes a campaign's calendar posts and regenerates all of them using
+// the brand visual brief + catalog + viral hook patterns + kie.ai
+// nano-banana-pro for images. Fire-and-forget: returns 202 immediately,
+// processes in background. Caller watches calendar_posts via realtime
+// to see posts populate one by one.
+//
+// Body: { brand_id, campaign_id, user_jwt, day_count }
+// Returns: { jobId, status: 'started', estimated_minutes }
+
+const KIE_BASE = 'https://api.kie.ai/api/v1'
+
+app.post('/jobs/regenerate-content', requireSecret, async (req, res) => {
+  const { brand_id, campaign_id, user_jwt, day_count = 30, image_only = true } = req.body || {}
+  if (!brand_id || !campaign_id || !user_jwt) {
+    return res.status(400).json({ error: 'brand_id, campaign_id, user_jwt required' })
+  }
+  if (!process.env.KIE_API_KEY) return res.status(500).json({ error: 'KIE_API_KEY not set' })
+  if (!process.env.ANTHROPIC_API_KEY) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not set' })
+  if (!process.env.MARKETPLACE_SUPABASE_URL) return res.status(500).json({ error: 'MARKETPLACE_SUPABASE_URL not set' })
+
+  // Respond immediately, run job in background.
+  res.json({ status: 'started', day_count, estimated_minutes: Math.ceil(day_count * 0.7) })
+
+  // Fire-and-forget. Errors here don't bubble back to the user — we log
+  // them and rely on the realtime UI to show what didn't get a media_url.
+  ;(async () => {
+    try {
+      await regenerateContent({ brand_id, campaign_id, user_jwt, day_count, image_only })
+    } catch (e) {
+      console.error('[regenerate-content] background failure:', e)
+    }
+  })()
+})
+
+async function regenerateContent({ brand_id, campaign_id, user_jwt, day_count, image_only }) {
+  const supa = createClient(
+    process.env.MARKETPLACE_SUPABASE_URL,
+    process.env.MARKETPLACE_SUPABASE_ANON_KEY,
+    { global: { headers: { Authorization: `Bearer ${user_jwt}` } } },
+  )
+
+  // Load context.
+  const [brandResp, catalogResp, postsResp, specialsResp] = await Promise.all([
+    supa.from('marketplace_profiles').select('*').eq('id', brand_id).single(),
+    supa.from('brand_catalog_items').select('*').eq('brand_id', brand_id).eq('active', true).order('display_order'),
+    supa.from('calendar_posts').select('*').eq('campaign_id', campaign_id).order('day_index'),
+    supa.from('brand_specials').select('*').eq('brand_id', brand_id).eq('active', true),
+  ])
+
+  if (brandResp.error) throw new Error(`Brand load: ${brandResp.error.message}`)
+  const brand = brandResp.data
+  const catalog = catalogResp.data || []
+  const existingPosts = postsResp.data || []
+  const specials = specialsResp.data || []
+
+  if (!brand.visual_brand_brief) {
+    throw new Error('Brand has no visual_brand_brief. Run /api/analyze-brand-visuals first.')
+  }
+
+  console.log(`[regen] Starting for ${brand.display_name || brand.business_name}, ${existingPosts.length} posts`)
+
+  // Reset all posts to a clean "generating" state. The grid clears so
+  // we can see new ones populate one by one.
+  await supa.from('calendar_posts')
+    .update({ media_url: null, media_thumb_url: null, status: 'draft' })
+    .eq('campaign_id', campaign_id)
+
+  // Pick subject_anchor reference assets — these are the food shots
+  // that anchor each generation by visual reference.
+  const { data: refAssets } = await supa
+    .from('brand_assets')
+    .select('id, kind, title, public_url, visual_role')
+    .eq('brand_id', brand_id)
+    .in('visual_role', ['subject_anchor', 'environment', 'background'])
+  const subjectRefs = (refAssets || []).filter((r) => r.visual_role === 'subject_anchor')
+
+  // Process in batches of 3 to balance kie.ai throughput vs latency.
+  const BATCH = 3
+  const posts = existingPosts.slice(0, day_count)
+  for (let i = 0; i < posts.length; i += BATCH) {
+    const slice = posts.slice(i, i + BATCH)
+    console.log(`[regen] Batch ${Math.floor(i / BATCH) + 1}/${Math.ceil(posts.length / BATCH)}: days ${slice.map((p) => p.day_index).join(',')}`)
+    await Promise.all(slice.map((post) => generateOnePost({
+      post, brand, catalog, specials, subjectRefs, supa, image_only, allRefs: refAssets || [],
+    }).catch((e) => console.warn(`[regen] day ${post.day_index} failed:`, e?.message))))
+  }
+
+  console.log(`[regen] Complete for ${brand.display_name}`)
+}
+
+// Compute which brand_specials apply to a given date, including the
+// promotion warmup window. promote_days_before=2 means the special
+// should also be promoted on the 2 calendar days leading up to it.
+//
+// Recurrence supported:
+//   weekly + day_of_week (0=Sun..6=Sat)
+//   monthly + day_of_month
+//   one_time + specific_date
+//   active starts_at <= date <= ends_at (when set)
+function activeSpecialsForDate(specials, scheduledFor) {
+  if (!scheduledFor) return []
+  const d = new Date(scheduledFor + 'T00:00:00')
+  const dow = d.getDay()
+  const dom = d.getDate()
+  return (specials || []).filter((s) => {
+    if (!s.active) return false
+    if (s.starts_at && new Date(s.starts_at) > d) return false
+    if (s.ends_at && new Date(s.ends_at) < d) return false
+
+    // The warmup window: post-date is within promote_days_before of the
+    // special-trigger date.
+    const warmup = Math.max(0, Number(s.promote_days_before) || 0)
+
+    if (s.recurrence === 'weekly' && s.day_of_week != null) {
+      // distance forward from post to the next occurrence of day_of_week
+      const distance = (s.day_of_week - dow + 7) % 7
+      return distance <= warmup
+    }
+    if (s.recurrence === 'monthly' && s.day_of_month != null) {
+      return Math.abs(dom - s.day_of_month) <= warmup
+    }
+    if (s.recurrence === 'one_time' && s.specific_date) {
+      const t = new Date(s.specific_date + 'T00:00:00')
+      const diffDays = Math.floor((t - d) / 86400000)
+      return diffDays >= 0 && diffDays <= warmup
+    }
+    return false
+  })
+}
+
+// Per-post: Claude composes post details + image prompt, kie.ai
+// generates image, upload to storage, UPDATE calendar_posts row.
+async function generateOnePost({ post, brand, catalog, specials, subjectRefs, supa, image_only, allRefs = [], focusItemOverride = null }) {
+  const activeSpecials = activeSpecialsForDate(specials, post.scheduled_for)
+
+  // Scene type: prefer post.scene_type when explicitly set (agency override),
+  // otherwise pick deterministically by day_index.
+  let sceneType = null
+  if (post.scene_type) {
+    const all = SCENE_TYPES_BY_NICHE[brand.business_type || 'other'] || SCENE_TYPES_BY_NICHE.default
+    sceneType = all.find((s) => s.key === post.scene_type)
+  }
+  if (!sceneType) {
+    sceneType = pickSceneType({ niche: brand.business_type || 'other', dayIdx: post.day_index })
+  }
+  const dayIdx = post.day_index
+
+  // Pick focus catalog item. Override wins if specified (e.g. when the
+  // agency tells regenerate-post to focus on a specific dish). Otherwise
+  // round-robin, prioritizing bestsellers. Also exclude weak-visual items
+  // (Sides like rice/fries) when scene_type calls for a hero protein.
+  let focusItem = null
+  if (focusItemOverride) {
+    focusItem = catalog.find((c) =>
+      c.name.toLowerCase().includes(String(focusItemOverride).toLowerCase()) ||
+      c.id === focusItemOverride
+    )
+  }
+  if (!focusItem) {
+    const heroSceneTypes = ['hero_plating', 'kitchen_action', 'process_macro', 'customer_pov', 'empty_plate_fill']
+    const needsHeroProtein = heroSceneTypes.includes(sceneType.key)
+    const eligible = needsHeroProtein
+      ? catalog.filter((c) => !/^(sides|drinks|hookah)$/i.test(c.category || ''))
+      : catalog
+    const bestsellers = eligible.filter((c) => c.notes && /bestseller/i.test(c.notes))
+    const others = eligible.filter((c) => !c.notes || !/bestseller/i.test(c.notes))
+    const sortedCatalog = [...bestsellers, ...others]
+    focusItem = sortedCatalog[dayIdx % sortedCatalog.length] || eligible[0] || catalog[0]
+  }
+
+  // Compose the post via Claude.
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  const composePrompt = buildComposePrompt({ post, brand, focusItem, dayIdx, activeSpecials, sceneType })
+  const composeMsg = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 1500,
+    thinking: { type: 'disabled' },
+    messages: [{ role: 'user', content: composePrompt }],
+  })
+  const composeText = composeMsg.content.find((c) => c.type === 'text')?.text || ''
+  let composed
+  try {
+    const first = composeText.indexOf('{'), last = composeText.lastIndexOf('}')
+    composed = JSON.parse(composeText.slice(first, last + 1))
+  } catch (e) {
+    throw new Error(`Compose parse failed day ${dayIdx}: ${e.message}`)
+  }
+
+  // Pick reference images matching this scene type. The picker pulls
+  // from the brand's reference library by visual_role.
+  //   hero_plating, customer_pov     → subject_anchor (the dish itself)
+  //   kitchen_action, team_moment    → team
+  //   storefront, customer_pov       → environment (exterior/interior)
+  //   process_macro                  → environment (rotisserie, oven, prep)
+  //   empty_plate_fill               → background (kitchen with empty plate)
+  //   humor_relatable                → subject_anchor + brand env
+  const sceneRoleMap = {
+    hero_plating:    ['subject_anchor'],
+    customer_pov:    ['environment', 'subject_anchor'],
+    kitchen_action:  ['team', 'background'],
+    storefront:      ['environment'],
+    process_macro:   ['environment'],
+    team_moment:     ['team'],
+    empty_plate_fill:['background'],
+    humor_relatable: ['subject_anchor'],
+  }
+  const targetRoles = sceneRoleMap[sceneType.key] || ['subject_anchor']
+  const sceneRefs = (allRefs || []).filter((r) => targetRoles.includes(r.visual_role))
+
+  // For dish-anchored scenes, prefer a ref that matches the focus item.
+  let primaryRef = null
+  if (sceneRefs.length) {
+    if (targetRoles.includes('subject_anchor')) {
+      primaryRef = sceneRefs.find((r) =>
+        r.title.toLowerCase().includes(focusItem.name.toLowerCase().split(' ')[0])
+      )
+    }
+    primaryRef = primaryRef || sceneRefs[dayIdx % sceneRefs.length]
+  }
+
+  const imageInput = primaryRef ? [primaryRef.public_url] : []
+
+  const taskResp = await fetch(`${KIE_BASE}/jobs/createTask`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${process.env.KIE_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'nano-banana-pro',
+      input: {
+        prompt: composed.image_prompt,
+        image_input: imageInput,
+        aspect_ratio: '9:16',
+        resolution: '1K',
+        output_format: 'png',
+        num_images: 1,
+      },
+    }),
+  })
+  const taskBody = await taskResp.json()
+  const taskId = taskBody?.data?.taskId || taskBody?.data?.task_id
+  if (!taskId) throw new Error(`Day ${dayIdx} createTask no taskId: ${JSON.stringify(taskBody).slice(0, 200)}`)
+
+  // Poll. nano-banana-pro typically completes in 20-60 sec.
+  let resultUrl
+  for (let tries = 0; tries < 60; tries++) {
+    await new Promise((r) => setTimeout(r, 3000))
+    const poll = await fetch(`${KIE_BASE}/jobs/recordInfo?taskId=${taskId}`, {
+      headers: { Authorization: `Bearer ${process.env.KIE_API_KEY}` },
+    })
+    const pb = await poll.json()
+    const data = pb?.data || pb
+    const urls = pickResultUrls(data)
+    if (urls.length) { resultUrl = urls[0]; break }
+    const state = String(data?.state || data?.status || '').toLowerCase()
+    if (['failed', 'error'].includes(state)) {
+      throw new Error(`Day ${dayIdx} kie failed: ${JSON.stringify(data).slice(0, 200)}`)
+    }
+  }
+  if (!resultUrl) throw new Error(`Day ${dayIdx} kie timeout`)
+
+  // Download + re-upload to our bucket so the URL is stable.
+  const imgResp = await fetch(typeof resultUrl === 'string' ? resultUrl : resultUrl.url)
+  if (!imgResp.ok) throw new Error(`Day ${dayIdx} download failed: ${imgResp.status}`)
+  const imgBuf = Buffer.from(await imgResp.arrayBuffer())
+  const storagePath = `${brand.id}/posts/${post.campaign_id}-day${dayIdx}.png`
+  const { error: upErr } = await supa.storage
+    .from('brand-assets').upload(storagePath, imgBuf, { contentType: 'image/png', upsert: true })
+  if (upErr) throw new Error(`Day ${dayIdx} upload: ${upErr.message}`)
+  const { data: pub } = supa.storage.from('brand-assets').getPublicUrl(storagePath)
+
+  const updates = {
+    media_url:        pub.publicUrl,
+    media_thumb_url:  pub.publicUrl,
+    post_type:        'image',
+    title:            composed.title || null,
+    caption:          composed.caption || null,
+    hashtags:         composed.hashtags || [],
+    first_comment:    composed.first_comment || null,
+    hook_overlay:     composed.hook_overlay || null,
+    prompt:           composed.image_prompt,
+    goal_focus:       composed.goal_focus || 'awareness',
+    scene_type:       sceneType.key,
+    reference_strategy: imageInput.length ? (sceneType.key === 'empty_plate_fill' ? 'edit' : 'multi_ref') : 'text_to_image',
+    reference_asset_ids: primaryRef ? [primaryRef.id] : [],
+    status: 'draft',
+  }
+  const { error: postErr } = await supa.from('calendar_posts')
+    .update(updates).eq('id', post.id)
+  if (postErr) throw new Error(`Day ${dayIdx} update: ${postErr.message}`)
+
+  console.log(`[regen] Day ${dayIdx} done [${sceneType.key}]: ${focusItem.name} → ${composed.hook_overlay?.slice(0, 50)}`)
+}
+
+// Scene-type rotation: stops every post from being a plate-on-table.
+// Mirrors SCENE_TYPES_BY_NICHE in scalesolo-app/src/lib/generationRules.js.
+const SCENE_TYPES_BY_NICHE = {
+  restaurant: [
+    { key: 'hero_plating',     weight: 28, allow_humor: false, directive: 'Plated dish on the brand\'s signature surface, 45° hero or true overhead. Steam, sauce drizzle, garnish detail visible. Pure food porn.' },
+    { key: 'kitchen_action',   weight: 14, allow_humor: false, directive: 'Behind-the-scenes kitchen moment — chef hands working a grill, flipping kofta, prepping the dish. Show motion + heat, never face the chef directly.' },
+    { key: 'storefront',       weight: 10, allow_humor: false, directive: 'Exterior of the restaurant from a customer\'s POV approaching. Sign, door, neighborhood context visible. Inviting, hospitable, neighborhood-feeling.' },
+    { key: 'customer_pov',     weight: 12, allow_humor: true,  directive: 'POV shot of someone walking in, sitting down, taking the first bite. Hands-only or shoulder-frame. Captures the experience, not just the food.' },
+    { key: 'humor_relatable',  weight: 10, allow_humor: true,  directive: 'Funny relatable food observation. "POV: you just remembered Sunday meal prep is tomorrow." "When the garlic sauce hits at 11pm." Clean, self-aware, never crude.' },
+    { key: 'process_macro',    weight: 14, allow_humor: false, directive: 'Tight macro on a brand-signature process — shawarma spit rotating, dough being stretched, sauce being whisked. Texture, motion, craft on display.' },
+    { key: 'team_moment',      weight: 6,  allow_humor: true,  directive: 'The people behind the food. Owner, chef, family staff. Warm, candid, human.' },
+    { key: 'empty_plate_fill', weight: 6,  allow_humor: false, directive: 'Use the empty-plate / kitchen reference as the canvas. Place the dish ONTO the existing brand environment. Output looks like a real candid shot of the dish in their actual restaurant.' },
+  ],
+  // Other niches fall through to a generic rotation in pickSceneType.
+  default: [
+    { key: 'hero_subject',     weight: 40, allow_humor: false, directive: 'Hero shot of the subject. 45° or 90° overhead.' },
+    { key: 'process_macro',    weight: 20, allow_humor: false, directive: 'Tight macro on a brand-signature process or craft moment.' },
+    { key: 'environment',      weight: 15, allow_humor: false, directive: 'Wide environmental shot of the brand\'s setting.' },
+    { key: 'humor_relatable',  weight: 15, allow_humor: true,  directive: 'Clean POV-style relatable humor.' },
+    { key: 'team_moment',      weight: 10, allow_humor: true,  directive: 'The people behind the brand.' },
+  ],
+}
+
+const HUMOR_FORBIDDEN = [
+  'Sexual jokes or innuendo',
+  'Profanity (even mild)',
+  'Body shaming or appearance-based humor',
+  'Politics or partisan content',
+  'Mean-spirited humor targeting any group',
+  'Punching down at customers or competitors',
+  'Dark / nihilistic humor',
+]
+
+function pickSceneType({ niche = 'other', dayIdx }) {
+  const scenes = SCENE_TYPES_BY_NICHE[niche] || SCENE_TYPES_BY_NICHE.default
+  const bag = []
+  for (const s of scenes) {
+    for (let i = 0; i < (s.weight || 1); i++) bag.push(s)
+  }
+  const idx = Math.abs((dayIdx * 2654435761) % bag.length)
+  return bag[idx]
+}
+
+function buildComposePrompt({ post, brand, focusItem, dayIdx, activeSpecials = [], sceneType = null }) {
+  const brief = brand.visual_brand_brief || {}
+  const dayLabel = post.scheduled_for
+    ? new Date(post.scheduled_for + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+    : `Day ${dayIdx}`
+  const dayOfWeekName = post.scheduled_for
+    ? new Date(post.scheduled_for + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' })
+    : null
+
+  const sceneBlock = sceneType
+    ? `\nSCENE TYPE for this post: "${sceneType.key}"
+DIRECTIVE: ${sceneType.directive}
+${sceneType.allow_humor ? `Humor is allowed for this scene. Allowed: POV-style relatable observations, self-aware brand jokes, clean industry humor, wordplay. FORBIDDEN: ${HUMOR_FORBIDDEN.join('; ')}.` : 'Humor is NOT appropriate for this scene type. Stay sincere + appetite-driven.'}
+The image MUST match this scene type — DO NOT default to a plated-dish-on-table shot unless the scene type calls for it.\n`
+    : ''
+
+  // Pricing block: explicit. When a special applies, the special's
+  // pricing supersedes the catalog regular price. The hook and caption
+  // MUST use special pricing. The catalog price is reference only.
+  const specialsBlock = activeSpecials.length
+    ? `\nACTIVE SPECIALS for ${dayOfWeekName || 'this day'} (within promotion window):\n${activeSpecials.map((s) => {
+        const recur = s.recurrence === 'weekly'
+          ? `Every ${['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][s.day_of_week]}`
+          : s.recurrence === 'monthly' ? `${s.day_of_month}${ordinal(s.day_of_month)} of each month`
+          : s.specific_date ? `On ${s.specific_date}` : 'Special'
+        return `- "${s.title}" — ${s.description || ''} (Recurrence: ${recur}${s.cta ? ` · CTA: ${s.cta}` : ''})`
+      }).join('\n')}\n
+PRICING + SPECIALS RULES (HARD):
+- The special's pricing (embedded in the title like "$7" or "20% off") OVERRIDES the catalog's regular price.
+- If the focus item is part of an active special, the caption AND hook overlay MUST cite the special's price/discount, NEVER the catalog's regular price.
+- If the special applies to a different item than the focus, mention BOTH: feature the focus item normally + add a line about the special.
+- Don't claim "this week only" or invent expiration language unless it matches the special's actual recurrence.
+- Use the special's exact wording when possible. "$7 Chicken Shawarma" stays "$7 Chicken Shawarma," not "Chicken Shawarma for under ten bucks."
+`
+    : ''
+
+  return `You are composing one Instagram/TikTok post for ${brand.business_name || brand.display_name}, a ${brand.business_type} in ${brand.city || 'their city'}.
+
+Brand voice: ${brand.brand_tone || 'warm, family-owned, appetite-driven'}
+Target customer: ${brand.target_customer || 'locals'}
+
+Visual brand brief (the AI image generator's ground truth):
+${JSON.stringify(brief, null, 2)}
+
+Focus item for THIS post:
+- Name: ${focusItem.name}
+- Description: ${focusItem.description || ''}
+- Regular catalog price: ${focusItem.price_cents ? '$' + (focusItem.price_cents / 100).toFixed(2) : 'n/a'}
+- Notes: ${focusItem.notes || ''}
+${specialsBlock}
+${sceneBlock}Day: ${dayLabel} (day ${dayIdx} of 30)
+
+Compose ONE post. Output ONLY JSON:
+{
+  "title": "TikTok-style 1-line hook title (under 60 chars)",
+  "caption": "Instagram-style caption, 2-3 short paragraphs, warm conversational. NEVER use em-dashes. NEVER use emojis except 1-2 sparingly. NEVER claim a price or special unless it's on the focus item or in catalog.",
+  "hashtags": ["array of 6-10 hashtags, include #${(brand.city || 'houston').toLowerCase().replace(/\\s+/g,'')}eats #${(brand.business_type || 'food')}, NO # at end, lowercase, 1 word each"],
+  "first_comment": "Conversational engagement bait, 1 sentence, no em-dash",
+  "hook_overlay": "Text rendered ON the image. Max 70 chars. TikTok-style scroll-stopper. Patterns: POV, 'If X, you belong at Y', 'THE BEST...', 'Houston [audience], here's...', 'POV: you walked into [brand] on a [day]'. SHOULD reference the focus item or brand context.",
+  "goal_focus": "one of: awareness | engagement | sales | retention",
+  "image_prompt": "Full kie.ai image prompt for nano-banana-pro. MUST be 9:16 vertical food photo. MUST reference the focus item by name with specific visual details. MUST incorporate brief.generation_directives. Mention specific environment cues from brief.environment_cues. Mention plating style from brief.plating_style. Mention lighting from brief.lighting. End with negative space cues: 'no people, no hands, no utensils, no text, no logos, no captions'. Under 600 chars."
+}
+
+Hard rules:
+- Never use em-dashes (— or –). Use commas or periods.
+- Never mention items not in the focus or general brand catalog.
+- Hook overlay text must be ALL CAPS or sentence case, never mixed.
+- Image prompt must paint a complete photo brief that follows the brand brief.`
+}
+
+// Suffix for 1st/2nd/3rd/etc. used in human-readable date references.
+function ordinal(n) {
+  const s = ['th','st','nd','rd'], v = n % 100
+  return s[(v - 20) % 10] || s[v] || s[0]
+}
+
+// Single-post regenerator. Used to fix specific posts (e.g. after a
+// schema fix) or to force a specific scene_type / focus item without
+// re-rendering the entire calendar.
+//
+// Body: { brand_id, post_id, user_jwt, scene_type?, focus_item? }
+//   scene_type — override post.scene_type for this render (else uses post.scene_type or rotation)
+//   focus_item — name substring of the catalog item to use as focus
+// Returns: { status: 'started' }
+app.post('/jobs/regenerate-post', requireSecret, async (req, res) => {
+  const { brand_id, post_id, user_jwt, scene_type = null, focus_item = null } = req.body || {}
+  if (!brand_id || !post_id || !user_jwt) return res.status(400).json({ error: 'brand_id, post_id, user_jwt required' })
+
+  res.json({ status: 'started', post_id, overrides: { scene_type, focus_item } })
+
+  ;(async () => {
+    try {
+      const supa = createClient(
+        process.env.MARKETPLACE_SUPABASE_URL,
+        process.env.MARKETPLACE_SUPABASE_ANON_KEY,
+        { global: { headers: { Authorization: `Bearer ${user_jwt}` } } },
+      )
+
+      const [brandResp, catalogResp, postResp, specialsResp, refsResp] = await Promise.all([
+        supa.from('marketplace_profiles').select('*').eq('id', brand_id).single(),
+        supa.from('brand_catalog_items').select('*').eq('brand_id', brand_id).eq('active', true).order('display_order'),
+        supa.from('calendar_posts').select('*').eq('id', post_id).single(),
+        supa.from('brand_specials').select('*').eq('brand_id', brand_id).eq('active', true),
+        supa.from('brand_assets').select('id, kind, title, public_url, visual_role')
+            .eq('brand_id', brand_id).in('visual_role', ['subject_anchor', 'environment', 'background', 'team']),
+      ])
+
+      if (brandResp.error || postResp.error) throw new Error('load failed')
+      const brand = brandResp.data
+      const catalog = catalogResp.data || []
+      let post = postResp.data
+      const specials = specialsResp.data || []
+      const subjectRefs = (refsResp.data || []).filter((r) => r.visual_role === 'subject_anchor')
+
+      // Apply scene_type override to the in-memory post copy (the worker
+      // reads from there). Doesn't write to DB unless the render succeeds.
+      if (scene_type) post = { ...post, scene_type }
+
+      await generateOnePost({
+        post, brand, catalog, specials, subjectRefs, supa,
+        image_only: true,
+        allRefs: refsResp.data || [],
+        focusItemOverride: focus_item,
+      })
+      console.log(`[regen-post] Day ${post.day_index} regenerated (scene=${scene_type || 'auto'}, focus=${focus_item || 'auto'})`)
+    } catch (e) {
+      console.error('[regen-post] failed:', e)
+    }
+  })()
+})
+
+function pickResultUrls(data) {
+  let out = []
+  const rj = data?.resultJson
+  if (typeof rj === 'string') {
+    try {
+      const parsed = JSON.parse(rj)
+      if (Array.isArray(parsed?.resultUrls)) out = parsed.resultUrls
+      else if (Array.isArray(parsed)) out = parsed
+    } catch {}
+  } else if (rj && Array.isArray(rj.resultUrls)) out = rj.resultUrls
+  if (!out.length) {
+    out = data?.resultUrls || data?.result?.urls || (data?.images?.map?.((i) => i.url || i)) || []
+  }
+  return (Array.isArray(out) ? out : []).filter(Boolean)
+}
+
+app.post('/jobs/composite-video', requireSecret, async (req, res) => {
+  const t0 = Date.now()
+  const { video_url, hook_text = '', logo_url = null, hook_scale = 0.5, hook_y_pct = 25 } = req.body || {}
+
+  if (!video_url) return res.status(400).json({ error: 'video_url required' })
+
+  const workDir = await mkdtemp(join(tmpdir(), 'composite-'))
+  try {
+    const videoPath = join(workDir, 'input.mp4')
+    await downloadToFile(video_url, videoPath)
+
+    let logoPath = null
+    if (logo_url) {
+      try {
+        logoPath = join(workDir, 'logo.png')
+        await downloadToFile(logo_url, logoPath)
+      } catch (e) {
+        console.warn('[composite-video] logo dl failed:', e.message)
+        logoPath = null
+      }
+    }
+
+    const overlayBuf = await renderHookOverlayPng({
+      hook_text, logo_path: logoPath, hook_scale: clampScale(hook_scale), hook_y_pct,
+    })
+    const overlayPath = join(workDir, 'overlay.png')
+    await writeFile(overlayPath, overlayBuf)
+
+    const outPath = join(workDir, 'output.mp4')
+    await runFFmpegArgs([
+      '-y',
+      '-i', videoPath,
+      '-i', overlayPath,
+      '-filter_complex',
+        '[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[v0];[v0][1:v]overlay=0:0[v]',
+      '-map', '[v]', '-map', '0:a?',
+      '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-pix_fmt', 'yuv420p',
+      '-c:a', 'copy',
+      '-movflags', '+faststart',
+      outPath,
+    ])
+
+    // Return the bytes directly. Skips a round-trip through Supabase
+    // storage — the proxy streams the response straight to the browser.
+    const buffer = await readFile(outPath)
+    res.set('Content-Type', 'video/mp4')
+    res.set('Content-Length', String(buffer.length))
+    res.set('X-Elapsed-Ms', String(Date.now() - t0))
+    res.set('X-Bytes', String(buffer.length))
+    res.send(buffer)
+  } catch (err) {
+    console.error('[composite-video]', err)
+    res.status(500).json({ error: err.message })
+  } finally {
+    await rm(workDir, { recursive: true, force: true }).catch(() => {})
+  }
+})
+
+function clampScale(v) {
+  const n = typeof v === 'number' ? v : parseFloat(v)
+  if (!Number.isFinite(n)) return 0.5
+  return Math.max(0.5, Math.min(1.5, n))
+}
+
+async function downloadToFile(url, dest) {
+  const r = await fetch(url)
+  if (!r.ok) throw new Error(`download ${r.status} for ${url}`)
+  const buf = Buffer.from(await r.arrayBuffer())
+  await writeFile(dest, buf)
+  return buf.length
+}
+
+function runFFmpegArgs(args) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(process.env.FFMPEG_PATH || ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] })
+    let stderr = ''
+    proc.stderr.on('data', (d) => { stderr += d.toString('utf8') })
+    proc.on('error', reject)
+    proc.on('close', (code) => {
+      if (code === 0) resolve()
+      else reject(new Error(`ffmpeg exit ${code}: ${stderr.slice(-1500)}`))
+    })
+  })
+}
+
+// Render the 1080x1920 transparent overlay (text + logo). Mirrors the
+// canvas compositor in scalesolo-app/src/lib/imageCompositor.js so the
+// in-editor preview matches what publishes.
+async function renderHookOverlayPng({ hook_text, logo_path, hook_scale = 0.5, hook_y_pct = 25 }) {
+  const W = 1080, H = 1920
+  const fontSize = Math.round(H * 0.062 * hook_scale)
+  const sidePad = W * 0.12
+  const maxTextW = W - sidePad * 2
+  const lineH = Math.round(fontSize * 1.15)
+
+  const lines = wrapText(String(hook_text || '').trim(), fontSize, maxTextW)
+  const totalH = lines.length * lineH
+  // Anchor text-block CENTER at hook_y_pct % of canvas height.
+  const yPct = Math.max(5, Math.min(95, Number(hook_y_pct) || 25))
+  const centerY = H * (yPct / 100)
+  const blockTop = centerY - totalH / 2
+  const cx = W / 2
+
+  const tspans = lines.map((line, i) => {
+    const y = Math.round(blockTop + (i + 0.85) * lineH)
+    return `<tspan x="${cx}" y="${y}">${escapeXmlText(line)}</tspan>`
+  }).join('')
+
+  let logoSvg = ''
+  if (logo_path) {
+    try {
+      const rawBuf = await readFile(logo_path)
+      // SVG-in-SVG embedding is unreliable in resvg. Rasterize SVGs to
+      // PNG first by sniffing the head of the buffer (file extension is
+      // an unreliable signal — Supabase URLs don't always carry one).
+      const isSvg = rawBuf.slice(0, 256).toString('utf8').trim().match(/^(<\?xml|<svg)/i)
+      let pngBuf, dimW, dimH
+      if (isSvg) {
+        const r = new Resvg(rawBuf, {
+          background: 'transparent',
+          fitTo: { mode: 'width', value: Math.round(W * 0.55) },
+          font: { loadSystemFonts: true },
+        })
+        const rendered = r.render()
+        pngBuf = Buffer.from(rendered.asPng())
+        dimW = rendered.width; dimH = rendered.height
+      } else {
+        pngBuf = rawBuf
+        const meta = await sharp(rawBuf).metadata()
+        dimW = meta.width || 1; dimH = meta.height || 1
+      }
+      const maxW = W * 0.50, maxH = H * 0.10
+      const aspect = dimW / dimH
+      let lw, lh
+      if (aspect > maxW / maxH) { lw = maxW; lh = maxW / aspect }
+      else                     { lh = maxH; lw = maxH * aspect }
+      const lx = (W - lw) / 2
+      const ly = H - lh - H * 0.06
+      const b64 = pngBuf.toString('base64')
+      logoSvg = `<image href="data:image/png;base64,${b64}" x="${lx}" y="${ly}" width="${lw}" height="${lh}" preserveAspectRatio="xMidYMid meet" />`
+    } catch (e) {
+      console.warn('[overlay] logo embed failed:', e.message)
+    }
+  }
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+    <defs>
+      <filter id="hs" x="-25%" y="-25%" width="150%" height="150%">
+        <feDropShadow dx="0" dy="3" stdDeviation="12" flood-color="black" flood-opacity="0.45"/>
+        <feDropShadow dx="0" dy="0" stdDeviation="4"  flood-color="black" flood-opacity="0.55"/>
+        <feDropShadow dx="0" dy="1" stdDeviation="2"  flood-color="black" flood-opacity="0.70"/>
+      </filter>
+    </defs>
+    <text font-family="Plus Jakarta Sans" font-weight="800" font-size="${fontSize}"
+          fill="#ffffff" letter-spacing="${(-0.02 * fontSize).toFixed(2)}"
+          text-anchor="middle" filter="url(#hs)">
+      ${tspans}
+    </text>
+    ${logoSvg}
+  </svg>`
+
+  const resvg = new Resvg(svg, {
+    background: 'transparent',
+    fitTo: { mode: 'width', value: W },
+    font: { loadSystemFonts: true, defaultFontFamily: 'Plus Jakarta Sans' },
+  })
+  return resvg.render().asPng()
+}
+
+function wrapText(text, fontSize, maxWidth) {
+  const charW = fontSize * 0.55  // Plus Jakarta Sans 800 avg advance
+  const maxChars = Math.max(8, Math.floor(maxWidth / charW))
+  const words = text.split(/\s+/).filter(Boolean)
+  const lines = []
+  let line = ''
+  for (const w of words) {
+    const test = line ? `${line} ${w}` : w
+    if (test.length > maxChars && line) { lines.push(line); line = w }
+    else { line = test }
+    if (lines.length >= 4) break
+  }
+  if (line && lines.length < 4) lines.push(line)
+  return lines
+}
+
+function escapeXmlText(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
 
 // ── Polish job ────────────────────────────────────────────────────────────
 // Probe duration via no-op ffmpeg + stderr parse. Same pattern as the
@@ -2134,6 +3084,143 @@ app.post('/jobs/extract-audio', requireSecret, async (req, res) => {
     res.json(result)
   } catch (err) {
     console.error('extract-audio job error:', err?.stack || err)
+    res.status(500).json({ error: String(err?.message || err) })
+  }
+})
+
+// ── Visual analysis fallback: sample N keyframes for vision LLM ──────────
+// Body: { video_url, count?=6, max_dim?=1568, quality?=70 }
+// Returns: { frames: [{ t, base64, media_type, bytes }], duration_secs }
+//
+// Why this exists:
+//   ScaleSolo's bulk caption generator and auto-title flows lean on
+//   audio transcripts as the topic anchor. Silent videos, music-only
+//   B-roll, and sound-effect-only clips produced "_no_transcript"
+//   sentinels that the UI surfaced as "n video(s) couldn't be
+//   auto-captioned." For those rows, Claude can still understand the
+//   content if we hand it the actual frames — vision is image input
+//   only (no native video), so we sample N evenly-spaced JPEGs.
+//
+// The encoded frames are returned inline (base64) instead of being
+// uploaded to Supabase. They feed straight into a Claude messages
+// `content: [{type:"image", source:{type:"base64", ...}}]` block in
+// the API, no signed-URL round-trip needed, and they're tiny enough
+// (~50-150KB each at max_dim 1568 + JPEG q70) that 6 frames stays
+// under the 32MB request ceiling with massive headroom.
+//
+// max_dim = 1568 matches the largest dimension Claude Sonnet 4.5
+// uses natively. Going higher wastes upstream tokens on a downscale
+// it does itself.
+async function extractFramesCore(body) {
+  const {
+    video_url,
+    count: rawCount = 6,
+    max_dim: rawMaxDim = 1568,
+    quality: rawQuality = 70,
+  } = body || {}
+  if (!video_url) throw new Error('video_url required')
+
+  const count = Math.max(1, Math.min(12, Number(rawCount) || 6))
+  const maxDim = Math.max(256, Math.min(2576, Number(rawMaxDim) || 1568))
+  const quality = Math.max(40, Math.min(95, Number(rawQuality) || 70))
+
+  let workdir = null
+  try {
+    workdir = await mkdtemp(join(tmpdir(), 'frames-'))
+    const extMatch = video_url.split('?')[0].match(/\.([a-z0-9]+)$/i)
+    const ext = extMatch ? extMatch[1].toLowerCase() : 'mp4'
+    const vPath = join(workdir, `in.${ext}`)
+
+    // Stream the video down once, then sample timestamps locally. We
+    // don't try to stream-extract via remote URL — many CDNs reject the
+    // range requests ffmpeg uses for -ss seeks, and downloading once is
+    // cheaper than N retries.
+    const buf = await fetchToBuffer(video_url)
+    await writeFile(vPath, buf)
+
+    let duration = await probeDurationSecs(vPath).catch(() => null)
+    if (!duration || duration < 0.2) {
+      // Couldn't probe — fall back to sampling evenly across whatever
+      // ffmpeg can decode. Bail with a clear error if even one frame
+      // grab fails on this file.
+      duration = null
+    }
+
+    // Build evenly-spaced sample timestamps. Skip the very start (often
+    // a black fade-in) and very end (codec EOF jank): clip to [5%, 95%].
+    // Falls back to a coarse [0, 1, 2, ...] sequence when duration is
+    // unknown.
+    const timestamps = duration
+      ? Array.from({ length: count }, (_, i) => {
+          const start = duration * 0.05
+          const end   = duration * 0.95
+          const span  = Math.max(0, end - start)
+          // Center the i-th sample inside its bin so frames are
+          // visually distinct (avoids grabbing two near-duplicates
+          // at the very same moment when count is small).
+          return start + span * ((i + 0.5) / count)
+        })
+      : Array.from({ length: count }, (_, i) => i * 0.5)
+
+    // Single ffmpeg invocation per frame — much more reliable than
+    // -vf "select" across N timestamps in one pass, especially for
+    // sources with B-frames / variable GOP that confuse select.
+    // -ss before -i = fast seek (sometimes inaccurate); we put it AFTER
+    // -i for accurate-seek even though it's slower, because frame
+    // accuracy matters more than throughput here (6 frames total).
+    //
+    // scale: keep aspect ratio, longest side = maxDim. force_original
+    // _aspect_ratio=decrease handles both landscape and portrait inputs.
+    //
+    // qscale:v sets JPEG quality (2-31, lower = better). We map 40-95
+    // (user-friendly) to ~7-2 to stay in JPEG's sane zone.
+    const ffmpegQ = Math.round(2 + ((95 - quality) / 55) * 5) // 95→2, 40→7
+    const frames = []
+    for (let i = 0; i < timestamps.length; i++) {
+      const t = timestamps[i]
+      const out = join(workdir, `f-${i}.jpg`)
+      const args = [
+        '-y', '-i', vPath,
+        '-ss', t.toFixed(3),
+        '-frames:v', '1',
+        '-vf', `scale='if(gt(iw,ih),${maxDim},-2)':'if(gt(iw,ih),-2,${maxDim})'`,
+        '-q:v', String(ffmpegQ),
+        out,
+      ]
+      try {
+        await runFFmpeg(args, 60_000)
+        const jpg = await readFile(out)
+        if (jpg.byteLength > 0) {
+          frames.push({
+            t: Number(t.toFixed(3)),
+            base64: jpg.toString('base64'),
+            media_type: 'image/jpeg',
+            bytes: jpg.byteLength,
+          })
+        }
+      } catch (e) {
+        // Individual frame failure isn't fatal — we'd rather hand
+        // Claude 5 frames than zero. Logged for diagnosability.
+        console.warn(`[extract-frames] frame ${i} @ ${t.toFixed(2)}s failed: ${e?.message || e}`)
+      }
+    }
+
+    if (frames.length === 0) {
+      throw new Error('Could not extract any frames from the video')
+    }
+
+    return { frames, duration_secs: duration, sampled: frames.length }
+  } finally {
+    if (workdir) { try { await rm(workdir, { recursive: true, force: true }) } catch {} }
+  }
+}
+
+app.post('/jobs/extract-frames', requireSecret, async (req, res) => {
+  try {
+    const result = await extractFramesCore(req.body || {})
+    res.json(result)
+  } catch (err) {
+    console.error('extract-frames job error:', err?.stack || err)
     res.status(500).json({ error: String(err?.message || err) })
   }
 })
