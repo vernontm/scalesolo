@@ -452,7 +452,19 @@ const NODE_RUNNERS = {
       }
     }
     if (!audioUrl && !script && !preChunkedAudio) {
-      throw new Error('avatar_render needs upstream voice_gen audio, a script, or audio_chunks')
+      // Tell the user what we actually saw upstream so they can spot a
+      // mis-wire (e.g. Audio plugged into the avatar PICKER instead of
+      // the avatar VIDEO node).
+      const seen = asArr(inputs)
+        .filter((v) => v && typeof v === 'object')
+        .map((v) => Object.keys(v).join('+') || '(empty)')
+        .join(' | ') || 'nothing'
+      throw new Error(
+        'avatar_render needs upstream voice_gen audio, a script, or audio_chunks. ' +
+        `Connected inputs only provided: ${seen}. ` +
+        'Make sure the Audio (or Voice gen) node is wired directly into THIS Avatar video node — ' +
+        'not into the Avatar picker.'
+      )
     }
 
     // Shared single-clip submit + poll. Used by every mode below.
