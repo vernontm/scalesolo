@@ -30,6 +30,41 @@ async function fetchStatus(requestId) {
   return { ok: r.ok, status: r.status, body }
 }
 
+// ── Auto-retry ─────────────────────────────────────────────────────────
+// Upload-Post's POST /api/uploadposts/retry (documented in llm.txt)
+// retries ONLY the platforms that failed on the original request and
+// reuses the original media snapshot — no re-upload, no double-posting
+// on platforms that already delivered. 409 = "nothing to retry", i.e.
+// every platform actually succeeded.
+//
+// Backoff ladder: quick first retries for transient blips, long tail
+// for TikTok's daily active-user cap (resets 24h after it's hit).
+const MAX_PUBLISH_RETRIES = 6
+const RETRY_BACKOFF_MS = [
+  10 * 60 * 1000,        // 10 min
+  30 * 60 * 1000,        // 30 min
+  60 * 60 * 1000,        // 1 h
+  3 * 60 * 60 * 1000,    // 3 h
+  8 * 60 * 60 * 1000,    // 8 h
+  24 * 60 * 60 * 1000,   // 24 h
+]
+const nextRetryIso = (retryCount) => new Date(
+  Date.now() + (RETRY_BACKOFF_MS[Math.min(retryCount, RETRY_BACKOFF_MS.length - 1)])
+).toISOString()
+
+async function requestRetry(requestId) {
+  const r = await fetch('https://api.upload-post.com/api/uploadposts/retry', {
+    method: 'POST',
+    headers: { Authorization: `Apikey ${UPLOADPOST_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ request_id: requestId }),
+  })
+  const text = await r.text()
+  let body = null
+  try { body = text ? JSON.parse(text) : null } catch { body = { raw: text } }
+  // 409 = no failed platforms — treat as "all delivered".
+  return { ok: r.ok, status: r.status, nothingToRetry: r.status === 409, body }
+}
+
 // Look at Upload-Post's per-platform delivery state. Their response
 // shape varies but typically has either `platforms: { tiktok: 'posted'|'failed', … }`
 // or top-level success/error markers. We're conservative: only flip to
@@ -86,6 +121,12 @@ function classify(body) {
     }
     const anySuccess = resultsArr.some(isResultSuccess)
     const allFailed  = resultsArr.every((r) => r?.success === false || r?.success === 'false')
+    // Platforms that hard-failed — feeds the auto-retry machinery so a
+    // partially-delivered post (e.g. FB+Threads ok, TikTok hit its
+    // daily cap) still gets its stragglers retried.
+    const failedPlatforms = resultsArr
+      .filter((r) => (r?.success === false || r?.success === 'false') && !isResultSuccess(r))
+      .map((r) => (r?.platform || r?.network || 'unknown').toLowerCase())
     // Build a "tiktok: <reason> · instagram: <reason>" string so it
     // shows up on the row's last_error when we mark it failed.
     const summary = resultsArr
@@ -98,9 +139,9 @@ function classify(body) {
       })
       .join(' · ')
       .slice(0, 800)
-    if (anySuccess) return { verdict: 'posted', summary: null }
-    if (allFailed)  return { verdict: 'failed', summary }
-    return { verdict: null, summary: null }  // partial / still progressing
+    if (anySuccess) return { verdict: 'posted', summary: null, failedPlatforms }
+    if (allFailed)  return { verdict: 'failed', summary, failedPlatforms }
+    return { verdict: null, summary: null, failedPlatforms: [] }  // partial / still progressing
   }
 
   // Legacy object-shaped variant: { platforms: { tiktok: 'posted', ... } }
@@ -160,17 +201,70 @@ export default async function handler(req, res) {
     // with no last_error captured — back-fills per-platform error
     // reasons on legacy failures so Ray (and end users) can see
     // why a post died instead of staring at an empty error column.
+    const RETRY_COLS = 'id,status,uploadpost_request_id,scheduled_datetime,publish_retry_count,publish_next_retry_at'
     const dueScheduled = await supaFetch(
       `content_scripts?status=eq.scheduled&scheduled_datetime=lt.${encodeURIComponent(nowIso)}` +
-      `&uploadpost_request_id=not.is.null&select=id,status,uploadpost_request_id,scheduled_datetime&limit=200`
+      `&uploadpost_request_id=not.is.null&select=${RETRY_COLS}&limit=200`
     ).catch(() => [])
     const orphanedFails = await supaFetch(
       `content_scripts?status=eq.failed&last_error=is.null` +
-      `&uploadpost_request_id=not.is.null&select=id,status,uploadpost_request_id,scheduled_datetime&limit=50`
+      `&uploadpost_request_id=not.is.null&select=${RETRY_COLS}&limit=50`
     ).catch(() => [])
     const rows = [...(dueScheduled || []), ...(orphanedFails || [])]
 
-    const results = { posted: 0, failed: 0, indeterminate: 0, errors: 0, backfilled: 0, ghosts: 0 }
+    const results = { posted: 0, failed: 0, indeterminate: 0, errors: 0, backfilled: 0, ghosts: 0, retried: 0, retry_exhausted: 0 }
+
+    // Partial-failure retry sweep. Rows that flipped to 'posted' with
+    // some platform still failed (e.g. TikTok daily cap while FB and
+    // Threads delivered) carry a publish_next_retry_at. When it comes
+    // due, re-check Upload-Post and retry the stragglers. Scheduled
+    // rows are excluded — the main pass below owns those.
+    const dueRetries = await supaFetch(
+      `content_scripts?status=eq.posted&publish_next_retry_at=lte.${encodeURIComponent(nowIso)}` +
+      `&uploadpost_request_id=not.is.null&select=${RETRY_COLS}&limit=50`
+    ).catch(() => [])
+    for (const row of (dueRetries || [])) {
+      try {
+        const { ok, body } = await fetchStatus(row.uploadpost_request_id)
+        const { failedPlatforms } = ok ? classify(body) : { failedPlatforms: [] }
+        const count = row.publish_retry_count || 0
+        if (!ok || !failedPlatforms.length) {
+          // Everything delivered (or status is unreadable — stop churning).
+          await supaFetch(`content_scripts?id=eq.${row.id}`, {
+            method: 'PATCH', body: { publish_next_retry_at: null }, prefer: 'return=minimal',
+          })
+          continue
+        }
+        if (count >= MAX_PUBLISH_RETRIES) {
+          await supaFetch(`content_scripts?id=eq.${row.id}`, {
+            method: 'PATCH',
+            body: {
+              publish_next_retry_at: null,
+              last_error: `Auto-retry gave up after ${count} attempts; still failed: ${failedPlatforms.join(', ')}`,
+            },
+            prefer: 'return=minimal',
+          })
+          results.retry_exhausted += 1
+          continue
+        }
+        const retry = await requestRetry(row.uploadpost_request_id)
+        await supaFetch(`content_scripts?id=eq.${row.id}`, {
+          method: 'PATCH',
+          body: retry.nothingToRetry
+            ? { publish_next_retry_at: null }
+            : {
+                publish_retry_count: count + 1,
+                publish_next_retry_at: nextRetryIso(count + 1),
+                last_error: `Auto-retry ${count + 1}/${MAX_PUBLISH_RETRIES} sent for: ${failedPlatforms.join(', ')}`,
+              },
+          prefer: 'return=minimal',
+        })
+        if (!retry.nothingToRetry) results.retried += 1
+      } catch (e) {
+        console.warn('retry sweep row failed:', row.id, e?.message)
+        results.errors += 1
+      }
+    }
 
     // Ghost sweep. A row marked `scheduled` and already past its fire
     // time but carrying NO uploadpost_request_id was never actually
@@ -264,12 +358,27 @@ export default async function handler(req, res) {
         }
 
         if (!ok) { results.errors += 1; continue }
-        const { verdict, summary } = classify(body)
+        const { verdict, summary, failedPlatforms = [] } = classify(body)
+        const retryCount = row.publish_retry_count || 0
 
         if (verdict === 'posted') {
+          // Partially delivered? Fire the first retry for the failed
+          // platforms right away and arm the backoff sweep above for
+          // follow-ups. Upload-Post's retry endpoint only touches the
+          // platforms that failed, so the delivered ones are safe.
+          const patch = { status: 'posted', last_error: null }
+          if (failedPlatforms.length && retryCount < MAX_PUBLISH_RETRIES) {
+            const retry = await requestRetry(row.uploadpost_request_id).catch(() => null)
+            if (retry && !retry.nothingToRetry) {
+              patch.publish_retry_count = retryCount + 1
+              patch.publish_next_retry_at = nextRetryIso(retryCount + 1)
+              patch.last_error = `Posted, but auto-retry ${retryCount + 1}/${MAX_PUBLISH_RETRIES} sent for: ${failedPlatforms.join(', ')}`
+              results.retried += 1
+            }
+          }
           await supaFetch(`content_scripts?id=eq.${row.id}`, {
             method: 'PATCH',
-            body: { status: 'posted', last_error: null },
+            body: patch,
             prefer: 'return=minimal',
           })
           results.posted += 1
@@ -293,15 +402,61 @@ export default async function handler(req, res) {
             results.indeterminate += 1
             continue
           }
+
+          // Auto-retry before declaring death. A full failure is often
+          // transient (platform rate limits, TikTok's daily active-user
+          // cap, Upload-Post worker hiccups). Call their retry endpoint
+          // — original media is reused server-side — and keep the row
+          // as 'scheduled' so this sweep re-checks the outcome. Backoff
+          // gates how often we fire; MAX_PUBLISH_RETRIES caps the total.
+          const retryDueMs = row.publish_next_retry_at ? Date.parse(row.publish_next_retry_at) : 0
+          if (retryCount < MAX_PUBLISH_RETRIES) {
+            if (retryDueMs > Date.now()) {
+              // Backoff not elapsed yet — leave as scheduled, check next tick.
+              results.indeterminate += 1
+              continue
+            }
+            const retry = await requestRetry(row.uploadpost_request_id).catch(() => null)
+            if (retry?.nothingToRetry) {
+              // Everything actually delivered between our status poll
+              // and the retry call. Promote to posted.
+              await supaFetch(`content_scripts?id=eq.${row.id}`, {
+                method: 'PATCH',
+                body: { status: 'posted', last_error: null, publish_next_retry_at: null },
+                prefer: 'return=minimal',
+              })
+              results.posted += 1
+              continue
+            }
+            if (retry?.ok) {
+              await supaFetch(`content_scripts?id=eq.${row.id}`, {
+                method: 'PATCH',
+                body: {
+                  publish_retry_count: retryCount + 1,
+                  publish_next_retry_at: nextRetryIso(retryCount + 1),
+                  last_error: `Auto-retry ${retryCount + 1}/${MAX_PUBLISH_RETRIES} sent (${summary || 'all platforms failed'})`,
+                },
+                prefer: 'return=minimal',
+              })
+              results.retried += 1
+              continue
+            }
+            // Retry endpoint itself errored (404 = request purged, etc):
+            // no path forward, fall through to the permanent failure.
+          }
           await supaFetch(`content_scripts?id=eq.${row.id}`, {
             method: 'PATCH',
             body: {
               status: 'failed',
-              last_error: summary || 'All platforms reported failure (no detail returned).',
+              publish_next_retry_at: null,
+              last_error: (retryCount >= MAX_PUBLISH_RETRIES
+                ? `Auto-retry gave up after ${retryCount} attempts. `
+                : '') + (summary || 'All platforms reported failure (no detail returned).'),
             },
             prefer: 'return=minimal',
           })
           results.failed += 1
+          if (retryCount >= MAX_PUBLISH_RETRIES) results.retry_exhausted += 1
         } else {
           results.indeterminate += 1
         }
