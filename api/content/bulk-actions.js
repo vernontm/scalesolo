@@ -135,7 +135,20 @@ async function generateCaptions({ res, profile_id, script_ids, user_id }) {
   const ruleLines = []
   if (dnsArr.length) ruleLines.push(`- NEVER use these words/phrases: ${dnsArr.map((s) => `"${s}"`).join(', ')}`)
   if (aiArr.length)  ruleLines.push(`- ALWAYS include at least one of: ${aiArr.map((s) => `"${s}"`).join(', ')}`)
-  if (ctaStr)        ruleLines.push(`- Brand CTA (use when natural): "${ctaStr}"`)
+  // CTA selection. brand_ctas (jsonb array of {label, url, when}) is the
+  // multi-CTA menu: Claude picks the ONE best-fit CTA per post based on
+  // the content, so an AI-group recap gets the event CTA while a tool
+  // tutorial gets the guide CTA — instead of every post closing the
+  // same way. Falls back to the legacy single brand_cta text when no
+  // menu is configured.
+  const ctaMenu = Array.isArray(profile.brand_ctas) ? profile.brand_ctas.filter((c) => c && c.label) : []
+  if (ctaMenu.length) {
+    const menuLines = ctaMenu.map((c, i) =>
+      `  ${i + 1}. "${c.label}"${c.url ? ` → ${c.url}` : ''} — best fit: ${c.when || 'any post'}`)
+    ruleLines.push(`- CTA MENU — pick exactly ONE that best matches this post's content (do not default to the first; vary across posts):\n${menuLines.join('\n')}`)
+  } else if (ctaStr) {
+    ruleLines.push(`- Brand CTA (use when natural): "${ctaStr}"`)
+  }
   const badPatternsBlock = renderBrandContextMarkdown(ctx, { include: ['bad_patterns'] })
   const coreHashtagsLine = profile.core_hashtags
     ? `Core brand hashtags (lead with these in the hashtags field): ${profile.core_hashtags}`
