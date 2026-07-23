@@ -528,7 +528,8 @@ export default function BulkUploadView({ profileId, token, onChange }) {
   // Sort order — newest scheduled first vs oldest first. Persisted to
   // localStorage so it sticks across reloads.
   const [sortOrder, setSortOrderState] = useState(() => {
-    try { return localStorage.getItem('scalesolo:bulk:sortOrder') === 'newest' ? 'newest' : 'oldest' } catch { return 'oldest' }
+    // Newest-first by default (user preference); saved choice still wins.
+    try { return localStorage.getItem('scalesolo:bulk:sortOrder') === 'oldest' ? 'oldest' : 'newest' } catch { return 'newest' }
   })
   const setSortOrder = (v) => {
     setSortOrderState(v)
