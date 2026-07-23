@@ -150,6 +150,14 @@ async function generateCaptions({ res, profile_id, script_ids, user_id }) {
   ].filter(Boolean).join('\n\n').trim()
   const today = new Date().toISOString().slice(0, 10)
 
+  // Shared caption-length contract for every prompt variant below.
+  // Product decision (user feedback 2026-07): generated captions were
+  // landing ~900+ chars of stacked paragraphs and Ray was hand-cutting
+  // them to a third of that before posting. Tight beats long: a CTA/
+  // hook line, one or two short beats, a closer. Keep this ONE constant
+  // so the four prompt variants can't drift apart on length rules.
+  const CAPTION_LENGTH_RULE = 'The caption MUST be 250-450 characters TOTAL (hard cap 450 — count characters, not words). Structure: one CTA or hook line, then 1-2 short beats, then a one-line closer. Blank line between each. No stacked story paragraphs, no repeating what the video already says.'
+
   // Per-media-type prompt builders. The user message carries the actual
   // image (image rows only) so Claude Vision can read it; for video
   // rows with a transcript we bake the transcript into the system
@@ -170,7 +178,7 @@ Generate the following:
 1. "title" - A short, click-worthy, engaging title for this video (max 12 words)
 2. "hook" - The opening 1-2 sentences that hook viewers
 3. "full_script" - A cleaned up version of the transcript as a readable script
-4. "caption" - An engaging social media caption to post with this video. Match the brand voice.
+4. "caption" - An engaging social media caption to post with this video. Match the brand voice. ${CAPTION_LENGTH_RULE}
 5. "hashtags" - Include any core brand hashtags from the brand bible first, then 4-6 topic-specific ones.
 6. "first_comment" - An engagement-driving first comment (question or call to action)
 
@@ -212,7 +220,7 @@ Generate the following:
 1. "title" - A short, click-worthy, engaging title for this video (max 12 words). If the keyframes contain on-screen text, the title almost always reflects or builds on it.
 2. "hook" - The opening 1-2 sentences that hook viewers.
 3. "full_script" - A cleaned-up readable script of the spoken content IF there was usable speech; otherwise a brief description of what unfolds visually across the frames.
-4. "caption" - Engaging social caption. Anchor to BOTH the visuals and any spoken content.
+4. "caption" - Engaging social caption. Anchor to BOTH the visuals and any spoken content. ${CAPTION_LENGTH_RULE}
 5. "hashtags" - Core brand hashtags first, then 4-6 specific to what's shown.
 6. "first_comment" - Engagement-driving first comment (question or CTA).
 
@@ -238,7 +246,7 @@ Generate the following:
 1. "title" - A short, click-worthy, engaging title for this video (max 12 words). Reference what you actually see.
 2. "hook" - The opening 1-2 sentences that hook viewers based on the visual story.
 3. "full_script" - A brief description of what unfolds visually across the frames, in order.
-4. "caption" - An engaging social media caption to post with this video. Match the brand voice. Anchor it to what is shown.
+4. "caption" - An engaging social media caption to post with this video. Match the brand voice. Anchor it to what is shown. ${CAPTION_LENGTH_RULE}
 5. "hashtags" - Include any core brand hashtags from the brand bible first, then 4-6 topic-specific ones drawn from what's visible.
 6. "first_comment" - An engagement-driving first comment (question or call to action).
 
@@ -260,7 +268,7 @@ ${brandContext}
 
 Generate the following:
 1. "title" - A short, click-worthy title for this image (max 10 words)
-2. "caption" - An engaging social media caption that complements the image. Match the brand voice. 1-3 short paragraphs.
+2. "caption" - An engaging social media caption that complements the image. Match the brand voice. ${CAPTION_LENGTH_RULE}
 3. "hashtags" - Include any core brand hashtags from the brand bible first, then 4-6 image/topic-specific ones.
 4. "first_comment" - An engagement-driving first comment (question or CTA)
 

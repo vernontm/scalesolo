@@ -144,7 +144,7 @@ ${platformList}${ctaBlock}
     "date": "YYYY-MM-DD",
     "title": "<3-9 word headline in Title Case — surfaces on Facebook as the post name, must read like a real headline, not a slug>",
     "hook": "<the opening line — must read like the brand on its best day>",
-    "caption": "<the long-form base text, no platform suffix>",
+    "caption": "<the base text, no platform suffix — 250-450 characters TOTAL (hard cap 450). One hook line, 1-2 short beats, a one-line closer. No stacked story paragraphs.>",
     "hashtags": "<space-separated, max 8>",
     "per_platform_text": { "threads": "...", "instagram": "...", "x": "...", "facebook": "..." }
   }
