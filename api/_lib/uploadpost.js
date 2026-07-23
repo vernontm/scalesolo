@@ -140,6 +140,53 @@ export async function uploadpostCancelScheduled(jobId) {
   }
 }
 
+// Edit a scheduled Upload-Post job IN PLACE (PATCH). Documented in
+// their llm.txt: PATCH /api/uploadposts/schedule/<job_id> with a JSON
+// body of fields to update (e.g. { scheduled_date }). Strongly
+// preferred over cancel+resubmit for pure time moves — the old
+// cancel+resubmit pattern had a failure window where the cancel
+// missed (job_id lookup failure) and the resubmit still fired,
+// double-booking the post. PATCH is atomic on their side.
+// Fails soft like the cancel helper so callers can fall back.
+export async function uploadpostEditScheduled(jobId, fields) {
+  if (!jobId) return { ok: false, reason: 'no_job_id' }
+  if (!fields || !Object.keys(fields).length) return { ok: false, reason: 'no_fields' }
+  try {
+    await uploadpost(`/api/uploadposts/schedule/${encodeURIComponent(jobId)}`, {
+      method: 'PATCH',
+      body: fields,
+    })
+    return { ok: true }
+  } catch (e) {
+    if (e.status === 404) return { ok: false, reason: 'not_found', status: 404 }
+    return { ok: false, reason: e.message, status: e.status }
+  }
+}
+
+// Unpublish (delete) an ALREADY-PUBLISHED post on the target platform.
+// Documented in their llm.txt: DELETE /api/uploadposts/posts/unpublish
+// with { platform, user, post_id }. Platform support matrix (per docs):
+//   facebook / youtube / x / linkedin / threads → supported
+//   instagram / tiktok                          → NOT supported (manual only)
+// post_id is the PLATFORM's post id (e.g. the numeric FB reel id from
+// post_url), not our request_id/job_id. Fails soft so delete cascades
+// can attempt best-effort cleanup without blocking the local delete.
+export const UNPUBLISH_SUPPORTED_PLATFORMS = new Set(['facebook', 'youtube', 'x', 'linkedin', 'threads'])
+export async function uploadpostUnpublish({ platform, username, postId }) {
+  const p = String(platform || '').toLowerCase()
+  if (!UNPUBLISH_SUPPORTED_PLATFORMS.has(p)) return { ok: false, reason: 'platform_unsupported', platform: p }
+  if (!username || !postId) return { ok: false, reason: 'missing_username_or_post_id' }
+  try {
+    await uploadpost('/api/uploadposts/posts/unpublish', {
+      method: 'DELETE',
+      body: { platform: p, user: username, post_id: String(postId) },
+    })
+    return { ok: true, platform: p }
+  } catch (e) {
+    return { ok: false, reason: e.message, status: e.status, platform: p }
+  }
+}
+
 // LEGACY — kept for rows submitted before content_scripts.uploadpost_job_id
 // existed. The documented list endpoint
 // (https://docs.upload-post.com/api/schedule-posts) does NOT return

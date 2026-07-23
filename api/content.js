@@ -12,7 +12,7 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from './_lib/supabase.js'
 import { findNextOpenSlot, syncContentStatusInSpaces } from './_lib/scheduling.js'
-import { uploadpostCancelByRequestId, uploadpostCancelScheduled, uploadpostJobIdViaScheduleMatch, resolveUploadpostUser } from './_lib/uploadpost.js'
+import { uploadpostCancelByRequestId, uploadpostCancelScheduled, uploadpostJobIdViaScheduleMatch, uploadpostEditScheduled, uploadpostUnpublish, UNPUBLISH_SUPPORTED_PLATFORMS, uploadpost, resolveUploadpostUser } from './_lib/uploadpost.js'
 import uploadPostHandler from './social/upload-post.js'
 import { invokeHandler } from './_lib/internal-invoke.js'
 
@@ -348,24 +348,40 @@ export default async function handler(req, res) {
             platforms: req.body.platforms || null,
           }
           // If this row was ALREADY scheduled and is being moved to a
-          // new time, cancel + re-submit on Upload-Post so the actual
-          // post fires at the right moment. Brand-new schedules (the
-          // first time the user hits Schedule) skip this — the initial
-          // submission is owned by /api/social/upload-post directly.
+          // new time, update the Upload-Post job. Preferred path: PATCH
+          // the existing job in place (atomic on their side, no window
+          // where a missed cancel + successful resubmit double-books —
+          // the failure mode behind past duplicate-post incidents).
+          // Fallback: cancel + re-submit for rows without a stored
+          // job_id or when the PATCH 404s (job already fired/pruned).
+          // Brand-new schedules skip this — the initial submission is
+          // owned by /api/social/upload-post directly.
           const wasScheduled = item.status === 'scheduled' && item.uploadpost_request_id
           const timeChanged = item.scheduled_datetime !== req.body.scheduled_datetime
           if (wasScheduled && timeChanged) {
-            try {
-              const submitResult = await rescheduleUploadPostJob({
-                row: item,
-                newScheduledIso: req.body.scheduled_datetime,
-                authToken: req.headers.authorization?.replace(/^Bearer\s+/i, '') || '',
-                req,
+            let patched = false
+            if (item.uploadpost_job_id) {
+              const edit = await uploadpostEditScheduled(item.uploadpost_job_id, {
+                scheduled_date: req.body.scheduled_datetime,
               })
-              if (submitResult?.request_id) updates.uploadpost_request_id = submitResult.request_id
-              if (submitResult?.job_id) updates.uploadpost_job_id = submitResult.job_id
-            } catch (e) {
-              return res.status(502).json({ error: `Reschedule failed on Upload-Post: ${e.message}` })
+              patched = !!edit.ok
+              if (!patched && edit.status !== 404) {
+                console.warn('upload-post PATCH reschedule failed, falling back to cancel+resubmit:', edit.reason)
+              }
+            }
+            if (!patched) {
+              try {
+                const submitResult = await rescheduleUploadPostJob({
+                  row: item,
+                  newScheduledIso: req.body.scheduled_datetime,
+                  authToken: req.headers.authorization?.replace(/^Bearer\s+/i, '') || '',
+                  req,
+                })
+                if (submitResult?.request_id) updates.uploadpost_request_id = submitResult.request_id
+                if (submitResult?.job_id) updates.uploadpost_job_id = submitResult.job_id
+              } catch (e) {
+                return res.status(502).json({ error: `Reschedule failed on Upload-Post: ${e.message}` })
+              }
             }
           }
         } else {
@@ -592,13 +608,41 @@ export default async function handler(req, res) {
           console.warn('upload-post cancel threw:', e.message)
         }
       }
+      // Cascade-unpublish for rows that already went live. Upload-Post's
+      // /posts/unpublish (documented in their llm.txt) deletes published
+      // posts on facebook / youtube / x / linkedin / threads. Instagram
+      // and TikTok have no deletion API — those the user removes in-app.
+      // We resolve each platform's post_id from the request's status
+      // results, then fire best-effort unpublishes. Never blocks the
+      // local delete.
+      const unpublishDiag = []
+      if (row.status === 'posted' && row.uploadpost_request_id) {
+        try {
+          const username = await resolveUploadpostUser(profileId)
+          const statusBody = await uploadpost(
+            `/api/uploadposts/status?request_id=${encodeURIComponent(row.uploadpost_request_id)}`
+          ).catch(() => null)
+          for (const r of (statusBody?.results || [])) {
+            if (!r?.success || !r?.platform_post_id) continue
+            const platform = String(r.platform || '').toLowerCase()
+            if (!UNPUBLISH_SUPPORTED_PLATFORMS.has(platform)) {
+              unpublishDiag.push({ platform, ok: false, reason: 'platform_unsupported (delete in-app)' })
+              continue
+            }
+            const result = await uploadpostUnpublish({ platform, username, postId: r.platform_post_id })
+            unpublishDiag.push({ platform, ok: result.ok, reason: result.reason || null })
+          }
+        } catch (e) {
+          unpublishDiag.push({ platform: '*', ok: false, reason: e?.message || String(e) })
+        }
+      }
       await supaFetch(`content_scripts?id=eq.${id}`, { method: 'DELETE', prefer: 'return=minimal' })
       // Mark collection items as deleted so they reflect in the canvas.
       syncContentStatusInSpaces(profileId, id, 'deleted').catch(() => {})
       // Return the diagnostic so the frontend can show / log why the
       // Upload-Post cascade did or didn't happen. 200 instead of 204
       // so the body is honored.
-      return res.status(200).json({ deleted: true, upload_post_cancel: cancelDiag })
+      return res.status(200).json({ deleted: true, upload_post_cancel: cancelDiag, upload_post_unpublish: unpublishDiag })
     }
 
     return res.status(405).json({ error: 'Method not allowed' })
