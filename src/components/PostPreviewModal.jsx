@@ -19,6 +19,7 @@
 // caller's row data stays the source of truth between renders.
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   X, ChevronLeft, ChevronRight, Calendar, Check, AlertCircle,
   ExternalLink, Hash, Loader2, Trash2,
@@ -132,7 +133,12 @@ export default function PostPreviewModal({ items, initialIndex, token, onClose, 
 
   if (!row) return null
 
-  return (
+  // Portal to document.body: an ancestor on the schedule page creates a
+  // containing block (transform/filter), which demotes position:fixed
+  // to in-flow positioning — the overlay rendered BELOW the table, so
+  // opening the modal showed a blank screen until the user scrolled.
+  // Same fix as NewLookModal/NewVideoModal.
+  return createPortal(
     <div style={overlayStyle} onClick={(e) => { if (e.target === e.currentTarget) onClose?.() }}>
       {/* Left arrow */}
       {total > 1 && (
@@ -257,7 +263,8 @@ export default function PostPreviewModal({ items, initialIndex, token, onClose, 
           <ChevronRight size={26} />
         </button>
       )}
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -397,11 +404,17 @@ function localToIso(local) {
 const overlayStyle = {
   position: 'fixed', inset: 0, zIndex: 260,
   background: 'rgba(10,10,12,0.85)', backdropFilter: 'blur(6px)',
-  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  // flex-start + margin:auto on the card (not align-items:center):
+  // centering a child taller than the viewport clips its TOP with no
+  // way to scroll up — the "blank screen, scroll down to find it" bug.
+  // margin:auto centers when the card fits and pins to the top edge
+  // when it doesn't, keeping everything reachable via overlay scroll.
+  display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
   padding: '20px 80px', overflowY: 'auto',
 }
 const cardStyle = {
   width: '100%', maxWidth: 820,
+  margin: 'auto',
   background: 'var(--bg-base, #0a0a0c)',
   border: '1px solid var(--border)', borderRadius: 14,
   display: 'flex', flexDirection: 'column',
