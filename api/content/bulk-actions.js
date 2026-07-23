@@ -907,6 +907,18 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
   const results = []
   for (const r of rows) {
     try {
+      // Idempotency guard — never re-publish a row that already went
+      // out. Root-caused from a real incident: a posted row got
+      // re-submitted 4 extra times within 3 minutes (platform-grouped
+      // pseudo-rows in the UI each triggered a full-platform publish),
+      // landing the same TikTok video 5x. status='posted' is the
+      // authoritative "this fired" signal, so publish requests for
+      // those rows are now no-ops. Re-publishing intentionally (rare)
+      // means flipping status back first via the row editor.
+      if (r.status === 'posted') {
+        results.push({ id: r.id, ok: false, skipped: true, error: 'already posted — skipped (flip status to re-publish intentionally)' })
+        continue
+      }
       const isText = r.media_type === 'text'
       if (!isText && (!Array.isArray(r.media_urls) || !r.media_urls.length)) {
         results.push({ id: r.id, ok: false, error: 'no media' }); continue
