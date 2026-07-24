@@ -114,7 +114,11 @@ async function resubmitTikTokOnly(row, uploadpostUser) {
   fd.append('platform[]', 'tiktok')
   fd.append('video', videoUrl)
   fd.append('async_upload', 'true')
-  if (row.title) fd.append('tiktok_title', String(row.title).replace(/\s+/g, ' ').trim().slice(0, 90))
+  // TikTok's on-video caption comes from tiktok_title (it ignores
+  // `description`) — send the full caption+hashtags there, matching
+  // the normal publish path in bulk-actions.js.
+  const tkCaption = fullCaption || (row.title ? String(row.title).trim() : '')
+  if (tkCaption) fd.append('tiktok_title', tkCaption.slice(0, 2200))
   if (fullCaption) fd.append('description', fullCaption.slice(0, 2200))
   const r = await fetch('https://api.upload-post.com/api/upload', {
     method: 'POST',
