@@ -65,6 +65,68 @@ async function requestRetry(requestId) {
   return { ok: r.ok, status: r.status, nothingToRetry: r.status === 409, body }
 }
 
+// ── TikTok forced Direct Post ──────────────────────────────────────────
+// Upload-Post's shared daily active-user cap makes TikTok fall back to
+// MEDIA_UPLOAD (Inbox, tap-to-publish) with success=true — so their
+// retry endpoint refuses to touch it (nothing "failed"). For profiles
+// that opted in via tiktok_force_direct_post, we re-submit the video as
+// a fresh TIKTOK-ONLY post on a long backoff until one attempt lands on
+// the feed. IG/FB/etc from the original request are never re-sent.
+// Trade-off the profile owner accepted: every attempt that hits a
+// still-capped window stacks one more unposted draft in the TikTok
+// inbox (ignore those; tapping one after a feed success = duplicate).
+const MAX_TIKTOK_INBOX_RETRIES = 5
+const TIKTOK_INBOX_BACKOFF_MS = [
+  2 * 60 * 60 * 1000,    // 2 h
+  4 * 60 * 60 * 1000,    // 4 h
+  8 * 60 * 60 * 1000,    // 8 h
+  12 * 60 * 60 * 1000,   // 12 h
+  24 * 60 * 60 * 1000,   // 24 h
+]
+const nextInboxRetryIso = (count) => new Date(
+  Date.now() + (TIKTOK_INBOX_BACKOFF_MS[Math.min(count, TIKTOK_INBOX_BACKOFF_MS.length - 1)])
+).toISOString()
+
+// True when the tiktok result "succeeded" into the Inbox instead of
+// the feed. A real feed delivery has an http(s) post_url.
+function tiktokInboxResult(resultsArr) {
+  if (!Array.isArray(resultsArr)) return null
+  const tk = resultsArr.find((r) => String(r?.platform || '').toLowerCase() === 'tiktok')
+  if (!tk) return null
+  const url = String(tk.post_url || '')
+  const delivered = tk.success === true || tk.success === 'true'
+  if (delivered && /inbox/i.test(url)) return { state: 'inbox' }
+  if (delivered && /^https?:\/\//.test(url)) return { state: 'feed', url }
+  if (tk.success === false || tk.success === 'false') return { state: 'failed' }
+  return { state: 'pending' }
+}
+
+// Fresh TikTok-only submission reusing the row's media + copy. Video
+// rows only — that's what TikTok takes from us in practice.
+async function resubmitTikTokOnly(row, uploadpostUser) {
+  const videoUrl = (row.embed_cover_intro !== false && row.media_url_with_cover)
+    ? row.media_url_with_cover
+    : (Array.isArray(row.media_urls) ? row.media_urls[0] : null)
+  if (!videoUrl || !/^https?:\/\//.test(videoUrl)) return { ok: false, reason: 'no_video_url' }
+  const fullCaption = [row.caption, row.hashtags].filter(Boolean).join('\n\n').trim()
+  const fd = new FormData()
+  fd.append('user', uploadpostUser)
+  fd.append('platform[]', 'tiktok')
+  fd.append('video', videoUrl)
+  fd.append('async_upload', 'true')
+  if (row.title) fd.append('tiktok_title', String(row.title).replace(/\s+/g, ' ').trim().slice(0, 90))
+  if (fullCaption) fd.append('description', fullCaption.slice(0, 2200))
+  const r = await fetch('https://api.upload-post.com/api/upload', {
+    method: 'POST',
+    headers: { Authorization: `Apikey ${UPLOADPOST_API_KEY}` },
+    body: fd,
+  })
+  const text = await r.text()
+  let body = null
+  try { body = text ? JSON.parse(text) : null } catch { body = { raw: text } }
+  return { ok: r.ok, status: r.status, requestId: body?.request_id || null, body }
+}
+
 // Look at Upload-Post's per-platform delivery state. Their response
 // shape varies but typically has either `platforms: { tiktok: 'posted'|'failed', … }`
 // or top-level success/error markers. We're conservative: only flip to
@@ -201,7 +263,29 @@ export default async function handler(req, res) {
     // with no last_error captured — back-fills per-platform error
     // reasons on legacy failures so Ray (and end users) can see
     // why a post died instead of staring at an empty error column.
-    const RETRY_COLS = 'id,status,uploadpost_request_id,scheduled_datetime,publish_retry_count,publish_next_retry_at'
+    const RETRY_COLS = 'id,profile_id,status,uploadpost_request_id,scheduled_datetime,publish_retry_count,publish_next_retry_at,tiktok_retry_request_id,media_type,media_urls,media_url_with_cover,embed_cover_intro,title,caption,hashtags'
+
+    // Per-profile tiktok_force_direct_post flag + upload-post username,
+    // cached per cron run so N rows on the same brand cost one lookup.
+    const profileCache = new Map()
+    const getProfileMeta = async (profileId) => {
+      if (!profileId) return { force: false, username: null }
+      if (profileCache.has(profileId)) return profileCache.get(profileId)
+      let meta = { force: false, username: null }
+      try {
+        const rows2 = await supaFetch(`profiles?id=eq.${profileId}&select=tiktok_force_direct_post,uploadpost_user`)
+        const p = rows2?.[0]
+        if (p) {
+          const { deriveUploadPostUsername } = await import('../_lib/uploadpost.js')
+          meta = {
+            force: !!p.tiktok_force_direct_post,
+            username: (p.uploadpost_user && p.uploadpost_user.trim()) || deriveUploadPostUsername(profileId),
+          }
+        }
+      } catch { /* default meta */ }
+      profileCache.set(profileId, meta)
+      return meta
+    }
     const dueScheduled = await supaFetch(
       `content_scripts?status=eq.scheduled&scheduled_datetime=lt.${encodeURIComponent(nowIso)}` +
       `&uploadpost_request_id=not.is.null&select=${RETRY_COLS}&limit=200`
@@ -221,7 +305,7 @@ export default async function handler(req, res) {
     // rows are excluded — the main pass below owns those.
     const dueRetries = await supaFetch(
       `content_scripts?status=eq.posted&publish_next_retry_at=lte.${encodeURIComponent(nowIso)}` +
-      `&uploadpost_request_id=not.is.null&select=${RETRY_COLS}&limit=50`
+      `&uploadpost_request_id=not.is.null&tiktok_retry_request_id=is.null&select=${RETRY_COLS}&limit=50`
     ).catch(() => [])
     for (const row of (dueRetries || [])) {
       try {
@@ -262,6 +346,72 @@ export default async function handler(req, res) {
         if (!retry.nothingToRetry) results.retried += 1
       } catch (e) {
         console.warn('retry sweep row failed:', row.id, e?.message)
+        results.errors += 1
+      }
+    }
+
+    // TikTok forced-Direct-Post chain sweep. Rows with an active
+    // re-submission chain (tiktok_retry_request_id set) get their
+    // LATEST tiktok-only request polled when the backoff comes due:
+    //   feed URL  → done, clear the chain, note the win
+    //   inbox/failed again → re-submit if budget remains, else give up
+    const dueInboxChains = await supaFetch(
+      `content_scripts?tiktok_retry_request_id=not.is.null` +
+      `&publish_next_retry_at=lte.${encodeURIComponent(nowIso)}&select=${RETRY_COLS}&limit=50`
+    ).catch(() => [])
+    for (const row of (dueInboxChains || [])) {
+      try {
+        const { ok, body } = await fetchStatus(row.tiktok_retry_request_id)
+        const tk = ok ? tiktokInboxResult(body?.results) : null
+        const count = row.publish_retry_count || 0
+        if (tk?.state === 'feed') {
+          await supaFetch(`content_scripts?id=eq.${row.id}`, {
+            method: 'PATCH',
+            body: {
+              tiktok_retry_request_id: null,
+              publish_next_retry_at: null,
+              last_error: `TikTok direct-posted on retry ${count}: ${tk.url}`,
+            },
+            prefer: 'return=minimal',
+          })
+          results.tiktok_feed_landed = (results.tiktok_feed_landed || 0) + 1
+          continue
+        }
+        if (tk?.state === 'pending') { continue }  // still uploading — next tick
+        if (count >= MAX_TIKTOK_INBOX_RETRIES) {
+          await supaFetch(`content_scripts?id=eq.${row.id}`, {
+            method: 'PATCH',
+            body: {
+              tiktok_retry_request_id: null,
+              publish_next_retry_at: null,
+              last_error: `TikTok forced-direct-post gave up after ${count} attempts (cap never freed). Latest copy is in the TikTok inbox — tap-publish or let it sit.`,
+            },
+            prefer: 'return=minimal',
+          })
+          results.retry_exhausted += 1
+          continue
+        }
+        const meta = await getProfileMeta(row.profile_id)
+        const resub = meta.username ? await resubmitTikTokOnly(row, meta.username) : { ok: false, reason: 'no_username' }
+        await supaFetch(`content_scripts?id=eq.${row.id}`, {
+          method: 'PATCH',
+          body: resub.ok && resub.requestId
+            ? {
+                tiktok_retry_request_id: resub.requestId,
+                publish_retry_count: count + 1,
+                publish_next_retry_at: nextInboxRetryIso(count + 1),
+                last_error: `TikTok direct-post retry ${count + 1}/${MAX_TIKTOK_INBOX_RETRIES} submitted (previous attempt hit the cap → inbox).`,
+              }
+            : {
+                // Submission itself failed — keep the chain, try again next backoff.
+                publish_next_retry_at: nextInboxRetryIso(count + 1),
+                last_error: `TikTok direct-post retry submission errored (${resub.reason || resub.status}); will try again.`,
+              },
+          prefer: 'return=minimal',
+        })
+        if (resub.ok) results.tiktok_resubmitted = (results.tiktok_resubmitted || 0) + 1
+      } catch (e) {
+        console.warn('tiktok inbox chain row failed:', row.id, e?.message)
         results.errors += 1
       }
     }
@@ -374,6 +524,24 @@ export default async function handler(req, res) {
               patch.publish_next_retry_at = nextRetryIso(retryCount + 1)
               patch.last_error = `Posted, but auto-retry ${retryCount + 1}/${MAX_PUBLISH_RETRIES} sent for: ${failedPlatforms.join(', ')}`
               results.retried += 1
+            }
+          }
+          // TikTok landed in the Inbox instead of the feed? For opted-in
+          // profiles, start the forced-direct-post chain: submit a fresh
+          // tiktok-only copy now; the chain sweep above polls the outcome
+          // and re-submits on backoff until one attempt beats the cap.
+          const tk = tiktokInboxResult(body?.results || body?.data?.results)
+          if (tk?.state === 'inbox' && !row.tiktok_retry_request_id && row.media_type === 'video' && retryCount < MAX_TIKTOK_INBOX_RETRIES) {
+            const meta = await getProfileMeta(row.profile_id)
+            if (meta.force && meta.username) {
+              const resub = await resubmitTikTokOnly(row, meta.username).catch(() => null)
+              if (resub?.ok && resub.requestId) {
+                patch.tiktok_retry_request_id = resub.requestId
+                patch.publish_retry_count = retryCount + 1
+                patch.publish_next_retry_at = nextInboxRetryIso(retryCount + 1)
+                patch.last_error = `TikTok went to Inbox (cap). Direct-post retry 1/${MAX_TIKTOK_INBOX_RETRIES} submitted — do NOT tap-publish the inbox copies.`
+                results.tiktok_resubmitted = (results.tiktok_resubmitted || 0) + 1
+              }
             }
           }
           await supaFetch(`content_scripts?id=eq.${row.id}`, {
