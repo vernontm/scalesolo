@@ -77,7 +77,7 @@ function Toggle({ on, onChange, disabled }) {
 const NOTIFICATION_PREFS = [
   { key: 'run_done',       label: 'Run finished',       hint: 'When a Spaces run / avatar render completes.' },
   { key: 'post_scheduled', label: 'Post scheduled',     hint: 'When a post is queued to publish later.' },
-  { key: 'post_published', label: 'Post published',     hint: 'When a scheduled post goes live on social.' },
+  { key: 'post_published', label: 'Post published',     hint: 'When a scheduled post goes live on social. Bell + toast + confirmation email.' },
   { key: 'post_failed',    label: 'Post failed',        hint: 'When a scheduled post errors out.' },
   { key: 'credits_low',    label: 'Credits running low', hint: 'When AI tokens or video units drop below 10%.' },
 ]

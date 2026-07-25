@@ -16,6 +16,11 @@
 // Auth: CRON_SECRET bearer.
 
 import { setCors, supaFetch } from '../_lib/supabase.js'
+import { notify } from '../_lib/notify.js'
+import { sendEmailSafe } from '../_lib/email.js'
+
+const SUPABASE_URL = process.env.SUPABASE_URL
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
 
 const UPLOADPOST_API_KEY = process.env.UPLOADPOST_API_KEY
 
@@ -99,6 +104,22 @@ function tiktokInboxResult(resultsArr) {
   if (delivered && /^https?:\/\//.test(url)) return { state: 'feed', url }
   if (tk.success === false || tk.success === 'false') return { state: 'failed' }
   return { state: 'pending' }
+}
+
+// Platforms that actually delivered, with their live URLs. TikTok
+// inbox fallbacks are excluded — "sent to inbox" is not "live on the
+// feed", and announcing it as posted would be a lie.
+function deliveredResults(body) {
+  const arr = body?.results || body?.data?.results
+  if (!Array.isArray(arr)) return []
+  return arr
+    .filter((r) => r && (r.success === true || r.success === 'true'))
+    .filter((r) => !/inbox/i.test(String(r.post_url || '')))
+    .map((r) => ({
+      platform: String(r.platform || '').toLowerCase(),
+      url: /^https?:\/\//.test(String(r.post_url || '')) ? r.post_url : null,
+    }))
+    .filter((r) => r.platform)
 }
 
 // Fresh TikTok-only submission reusing the row's media + copy. Video
@@ -290,6 +311,80 @@ export default async function handler(req, res) {
       profileCache.set(profileId, meta)
       return meta
     }
+    // Owner contact per profile (user_id + email + brand name), cached
+    // per run. Owner = the profile_access row with role 'owner', falling
+    // back to the first accessor. Email comes from the auth admin API.
+    const ownerCache = new Map()
+    const getOwnerContact = async (profileId) => {
+      if (!profileId) return { userId: null, email: null, brandName: null }
+      if (ownerCache.has(profileId)) return ownerCache.get(profileId)
+      const contact = { userId: null, email: null, brandName: null }
+      try {
+        const access = await supaFetch(`profile_access?profile_id=eq.${profileId}&select=user_id,role`)
+        const owner = (access || []).find((a) => a.role === 'owner') || (access || [])[0]
+        contact.userId = owner?.user_id || null
+        const prof = await supaFetch(`profiles?id=eq.${profileId}&select=business_name`)
+        contact.brandName = prof?.[0]?.business_name || null
+        if (contact.userId && SUPABASE_URL && SERVICE_KEY) {
+          const r = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${contact.userId}`, {
+            headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` },
+          })
+          if (r.ok) contact.email = (await r.json())?.email || null
+        }
+      } catch { /* best-effort */ }
+      ownerCache.set(profileId, contact)
+      return contact
+    }
+
+    // Announce a confirmed publish: in-app notification (bell + toast
+    // via Realtime) plus a plain-text email. Both best-effort and both
+    // gated by the user's post_published notification pref — notify()
+    // returns null when the pref is muted, and we skip the email too.
+    const announcePosted = async (row, statusBody, deliveredOverride = null) => {
+      try {
+        const delivered = deliveredOverride || deliveredResults(statusBody)
+        // If Upload-Post gave us a per-platform breakdown and nothing is
+        // actually live (e.g. a TikTok-only post that fell back to the
+        // inbox), stay quiet — the forced-direct chain announces the
+        // real feed landing later.
+        const resultsArr = statusBody?.results || statusBody?.data?.results
+        if (!delivered.length && Array.isArray(resultsArr)) return
+        const contact = await getOwnerContact(row.profile_id)
+        if (!contact.userId) return
+        const platforms = [...new Set(delivered.map((d) => d.platform))]
+        const links = delivered.filter((d) => d.url)
+        const title = row.title ? `Posted: ${row.title}` : 'Your post is live'
+        const inserted = await notify({
+          user_id: contact.userId,
+          profile_id: row.profile_id,
+          kind: 'post.published', level: 'success',
+          title,
+          body: platforms.length
+            ? `Live on ${platforms.join(', ')}${contact.brandName ? ` · ${contact.brandName}` : ''}`
+            : (contact.brandName || null),
+          href: '/schedule',
+          meta: { platforms, post_url: links[0]?.url || null, content_id: row.id },
+        })
+        if (!inserted || !contact.email) return   // pref muted, insert failed, or no email
+        const lines = [
+          `${row.title ? `"${row.title}"` : 'Your scheduled post'} just went live${platforms.length ? ` on ${platforms.join(', ')}` : ''}${contact.brandName ? ` for ${contact.brandName}` : ''}.`,
+          '',
+          ...links.map((l) => `${l.platform}: ${l.url}`),
+          ...(links.length ? [''] : []),
+          'Manage your schedule: https://scalesolo.ai/schedule',
+        ]
+        const text = lines.join('\n')
+        await sendEmailSafe({
+          to: contact.email,
+          subject: title,
+          text,
+          html: lines.map((l) => l || '<br>').map((l) => l === '<br>' ? l : `<p style="margin:0 0 4px;font-family:sans-serif;font-size:14px;color:#1c1c1e;">${l.replace(/(https?:\/\/\S+)/g, '<a href="$1">$1</a>')}</p>`).join(''),
+        })
+      } catch (e) {
+        console.warn('announcePosted failed:', row.id, e?.message)
+      }
+    }
+
     const dueScheduled = await supaFetch(
       `content_scripts?status=eq.scheduled&scheduled_datetime=lt.${encodeURIComponent(nowIso)}` +
       `&uploadpost_request_id=not.is.null&select=${RETRY_COLS}&limit=200`
@@ -379,6 +474,7 @@ export default async function handler(req, res) {
             prefer: 'return=minimal',
           })
           results.tiktok_feed_landed = (results.tiktok_feed_landed || 0) + 1
+          await announcePosted(row, null, [{ platform: 'tiktok', url: tk.url }])
           continue
         }
         if (tk?.state === 'pending') { continue }  // still uploading — next tick
@@ -493,6 +589,7 @@ export default async function handler(req, res) {
               prefer: 'return=minimal',
             })
             results.posted += 1
+            await announcePosted(row, body)
             continue
           }
 
@@ -554,6 +651,7 @@ export default async function handler(req, res) {
             prefer: 'return=minimal',
           })
           results.posted += 1
+          await announcePosted(row, body)
         } else if (verdict === 'failed') {
           // Grace window. Upload-Post takes minutes to actually
           // push to TikTok/IG/YouTube/Facebook after we submit. If
@@ -598,6 +696,7 @@ export default async function handler(req, res) {
                 prefer: 'return=minimal',
               })
               results.posted += 1
+              await announcePosted(row, body)
               continue
             }
             if (retry?.ok) {

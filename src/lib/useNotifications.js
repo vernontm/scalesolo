@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { supabase } from './supabase.js'
 import { useAuth } from '../context/AuthContext.jsx'
+import { toast } from '../components/Toast.jsx'
 
 // Live notifications hook. Loads the latest 50 + subscribes to Supabase
 // Realtime for INSERT events on the notifications table filtered to the
@@ -43,6 +44,12 @@ export function useNotifications() {
             // De-dupe in case a refetch raced the realtime event.
             if (prev.some((n) => n.id === row.id)) return prev
             return [row, ...prev].slice(0, 50)
+          })
+          // Surface live events as a toast too — the bell badge alone is
+          // easy to miss when you're heads-down in another page.
+          toast({
+            message: row.body ? `${row.title}\n${row.body}` : row.title,
+            kind: row.level === 'warning' ? 'warn' : (row.level || 'info'),
           })
         })
       .on('postgres_changes',
