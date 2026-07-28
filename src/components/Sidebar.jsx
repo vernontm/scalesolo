@@ -13,6 +13,7 @@ import {
   Building2,
   Boxes,
   Library as LibraryIcon,
+  Megaphone,
   CreditCard,
   Settings,
   Zap,
@@ -46,6 +47,7 @@ const navGroups = [
     items: [
       { to: '/spaces',  label: 'Spaces',   icon: Boxes },
       { to: '/schedule', label: 'Schedule', icon: Sparkles },
+      { to: '/campaigns', label: 'Campaigns', icon: Megaphone },
       { to: '/avatars', label: 'Avatars',  icon: UserCircle2 },
       { to: '/library', label: 'Library',  icon: LibraryIcon },
       { to: '/email',   label: 'Email',    icon: Mail, beta: true },

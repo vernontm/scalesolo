@@ -32,6 +32,7 @@ const Pipeline      = lazy(() => import('./pages/Pipeline.jsx'))
 const Forms         = lazy(() => import('./pages/Forms.jsx'))
 const Contacts      = lazy(() => import('./pages/Contacts.jsx'))
 const Profiles      = lazy(() => import('./pages/Profiles.jsx'))
+const Campaigns     = lazy(() => import('./pages/Campaigns.jsx'))
 const Content        = lazy(() => import('./pages/Content.jsx'))
 const ApprovalQueue  = lazy(() => import('./pages/ApprovalQueue.jsx'))
 const Avatars        = lazy(() => import('./pages/Avatars.jsx'))
@@ -188,6 +189,7 @@ function AppShell() {
             <Route path="/avatars"   element={<Avatars />} />
             <Route path="/library"   element={<Library />} />
             <Route path="/profiles"  element={<Profiles />} />
+            <Route path="/campaigns" element={<Campaigns />} />
             <Route path="/billing"   element={<Billing />} />
             <Route path="/settings"  element={<Settings />} />
             <Route path="/affiliate" element={<Affiliate />} />

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useNavigate } from 'react-router-dom'
 import {
   Plus, Building2, Edit3, Trash2, X, Save, Sparkles, Check, Crown,
   Upload, ClipboardCopy, MessageSquare, Wand2, Loader2, ChevronRight,
   CircleDashed, CheckCircle2, Mic, Calendar, Share2, Palette, ChevronDown,
-  Music, Play, Pause,
+  Music, Play, Pause, Megaphone,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
@@ -1920,6 +1921,7 @@ function QuickstartModal({ token, onClose, onCreated }) {
 export default function Profiles() {
   const { profiles, selectedProfileId, setSelectedProfileId, refresh } = useProfile()
   const { session } = useAuth()
+  const navigate = useNavigate()
   const [editing, setEditing] = useState(null)
   const [quickstart, setQuickstart] = useState(false)
 
@@ -2008,6 +2010,13 @@ export default function Profiles() {
                   </div>
                 )}
                 <div style={{ display: 'flex', gap: 6, marginTop: 14 }}>
+                  <button
+                    className="btn-primary"
+                    style={{ padding: '6px 10px', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                    onClick={(e) => { e.stopPropagation(); setSelectedProfileId(p.id); navigate('/campaigns?new=1') }}
+                  >
+                    <Megaphone size={12} /> Create campaign
+                  </button>
                   <button className="btn-ghost" style={{ padding: '6px 10px', fontSize: 12 }} onClick={(e) => { e.stopPropagation(); setEditing(p) }}>
                     <Edit3 size={12} /> Edit
                   </button>
