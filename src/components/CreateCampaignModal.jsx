@@ -99,10 +99,21 @@ export default function CreateCampaignModal({ profileId, token, onClose, onCompl
 
   const connectedSet = useMemo(() => new Set(connected?.connected_platforms || []), [connected])
 
-  const canNext = () => {
-    if (step === 'setup') return durationDays >= 1 && postsPerDay >= 1 && platforms.length >= 1 && startDate
-    if (step === 'details') return goal.trim().length >= 8
-    return true
+  const canNext = () => !nextHint()
+
+  // Returns a human reason the current step can't advance, or '' when it
+  // can. Drives both the disabled state and the visible hint so the user
+  // is never stuck at a greyed button with no explanation.
+  const nextHint = () => {
+    if (step === 'setup') {
+      if (!platforms.length) return 'Pick at least one platform.'
+      if (!startDate) return 'Choose a start date.'
+      if (!(durationDays >= 1 && postsPerDay >= 1)) return 'Set the length and posts per day.'
+    }
+    if (step === 'details') {
+      if (goal.trim().length < 3) return 'Add a short campaign goal to continue.'
+    }
+    return ''
   }
 
   const next = async () => {
@@ -252,10 +263,13 @@ export default function CreateCampaignModal({ profileId, token, onClose, onCompl
             <ChevronLeft size={14} /> Back
           </button>
           {step !== 'review' ? (
-            <button onClick={next} disabled={!canNext() || busy} className="btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              {busy ? <Loader2 size={14} className="spin" /> : null}
-              {step === 'holidays' ? 'Review' : 'Next'} <ChevronRight size={14} />
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {nextHint() && <span style={{ fontSize: 12, color: 'var(--muted)' }}>{nextHint()}</span>}
+              <button onClick={next} disabled={!canNext() || busy} className="btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                {busy ? <Loader2 size={14} className="spin" /> : null}
+                {step === 'holidays' ? 'Review' : 'Next'} <ChevronRight size={14} />
+              </button>
+            </div>
           ) : finished ? (
             <button onClick={onClose} className="btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               Done <Check size={14} />
