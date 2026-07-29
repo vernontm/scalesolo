@@ -22,7 +22,7 @@
 // to Upload-Post — finishing the approve -> media -> scheduled loop.
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
-import { withCreditReservation } from '../_lib/credits.js'
+import { withCreditReservation, refundConsumeByMetadata } from '../_lib/credits.js'
 import { invokeHandler } from '../_lib/internal-invoke.js'
 import imagesGenerate from '../images/generate.js'
 import imagesStatus from '../images/status.js'
@@ -36,9 +36,18 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
 // Vertical 4:5 is the safest single ratio across IG/FB/TikTok feed.
 const IMAGE_ASPECT = '4:5'
 const VIDEO_ASPECT = '9:16'
-const VIDEO_FEE_TOKENS = 30000   // ~ one short grok clip; refunded on failure
-const POLL_MS = 5000
-const POLL_BUDGET_MS = 210000    // leave headroom under the 300s function cap
+// Video uses Google Veo 3.1 via Kie (veo3_fast variant). Veo holds
+// real food/product together far better than the old Grok model, which
+// warped it. veo3_fast is Veo 3.1's cost-efficient tier; flip to 'veo3'
+// for the top-quality tier (and raise VIDEO_FEE_TOKENS to ~215000).
+const VEO_MODEL = 'veo3_fast'
+const VEO_DURATION = 8            // Veo options: 4 | 6 | 8 seconds
+// Kie charges 25% of Google's Veo price; veo3_fast 8s ≈ $0.80. At the
+// same credits-per-dollar as image gen ($0.03 = 4000 credits) that's
+// ~107k; round to 110k. Refunded on failure.
+const VIDEO_FEE_TOKENS = 110000
+const POLL_MS = 6000
+const POLL_BUDGET_MS = 240000    // Veo runs ~1-3 min; resume via media_jobs if it exceeds this
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -76,16 +85,18 @@ async function mirrorVideo(url, profileId) {
   } catch { return url }
 }
 
-async function submitGrokVideo(imageUrl, prompt) {
+// Submit a Veo 3.1 image-to-video job (animates the real reference photo).
+// Veo uses its own endpoint + schema, separate from the jobs API used for
+// images. Returns the taskId.
+async function submitVeoVideo(imageUrl, prompt) {
   const body = {
-    model: 'grok-imagine/image-to-video',
-    input: {
-      image_urls: [imageUrl],
-      prompt: String(prompt || 'Subtle, appetizing camera movement, natural motion, cinematic').slice(0, 5000),
-      mode: 'normal', duration: '6', resolution: '720p', aspect_ratio: VIDEO_ASPECT,
-    },
+    prompt: String(prompt || 'Subtle, appetizing camera movement, natural motion, cinematic. Keep the food exactly as shown.').slice(0, 5000),
+    imageUrls: [imageUrl],
+    model: VEO_MODEL,
+    aspect_ratio: VIDEO_ASPECT,
+    duration: VEO_DURATION,
   }
-  const r = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
+  const r = await fetch('https://api.kie.ai/api/v1/veo/generate', {
     method: 'POST',
     headers: { Authorization: `Bearer ${KIE_API_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -93,32 +104,31 @@ async function submitGrokVideo(imageUrl, prompt) {
   const text = await r.text()
   let data = {}; try { data = JSON.parse(text) } catch {}
   if (!r.ok || (data?.code && data.code !== 200)) {
-    throw new Error(`Kie grok createTask ${r.status}: ${(data?.msg || text).slice(0, 200)}`)
+    throw new Error(`Kie Veo generate ${r.status}: ${(data?.msg || text).slice(0, 200)}`)
   }
   const taskId = data?.data?.taskId || data?.taskId
-  if (!taskId) throw new Error('Kie grok returned no taskId')
+  if (!taskId) throw new Error('Kie Veo returned no taskId')
   return taskId
 }
 
-// Poll one Kie video task. Returns { state, url? }.
-async function pollGrokVideo(taskId) {
-  const r = await fetch(`https://api.kie.ai/api/v1/jobs/recordInfo?taskId=${encodeURIComponent(taskId)}`, {
+// Poll one Veo task. Returns { state, url? }. Veo reports data.successFlag
+// (0 generating, 1 success, 2/3 failed) with the video at
+// data.response.resultUrls.
+async function pollVeoVideo(taskId) {
+  const r = await fetch(`https://api.kie.ai/api/v1/veo/record-info?taskId=${encodeURIComponent(taskId)}`, {
     headers: { Authorization: `Bearer ${KIE_API_KEY}` },
   })
   const text = await r.text()
   let body = {}; try { body = JSON.parse(text) } catch {}
-  const data = body?.data || body
-  const state = String(data?.state || data?.status || '').toLowerCase()
-  let urls = []
-  const rj = data?.resultJson
-  if (typeof rj === 'string') { try { const p = JSON.parse(rj); urls = p?.resultUrls || (Array.isArray(p) ? p : []) } catch {} }
-  else if (rj?.resultUrls) urls = rj.resultUrls
-  if (!urls.length) urls = data?.resultUrls || []
-  urls = (Array.isArray(urls) ? urls : []).filter(Boolean)
-  if (state === 'success' || state === 'completed' || state === 'done' || urls.length) {
-    return urls.length ? { state: 'success', url: typeof urls[0] === 'string' ? urls[0] : urls[0]?.url } : { state: 'failed' }
+  const data = body?.data || {}
+  const flag = Number(data?.successFlag)
+  if (flag === 1) {
+    const resp = data?.response || {}
+    const urls = resp.resultUrls || resp.fullResultUrls || resp.originUrls || []
+    const url = Array.isArray(urls) ? (typeof urls[0] === 'string' ? urls[0] : urls[0]?.url) : null
+    return url ? { state: 'success', url } : { state: 'failed' }
   }
-  if (state === 'fail' || state === 'failed' || state === 'error') return { state: 'failed' }
+  if (flag === 2 || flag === 3) return { state: 'failed' }
   return { state: 'pending' }
 }
 
@@ -161,7 +171,7 @@ async function processRow(row, req, userId) {
         const taskId = await withCreditReservation(
           { userId, poolType: 'ai_tokens', amount: VIDEO_FEE_TOKENS, action: 'consume:campaign-video', profileId: row.profile_id },
           async ({ refundIfFailed, tagMetadata }) => {
-            try { const t = await submitGrokVideo(srcImage, brief.prompt); await tagMetadata({ taskId: t }); return t }
+            try { const t = await submitVeoVideo(srcImage, brief.prompt); await tagMetadata({ taskId: t }); return t }
             catch (e) { await refundIfFailed(); throw e }
           },
         )
@@ -169,13 +179,21 @@ async function processRow(row, req, userId) {
         await patch(row.id, { media_jobs: jobs, media_gen_status: 'generating', media_gen_error: null })
       }
       while (Date.now() < deadline) {
-        const v = await pollGrokVideo(jobs.video_task)
+        const v = await pollVeoVideo(jobs.video_task)
         if (v.state === 'success' && v.url) {
           const mirrored = await mirrorVideo(v.url, row.profile_id)
           await finishMedia(row, [mirrored], 'video')
           return { state: 'ready' }
         }
-        if (v.state === 'failed') { await fail(row.id, 'Video generation failed at Kie.'); return { state: 'failed' } }
+        if (v.state === 'failed') {
+          // Veo is expensive — refund the reservation on a genuine failure.
+          await refundConsumeByMetadata({
+            originalAction: 'consume:campaign-video', metadataKey: 'taskId',
+            metadataValue: jobs.video_task, profileId: row.profile_id,
+          }).catch(() => {})
+          await fail(row.id, 'Veo video generation failed.')
+          return { state: 'failed' }
+        }
         await sleep(POLL_MS)
       }
       return { state: 'pending' }   // resume on next call

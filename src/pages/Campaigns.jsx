@@ -23,9 +23,10 @@ const STATUS_COLOR = {
 
 // Credit cost per generated asset. MUST mirror the server fees:
 // images = 4000 ai_tokens/image (api/images/generate.js), carousel =
-// 4000 x slides, video = 30000 (VIDEO_FEE_TOKENS in generate-media.js).
+// 4000 x slides, video = 110000 (VIDEO_FEE_TOKENS in generate-media.js;
+// Veo 3.1 is much pricier than images).
 const IMAGE_FEE = 4000
-const VIDEO_FEE = 30000
+const VIDEO_FEE = 110000
 function postCost(p) {
   const ct = p.media_brief?.content_type || p.media_type
   if (ct === 'video') return VIDEO_FEE
