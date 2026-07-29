@@ -6,7 +6,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Megaphone, Plus, Loader2, CheckCircle2, Clock, Send, Trash2 } from 'lucide-react'
+import { Megaphone, Plus, Loader2, CheckCircle2, Clock, Send, Trash2, Image as ImageIcon, Video, Sparkles, ChevronDown, ChevronRight, AlertCircle, RefreshCw } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import CreateCampaignModal from '../components/CreateCampaignModal.jsx'
@@ -100,7 +100,7 @@ export default function Campaigns() {
       ) : (
         <div style={{ marginTop: 20, display: 'grid', gap: 12 }}>
           {campaigns.map((c) => (
-            <CampaignCard key={c.id} campaign={c} onOpenQueue={() => navigate('/schedule/queue')} onDelete={() => removeCampaign(c.id)} />
+            <CampaignCard key={c.id} campaign={c} token={token} onOpenQueue={() => navigate('/schedule/queue')} onDelete={() => removeCampaign(c.id)} onChanged={refresh} />
           ))}
         </div>
       )}
@@ -117,11 +117,83 @@ export default function Campaigns() {
   )
 }
 
-function CampaignCard({ campaign, onOpenQueue, onDelete }) {
+function CampaignCard({ campaign, token, onOpenQueue, onDelete, onChanged }) {
   const c = campaign.counts || {}
   const created = useMemo(() => {
     try { return new Date(campaign.created_at).toLocaleDateString() } catch { return '' }
   }, [campaign.created_at])
+
+  const [expanded, setExpanded] = useState(false)
+  const [posts, setPosts] = useState(null)     // null = not loaded
+  const [gen, setGen] = useState(null)         // { running, done, total }
+  const [busyIds, setBusyIds] = useState({})   // per-post generating state
+
+  const mediaNeeded = c.media_needed || 0
+  const mediaReady = c.media_ready || 0
+  const mediaTotal = c.media_total || 0
+
+  const loadPosts = async () => {
+    try {
+      const r = await fetch(`/api/campaigns?id=${campaign.id}&posts=1`, { headers: { Authorization: `Bearer ${token}` } })
+      const b = await r.json()
+      if (r.ok) setPosts(b.posts || [])
+    } catch { /* keep */ }
+  }
+  const toggleExpand = () => {
+    const next = !expanded
+    setExpanded(next)
+    if (next && posts === null) loadPosts()
+  }
+
+  // Campaign-wide: loop the batch endpoint until nothing remains. Each
+  // call processes one post (resuming in-flight ones), returning how many
+  // still need media so we can drive a progress bar.
+  const runAllMedia = async () => {
+    const total = mediaNeeded + (c.media_generating || 0)
+    setGen({ running: true, done: 0, total: total || 1 })
+    let guard = 0
+    try {
+      while (guard++ < 800) {
+        const r = await fetch('/api/campaigns/generate-media', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ campaign_id: campaign.id }),
+        })
+        const b = await r.json()
+        if (!r.ok) { toast({ kind: 'error', message: b?.error || 'Media generation failed.' }); break }
+        if (b.done && !b.processed) break
+        const remaining = b.remaining || 0
+        setGen({ running: true, done: Math.max(0, total - remaining), total: total || 1 })
+        if (remaining <= 0 && b.state !== 'pending') break
+      }
+    } finally {
+      setGen(null)
+      if (expanded) loadPosts()
+      onChanged?.()
+    }
+  }
+
+  // Single post: generate (or retry) media for one row.
+  const runOne = async (id) => {
+    setBusyIds((m) => ({ ...m, [id]: true }))
+    try {
+      let guard = 0
+      while (guard++ < 60) {
+        const r = await fetch('/api/campaigns/generate-media', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ content_id: id }),
+        })
+        const b = await r.json()
+        if (!r.ok) { toast({ kind: 'error', message: b?.error || 'Generation failed.' }); break }
+        if (b.state === 'pending') { continue }  // resume polling
+        if (b.state === 'failed') { toast({ kind: 'error', message: b.error || 'Generation failed.' }) }
+        break
+      }
+    } finally {
+      setBusyIds((m) => { const n = { ...m }; delete n[id]; return n })
+      loadPosts(); onChanged?.()
+    }
+  }
+
   return (
     <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 18 }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
@@ -145,7 +217,7 @@ function CampaignCard({ campaign, onOpenQueue, onDelete }) {
         <Stat icon={<Clock size={14} />} label="Awaiting review" value={c.pending || 0} />
         <Stat icon={<CheckCircle2 size={14} />} label="Approved" value={c.approved || 0} />
         <Stat icon={<Send size={14} />} label="Scheduled" value={c.scheduled || 0} />
-        <Stat icon={<CheckCircle2 size={14} />} label="Posted" value={c.posted || 0} />
+        <Stat icon={<ImageIcon size={14} />} label="Media ready" value={`${mediaReady}/${mediaTotal}`} />
         <div style={{ marginLeft: 'auto', alignSelf: 'center' }}>
           {(c.pending || 0) > 0 && (
             <button className="btn-ghost" onClick={onOpenQueue} style={{ fontSize: 13 }}>
@@ -154,6 +226,76 @@ function CampaignCard({ campaign, onOpenQueue, onDelete }) {
           )}
         </div>
       </div>
+
+      {/* Media generation bar */}
+      {mediaTotal > 0 && (
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <button className="btn-primary" onClick={runAllMedia} disabled={!!gen || mediaNeeded === 0}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+              {gen ? <Loader2 size={14} className="spin" /> : <Sparkles size={14} />}
+              {gen ? 'Generating media…' : mediaNeeded > 0 ? `Generate media (${mediaNeeded})` : 'All media generated'}
+            </button>
+            <button className="btn-ghost" onClick={toggleExpand} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 13 }}>
+              {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />} {expanded ? 'Hide' : 'Show'} posts
+            </button>
+            <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+              Images, carousels &amp; videos from your real photos. Approved posts schedule automatically once their media lands.
+            </span>
+          </div>
+          {gen && (
+            <div style={{ marginTop: 10, height: 6, background: 'var(--surface-2)', borderRadius: 3, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${Math.min(100, Math.round((gen.done / gen.total) * 100))}%`, background: 'linear-gradient(90deg, var(--red), var(--red-dark))', transition: 'width 0.3s' }} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {expanded && (
+        <div style={{ marginTop: 14, display: 'grid', gap: 8 }}>
+          {posts === null ? (
+            <div style={{ color: 'var(--muted)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}><Loader2 size={14} className="spin" /> Loading posts…</div>
+          ) : posts.filter((p) => p.media_type !== 'text').length === 0 ? (
+            <div style={{ color: 'var(--muted)', fontSize: 13 }}>No media posts in this campaign.</div>
+          ) : (
+            posts.filter((p) => p.media_type !== 'text').map((p) => (
+              <PostRow key={p.id} post={p} busy={!!busyIds[p.id] || !!gen} onGenerate={() => runOne(p.id)} />
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PostRow({ post, busy, onGenerate }) {
+  const hasMedia = Array.isArray(post.media_urls) && post.media_urls.length > 0
+  const isVideo = post.media_type === 'video'
+  const generating = post.media_gen_status === 'generating' || busy
+  const failed = post.media_gen_status === 'failed' && !hasMedia
+  const thumb = hasMedia ? post.media_urls[0] : null
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, padding: 8 }}>
+      <div style={{ width: 44, height: 44, borderRadius: 8, overflow: 'hidden', flexShrink: 0, background: 'var(--surface)', display: 'grid', placeItems: 'center', color: 'var(--muted)' }}>
+        {thumb && !isVideo ? (
+          <img src={thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        ) : thumb && isVideo ? (
+          <video src={thumb} muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        ) : isVideo ? <Video size={18} /> : <ImageIcon size={18} />}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{post.title || 'Untitled'}</div>
+        <div style={{ fontSize: 11, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ textTransform: 'capitalize' }}>{post.media_type}</span>
+          {failed && <span style={{ color: 'var(--red)', display: 'inline-flex', alignItems: 'center', gap: 3 }}><AlertCircle size={11} /> failed</span>}
+          {hasMedia && <span style={{ color: '#2ecc71', display: 'inline-flex', alignItems: 'center', gap: 3 }}><CheckCircle2 size={11} /> ready{post.media_urls.length > 1 ? ` · ${post.media_urls.length} slides` : ''}</span>}
+        </div>
+      </div>
+      <button onClick={onGenerate} disabled={generating} className={hasMedia ? 'btn-ghost' : 'btn-primary'}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, flexShrink: 0 }}>
+        {generating ? <Loader2 size={13} className="spin" /> : hasMedia ? <RefreshCw size={13} /> : <Sparkles size={13} />}
+        {generating ? 'Working…' : hasMedia ? 'Regenerate' : failed ? 'Retry' : 'Generate'}
+      </button>
     </div>
   )
 }

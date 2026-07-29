@@ -54,9 +54,14 @@ function sanitizeConfig(body, { forCreate } = {}) {
 // funnel without the client re-querying content_scripts.
 async function countsFor(campaignId) {
   const rows = await supaFetch(
-    `content_scripts?campaign_id=eq.${campaignId}&select=status,approval_status`,
+    `content_scripts?campaign_id=eq.${campaignId}&select=status,approval_status,media_type,media_urls,media_gen_status`,
   ).catch(() => [])
-  const c = { total: 0, pending: 0, approved: 0, scheduled: 0, posted: 0, failed: 0 }
+  const c = {
+    total: 0, pending: 0, approved: 0, scheduled: 0, posted: 0, failed: 0,
+    // Media funnel (non-text posts only): how many still need generation,
+    // how many are done, how many are mid-generation.
+    media_total: 0, media_ready: 0, media_needed: 0, media_generating: 0,
+  }
   for (const r of rows || []) {
     c.total += 1
     if (r.approval_status === 'pending') c.pending += 1
@@ -64,6 +69,13 @@ async function countsFor(campaignId) {
     if (r.status === 'scheduled') c.scheduled += 1
     if (r.status === 'posted') c.posted += 1
     if (r.status === 'failed') c.failed += 1
+    if (r.media_type && r.media_type !== 'text') {
+      c.media_total += 1
+      const hasMedia = Array.isArray(r.media_urls) && r.media_urls.length > 0
+      if (hasMedia || r.media_gen_status === 'ready') c.media_ready += 1
+      else if (r.media_gen_status === 'generating') c.media_generating += 1
+      else if (r.approval_status !== 'rejected') c.media_needed += 1
+    }
   }
   return c
 }
@@ -82,6 +94,19 @@ export default async function handler(req, res) {
       const days = clampInt(req.query.days, 1, 90, 30)
       const region = String(req.query.region || 'US').slice(0, 8)
       return res.status(200).json({ holidays: holidaysInWindow(start, days, region) })
+    }
+
+    // ── GET a campaign's posts (media view) ─────────────────────────
+    if (req.method === 'GET' && req.query.id && req.query.posts) {
+      const id = String(req.query.id)
+      const rows = await supaFetch(`campaigns?id=eq.${id}&select=profile_id&limit=1`)
+      if (!rows?.[0]) return res.status(404).json({ error: 'Not found' })
+      await assertProfileAccess(auth.user.id, rows[0].profile_id)
+      const posts = await supaFetch(
+        `content_scripts?campaign_id=eq.${id}&order=scheduled_datetime.asc&limit=400` +
+        `&select=id,title,media_type,media_urls,media_gen_status,media_gen_error,approval_status,status,scheduled_datetime,media_brief`,
+      ).catch(() => [])
+      return res.status(200).json({ posts: posts || [] })
     }
 
     // ── GET one ─────────────────────────────────────────────────────

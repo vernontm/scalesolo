@@ -19,11 +19,12 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Check, X as XIcon, Edit3, RefreshCw, SkipForward,
-  ArrowLeft, ArrowRight, Loader2, Inbox, Sparkles,
+  ArrowLeft, ArrowRight, Loader2, Inbox, Sparkles, Image as ImageIcon,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { PlatformBadge } from '../components/PlatformBadge.jsx'
+import { toast } from '../components/Toast.jsx'
 
 const FETCH_BATCH = 20
 
@@ -136,7 +137,16 @@ export default function ApprovalQueue() {
       if (editMode && editText !== current.caption) {
         await patchCaption(current.id, editText)
       }
+      // A media post (image/carousel/video) with no media yet can't
+      // actually schedule on approve — the server holds it at approved.
+      // Say so plainly instead of letting the "Goes live" note imply it's
+      // publishing. It schedules automatically once its media is generated.
+      const needsMedia = current.media_type && current.media_type !== 'text'
+        && !(Array.isArray(current.media_urls) && current.media_urls.length)
       await callAction(current.id, 'approve')
+      if (needsMedia) {
+        toast({ kind: 'info', message: 'Approved. Generate its media on the Campaigns page, then it schedules automatically.' })
+      }
       advance()
     } catch (e) { setError(e.message) }
   }, [current, busy, editMode, editText, callAction, patchCaption, advance])
@@ -213,6 +223,11 @@ export default function ApprovalQueue() {
             {current.scheduled_datetime && (
               <div style={metaPill}>
                 {new Date(current.scheduled_datetime).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+              </div>
+            )}
+            {current.media_type && current.media_type !== 'text' && !(Array.isArray(current.media_urls) && current.media_urls.length) && (
+              <div style={{ ...metaPill, color: '#f59e0b', borderColor: 'rgba(245,158,11,0.45)' }}>
+                <ImageIcon size={11} style={{ verticalAlign: -1, marginRight: 4 }} />media needed
               </div>
             )}
             {platforms.length > 0 && (
