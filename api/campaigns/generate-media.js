@@ -26,7 +26,6 @@ import { withCreditReservation } from '../_lib/credits.js'
 import { invokeHandler } from '../_lib/internal-invoke.js'
 import imagesGenerate from '../images/generate.js'
 import imagesStatus from '../images/status.js'
-import contentHandler from '../content.js'
 
 export const config = { maxDuration: 300 }
 
@@ -288,20 +287,13 @@ export default async function handler(req, res) {
 
     const result = await processRow(targetRow, req, auth.user.id)
 
-    // When media just landed and the post is approved with a future slot
-    // and not yet submitted, finish scheduling via the approve action.
-    let scheduled = false
-    if (result.state === 'ready') {
-      const fresh = (await supaFetch(`content_scripts?id=eq.${targetRow.id}&limit=1`))?.[0]
-      const future = fresh?.scheduled_datetime && new Date(fresh.scheduled_datetime).getTime() > Date.now() + 5000
-      if (fresh?.approval_status === 'approved' && !fresh.uploadpost_request_id &&
-          Array.isArray(fresh.media_urls) && fresh.media_urls.length && future) {
-        const appr = await invokeHandler(contentHandler, req, {
-          method: 'POST', query: { action: 'approve', id: targetRow.id }, body: {},
-        }).catch((e) => ({ statusCode: 500, body: { error: e?.message } }))
-        scheduled = appr.statusCode < 300
-      }
-    }
+    // IMPORTANT: generated media is NEVER auto-submitted to Upload-Post.
+    // The post was "approved" as a caption/plan, before any media existed,
+    // so publishing the moment media lands would push un-reviewed (and
+    // possibly bad) AI media live. Media-ready posts wait at status
+    // 'caption_ready' for an explicit review + schedule step, where the
+    // user sees the actual image/video first.
+    const scheduled = false
 
     return res.status(200).json({
       done: body.content_id ? true : (result.state !== 'pending' && remaining <= 1 && result.state !== 'failed'),
