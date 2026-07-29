@@ -21,6 +21,20 @@ const STATUS_COLOR = {
   scheduled: '#60a5fa', complete: 'var(--muted)',
 }
 
+// Credit cost per generated asset. MUST mirror the server fees:
+// images = 4000 ai_tokens/image (api/images/generate.js), carousel =
+// 4000 x slides, video = 30000 (VIDEO_FEE_TOKENS in generate-media.js).
+const IMAGE_FEE = 4000
+const VIDEO_FEE = 30000
+function postCost(p) {
+  const ct = p.media_brief?.content_type || p.media_type
+  if (ct === 'video') return VIDEO_FEE
+  if (ct === 'carousel') return IMAGE_FEE * Math.max(3, Math.min(6, Number(p.media_brief?.slides) || 3))
+  if (ct === 'text' || p.media_type === 'text') return 0
+  return IMAGE_FEE
+}
+const fmtCredits = (n) => n >= 1000 ? `${(n / 1000).toFixed(n % 1000 === 0 ? 0 : 1)}k` : `${n}`
+
 export default function Campaigns() {
   const { session } = useAuth()
   const { selectedProfileId, selectedProfile } = useProfile()
@@ -150,8 +164,23 @@ function CampaignCard({ campaign, token, onOpenQueue, onDelete, onChanged }) {
   const toggleExpand = () => {
     const next = !expanded
     setExpanded(next)
-    if (next && posts === null) { loadPosts(); loadAssets() }
+    if (next) { if (posts === null) loadPosts(); if (!assets.length) loadAssets() }
   }
+
+  // Load the post list up front (once) so we can show a cost estimate on
+  // the button without the user having to expand first.
+  useEffect(() => {
+    if (mediaTotal > 0 && posts === null) loadPosts()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mediaTotal])
+
+  // Posts still needing media, and what generating them would cost.
+  const needyPosts = Array.isArray(posts)
+    ? posts.filter((p) => p.media_type !== 'text'
+        && !(Array.isArray(p.media_urls) && p.media_urls.length)
+        && p.media_gen_status !== 'ready')
+    : []
+  const estCredits = needyPosts.reduce((s, p) => s + postCost(p), 0)
 
   // Live view: while media is generating (batch running, or any post
   // still rendering — e.g. one kicked off in another tab), poll the post
@@ -194,6 +223,30 @@ function CampaignCard({ campaign, token, onOpenQueue, onDelete, onChanged }) {
       loadPosts()
       onChanged?.()
     }
+  }
+
+  // Confirm the spend before running the whole batch.
+  const runAllConfirmed = async () => {
+    const n = needyPosts.length
+    if (!n) return
+    const vids = needyPosts.filter((p) => (p.media_brief?.content_type || p.media_type) === 'video').length
+    const imgs = n - vids
+    const ok = await confirmDialog({
+      title: `Generate media for ${n} post${n === 1 ? '' : 's'}?`,
+      message: `About ${fmtCredits(estCredits)} credits (${imgs} image${imgs === 1 ? '' : 's'}${vids ? ` + ${vids} video${vids === 1 ? '' : 's'}` : ''}). Tip: use "Test one" first to dial in a prompt before spending on the set. Nothing publishes automatically.`,
+      confirmText: `Generate ${n}`,
+    })
+    if (ok) runAllMedia()
+  }
+
+  // Generate just the first post that needs media, so you can review the
+  // result (and tweak its prompt) before committing to the whole batch.
+  const testOne = async () => {
+    const first = needyPosts[0]
+    if (!first) { toast({ kind: 'info', message: 'Nothing left to generate.' }); return }
+    setExpanded(true)
+    if (!assets.length) loadAssets()
+    await runOne(first.id)
   }
 
   // Single post: generate (or retry) media for one row.
@@ -255,16 +308,23 @@ function CampaignCard({ campaign, token, onOpenQueue, onDelete, onChanged }) {
       {mediaTotal > 0 && (
         <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-            <button className="btn-primary" onClick={runAllMedia} disabled={!!gen || mediaNeeded === 0}
+            <button className="btn-ghost" onClick={testOne} disabled={!!gen || posts === null || needyPosts.length === 0}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }} title="Generate just one so you can dial in the prompt first">
+              <Sparkles size={14} /> Test one
+            </button>
+            <button className="btn-primary" onClick={runAllConfirmed} disabled={!!gen || posts === null || needyPosts.length === 0}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
               {gen ? <Loader2 size={14} className="spin" /> : <Sparkles size={14} />}
-              {gen ? 'Generating media…' : mediaNeeded > 0 ? `Generate media (${mediaNeeded})` : 'All media generated'}
+              {gen ? 'Generating media…'
+                : posts === null ? 'Preparing…'
+                : needyPosts.length > 0 ? `Generate all (${needyPosts.length}) · ~${fmtCredits(estCredits)} cr`
+                : 'All media generated'}
             </button>
             <button className="btn-ghost" onClick={toggleExpand} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 13 }}>
               {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />} {expanded ? 'Hide' : 'Show'} posts
             </button>
             <span style={{ fontSize: 12, color: 'var(--muted)' }}>
-              Review each post's prompt and reference photo before generating. Nothing publishes automatically, you schedule the good ones after.
+              Test one to dial in a prompt, then generate the rest. Nothing publishes automatically, you schedule the good ones after.
             </span>
           </div>
           {gen && (
