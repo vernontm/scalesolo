@@ -166,6 +166,7 @@ ${platformList}${standoutBlock}${buildContentMixBlock(campaign.content_mix)}${bu
 - per_platform_text MUST include EVERY platform above, written slightly differently for each, trimmed to each cap.
 - When a date has a SPECIAL or HOLIDAY noted in the user message, make at least one of that day's posts a promo/graphic tied to it.
 - For content_type text, media_brief may be { "prompt": "", "reference_asset_ids": [], "exact_lock": false }.
+- In media_brief.prompt, name the EXACT dish/product from the chosen reference asset (use its catalog label, e.g. "chicken shawarma plate", "kafta", "lamb chops"). NEVER use vague words like "meat", "food", "dish", or "platter" — those produce wrong-looking media. If you are unsure what a reference shows, do not guess a category; reference it by its exact catalog label only.
 - Never use em dashes. No emojis unless the brand exemplars use them.
 - Each post stands alone. Return ONLY the JSON array — start with [ and end with ].`
 }

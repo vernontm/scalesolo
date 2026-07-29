@@ -59,7 +59,7 @@ Return ONLY a JSON object (no prose, no code fences) with these keys:
   "do_not_alter": ["the elements an AI must reproduce exactly, phrased as instructions"]
 }
 
-Be concrete and specific to THIS image. Never use em dashes.
+Be concrete and specific to THIS image. Name the EXACT dish/product, never a vague category: never label something just "meat", "food", "dish", or "platter" — identify the specific item (e.g. "chicken shawarma plate", "beef shawarma", "kafta", "lamb chops"). If you genuinely cannot tell the specific dish from the image, set label to "NEEDS LABEL: <your best short description>" so a human can correct it, rather than guessing a generic category. Never use em dashes.
 
 <brand_context>
 ${brandMd || '(no brand context)'}

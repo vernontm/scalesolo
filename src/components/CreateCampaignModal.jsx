@@ -37,26 +37,29 @@ const MIX_TYPES = [
 ]
 const LENGTH_PRESETS = [7, 14, 30]
 
-export default function CreateCampaignModal({ profileId, token, onClose, onComplete }) {
+export default function CreateCampaignModal({ profileId, token, editCampaign = null, onClose, onComplete }) {
+  const isEdit = !!editCampaign
   const [stepIdx, setStepIdx] = useState(0)
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
 
   const [connected, setConnected] = useState(null)
-  const [name, setName] = useState('')
-  const [durationDays, setDurationDays] = useState(7)
-  const [postsPerDay, setPostsPerDay] = useState(1)
-  const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [name, setName] = useState(editCampaign?.name || '')
+  const [durationDays, setDurationDays] = useState(editCampaign?.duration_days || 7)
+  const [postsPerDay, setPostsPerDay] = useState(editCampaign?.posts_per_day || 1)
+  const [startDate, setStartDate] = useState(editCampaign?.start_date || new Date().toISOString().slice(0, 10))
   const [platforms, setPlatforms] = useState(['instagram', 'facebook', 'tiktok'])
-  const [goal, setGoal] = useState('')
-  const [specials, setSpecials] = useState([])
-  const [standouts, setStandouts] = useState([])
+  const [goal, setGoal] = useState(editCampaign?.goal || '')
+  const [specials, setSpecials] = useState(Array.isArray(editCampaign?.specials) ? editCampaign.specials : [])
+  const [standouts, setStandouts] = useState(Array.isArray(editCampaign?.standouts) ? editCampaign.standouts : [])
   const [standoutDraft, setStandoutDraft] = useState('')
-  const [contentMix, setContentMix] = useState({ image: 2, carousel: 1, video: 1, promo: 1, mood: 1, text: 1 })
-  const [holidays, setHolidays] = useState([]) // [{date,name,kind, on:true}]
+  const [contentMix, setContentMix] = useState(editCampaign?.content_mix || { image: 2, carousel: 1, video: 1, promo: 1, mood: 1, text: 1 })
+  const [holidays, setHolidays] = useState(
+    Array.isArray(editCampaign?.holidays) ? editCampaign.holidays.map((h) => ({ ...h, on: true })) : [],
+  ) // [{date,name,kind, on:true}]
   const [assetCount, setAssetCount] = useState(0)
 
-  const [campaignId, setCampaignId] = useState(null)
+  const [campaignId, setCampaignId] = useState(editCampaign?.id || null)
   const [preview, setPreview] = useState(null)
   const [progress, setProgress] = useState(null)
 
@@ -213,7 +216,7 @@ export default function CreateCampaignModal({ profileId, token, onClose, onCompl
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={brandIcon}><Megaphone size={16} /></div>
             <div>
-              <div style={{ fontWeight: 700, fontSize: 14 }}>Create campaign</div>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>{isEdit ? 'Edit campaign' : 'Create campaign'}</div>
               <div style={{ fontSize: 11, color: 'var(--muted)', letterSpacing: 0.06 }}>STEP {stepIdx + 1} OF {steps.length}</div>
             </div>
           </div>
@@ -273,6 +276,13 @@ export default function CreateCampaignModal({ profileId, token, onClose, onCompl
           ) : finished ? (
             <button onClick={onClose} className="btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               Done <Check size={14} />
+            </button>
+          ) : isEdit ? (
+            // Editing an existing campaign: entering the review step already
+            // PATCHed the settings, so this just confirms + closes. We don't
+            // re-run the plan (that would duplicate the existing posts).
+            <button onClick={() => { onComplete?.({ edited: true, campaignId }); onClose?.() }} disabled={busy} className="btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              Save changes <Check size={14} />
             </button>
           ) : (
             <button onClick={runGeneration} disabled={busy} className="btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>

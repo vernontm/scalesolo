@@ -51,17 +51,34 @@ const POLL_BUDGET_MS = 240000    // Veo runs ~1-3 min; resume via media_jobs if 
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+// Never let a generation prompt describe food/products with vague
+// catch-all words. The reference photo's label names the exact dish;
+// the model must reproduce THAT, not a generic category.
+const SPECIFICITY_RULE = ' Be exact about the subject: never use vague words like "meat", "food", "dish", or "platter". The item is precisely what the reference photo shows, named above. Do not substitute a different dish or a generic version.'
+
 // Build the image-generation prompt. When the brief locks the product,
 // phrase the reference so /api/images/generate's OBJECT-role expansion
 // fires ("keep the product exact"); restyle only background/lighting.
+// The reference LABELS (the specific dish names) are stated so the model
+// reproduces the exact item, not a vague category.
 function buildImagePrompt(brief, refLabels) {
   const base = String(brief?.prompt || 'On-brand marketing photo for the restaurant.').trim()
-  if (!refLabels.length) return base.slice(0, 4800)
+  if (!refLabels.length) return (base + SPECIFICITY_RULE).slice(0, 4800)
   const mentions = refLabels.map((l) => `reference "${l}"`).join(' and ')
+  const subject = refLabels.filter(Boolean).join(', ')
   const lock = brief?.exact_lock
-    ? ` Use the real product exactly as shown in ${mentions}: do not change the food, plating, garnishes, colors, or any product detail. Keep it an exact match to the reference. Restyle only the background, lighting, and composition.`
-    : ` Take visual guidance from ${mentions}.`
-  return (base + lock).slice(0, 4800)
+    ? ` The exact subject is: ${subject}. Use it exactly as shown in ${mentions}: do not change the food, plating, garnishes, colors, or any product detail. Keep it an exact match to the reference. Restyle only the background, lighting, and composition.`
+    : ` Subject: ${subject}. Take visual guidance from ${mentions}.`
+  return (base + lock + SPECIFICITY_RULE).slice(0, 4800)
+}
+
+// Build the Veo video prompt with the same specificity guardrail + the
+// exact dish name from the reference.
+function buildVideoPrompt(brief, refLabels) {
+  const base = String(brief?.prompt || 'Subtle, appetizing camera movement, natural motion, cinematic.').trim()
+  const subject = refLabels.filter(Boolean).join(', ')
+  const subj = subject ? ` The exact subject is: ${subject}. Keep it identical to the source photo.` : ''
+  return (base + subj + SPECIFICITY_RULE).slice(0, 5000)
 }
 
 // Mirror a Kie video result into our public bucket (landing-media allows
@@ -134,7 +151,7 @@ async function pollVeoVideo(taskId) {
 
 // Core: generate media for one row. Returns a status object; never throws
 // for expected outcomes (pending/failed) — only for programmer errors.
-async function processRow(row, req, userId) {
+async function processRow(row, req, userId, force = false) {
   const brief = row.media_brief || {}
   const ct = brief.content_type || row.media_type || 'text'
 
@@ -143,10 +160,19 @@ async function processRow(row, req, userId) {
     await patch(row.id, { media_gen_status: 'ready' })
     return { state: 'ready', skipped: true }
   }
-  // Already has media.
-  if (Array.isArray(row.media_urls) && row.media_urls.length) {
+  // Already has media — skip UNLESS this is an explicit regenerate
+  // (force). Without force, a "Regenerate" click on a post that still
+  // has its old media would just return 'ready' and never re-run. When
+  // forcing, drop the stale job handle + status so the video/image
+  // branch submits a fresh job (old media_urls stay visible until the
+  // new one lands and overwrites them).
+  if (!force && Array.isArray(row.media_urls) && row.media_urls.length) {
     await patch(row.id, { media_gen_status: 'ready' })
     return { state: 'ready', already: true }
+  }
+  if (force && !row.media_jobs) {
+    // Fresh regenerate: don't resume an old (already-finished) job.
+    row = { ...row, media_jobs: null }
   }
 
   // Resolve referenced real assets (images only usable as generation refs).
@@ -171,7 +197,7 @@ async function processRow(row, req, userId) {
         const taskId = await withCreditReservation(
           { userId, poolType: 'ai_tokens', amount: VIDEO_FEE_TOKENS, action: 'consume:campaign-video', profileId: row.profile_id },
           async ({ refundIfFailed, tagMetadata }) => {
-            try { const t = await submitVeoVideo(srcImage, brief.prompt); await tagMetadata({ taskId: t }); return t }
+            try { const t = await submitVeoVideo(srcImage, buildVideoPrompt(brief, refLabels)); await tagMetadata({ taskId: t }); return t }
             catch (e) { await refundIfFailed(); throw e }
           },
         )
@@ -303,7 +329,10 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'content_id or campaign_id required' })
     }
 
-    const result = await processRow(targetRow, req, auth.user.id)
+    // Single-post generation may force a fresh regenerate even when the
+    // post still has its old media. Batch never forces (it only fills
+    // posts that have no media yet).
+    const result = await processRow(targetRow, req, auth.user.id, body.content_id ? !!body.force : false)
 
     // IMPORTANT: generated media is NEVER auto-submitted to Upload-Post.
     // The post was "approved" as a caption/plan, before any media existed,

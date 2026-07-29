@@ -6,7 +6,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Megaphone, Plus, Loader2, CheckCircle2, Clock, Send, Trash2, Image as ImageIcon, Video, Sparkles, ChevronDown, ChevronRight, AlertCircle, RefreshCw } from 'lucide-react'
+import { Megaphone, Plus, Loader2, CheckCircle2, Clock, Send, Trash2, Image as ImageIcon, Video, Sparkles, ChevronDown, ChevronRight, AlertCircle, RefreshCw, Pencil } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import CreateCampaignModal from '../components/CreateCampaignModal.jsx'
@@ -47,6 +47,7 @@ export default function Campaigns() {
   const [campaigns, setCampaigns] = useState([])
   const [loading, setLoading] = useState(false)
   const [showWizard, setShowWizard] = useState(false)
+  const [editing, setEditing] = useState(null)   // campaign being edited
 
   const refresh = async () => {
     if (!selectedProfileId || !token) return
@@ -116,7 +117,7 @@ export default function Campaigns() {
       ) : (
         <div style={{ marginTop: 20, display: 'grid', gap: 12 }}>
           {campaigns.map((c) => (
-            <CampaignCard key={c.id} campaign={c} token={token} onOpenQueue={() => navigate('/schedule/queue')} onDelete={() => removeCampaign(c.id)} onChanged={refresh} />
+            <CampaignCard key={c.id} campaign={c} token={token} onOpenQueue={() => navigate('/schedule/queue')} onDelete={() => removeCampaign(c.id)} onEdit={() => setEditing(c)} onChanged={refresh} />
           ))}
         </div>
       )}
@@ -129,11 +130,21 @@ export default function Campaigns() {
           onComplete={({ inserted }) => { toast({ kind: 'success', message: `Campaign generated — ${inserted} posts are in your approval queue.` }); refresh() }}
         />
       )}
+
+      {editing && (
+        <CreateCampaignModal
+          profileId={selectedProfileId}
+          token={token}
+          editCampaign={editing}
+          onClose={() => setEditing(null)}
+          onComplete={() => { toast({ kind: 'success', message: 'Campaign updated.' }); setEditing(null); refresh() }}
+        />
+      )}
     </div>
   )
 }
 
-function CampaignCard({ campaign, token, onOpenQueue, onDelete, onChanged }) {
+function CampaignCard({ campaign, token, onOpenQueue, onDelete, onEdit, onChanged }) {
   const c = campaign.counts || {}
   const created = useMemo(() => {
     try { return new Date(campaign.created_at).toLocaleDateString() } catch { return '' }
@@ -259,7 +270,9 @@ function CampaignCard({ campaign, token, onOpenQueue, onDelete, onChanged }) {
       while (guard++ < 60) {
         const r = await fetch('/api/campaigns/generate-media', {
           method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ content_id: id }),
+          // force: a per-post click is an explicit (re)generate — make a
+          // fresh asset even if the post still has old media.
+          body: JSON.stringify({ content_id: id, force: true }),
         })
         const b = await r.json()
         if (!r.ok) { toast({ kind: 'error', message: b?.error || 'Generation failed.' }); break }
@@ -287,9 +300,14 @@ function CampaignCard({ campaign, token, onOpenQueue, onDelete, onChanged }) {
             {campaign.duration_days} days · {campaign.posts_per_day}/day · {campaign.start_date || 'no start date'} · created {created}
           </div>
         </div>
-        <button onClick={onDelete} title="Delete campaign" style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: 8, padding: 8, cursor: 'pointer', color: 'var(--muted)' }}>
-          <Trash2 size={14} />
-        </button>
+        <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+          <button onClick={onEdit} title="Edit campaign settings" style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: 8, padding: 8, cursor: 'pointer', color: 'var(--muted)' }}>
+            <Pencil size={14} />
+          </button>
+          <button onClick={onDelete} title="Delete campaign" style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: 8, padding: 8, cursor: 'pointer', color: 'var(--muted)' }}>
+            <Trash2 size={14} />
+          </button>
+        </div>
       </div>
 
       <div style={{ display: 'flex', gap: 18, marginTop: 14, flexWrap: 'wrap' }}>
