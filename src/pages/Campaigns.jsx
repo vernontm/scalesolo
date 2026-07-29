@@ -34,6 +34,7 @@ function postCost(p) {
   return IMAGE_FEE
 }
 const fmtCredits = (n) => n >= 1000 ? `${(n / 1000).toFixed(n % 1000 === 0 ? 0 : 1)}k` : `${n}`
+const fieldLabel = { fontSize: 11, fontWeight: 700, letterSpacing: 0.06, textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6 }
 
 export default function Campaigns() {
   const { session } = useAuth()
