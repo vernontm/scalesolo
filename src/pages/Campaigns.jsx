@@ -145,12 +145,27 @@ function CampaignCard({ campaign, token, onOpenQueue, onDelete, onChanged }) {
     if (next && posts === null) loadPosts()
   }
 
+  // Live view: while media is generating (batch running, or any post
+  // still rendering — e.g. one kicked off in another tab), poll the post
+  // list so finished images/videos pop in without a manual refresh.
+  const anyGenerating = Array.isArray(posts) && posts.some((p) => p.media_gen_status === 'generating')
+  useEffect(() => {
+    if (!expanded) return
+    if (!gen && !anyGenerating) return
+    const t = setInterval(loadPosts, 8000)
+    return () => clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded, !!gen, anyGenerating])
+
   // Campaign-wide: loop the batch endpoint until nothing remains. Each
   // call processes one post (resuming in-flight ones), returning how many
-  // still need media so we can drive a progress bar.
+  // still need media so we can drive a progress bar. Refreshes the grid
+  // after every post so they appear the moment they finish.
   const runAllMedia = async () => {
     const total = mediaNeeded + (c.media_generating || 0)
     setGen({ running: true, done: 0, total: total || 1 })
+    setExpanded(true)
+    loadPosts()   // show the grid filling in
     let guard = 0
     try {
       while (guard++ < 800) {
@@ -163,11 +178,12 @@ function CampaignCard({ campaign, token, onOpenQueue, onDelete, onChanged }) {
         if (b.done && !b.processed) break
         const remaining = b.remaining || 0
         setGen({ running: true, done: Math.max(0, total - remaining), total: total || 1 })
+        if (b.state === 'ready' || b.state === 'failed') loadPosts()   // live: pop it in
         if (remaining <= 0 && b.state !== 'pending') break
       }
     } finally {
       setGen(null)
-      if (expanded) loadPosts()
+      loadPosts()
       onChanged?.()
     }
   }
@@ -274,15 +290,20 @@ function PostRow({ post, busy, onGenerate }) {
   const generating = post.media_gen_status === 'generating' || busy
   const failed = post.media_gen_status === 'failed' && !hasMedia
   const thumb = hasMedia ? post.media_urls[0] : null
+  const box = { width: 56, height: 56, borderRadius: 8, overflow: 'hidden', flexShrink: 0, background: 'var(--surface)', display: 'grid', placeItems: 'center', color: 'var(--muted)', position: 'relative' }
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, padding: 8 }}>
-      <div style={{ width: 44, height: 44, borderRadius: 8, overflow: 'hidden', flexShrink: 0, background: 'var(--surface)', display: 'grid', placeItems: 'center', color: 'var(--muted)' }}>
-        {thumb && !isVideo ? (
-          <img src={thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-        ) : thumb && isVideo ? (
-          <video src={thumb} muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-        ) : isVideo ? <Video size={18} /> : <ImageIcon size={18} />}
-      </div>
+      {thumb ? (
+        // Click to open the full-size image / play the video in a new tab.
+        <a href={thumb} target="_blank" rel="noreferrer" style={{ ...box, cursor: 'zoom-in' }} title="Open full size">
+          {isVideo
+            ? <><video src={thumb} muted playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                <span style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}><Video size={16} /></span></>
+            : <img src={thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+        </a>
+      ) : (
+        <div style={box}>{isVideo ? <Video size={18} /> : <ImageIcon size={18} />}</div>
+      )}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{post.title || 'Untitled'}</div>
         <div style={{ fontSize: 11, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
