@@ -325,12 +325,25 @@ export default async function handler(req, res) {
 
     const inserted = []
     const failed = []
-    const byDate = new Map()
+    // Assign posts to days robustly. First honor the model's echoed
+    // date when it matches a requested day; then fill any day that came
+    // up short of posts_per_day from the leftover pool (posts the model
+    // tagged with a wrong/missing date). This stops a mis-formatted date
+    // from silently dropping a post, which made a 30-day × 2/day run
+    // land fewer than 60. Each day is capped at posts_per_day; genuine
+    // extras are ignored.
+    const windowKeys = new Set(dayWindow.map((d) => isoDay(d)))
+    const byDate = new Map(dayWindow.map((d) => [isoDay(d), []]))
+    const leftovers = []
     for (const p of posts) {
       const d = String(p?.date || '').slice(0, 10)
-      if (!d) continue
-      if (!byDate.has(d)) byDate.set(d, [])
-      byDate.get(d).push(p)
+      if (windowKeys.has(d)) byDate.get(d).push(p)
+      else leftovers.push(p)
+    }
+    for (const day of dayWindow) {
+      const arr = byDate.get(isoDay(day))
+      while (arr.length < postsPerDay && leftovers.length) arr.push(leftovers.shift())
+      if (arr.length > postsPerDay) arr.length = postsPerDay
     }
 
     for (const day of dayWindow) {
