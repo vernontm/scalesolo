@@ -125,6 +125,7 @@ function CampaignCard({ campaign, token, onOpenQueue, onDelete, onChanged }) {
 
   const [expanded, setExpanded] = useState(false)
   const [posts, setPosts] = useState(null)     // null = not loaded
+  const [assets, setAssets] = useState([])     // profile's real asset library
   const [gen, setGen] = useState(null)         // { running, done, total }
   const [busyIds, setBusyIds] = useState({})   // per-post generating state
 
@@ -139,10 +140,17 @@ function CampaignCard({ campaign, token, onOpenQueue, onDelete, onChanged }) {
       if (r.ok) setPosts(b.posts || [])
     } catch { /* keep */ }
   }
+  const loadAssets = async () => {
+    try {
+      const r = await fetch(`/api/profile/brand-assets?profile_id=${campaign.profile_id}`, { headers: { Authorization: `Bearer ${token}` } })
+      const b = await r.json()
+      if (r.ok) setAssets(b.assets || [])
+    } catch { /* keep */ }
+  }
   const toggleExpand = () => {
     const next = !expanded
     setExpanded(next)
-    if (next && posts === null) loadPosts()
+    if (next && posts === null) { loadPosts(); loadAssets() }
   }
 
   // Live view: while media is generating (batch running, or any post
@@ -165,7 +173,7 @@ function CampaignCard({ campaign, token, onOpenQueue, onDelete, onChanged }) {
     const total = mediaNeeded + (c.media_generating || 0)
     setGen({ running: true, done: 0, total: total || 1 })
     setExpanded(true)
-    loadPosts()   // show the grid filling in
+    loadPosts(); loadAssets()   // show the grid filling in
     let guard = 0
     try {
       while (guard++ < 800) {
@@ -256,7 +264,7 @@ function CampaignCard({ campaign, token, onOpenQueue, onDelete, onChanged }) {
               {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />} {expanded ? 'Hide' : 'Show'} posts
             </button>
             <span style={{ fontSize: 12, color: 'var(--muted)' }}>
-              Images, carousels &amp; videos from your real photos. Approved posts schedule automatically once their media lands.
+              Review each post's prompt and reference photo before generating. Nothing publishes automatically, you schedule the good ones after.
             </span>
           </div>
           {gen && (
@@ -275,7 +283,8 @@ function CampaignCard({ campaign, token, onOpenQueue, onDelete, onChanged }) {
             <div style={{ color: 'var(--muted)', fontSize: 13 }}>No media posts in this campaign.</div>
           ) : (
             posts.filter((p) => p.media_type !== 'text').map((p) => (
-              <PostRow key={p.id} post={p} busy={!!busyIds[p.id] || !!gen} onGenerate={() => runOne(p.id)} />
+              <PostRow key={p.id} post={p} assets={assets} token={token}
+                busy={!!busyIds[p.id] || !!gen} onGenerate={() => runOne(p.id)} onSaved={loadPosts} />
             ))
           )}
         </div>
@@ -284,39 +293,122 @@ function CampaignCard({ campaign, token, onOpenQueue, onDelete, onChanged }) {
   )
 }
 
-function PostRow({ post, busy, onGenerate }) {
+function PostRow({ post, assets, token, busy, onGenerate, onSaved }) {
   const hasMedia = Array.isArray(post.media_urls) && post.media_urls.length > 0
   const isVideo = post.media_type === 'video'
   const generating = post.media_gen_status === 'generating' || busy
   const failed = post.media_gen_status === 'failed' && !hasMedia
   const thumb = hasMedia ? post.media_urls[0] : null
   const box = { width: 56, height: 56, borderRadius: 8, overflow: 'hidden', flexShrink: 0, background: 'var(--surface)', display: 'grid', placeItems: 'center', color: 'var(--muted)', position: 'relative' }
+
+  const brief = post.media_brief || {}
+  const [open, setOpen] = useState(false)
+  const [prompt, setPrompt] = useState(brief.prompt || '')
+  const [refIds, setRefIds] = useState(Array.isArray(brief.reference_asset_ids) ? brief.reference_asset_ids : [])
+  const [saving, setSaving] = useState(false)
+  const dirty = prompt !== (brief.prompt || '') ||
+    JSON.stringify(refIds) !== JSON.stringify(Array.isArray(brief.reference_asset_ids) ? brief.reference_asset_ids : [])
+
+  // Only real photos are usable as generation references.
+  const imageAssets = (assets || []).filter((a) => a.media_type === 'image')
+  const byId = Object.fromEntries((assets || []).map((a) => [a.id, a]))
+
+  const toggleRef = (id) => setRefIds((cur) => cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id])
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      const r = await fetch('/api/campaigns/brief', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ content_id: post.id, prompt, reference_asset_ids: refIds }),
+      })
+      const b = await r.json()
+      if (!r.ok) { toast({ kind: 'error', message: b?.error || 'Could not save prompt.' }); return false }
+      toast({ kind: 'success', message: 'Prompt saved.' })
+      onSaved?.()
+      return true
+    } catch (e) { toast({ kind: 'error', message: e.message }); return false }
+    finally { setSaving(false) }
+  }
+  const saveAndGenerate = async () => {
+    if (dirty) { const ok = await save(); if (!ok) return }
+    onGenerate()
+  }
+
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, padding: 8 }}>
-      {thumb ? (
-        // Click to open the full-size image / play the video in a new tab.
-        <a href={thumb} target="_blank" rel="noreferrer" style={{ ...box, cursor: 'zoom-in' }} title="Open full size">
-          {isVideo
-            ? <><video src={thumb} muted playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                <span style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}><Video size={16} /></span></>
-            : <img src={thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
-        </a>
-      ) : (
-        <div style={box}>{isVideo ? <Video size={18} /> : <ImageIcon size={18} />}</div>
-      )}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{post.title || 'Untitled'}</div>
-        <div style={{ fontSize: 11, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ textTransform: 'capitalize' }}>{post.media_type}</span>
-          {failed && <span style={{ color: 'var(--red)', display: 'inline-flex', alignItems: 'center', gap: 3 }}><AlertCircle size={11} /> failed</span>}
-          {hasMedia && <span style={{ color: '#2ecc71', display: 'inline-flex', alignItems: 'center', gap: 3 }}><CheckCircle2 size={11} /> ready{post.media_urls.length > 1 ? ` · ${post.media_urls.length} slides` : ''}</span>}
+    <div style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 8 }}>
+        {thumb ? (
+          <a href={thumb} target="_blank" rel="noreferrer" style={{ ...box, cursor: 'zoom-in' }} title="Open full size">
+            {isVideo
+              ? <><video src={thumb} muted playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  <span style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}><Video size={16} /></span></>
+              : <img src={thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+          </a>
+        ) : (
+          <div style={box}>{isVideo ? <Video size={18} /> : <ImageIcon size={18} />}</div>
+        )}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{post.title || 'Untitled'}</div>
+          <div style={{ fontSize: 11, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ textTransform: 'capitalize' }}>{post.media_type}</span>
+            {failed && <span style={{ color: 'var(--red)', display: 'inline-flex', alignItems: 'center', gap: 3 }}><AlertCircle size={11} /> failed</span>}
+            {hasMedia && <span style={{ color: '#2ecc71', display: 'inline-flex', alignItems: 'center', gap: 3 }}><CheckCircle2 size={11} /> ready{post.media_urls.length > 1 ? ` · ${post.media_urls.length} slides` : ''}</span>}
+          </div>
         </div>
+        <button onClick={() => setOpen((o) => !o)} className="btn-ghost" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, flexShrink: 0 }}>
+          {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />} Prompt
+        </button>
+        <button onClick={saveAndGenerate} disabled={generating} className={hasMedia ? 'btn-ghost' : 'btn-primary'}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, flexShrink: 0 }}>
+          {generating ? <Loader2 size={13} className="spin" /> : hasMedia ? <RefreshCw size={13} /> : <Sparkles size={13} />}
+          {generating ? 'Working…' : hasMedia ? 'Regenerate' : failed ? 'Retry' : 'Generate'}
+        </button>
       </div>
-      <button onClick={onGenerate} disabled={generating} className={hasMedia ? 'btn-ghost' : 'btn-primary'}
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, flexShrink: 0 }}>
-        {generating ? <Loader2 size={13} className="spin" /> : hasMedia ? <RefreshCw size={13} /> : <Sparkles size={13} />}
-        {generating ? 'Working…' : hasMedia ? 'Regenerate' : failed ? 'Retry' : 'Generate'}
-      </button>
+
+      {open && (
+        <div style={{ padding: '4px 12px 14px', borderTop: '1px solid var(--border)', display: 'grid', gap: 12 }}>
+          <div>
+            <div style={{ ...fieldLabel, marginTop: 10 }}>Generation prompt {isVideo ? '(motion / video)' : '(image)'}</div>
+            <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={4}
+              placeholder="Describe exactly what this image/video should show…"
+              style={{ width: '100%', padding: 10, fontSize: 13, lineHeight: 1.5, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)', resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+              The real reference photo below is locked so the product stays exact. This text controls everything else (scene, mood, motion).
+            </div>
+          </div>
+
+          <div>
+            <div style={fieldLabel}>Reference photo{refIds.length !== 1 ? 's' : ''} it builds from {refIds.length === 0 && <span style={{ color: '#f59e0b', textTransform: 'none', fontWeight: 400 }}>· none selected (AI will invent the product — pick one)</span>}</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', maxHeight: 180, overflowY: 'auto', padding: 2 }}>
+              {imageAssets.length === 0 ? (
+                <div style={{ fontSize: 12, color: 'var(--muted)' }}>No photos in this brand's asset library yet.</div>
+              ) : imageAssets.map((a) => {
+                const sel = refIds.includes(a.id)
+                return (
+                  <button key={a.id} type="button" onClick={() => toggleRef(a.id)} title={a.label || a.category}
+                    style={{ width: 64, height: 64, borderRadius: 8, overflow: 'hidden', padding: 0, cursor: 'pointer', position: 'relative',
+                      border: `2px solid ${sel ? 'var(--red)' : 'var(--border)'}`, background: 'var(--surface)' }}>
+                    <img src={a.public_url} alt={a.label || ''} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: sel ? 1 : 0.7 }} />
+                    {sel && <span style={{ position: 'absolute', top: 2, right: 2, background: 'var(--red)', color: '#fff', borderRadius: 10, width: 16, height: 16, display: 'grid', placeItems: 'center' }}><CheckCircle2 size={11} /></span>}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button onClick={save} disabled={!dirty || saving} className="btn-ghost" style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              {saving ? <Loader2 size={13} className="spin" /> : null} Save prompt
+            </button>
+            <button onClick={saveAndGenerate} disabled={generating} className="btn-primary" style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              {generating ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
+              {dirty ? 'Save + generate' : hasMedia ? 'Regenerate' : 'Generate'}
+            </button>
+            {dirty && <span style={{ fontSize: 11, color: 'var(--muted)' }}>unsaved changes</span>}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
