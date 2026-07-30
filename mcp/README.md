@@ -12,19 +12,26 @@ cd mcp
 npm install
 ```
 
-Get the internal secret (same value as Vercel's `WORKFLOW_INTERNAL_SECRET`) from
-the linked ScaleSolo repo:
+The MCP authenticates with a dedicated secret you choose (`SCALESOLO_MCP_SECRET`).
+The API accepts it via the same impersonation gate as the Fly worker, so no
+worker secret is touched. Create it once and set it in Vercel + the MCP env:
 
 ```bash
-# from the ScaleSolo project root (linked to Vercel)
-vercel env pull .env.vercel      # writes WORKFLOW_INTERNAL_SECRET=... (gitignored)
+# 1. generate a strong secret
+openssl rand -hex 32                       # copy the output
+
+# 2. set it on the API (from the linked ScaleSolo repo root), then redeploy
+vercel env add SCALESOLO_MCP_SECRET production   # paste the value
+vercel --prod                                    # or push to redeploy
+
+# 3. use the SAME value as SCALESOLO_INTERNAL_SECRET in the Claude config below
 ```
 
 ## Claude config
 
-Add to your Claude Code MCP config (`~/.claude.json` `mcpServers`, or via
-`claude mcp add`). Fill the secret from the value you pulled above — do NOT
-commit it.
+Add to your Claude Code MCP config (`~/.claude.json` `mcpServers`, or
+`claude mcp add`). Use the API host **`https://www.scalesolo.ai`** (the apex
+`scalesolo.ai` 307-redirects and drops custom headers). Do NOT commit the secret.
 
 ```json
 {
@@ -33,8 +40,8 @@ commit it.
       "command": "node",
       "args": ["/absolute/path/to/Scalesolo/mcp/server.js"],
       "env": {
-        "SCALESOLO_API_BASE": "https://scalesolo.ai",
-        "SCALESOLO_INTERNAL_SECRET": "<WORKFLOW_INTERNAL_SECRET>",
+        "SCALESOLO_API_BASE": "https://www.scalesolo.ai",
+        "SCALESOLO_INTERNAL_SECRET": "<the SCALESOLO_MCP_SECRET value>",
         "SCALESOLO_USER_ID": "84df3249-68f9-48f6-83f1-1c0e16d63cea"
       }
     }

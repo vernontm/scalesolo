@@ -26,7 +26,9 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 
-const API_BASE = (process.env.SCALESOLO_API_BASE || 'https://scalesolo.ai').replace(/\/$/, '')
+// Use the www host: the apex scalesolo.ai 307-redirects and curl/fetch drop
+// custom headers across the redirect, which would break impersonation auth.
+const API_BASE = (process.env.SCALESOLO_API_BASE || 'https://www.scalesolo.ai').replace(/\/$/, '')
 const SECRET = process.env.SCALESOLO_INTERNAL_SECRET
 const USER_ID = process.env.SCALESOLO_USER_ID
 if (!SECRET || !USER_ID) {

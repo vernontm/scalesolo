@@ -77,10 +77,18 @@ export async function requireUser(req, res) {
   // impersonate header only when the secret is correct, so it's
   // impossible to spoof from a normal client. The synthesized auth
   // object looks just like a real user session to downstream code.
+  // Accept EITHER the worker secret (WORKFLOW_INTERNAL_SECRET, used by the
+  // Fly workflow worker) OR a dedicated MCP secret (SCALESOLO_MCP_SECRET,
+  // set for the ScaleSolo MCP server). Both gate the same impersonation
+  // path; the second exists so the MCP doesn't depend on the worker's
+  // (write-only) secret and can be rotated independently.
   const internalSecret = process.env.WORKFLOW_INTERNAL_SECRET
+  const mcpSecret = process.env.SCALESOLO_MCP_SECRET
   const claimedSecret = req.headers['x-internal-secret']
   const claimedUserId = req.headers['x-impersonate-user']
-  if (internalSecret && claimedSecret === internalSecret && claimedUserId) {
+  const secretMatches = (internalSecret && claimedSecret === internalSecret)
+    || (mcpSecret && claimedSecret === mcpSecret)
+  if (secretMatches && claimedUserId) {
     return {
       user: { id: String(claimedUserId), email: null, app_metadata: { internal: true } },
       token: null,
