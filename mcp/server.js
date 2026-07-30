@@ -78,14 +78,33 @@ async function resolveBrand(brand) {
 
 const ok = (obj) => ({ content: [{ type: 'text', text: JSON.stringify(obj, null, 2) }] })
 
+// Normalize platform names to what the system stores ("x", not "twitter").
+const PLATFORM_ALIASES = { twitter: 'x' }
+const normPlatforms = (arr) => (Array.isArray(arr) ? arr : [])
+  .map((p) => String(p || '').trim().toLowerCase())
+  .map((p) => PLATFORM_ALIASES[p] || p)
+  .filter(Boolean)
+
+// Which platforms a brand is actually connected to on Upload-Post.
+async function connectedPlatforms(profileId) {
+  try {
+    const b = await api('/api/account/uploadpost-connected', { query: { profile_id: profileId } })
+    return Array.isArray(b?.connected_platforms) ? b.connected_platforms : []
+  } catch { return [] }
+}
+
 // ── Tool implementations ─────────────────────────────────────────────
 const impls = {
   async list_brands() {
     const { profiles } = await api('/api/profiles')
-    return ok((profiles || []).map((p) => ({ id: p.id, name: p.business_name, uploadpost_user: p.uploadpost_user || null })))
+    const out = await Promise.all((profiles || []).map(async (p) => ({
+      id: p.id, name: p.business_name, uploadpost_user: p.uploadpost_user || null,
+      connected_platforms: await connectedPlatforms(p.id),
+    })))
+    return ok(out)
   },
 
-  async upload_media({ brand, file_path }) {
+  async upload_media({ brand, file_path, platforms }) {
     if (!file_path) throw new Error('file_path is required')
     const profile = await resolveBrand(brand)
     const ext = extname(file_path).slice(1).toLowerCase()
@@ -105,6 +124,8 @@ const impls = {
       body: bytes,
     })
     if (!put.ok) throw new Error(`Storage upload failed (${put.status}): ${(await put.text()).slice(0, 200)}`)
+    // Platforms: use what was passed, else default to the brand's connected set.
+    const chosen = platforms?.length ? normPlatforms(platforms) : await connectedPlatforms(profile.id)
     // 3. create the draft content row
     const created = await api('/api/content', {
       method: 'POST',
@@ -114,11 +135,12 @@ const impls = {
         media_urls: [init.public_url], media_type: init.media_type,
         post_type: init.media_type === 'video' ? 'video' : 'post',
         status: 'draft', generated_by: 'mcp',
+        platforms: chosen.length ? chosen : null,
       },
     })
     const id = created?.item?.id
     if (!id) throw new Error('Row created but no id returned')
-    return ok({ content_id: id, brand: profile.business_name, media_type: init.media_type, media_url: init.public_url })
+    return ok({ content_id: id, brand: profile.business_name, media_type: init.media_type, media_url: init.public_url, platforms: chosen })
   },
 
   async autocaption({ content_id }) {
@@ -171,20 +193,40 @@ const impls = {
     return ok({ content_id, title: row.title, caption: row.caption, hashtags: row.hashtags, first_comment: row.first_comment })
   },
 
+  async set_platforms({ content_id, platforms }) {
+    if (!content_id) throw new Error('content_id is required')
+    const list = normPlatforms(platforms)
+    if (!list.length) throw new Error('platforms must be a non-empty list, e.g. ["instagram","tiktok"]')
+    const updated = await api('/api/content', { method: 'PATCH', query: { id: content_id }, json: { platforms: list } })
+    const row = updated?.item || updated
+    return ok({ content_id, platforms: row.platforms })
+  },
+
   // CONFIRM GATE — the only tool that reaches Upload-Post. Sets the chosen
-  // slot then approves the post, which submits it to Upload-Post for that
-  // time. Call this ONLY after the user has explicitly confirmed.
-  async schedule_post({ content_id, scheduled_datetime }) {
+  // slot (and platforms, if given) then approves the post, which submits it
+  // to Upload-Post for that time. Call this ONLY after the user has
+  // explicitly confirmed the caption, the platforms, and the slot.
+  async schedule_post({ content_id, scheduled_datetime, platforms }) {
     if (!content_id) throw new Error('content_id is required')
     if (!scheduled_datetime) throw new Error('scheduled_datetime (ISO) is required')
-    // 1. pin the slot
-    await api('/api/content', { method: 'PATCH', query: { id: content_id }, json: { scheduled_datetime } })
+    // Resolve the target platforms: passed in > already on the row >
+    // the brand's connected set. Refuse to schedule with none, or the
+    // publish step would silently no-op.
+    const row0 = (await api('/api/content', { query: { id: content_id } }))?.item
+    if (!row0) throw new Error('post not found')
+    let targets = normPlatforms(platforms)
+    if (!targets.length) targets = normPlatforms(row0.platforms)
+    if (!targets.length) targets = await connectedPlatforms(row0.profile_id)
+    if (!targets.length) throw new Error('No platforms selected and none connected for this brand. Pass platforms, e.g. ["instagram","tiktok"].')
+    // 1. pin the slot + platforms
+    await api('/api/content', { method: 'PATCH', query: { id: content_id }, json: { scheduled_datetime, platforms: targets } })
     // 2. approve → schedules + submits to Upload-Post (first-time submit path)
     const res = await api('/api/content', { method: 'POST', query: { action: 'approve', id: content_id } })
     const row = res?.item || {}
     return ok({
       content_id,
       status: row.status || 'scheduled',
+      platforms: row.platforms || targets,
       scheduled_datetime: row.scheduled_datetime || scheduled_datetime,
       uploadpost_request_id: row.uploadpost_request_id || res?.request_id || null,
       submitted_to_upload_post: !!(row.uploadpost_request_id || res?.request_id),
@@ -193,14 +235,18 @@ const impls = {
 }
 
 // ── Tool schemas ─────────────────────────────────────────────────────
+const PLATFORM_VALUES = ['instagram', 'facebook', 'tiktok', 'youtube', 'threads', 'x', 'linkedin', 'pinterest']
+const platformsSchema = { type: 'array', items: { type: 'string', enum: PLATFORM_VALUES }, description: 'Which social platforms to post to (use "x" for Twitter/X). Only ones the brand is connected to will actually publish.' }
+
 const TOOLS = [
-  { name: 'list_brands', description: 'List the ScaleSolo brand profiles you can post for (id, name, Upload-Post handle).', inputSchema: { type: 'object', properties: {} } },
-  { name: 'upload_media', description: 'Upload a local video or image file to ScaleSolo under a brand and create a draft post. Returns a content_id. Does NOT publish.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id (e.g. "RayvaughnCEO").' }, file_path: { type: 'string', description: 'Absolute path to the local video/image file.' } }, required: ['brand', 'file_path'] } },
+  { name: 'list_brands', description: 'List the ScaleSolo brand profiles you can post for, each with its Upload-Post handle and the platforms it is connected to (the valid choices for this brand).', inputSchema: { type: 'object', properties: {} } },
+  { name: 'upload_media', description: 'Upload a local video or image file to ScaleSolo under a brand and create a draft post. Optionally set target platforms (defaults to the brand\'s connected platforms). Returns a content_id. Does NOT publish.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id (e.g. "RayvaughnCEO").' }, file_path: { type: 'string', description: 'Absolute path to the local video/image file.' }, platforms: platformsSchema }, required: ['brand', 'file_path'] } },
   { name: 'autocaption', description: 'Run ScaleSolo autopilot on an uploaded post: analyze the media and generate a title, caption, and hashtags. Returns them for review. Does NOT publish.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' } }, required: ['content_id'] } },
   { name: 'next_slots', description: "List the next open posting time slots from a brand's posting schedule (ISO + human-readable local time).", inputSchema: { type: 'object', properties: { brand: { type: 'string' }, count: { type: 'number', description: 'How many slots (default 5).' } }, required: ['brand'] } },
   { name: 'get_post', description: 'Read a draft/scheduled post (title, caption, hashtags, media, platforms, slot) for review.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' } }, required: ['content_id'] } },
   { name: 'update_post', description: 'Apply edits to a post\'s title / caption / hashtags / first_comment before scheduling. Does NOT publish.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' }, title: { type: 'string' }, caption: { type: 'string' }, hashtags: { type: 'string' }, first_comment: { type: 'string' } }, required: ['content_id'] } },
-  { name: 'schedule_post', description: 'PUBLISHES/SCHEDULES the post to social via Upload-Post at the given time. This is the only tool that posts to social — call it ONLY after the user has explicitly confirmed the caption and the chosen slot.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' }, scheduled_datetime: { type: 'string', description: 'ISO 8601 datetime (use an iso value from next_slots).' } }, required: ['content_id', 'scheduled_datetime'] } },
+  { name: 'set_platforms', description: 'Set which social platforms a post will go to. Does NOT publish.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' }, platforms: platformsSchema }, required: ['content_id', 'platforms'] } },
+  { name: 'schedule_post', description: 'PUBLISHES/SCHEDULES the post to social via Upload-Post at the given time and platforms. This is the only tool that posts to social — call it ONLY after the user has explicitly confirmed the caption, the platforms, and the slot. If platforms is omitted it uses the ones already on the post, else the brand\'s connected platforms.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' }, scheduled_datetime: { type: 'string', description: 'ISO 8601 datetime (use an iso value from next_slots).' }, platforms: platformsSchema }, required: ['content_id', 'scheduled_datetime'] } },
 ]
 
 // ── Wire up the server ───────────────────────────────────────────────
