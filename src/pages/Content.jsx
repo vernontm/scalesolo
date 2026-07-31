@@ -1369,14 +1369,10 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
                           <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 5 }}>
                             <span>{new Date(item.scheduled_datetime).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>
                             {isPosted && (
-                              <span style={{
-                                display: 'inline-flex', alignItems: 'center', gap: 3,
-                                padding: '1px 5px', borderRadius: 999,
-                                background: 'rgba(46,204,113,0.18)',
-                                color: '#2ecc71',
-                                fontWeight: 700, fontSize: 9,
-                                letterSpacing: '0.04em', textTransform: 'uppercase',
-                              }}>✓ Posted</span>
+                              <span title="Posted" style={{
+                                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                color: '#2ecc71', fontWeight: 800, fontSize: 12, lineHeight: 1,
+                              }}>✓</span>
                             )}
                             {isPendingApproval && (
                               <span style={{
