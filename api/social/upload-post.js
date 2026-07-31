@@ -225,7 +225,10 @@ export default async function handler(req, res) {
       // TikTok ignores the caption/hashtags we send, so the brand's workflow
       // texts the copy to the user to paste in the app. Default stays
       // DIRECT_POST when the flag is off.
-      if (tiktokDraftMode) fd.append('tiktok_post_mode', 'MEDIA_UPLOAD')
+      // Upload-Post's TikTok post-mode field is `post_mode` (TikTok-specific);
+      // MEDIA_UPLOAD sends the post to the TikTok inbox/drafts instead of the
+      // feed. (An earlier `tiktok_post_mode` name was silently ignored.)
+      if (tiktokDraftMode) fd.append('post_mode', 'MEDIA_UPLOAD')
     }
     if (platforms.includes('instagram')) {
       fd.append('instagram_title', trim(fullCaption || cleanTitle, 2200))
