@@ -1,0 +1,4 @@
+# Secrets + local state — never commit.
+texter.env
+*.env
+tiktok-texter-sent.json
