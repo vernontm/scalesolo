@@ -878,6 +878,11 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
     setViewMonth(d)
   }
 
+  // Optimistic overrides keyed by content id — a dropped post appears /
+  // moves instantly without a full re-fetch. Declared before byDay because
+  // the memo reads it.
+  const [localItems, setLocalItems] = useState([])
+
   // Bucket items by local YYYY-MM-DD so calendar slots map correctly
   // against the user's timezone (toISOString().slice(0,10) is UTC, which
   // shifts items into the wrong day for users east of UTC).
@@ -918,9 +923,6 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
   // The specific slot the cursor is over, so only THAT slot glows (lets
   // you aim any slot directly instead of filling top-down).
   const [hoverSlot, setHoverSlot] = useState(null)
-  // Optimistic overrides keyed by content id — a dropped post appears /
-  // moves instantly without a full re-fetch of the whole page.
-  const [localItems, setLocalItems] = useState([])
 
   // Backlog: unscheduled ready-to-post rows for this brand. Refreshed
   // whenever the calendar items change (so a just-scheduled post leaves
