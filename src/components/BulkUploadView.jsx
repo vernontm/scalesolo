@@ -672,7 +672,11 @@ export default function BulkUploadView({ profileId, token, onChange }) {
       .then((b) => {
         if (cancelled) return
         const p = (b?.profiles || []).find((x) => x.id === profileId)
-        const arr = Array.isArray(p?.uploadpost_platforms) ? p.uploadpost_platforms : []
+        // Prefer the brand's explicit default_platforms; fall back to its
+        // connected uploadpost_platforms.
+        const arr = (Array.isArray(p?.default_platforms) && p.default_platforms.length)
+          ? p.default_platforms
+          : (Array.isArray(p?.uploadpost_platforms) ? p.uploadpost_platforms : [])
         setDefaultPlatforms(arr)
         // Pull the brand's polish template alongside platforms. Empty
         // object is fine — the video_polish node falls through to its
@@ -907,7 +911,9 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         const r = await fetch(`/api/profiles`, { headers: { Authorization: `Bearer ${tokenRef.current}` } })
         const b = await r.json()
         const p = (b?.profiles || []).find((x) => x.id === profileId)
-        const arr = Array.isArray(p?.uploadpost_platforms) ? p.uploadpost_platforms : []
+        const arr = (Array.isArray(p?.default_platforms) && p.default_platforms.length)
+          ? p.default_platforms
+          : (Array.isArray(p?.uploadpost_platforms) ? p.uploadpost_platforms : [])
         resolvedPlatforms = arr
         setDefaultPlatforms(arr)
       } catch { /* fall through with [] — the row gets platforms=null and the user can fix it inline */ }

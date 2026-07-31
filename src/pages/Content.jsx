@@ -1002,7 +1002,10 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
         try {
           const cr = await fetch(`/api/account/uploadpost-connected?profile_id=${profileId}`, { headers: { Authorization: `Bearer ${token}` } })
           const cb = await cr.json().catch(() => ({}))
-          platforms = Array.isArray(cb.connected_platforms) ? cb.connected_platforms : []
+          // Prefer the brand's default platforms; fall back to all connected.
+          platforms = (Array.isArray(cb.default_platforms) && cb.default_platforms.length)
+            ? cb.default_platforms
+            : (Array.isArray(cb.connected_platforms) ? cb.connected_platforms : [])
         } catch { /* leave empty */ }
       }
       if (!platforms.length) throw new Error('This brand has no connected platforms — connect one before scheduling.')

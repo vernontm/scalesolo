@@ -85,11 +85,13 @@ const normPlatforms = (arr) => (Array.isArray(arr) ? arr : [])
   .map((p) => PLATFORM_ALIASES[p] || p)
   .filter(Boolean)
 
-// Which platforms a brand is actually connected to on Upload-Post.
+// The platforms a new post for this brand should default to: the brand's
+// configured default_platforms if set, otherwise all connected platforms.
 async function connectedPlatforms(profileId) {
   try {
     const b = await api('/api/account/uploadpost-connected', { query: { profile_id: profileId } })
-    return Array.isArray(b?.connected_platforms) ? b.connected_platforms : []
+    if (Array.isArray(b?.default_platforms) && b.default_platforms.length) return normPlatforms(b.default_platforms)
+    return normPlatforms(b?.connected_platforms)
   } catch { return [] }
 }
 

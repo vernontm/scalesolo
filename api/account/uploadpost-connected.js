@@ -47,10 +47,19 @@ export default async function handler(req, res) {
   try {
     await assertProfileAccess(auth.user.id, profileId)
 
+    // Per-brand default platforms (may be empty → fall back to connected).
+    let defaultPlatforms = []
+    try {
+      const pr = await supaFetch(`profiles?id=eq.${profileId}&select=default_platforms`)
+      const dp = pr?.[0]?.default_platforms
+      if (Array.isArray(dp)) defaultPlatforms = dp.filter(Boolean)
+    } catch { /* column may not exist yet / lookup blip */ }
+
     const username = await resolveUploadpostUser(profileId)
     if (!username) {
       return res.status(200).json({
         username: null, connected_platforms: [], all_platforms: Object.values(PLATFORM_ALIASES),
+        default_platforms: defaultPlatforms,
       })
     }
 
@@ -64,6 +73,7 @@ export default async function handler(req, res) {
       console.warn(`[uploadpost-connected] lookup for ${username} failed: ${e?.message || e}`)
       return res.status(200).json({
         username, connected_platforms: [], all_platforms: Object.values(PLATFORM_ALIASES),
+        default_platforms: defaultPlatforms,
         warning: 'Upload-Post profile lookup failed — listing all platforms; verify connections in Upload-Post.',
       })
     }
@@ -96,6 +106,7 @@ export default async function handler(req, res) {
       username,
       connected_platforms: Array.from(connectedSet),
       all_platforms: Object.values(PLATFORM_ALIASES),
+      default_platforms: defaultPlatforms,
     })
   } catch (e) {
     return res.status(e?.status || 500).json({ error: e?.message || String(e) })
