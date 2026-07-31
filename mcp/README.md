@@ -56,12 +56,16 @@ Ray / ray@vernontm.com, who owns the 5 brand profiles).
 
 | Tool | What it does | Posts to social? |
 |------|--------------|:---:|
-| `list_brands` | List your brand profiles | no |
+| `list_brands` | List your brand profiles + connected platforms | no |
 | `upload_media` | Upload a local video/image under a brand → draft post | no |
 | `autocaption` | Analyze the media → title, caption, hashtags | no |
+| `add_to_backlog` | Upload one file + auto-caption → left in the calendar backlog | no |
+| `batch_add_to_backlog` | Upload MANY files (list and/or a folder), each its own backlog post | no |
+| `upload_carousel` | Several images → ONE carousel post in the backlog | no |
 | `next_slots` | Next open time slots from the brand's schedule | no |
 | `get_post` | Read a draft/scheduled post | no |
 | `update_post` | Edit title/caption/hashtags/first_comment | no |
+| `set_platforms` | Set which platforms a post targets | no |
 | `schedule_post` | Schedule to Upload-Post at a chosen slot | **YES** |
 
 ## Example flow

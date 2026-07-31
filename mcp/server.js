@@ -20,8 +20,8 @@
 //   SCALESOLO_INTERNAL_SECRET
 //   SCALESOLO_USER_ID        the ScaleSolo auth user to act as
 
-import { readFile } from 'node:fs/promises'
-import { basename, extname } from 'node:path'
+import { readFile, readdir } from 'node:fs/promises'
+import { basename, extname, join } from 'node:path'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
@@ -37,6 +37,7 @@ if (!SECRET || !USER_ID) {
 }
 
 const VIDEO_EXT = new Set(['mp4', 'mov', 'webm', 'm4v'])
+const IMAGE_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif'])
 const MIME = {
   mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', m4v: 'video/x-m4v',
   jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif',
@@ -188,6 +189,56 @@ const impls = {
     })
   },
 
+  // Batch: turn MANY local files into SEPARATE backlog posts in one call —
+  // each file becomes its own upload + auto-caption, left unscheduled in the
+  // brand's "Waiting to schedule" backlog. Accepts an explicit file_paths
+  // list and/or a folder (all media files in it). Runs sequentially and
+  // keeps going past any single failure, reporting per-file results. Never
+  // posts or schedules anything. (For a single multi-image carousel, use
+  // upload_carousel instead — that makes ONE post, not many.)
+  async batch_add_to_backlog({ brand, file_paths, folder, platforms }) {
+    const profile = await resolveBrand(brand)
+    let files = Array.isArray(file_paths) ? file_paths.filter(Boolean) : []
+    if (folder) {
+      let entries
+      try { entries = await readdir(folder) }
+      catch (e) { throw new Error(`Could not read folder "${folder}": ${e.message}`) }
+      const media = entries
+        .filter((n) => { const e = extname(n).slice(1).toLowerCase(); return VIDEO_EXT.has(e) || IMAGE_EXT.has(e) })
+        .sort()
+        .map((n) => join(folder, n))
+      // De-dupe against any explicit paths pointing at the same files.
+      for (const m of media) if (!files.includes(m)) files.push(m)
+    }
+    if (!files.length) throw new Error('No files to upload. Pass file_paths (array) and/or folder (a directory of media).')
+    if (files.length > 50) throw new Error(`Too many files (${files.length}). Batch is capped at 50 per call.`)
+
+    const posts = []
+    for (const fp of files) {
+      try {
+        // Pass the resolved profile id so each item skips the name lookup.
+        const r = JSON.parse((await impls.add_to_backlog({ brand: profile.id, file_path: fp, platforms })).content[0].text)
+        posts.push({
+          file: fp, status: 'ok', content_id: r.content_id, media_type: r.media_type,
+          title: r.title, caption: r.caption, hashtags: r.hashtags, platforms: r.platforms,
+          ...(r.caption_warning ? { caption_warning: r.caption_warning } : {}),
+        })
+      } catch (e) {
+        posts.push({ file: fp, status: 'failed', error: e.message })
+      }
+    }
+    const uploaded = posts.filter((p) => p.status === 'ok').length
+    return ok({
+      brand: profile.business_name,
+      total: posts.length,
+      uploaded,
+      failed: posts.length - uploaded,
+      posts,
+      status: 'waiting to schedule (in the calendar backlog)',
+      next: `${uploaded} post(s) are in the ${profile.business_name} "Waiting to schedule" backlog. Open the calendar and drag each onto an open slot, or call schedule_post per content_id.`,
+    })
+  },
+
   // Make ONE carousel post from several images, caption it, and leave it
   // unscheduled in the backlog. Posts as a photo carousel (incl. TikTok
   // photo mode) when scheduled. Images only — no videos in a carousel.
@@ -323,6 +374,7 @@ const TOOLS = [
   { name: 'upload_media', description: 'Upload a local video or image file to ScaleSolo under a brand and create a draft post. Optionally set target platforms (defaults to the brand\'s connected platforms). Returns a content_id. Does NOT publish.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id (e.g. "RayvaughnCEO").' }, file_path: { type: 'string', description: 'Absolute path to the local video/image file.' }, platforms: platformsSchema }, required: ['brand', 'file_path'] } },
   { name: 'autocaption', description: 'Run ScaleSolo autopilot on an uploaded post: analyze the media and generate a title, caption, and hashtags. Returns them for review. Does NOT publish.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' } }, required: ['content_id'] } },
   { name: 'add_to_backlog', description: 'Upload a local video/image AND auto-caption it in one step, then leave it UNSCHEDULED in the calendar\'s "Waiting to schedule" backlog for that brand. Use this when the user wants a post prepared to drag onto the calendar later. Never posts or schedules anything.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id (e.g. "RayvaughnCEO").' }, file_path: { type: 'string', description: 'Absolute path to the local video/image file.' }, platforms: platformsSchema }, required: ['brand', 'file_path'] } },
+  { name: 'batch_add_to_backlog', description: 'Upload MANY local files at once, each becoming its OWN separate post (upload + auto-caption), all left UNSCHEDULED in the brand\'s "Waiting to schedule" backlog. Pass file_paths (a list) and/or folder (a directory whose video/image files are all uploaded). Runs one at a time, continues past failures, and returns a per-file result list. Use this to prep a batch of posts to schedule later. Never posts or schedules anything. (For ONE post made of multiple images, use upload_carousel instead.)', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, file_paths: { type: 'array', items: { type: 'string' }, description: 'Absolute paths to local video/image files — each becomes its own post.' }, folder: { type: 'string', description: 'Optional absolute path to a directory; all video/image files inside are uploaded (in filename order).' }, platforms: platformsSchema }, required: ['brand'] } },
   { name: 'upload_carousel', description: 'Make ONE carousel post from several local images (2-35), auto-caption it, and leave it UNSCHEDULED in the calendar backlog for that brand. Posts as a photo carousel (including TikTok photo mode) when scheduled. Images only. Never posts or schedules anything.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, file_paths: { type: 'array', items: { type: 'string' }, description: 'Absolute paths to 2-35 local image files, in slide order.' }, platforms: platformsSchema }, required: ['brand', 'file_paths'] } },
   { name: 'next_slots', description: "List the next open posting time slots from a brand's posting schedule (ISO + human-readable local time).", inputSchema: { type: 'object', properties: { brand: { type: 'string' }, count: { type: 'number', description: 'How many slots (default 5).' } }, required: ['brand'] } },
   { name: 'get_post', description: 'Read a draft/scheduled post (title, caption, hashtags, media, platforms, slot) for review.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' } }, required: ['content_id'] } },
