@@ -146,4 +146,18 @@ async function main() {
   if (!due.length) log('nothing due')
 }
 
+// `--test` sends one iMessage immediately (same code path the timer uses) so
+// you can approve the one-time macOS "control Messages" prompt and confirm
+// delivery, without waiting for a real go-live.
+if (process.argv.includes('--test')) {
+  try {
+    sendIMessage(IMESSAGE_TO, "✅ ScaleSolo TikTok texter is connected. You'll get post captions + hashtags here when a RayvaughnCEO TikTok draft goes live.")
+    log(`test message sent to ${IMESSAGE_TO}`)
+    process.exit(0)
+  } catch (e) {
+    log('test send failed:', e.message)
+    process.exit(1)
+  }
+}
+
 main().catch((e) => { log('fatal:', e.message); process.exit(1) })
