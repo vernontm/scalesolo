@@ -90,7 +90,10 @@ const APPLESCRIPT = `on run argv
 end run`
 
 function sendIMessage(to, message) {
-  execFileSync('osascript', ['-', to, message], { input: APPLESCRIPT, stdio: ['pipe', 'ignore', 'pipe'] })
+  // 20s timeout so a pending macOS Automation-permission prompt (or a wedged
+  // Messages) can never hang the agent indefinitely — it aborts and retries
+  // next run once permission is granted.
+  execFileSync('osascript', ['-', to, message], { input: APPLESCRIPT, stdio: ['pipe', 'ignore', 'pipe'], timeout: 20000 })
 }
 
 function buildMessage(item) {
