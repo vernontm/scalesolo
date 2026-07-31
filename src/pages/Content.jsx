@@ -371,7 +371,8 @@ function MediaPreviewBlock({ item }) {
           const playable = item.media_url_with_cover || urls[0]
           const isEmbedded = !!item.media_url_with_cover
           return (
-            <div style={{ flex: '1 1 220px', minWidth: 220 }}>
+            // Half-width so the 9:16 clip doesn't dominate the drawer.
+            <div style={{ flex: '0 0 auto', width: '50%', minWidth: 160, maxWidth: 220 }}>
               <div style={{ fontSize: 10, color: isEmbedded ? '#0ea5e9' : 'var(--muted)', marginBottom: 4, fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
                 {isEmbedded ? 'Video (with cover intro)' : 'Video'}
               </div>
