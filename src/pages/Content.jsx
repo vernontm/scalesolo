@@ -7,6 +7,7 @@ import {
 import { PlatformBadge } from '../components/PlatformBadge.jsx'
 import BulkUploadView from '../components/BulkUploadView.jsx'
 import GenerateMonthModal from '../components/GenerateMonthModal.jsx'
+import { toast } from '../components/Toast.jsx'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { useCredits } from '../context/CreditsContext.jsx'
@@ -904,12 +905,75 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
   const todayKey = dayKey(new Date())
 
   // Drag state — we hold the dragging item id while it's in flight so
-  // hover styling on drop targets shows up.
+  // hover styling on drop targets shows up. dragKind distinguishes a
+  // calendar reschedule (already-scheduled post moving days) from a
+  // backlog item being dropped onto an open slot.
   const [dragId, setDragId] = useState(null)
+  const [dragKind, setDragKind] = useState(null) // 'calendar' | 'backlog' | null
   const dragItemRef = useRef(null)
 
-  const onDragStart = (e, item) => {
+  // Backlog: unscheduled ready-to-post rows for this brand. Refreshed
+  // whenever the calendar items change (so a just-scheduled post leaves
+  // the backlog and appears on the grid).
+  const [backlog, setBacklog] = useState([])
+  useEffect(() => {
+    if (!profileId || !token) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const r = await fetch(`/api/content?profile_id=${profileId}&filter=unscheduled`, { headers: { Authorization: `Bearer ${token}` } })
+        const b = await r.json()
+        if (cancelled || !r.ok) return
+        // Only postable rows: has media, or a text-only post.
+        setBacklog((b.items || []).filter((it) => (Array.isArray(it.media_urls) && it.media_urls.length) || it.media_type === 'text'))
+      } catch { /* keep */ }
+    })()
+    return () => { cancelled = true }
+  }, [profileId, token, items])
+
+  // Brand posting schedule (days + times + tz) → drives the open slots.
+  const [sched, setSched] = useState(null)
+  useEffect(() => {
+    if (!profileId || !token) return
+    let cancelled = false
+    fetch('/api/profiles', { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : { profiles: [] }))
+      .then((b) => {
+        if (cancelled) return
+        const p = (b.profiles || []).find((x) => x.id === profileId)
+        if (p) setSched({
+          days: Array.isArray(p.posting_schedule?.days) ? p.posting_schedule.days : [1, 2, 3, 4, 5],
+          times: (Array.isArray(p.posting_schedule?.times) && p.posting_schedule.times.length) ? p.posting_schedule.times : ['09:00'],
+        })
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [profileId, token])
+
+  // Open posting slots for a given calendar day: configured times for
+  // that weekday, minus any already taken that day, minus past times.
+  const openSlotsFor = (d) => {
+    if (!sched || !sched.days.includes(d.getDay())) return []
+    const dayItems = byDay.get(dayKey(d)) || []
+    const taken = new Set(dayItems.map((it) => {
+      const t = new Date(it.scheduled_datetime)
+      return `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`
+    }))
+    const now = Date.now()
+    return sched.times
+      .filter((t) => !taken.has(t))
+      .map((t) => {
+        const [hh, mm] = String(t).split(':').map(Number)
+        const dt = new Date(d); dt.setHours(hh, mm, 0, 0)
+        return { time: t, iso: dt.toISOString(), ms: dt.getTime(), label: dt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) }
+      })
+      .filter((s) => s.ms > now + 60000)
+      .sort((a, b) => a.ms - b.ms)
+  }
+
+  const onDragStart = (e, item, kind = 'calendar') => {
     setDragId(item.id)
+    setDragKind(kind)
     dragItemRef.current = item
     try {
       e.dataTransfer.setData('text/plain', item.id)
@@ -918,12 +982,42 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
   }
   const onDragEnd = () => {
     setDragId(null)
+    setDragKind(null)
     dragItemRef.current = null
   }
+
+  // Drop a backlog post onto an open slot → schedule it LIVE: set the
+  // time, then approve (which submits to Upload-Post for that slot).
+  const onDropSlot = async (e, slot) => {
+    e.preventDefault(); e.stopPropagation()
+    const item = dragItemRef.current
+    if (!item || dragKind !== 'backlog') return
+    try {
+      const p = await fetch(`/api/content?id=${item.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ scheduled_datetime: slot.iso }),
+      })
+      if (!p.ok) throw new Error((await p.json().catch(() => ({})))?.error || 'Could not set the time')
+      const a = await fetch(`/api/content?action=approve&id=${item.id}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      })
+      const ab = await a.json().catch(() => ({}))
+      if (!a.ok) throw new Error(ab?.error || 'Scheduling failed at Upload-Post')
+      setBacklog((arr) => arr.filter((x) => x.id !== item.id))
+      toast({ kind: 'success', message: `Scheduled “${item.title || 'post'}” for ${slot.label}.` })
+      onChange?.()
+    } catch (err) {
+      toast({ kind: 'error', message: err.message })
+    } finally {
+      onDragEnd()
+    }
+  }
+
   const onDropDay = async (e, dayDate) => {
     e.preventDefault()
     const item = dragItemRef.current
-    if (!item) return
+    // Backlog items only schedule via a specific slot, not a bare day drop.
+    if (!item || dragKind === 'backlog') return
     // Keep the same time of day, just move the calendar date.
     const orig = new Date(item.scheduled_datetime)
     const next = new Date(dayDate)
@@ -1024,6 +1118,54 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
         />
       )}
 
+      {/* Backlog (left) + calendar (right). The backlog holds posts that
+          are ready but have no time yet; drag one onto an open slot on a
+          day to schedule it. */}
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+        <div style={{
+          width: 250, flexShrink: 0, background: 'var(--surface)',
+          border: '1px solid var(--border)', borderRadius: 10, padding: 10,
+          position: 'sticky', top: 12, maxHeight: 'calc(100vh - 200px)', overflowY: 'auto',
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 8 }}>
+            Waiting to schedule{backlog.length ? ` · ${backlog.length}` : ''}
+          </div>
+          {backlog.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--muted)', padding: '18px 8px', textAlign: 'center', border: '1px dashed var(--border)', borderRadius: 8 }}>
+              Nothing waiting. Everything ready is scheduled.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {backlog.map((it) => {
+                const thumb = it.cover_image_url || (Array.isArray(it.media_urls) && it.media_urls[0])
+                const isVid = it.media_type === 'video' && !it.cover_image_url
+                return (
+                  <div key={it.id} draggable onDragStart={(e) => onDragStart(e, it, 'backlog')} onDragEnd={onDragEnd}
+                    title="Drag onto an open slot to schedule"
+                    style={{
+                      display: 'flex', gap: 8, alignItems: 'flex-start', padding: 7,
+                      background: 'var(--surface-2)', border: '1px solid var(--border)',
+                      borderLeft: `3px solid ${it.media_type === 'video' ? '#0ea5e9' : it.media_type === 'text' ? '#f59e0b' : '#a855f7'}`,
+                      borderRadius: 7, cursor: 'grab', opacity: it.id === dragId ? 0.5 : 1,
+                    }}>
+                    {thumb ? (
+                      isVid
+                        ? <video src={thumb} muted playsInline preload="metadata" style={{ width: 34, height: 34, borderRadius: 4, objectFit: 'cover', background: '#000', flexShrink: 0 }} />
+                        : <img src={thumb} alt="" style={{ width: 34, height: 34, borderRadius: 4, objectFit: 'cover', background: 'var(--surface)', flexShrink: 0 }} />
+                    ) : (
+                      <div style={{ width: 34, height: 34, borderRadius: 4, background: 'var(--surface)', border: '1px solid var(--border)', display: 'grid', placeItems: 'center', color: 'var(--muted)', fontWeight: 700, fontSize: 13, flexShrink: 0 }}>{it.media_type === 'text' ? '“”' : '?'}</div>
+                    )}
+                    <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)', lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                      {it.title || 'Untitled'}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        <div style={{ flex: 1, minWidth: 0 }}>
       {/* Weekday labels — show once at the top, aligned with the grid below */}
       <div style={{
         display: 'grid',
@@ -1230,9 +1372,38 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
                   })}
                 </div>
               )}
+
+              {/* Open posting slots for this day — drop a backlog post here
+                  to schedule it at that time. Highlighted while a backlog
+                  card is being dragged. */}
+              {(() => {
+                const slots = openSlotsFor(d)
+                if (!slots.length) return null
+                const active = dragKind === 'backlog'
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 6 }}>
+                    {slots.map((slot) => (
+                      <div key={slot.time}
+                        onDragOver={(e) => { if (active) { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move' } }}
+                        onDrop={(e) => onDropSlot(e, slot)}
+                        style={{
+                          fontSize: 10, textAlign: 'center', padding: '3px 4px', borderRadius: 5,
+                          border: `1px dashed ${active ? 'rgba(239,68,68,0.65)' : 'var(--border)'}`,
+                          color: active ? 'var(--red)' : 'var(--muted)',
+                          background: active ? 'rgba(239,68,68,0.07)' : 'transparent',
+                          transition: 'all 0.12s',
+                        }}>
+                        ＋ {slot.label}
+                      </div>
+                    ))}
+                  </div>
+                )
+              })()}
             </div>
           )
         })}
+      </div>
+        </div>
       </div>
     </div>
   )

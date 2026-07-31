@@ -230,6 +230,10 @@ export default async function handler(req, res) {
       let where = `profile_id=eq.${profileId}`
       if (filter === 'drafts')    where += '&status=eq.draft'
       if (filter === 'caption_ready') where += '&status=eq.caption_ready'
+      // Backlog for the calendar's drag-to-schedule panel: posts that are
+      // ready but have no time yet (draft or caption_ready, no slot). The
+      // client further keeps only postable rows (has media or text-only).
+      if (filter === 'unscheduled') where += '&status=in.(draft,caption_ready)&scheduled_datetime=is.null'
       if (filter === 'scheduled') where += '&status=eq.scheduled'
       if (filter === 'posted')    where += '&status=eq.posted'
       // Calendar view: show scheduled (queued), posted (delivered), AND
