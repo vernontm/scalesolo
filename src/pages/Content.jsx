@@ -236,6 +236,13 @@ function ItemDetail({ item, onClose, onUpdate }) {
   }
 
   const pill = STATUS_PILL[item.status] || STATUS_PILL.draft
+  // When the post has media (video / image / carousel), lay the drawer out
+  // in two columns — media on the left, caption + schedule on the right — so
+  // a tall 9:16 clip sits beside the text instead of shoving it off-screen.
+  // Text-only posts have nothing to preview, so they stay single-column.
+  const hasMedia = item.media_type !== 'text' && (
+    (Array.isArray(item.media_urls) && item.media_urls.filter(Boolean).length > 0) || !!item.cover_image_url
+  )
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -261,49 +268,60 @@ function ItemDetail({ item, onClose, onUpdate }) {
           </div>
         )}
 
-        <MediaPreviewBlock item={item} />
+        <div style={{ display: 'flex', gap: 18, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          {/* Left column — media preview (only when there's something to show). */}
+          {hasMedia && (
+            <div style={{ flex: '0 0 240px', width: 240, maxWidth: '100%', position: 'sticky', top: 0 }}>
+              <MediaPreviewBlock item={item} />
+            </div>
+          )}
 
-        {item.hook && (
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>Hook</div>
-            <div style={{ fontSize: 14, color: 'var(--text)', lineHeight: 1.5 }}>{item.hook}</div>
-          </div>
-        )}
+          {/* Right column — caption, body, schedule. Fills the rest; for
+              text-only posts (no left column) it spans the full width. */}
+          <div style={{ flex: '1 1 320px', minWidth: 0 }}>
+            {item.hook && (
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>Hook</div>
+                <div style={{ fontSize: 14, color: 'var(--text)', lineHeight: 1.5 }}>{item.hook}</div>
+              </div>
+            )}
 
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>Body</div>
-          <div style={{ fontSize: 13.5, color: 'var(--text-soft)', lineHeight: 1.6, whiteSpace: 'pre-wrap', padding: 14, background: 'var(--surface-2)', borderRadius: 10, border: '1px solid var(--border)' }}>
-            {item.full_script || '(empty)'}
-          </div>
-        </div>
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>Body</div>
+              <div style={{ fontSize: 13.5, color: 'var(--text-soft)', lineHeight: 1.6, whiteSpace: 'pre-wrap', padding: 14, background: 'var(--surface-2)', borderRadius: 10, border: '1px solid var(--border)' }}>
+                {item.full_script || '(empty)'}
+              </div>
+            </div>
 
-        {item.caption && (
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>Caption</div>
-            <div style={{ fontSize: 13.5, color: 'var(--text-soft)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{item.caption}</div>
-          </div>
-        )}
+            {item.caption && (
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>Caption</div>
+                <div style={{ fontSize: 13.5, color: 'var(--text-soft)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{item.caption}</div>
+              </div>
+            )}
 
-        {item.hashtags && (
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>Hashtags</div>
-            <div style={{ fontSize: 12.5, color: 'var(--red)' }}>{item.hashtags}</div>
-          </div>
-        )}
+            {item.hashtags && (
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>Hashtags</div>
+                <div style={{ fontSize: 12.5, color: 'var(--red)' }}>{item.hashtags}</div>
+              </div>
+            )}
 
-        <div style={{ marginTop: 18, padding: 14, background: 'var(--surface-2)', borderRadius: 10, border: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>Schedule</div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input
-              className="input"
-              type="datetime-local"
-              value={scheduledAt}
-              onChange={(e) => setScheduledAt(e.target.value)}
-              style={{ flex: 1 }}
-            />
-            <button className="btn-primary" onClick={() => action('schedule', { scheduled_datetime: new Date(scheduledAt).toISOString() })} disabled={busy || !scheduledAt}>
-              <Send size={13} /> Schedule
-            </button>
+            <div style={{ marginTop: 4, padding: 14, background: 'var(--surface-2)', borderRadius: 10, border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>Schedule</div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  className="input"
+                  type="datetime-local"
+                  value={scheduledAt}
+                  onChange={(e) => setScheduledAt(e.target.value)}
+                  style={{ flex: 1, minWidth: 0 }}
+                />
+                <button className="btn-primary" onClick={() => action('schedule', { scheduled_datetime: new Date(scheduledAt).toISOString() })} disabled={busy || !scheduledAt}>
+                  <Send size={13} /> Schedule
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -371,8 +389,9 @@ function MediaPreviewBlock({ item }) {
           const playable = item.media_url_with_cover || urls[0]
           const isEmbedded = !!item.media_url_with_cover
           return (
-            // Half-width so the 9:16 clip doesn't dominate the drawer.
-            <div style={{ flex: '0 0 auto', width: '50%', minWidth: 160, maxWidth: 220 }}>
+            // Fills the media column (ItemDetail lays this out beside the
+            // caption / schedule as a left column).
+            <div style={{ flex: '1 1 100%', minWidth: 0 }}>
               <div style={{ fontSize: 10, color: isEmbedded ? '#0ea5e9' : 'var(--muted)', marginBottom: 4, fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
                 {isEmbedded ? 'Video (with cover intro)' : 'Video'}
               </div>
