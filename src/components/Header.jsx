@@ -1,5 +1,5 @@
 import { useLocation } from 'react-router-dom'
-import { Menu, Bot } from 'lucide-react'
+import { Menu, Bot, PanelLeft } from 'lucide-react'
 import ThemeToggle from './ThemeToggle.jsx'
 import NotificationBell from './NotificationBell.jsx'
 import CreditsBadge from './CreditsBadge.jsx'
@@ -86,7 +86,7 @@ const menuBtn = {
   cursor: 'pointer',
 }
 
-export default function Header({ onOpenSidebar }) {
+export default function Header({ onOpenSidebar, onToggleSidebar, sidebarCollapsed }) {
   const { pathname } = useLocation()
   const { setOpen: setAgentOpen } = useAgent()
   const meta = titles[pathname] || { t: 'ScaleSolo', s: '' }
@@ -101,6 +101,19 @@ export default function Header({ onOpenSidebar }) {
       >
         <Menu size={18} />
       </button>
+
+      {/* Desktop: collapse / expand the main sidebar. */}
+      {onToggleSidebar && (
+        <button
+          className="hide-on-mobile"
+          style={{ ...menuBtn, display: 'inline-flex' }}
+          onClick={onToggleSidebar}
+          aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          <PanelLeft size={18} />
+        </button>
+      )}
 
       <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
         <h1 style={{ ...titleStyle, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{meta.t}</h1>

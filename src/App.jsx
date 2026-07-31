@@ -130,8 +130,17 @@ function LoadingScreen() {
 function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const { pathname } = useLocation()
-  // Spaces gets a collapsed sidebar so the canvas has more room.
-  const compact = pathname.startsWith('/spaces')
+  // User-controlled collapse (persisted). Spaces always collapses so the
+  // canvas has more room; elsewhere the user's toggle wins.
+  const [userCollapsed, setUserCollapsed] = useState(() => {
+    try { return localStorage.getItem('scalesolo.sidebar.collapsed') === '1' } catch { return false }
+  })
+  const toggleSidebar = () => setUserCollapsed((v) => {
+    const next = !v
+    try { localStorage.setItem('scalesolo.sidebar.collapsed', next ? '1' : '0') } catch {}
+    return next
+  })
+  const compact = userCollapsed || pathname.startsWith('/spaces')
   // Profile-switch full remount. When the active brand profile
   // changes, every page mounted in <Routes> can hold stale state
   // pinned to the previous profile (e.g. fetched avatars, canvas
@@ -163,7 +172,7 @@ function AppShell() {
         </>
       )}
       <div style={dynamicMain} className="app-main">
-        <Header onOpenSidebar={() => setMobileOpen(true)} />
+        <Header onOpenSidebar={() => setMobileOpen(true)} onToggleSidebar={toggleSidebar} sidebarCollapsed={compact} />
         <main style={contentStyle}>
           <Suspense fallback={<RouteFallback />}>
           {/* Profile-keyed Routes: see the comment near useProfile()
