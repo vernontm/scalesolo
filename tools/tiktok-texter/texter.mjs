@@ -89,11 +89,12 @@ const APPLESCRIPT = `on run argv
   end tell
 end run`
 
-function sendIMessage(to, message) {
-  // 20s timeout so a pending macOS Automation-permission prompt (or a wedged
-  // Messages) can never hang the agent indefinitely — it aborts and retries
-  // next run once permission is granted.
-  execFileSync('osascript', ['-', to, message], { input: APPLESCRIPT, stdio: ['pipe', 'ignore', 'pipe'], timeout: 20000 })
+function sendIMessage(to, message, timeoutMs = 20000) {
+  // Default 20s timeout so a pending macOS Automation-permission prompt (or a
+  // wedged Messages) can never hang the scheduled agent — it aborts and
+  // retries next run. The --test path passes a longer timeout so there's time
+  // to find and click the one-time permission dialog.
+  execFileSync('osascript', ['-', to, message], { input: APPLESCRIPT, stdio: ['pipe', 'ignore', 'pipe'], timeout: timeoutMs })
 }
 
 function buildMessage(item) {
@@ -154,7 +155,8 @@ async function main() {
 // delivery, without waiting for a real go-live.
 if (process.argv.includes('--test')) {
   try {
-    sendIMessage(IMESSAGE_TO, "✅ ScaleSolo TikTok texter is connected. You'll get post captions + hashtags here when a RayvaughnCEO TikTok draft goes live.")
+    log('sending test — if a "Terminal wants access to control Messages" dialog appears, click OK (you have ~2 min)…')
+    sendIMessage(IMESSAGE_TO, "✅ ScaleSolo TikTok texter is connected. You'll get post captions + hashtags here when a RayvaughnCEO TikTok draft goes live.", 120000)
     log(`test message sent to ${IMESSAGE_TO}`)
     process.exit(0)
   } catch (e) {
