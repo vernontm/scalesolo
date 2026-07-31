@@ -207,8 +207,16 @@ export default async function handler(req, res) {
     // long-description field (YouTube, Facebook, LinkedIn, Pinterest)
     // get the full caption there too.
     if (platforms.includes('tiktok')) {
-      // TikTok's "title" IS the caption.
-      fd.append('tiktok_title', trim(fullCaption || cleanTitle, 2200))
+      // TikTok's "title" IS the caption. Photo carousels (upload_photos) cap
+      // the title at 90 chars — videos allow 2200. Overshooting the photo
+      // limit makes Upload-Post reject the whole post ("TikTok title is too
+      // long"). For videos use the full caption; for photos prefer the short
+      // post title (reads cleanly and fits) and fall back to a 90-char slice
+      // of the caption so it never exceeds the limit.
+      const tiktokTitle = isVideo
+        ? trim(fullCaption || cleanTitle, 2200)
+        : trim(cleanTitle || fullCaption, 90)
+      fd.append('tiktok_title', tiktokTitle)
     }
     if (platforms.includes('instagram')) {
       fd.append('instagram_title', trim(fullCaption || cleanTitle, 2200))
