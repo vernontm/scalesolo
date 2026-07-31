@@ -25,6 +25,7 @@ import {
 } from '../_lib/uploadpost.js'
 import uploadPostHandler from '../social/upload-post.js'
 import { invokeHandler } from '../_lib/internal-invoke.js'
+import { capHashtags } from '../_lib/hashtags.js'
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
 
@@ -192,7 +193,7 @@ Generate the following:
 2. "hook" - The opening 1-2 sentences that hook viewers
 3. "full_script" - A cleaned up version of the transcript as a readable script
 4. "caption" - An engaging social media caption to post with this video. Match the brand voice. ${CAPTION_LENGTH_RULE}
-5. "hashtags" - Include any core brand hashtags from the brand bible first, then 4-6 topic-specific ones.
+5. "hashtags" - AT MOST 5 total. Include any core brand hashtags from the brand bible first, then topic-specific ones up to the 5-tag limit.
 6. "first_comment" - An engagement-driving first comment (question or call to action)
 
 RULES:
@@ -234,7 +235,7 @@ Generate the following:
 2. "hook" - The opening 1-2 sentences that hook viewers.
 3. "full_script" - A cleaned-up readable script of the spoken content IF there was usable speech; otherwise a brief description of what unfolds visually across the frames.
 4. "caption" - Engaging social caption. Anchor to BOTH the visuals and any spoken content. ${CAPTION_LENGTH_RULE}
-5. "hashtags" - Core brand hashtags first, then 4-6 specific to what's shown.
+5. "hashtags" - AT MOST 5 total. Core brand hashtags first, then ones specific to what's shown, up to the 5-tag limit.
 6. "first_comment" - Engagement-driving first comment (question or CTA).
 
 RULES:
@@ -260,7 +261,7 @@ Generate the following:
 2. "hook" - The opening 1-2 sentences that hook viewers based on the visual story.
 3. "full_script" - A brief description of what unfolds visually across the frames, in order.
 4. "caption" - An engaging social media caption to post with this video. Match the brand voice. Anchor it to what is shown. ${CAPTION_LENGTH_RULE}
-5. "hashtags" - Include any core brand hashtags from the brand bible first, then 4-6 topic-specific ones drawn from what's visible.
+5. "hashtags" - AT MOST 5 total. Include any core brand hashtags from the brand bible first, then topic-specific ones drawn from what's visible, up to the 5-tag limit.
 6. "first_comment" - An engagement-driving first comment (question or call to action).
 
 RULES:
@@ -282,7 +283,7 @@ ${brandContext}
 Generate the following:
 1. "title" - A short, click-worthy title for this image (max 10 words)
 2. "caption" - An engaging social media caption that complements the image. Match the brand voice. ${CAPTION_LENGTH_RULE}
-3. "hashtags" - Include any core brand hashtags from the brand bible first, then 4-6 image/topic-specific ones.
+3. "hashtags" - AT MOST 5 total. Include any core brand hashtags from the brand bible first, then image/topic-specific ones up to the 5-tag limit.
 4. "first_comment" - An engagement-driving first comment (question or CTA)
 
 RULES:
@@ -476,7 +477,7 @@ Return ONLY valid JSON:
     const wasPosted = script.status === 'posted'
     const patch = {
       caption: r.caption || null,
-      hashtags: r.hashtags || null,
+      hashtags: capHashtags(r.hashtags),
       first_comment: r.first_comment || null,
       // Preserve terminal / mid-flight statuses. Only fresh rows
       // (draft / null / failed) flip to caption_ready.

@@ -14,13 +14,14 @@
 // downstream and must NOT leave behind a draft row. Credits are still metered.
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { capHashtags } from '../_lib/hashtags.js'
 import { message } from '../_lib/anthropic.js'
 import { loadBrandContext, renderBrandContextMarkdown } from '../_lib/brand-context.js'
 import { embedOne } from '../_lib/openai.js'
 
 const FORMAT_HINT = {
   'tiktok-script':    'A TikTok script with a hook (first 3 seconds) + body (15-60 seconds of value) + CTA.',
-  'ig-post':          'An Instagram caption with a strong hook line, 3-5 short paragraphs, 1 CTA, and 5-10 hashtags.',
+  'ig-post':          'An Instagram caption with a strong hook line, 3-5 short paragraphs, 1 CTA, and at most 5 hashtags.',
   'thread':           'An X / Threads post — 3-7 numbered tweets, each <280 chars, a hook in #1, payoff in last.',
   'email-subject':    'Five email subject lines (newline-separated) optimized for opens. No clickbait.',
   'carousel-outline': 'An Instagram/LinkedIn carousel outline: title slide, 5-7 content slides (each one short paragraph), CTA slide.',
@@ -405,7 +406,7 @@ opener in the "Previously written for this brand" list.`
         hook: parsed.hook || null,
         full_script: parsed.full_script || text,
         caption: parsed.caption || null,
-        hashtags: parsed.hashtags || profile.core_hashtags || null,
+        hashtags: capHashtags(parsed.hashtags || profile.core_hashtags),
         first_comment: parsed.first_comment || null,
         media_type: format === 'carousel-outline' ? 'carousel' : (format === 'tiktok-script' || format === 'youtube-short' ? 'video' : 'text'),
         post_type: 'post',

@@ -19,6 +19,7 @@
 // set); everything else is read from the campaign row.
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { capHashtags } from '../_lib/hashtags.js'
 import { loadBrandContext, renderBrandContextMarkdown } from '../_lib/brand-context.js'
 import { message as anthropicMessage } from '../_lib/anthropic.js'
 
@@ -155,7 +156,7 @@ ${platformList}${standoutBlock}${buildContentMixBlock(campaign.content_mix)}${bu
     "title": "<3-9 word Title Case headline>",
     "hook": "<opening line, brand voice>",
     "caption": "<base text, 250-450 chars total. Hook line, 1-2 beats, one closer.>",
-    "hashtags": "<space-separated, max 8>",
+    "hashtags": "<space-separated, at most 5>",
     "per_platform_text": { ${platforms.map((p) => `"${p}": "..."`).join(', ')} },
     "media_brief": {
       "prompt": "<for non-text posts: a concrete visual generation brief. Describe the shot. If it shows the real product, say to keep it EXACT.>",
@@ -378,7 +379,7 @@ export default async function handler(req, res) {
             title: String(p.title || '').slice(0, 200) || `${key} post ${i + 1}`,
             hook: String(p.hook || '').slice(0, 500) || null,
             caption: String(p.caption || '').slice(0, 8000),
-            hashtags: String(p.hashtags || '').slice(0, 1000) || null,
+            hashtags: capHashtags(String(p.hashtags || '').slice(0, 1000)),
             platforms,
             scheduled_datetime: slots[i] || null,
             status: 'caption_ready',

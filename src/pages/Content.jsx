@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Sparkles, Library, Calendar, FileEdit, ClipboardCheck, X, Wand2,
   Check, Trash2, Edit3, Send, Eye, AlertCircle, Link2, Plus, ExternalLink,
-  Image as ImageIcon, RotateCcw, Loader2,
+  Image as ImageIcon, RotateCcw, Loader2, Copy,
 } from 'lucide-react'
 import BulkUploadView from '../components/BulkUploadView.jsx'
 import GenerateMonthModal from '../components/GenerateMonthModal.jsx'
@@ -181,6 +181,17 @@ function GenerateModal({ profileId, onClose, onCreated }) {
   )
 }
 
+// Trim a hashtags string to at most `max` tags. Handles "#a #b", "a, b",
+// or mixed input; always returns space-separated "#tag" tokens.
+function limitHashtags(raw, max = 5) {
+  if (!raw) return ''
+  const hashed = String(raw).match(/#[\p{L}\p{N}_]+/gu)
+  const tokens = (hashed && hashed.length)
+    ? hashed
+    : String(raw).split(/[\s,]+/).filter(Boolean).map((t) => (t.startsWith('#') ? t : '#' + t))
+  return tokens.slice(0, max).join(' ')
+}
+
 // ── Detail modal ──────────────────────────────────────────────────────────
 function ItemDetail({ item, onClose, onUpdate }) {
   const { session } = useAuth()
@@ -191,6 +202,24 @@ function ItemDetail({ item, onClose, onUpdate }) {
   // gets a clear "Scheduled to TikTok, Instagram for Wed May 21 at
   // 9:00 AM" confirmation before the modal stays open or closes.
   const [success, setSuccess] = useState(null)
+  // Copy-to-clipboard feedback for the caption field (mobile-friendly).
+  const [copied, setCopied] = useState(false)
+  const copyCaption = async () => {
+    const text = item.caption || ''
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      // Fallback for older / non-secure contexts: temp textarea + execCommand.
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'
+        document.body.appendChild(ta); ta.focus(); ta.select()
+        document.execCommand('copy'); document.body.removeChild(ta)
+      } catch { /* give up silently */ }
+    }
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1800)
+  }
 
   const action = async (verb, body = {}) => {
     setBusy(true); setError(null); setSuccess(null)
@@ -279,31 +308,49 @@ function ItemDetail({ item, onClose, onUpdate }) {
           {/* Right column — caption, body, schedule. Fills the rest; for
               text-only posts (no left column) it spans the full width. */}
           <div style={{ flex: '1 1 320px', minWidth: 0 }}>
-            {item.hook && (
-              <div style={{ marginBottom: 14 }}>
-                <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>Hook</div>
-                <div style={{ fontSize: 14, color: 'var(--text)', lineHeight: 1.5 }}>{item.hook}</div>
-              </div>
-            )}
-
+            {/* Caption is the only thing that actually gets posted, so it's
+                the focus here: a tap-to-select field with a big Copy button
+                that's easy to hit on mobile. */}
             <div style={{ marginBottom: 14 }}>
-              <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>Body</div>
-              <div style={{ fontSize: 13.5, color: 'var(--text-soft)', lineHeight: 1.6, whiteSpace: 'pre-wrap', padding: 14, background: 'var(--surface-2)', borderRadius: 10, border: '1px solid var(--border)' }}>
-                {item.full_script || '(empty)'}
+              <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
+                <div style={{ flex: 1, fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Caption</div>
+                <button
+                  onClick={copyCaption}
+                  disabled={!item.caption}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    padding: '7px 14px', fontSize: 12.5, fontWeight: 700,
+                    borderRadius: 8, cursor: item.caption ? 'pointer' : 'not-allowed',
+                    border: '1px solid var(--border)',
+                    background: copied ? 'rgba(46,204,113,0.15)' : 'var(--surface-3, var(--surface-2))',
+                    color: copied ? '#2ecc71' : 'var(--text)',
+                    opacity: item.caption ? 1 : 0.5,
+                  }}>
+                  {copied ? <Check size={14} /> : <Copy size={14} />}
+                  {copied ? 'Copied' : 'Copy'}
+                </button>
               </div>
+              <textarea
+                readOnly
+                value={item.caption || ''}
+                placeholder="No caption yet."
+                onFocus={(e) => e.target.select()}
+                onClick={(e) => e.target.select()}
+                rows={Math.min(10, Math.max(3, String(item.caption || '').split('\n').length + 1))}
+                style={{
+                  width: '100%', resize: 'vertical', boxSizing: 'border-box',
+                  fontSize: 13.5, lineHeight: 1.6, color: 'var(--text)',
+                  padding: 12, borderRadius: 10, border: '1px solid var(--border)',
+                  background: 'var(--surface-2)', fontFamily: 'inherit',
+                  WebkitUserSelect: 'text', userSelect: 'text',
+                }}
+              />
             </div>
-
-            {item.caption && (
-              <div style={{ marginBottom: 14 }}>
-                <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>Caption</div>
-                <div style={{ fontSize: 13.5, color: 'var(--text-soft)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{item.caption}</div>
-              </div>
-            )}
 
             {item.hashtags && (
               <div style={{ marginBottom: 14 }}>
                 <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>Hashtags</div>
-                <div style={{ fontSize: 12.5, color: 'var(--red)' }}>{item.hashtags}</div>
+                <div style={{ fontSize: 12.5, color: 'var(--red)' }}>{limitHashtags(item.hashtags, 5)}</div>
               </div>
             )}
 

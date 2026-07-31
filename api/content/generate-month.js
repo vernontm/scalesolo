@@ -31,6 +31,7 @@
 //   - ~600 output tokens per post (very generous; caption + hashtags)
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { capHashtags } from '../_lib/hashtags.js'
 import { loadBrandContext, renderBrandContextMarkdown } from '../_lib/brand-context.js'
 import { message as anthropicMessage } from '../_lib/anthropic.js'
 
@@ -145,7 +146,7 @@ ${platformList}${ctaBlock}
     "title": "<3-9 word headline in Title Case — surfaces on Facebook as the post name, must read like a real headline, not a slug>",
     "hook": "<the opening line — must read like the brand on its best day>",
     "caption": "<the base text, no platform suffix — 250-450 characters TOTAL (hard cap 450). One hook line, 1-2 short beats, a one-line closer. No stacked story paragraphs.>",
-    "hashtags": "<space-separated, max 8>",
+    "hashtags": "<space-separated, at most 5>",
     "per_platform_text": { "threads": "...", "instagram": "...", "x": "...", "facebook": "..." }
   }
 - per_platform_text MUST include an entry for EVERY platform in the platform list above. If the same body works for multiple platforms, write it slightly differently for each — never identical strings. Trim to each platform's char limit.
@@ -370,7 +371,7 @@ export default async function handler(req, res) {
             title: String(p.title || '').slice(0, 200) || `${key} post ${i+1}`,
             hook:  String(p.hook  || '').slice(0, 500) || null,
             caption: String(p.caption || '').slice(0, 8000),
-            hashtags: String(p.hashtags || '').slice(0, 1000) || null,
+            hashtags: capHashtags(String(p.hashtags || '').slice(0, 1000)),
             platforms,
             scheduled_datetime: slots[i] || null,
             status: 'caption_ready',
