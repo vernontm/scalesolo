@@ -161,6 +161,31 @@ const impls = {
     })
   },
 
+  // One-shot: upload + auto-caption, then STOP (no scheduling). The post
+  // lands in the calendar's "Waiting to schedule" backlog for that brand,
+  // where the user drags it onto an open slot. This never posts anything.
+  async add_to_backlog({ brand, file_path, platforms }) {
+    const up = JSON.parse((await impls.upload_media({ brand, file_path, platforms })).content[0].text)
+    let cap = {}
+    try {
+      cap = JSON.parse((await impls.autocaption({ content_id: up.content_id })).content[0].text)
+    } catch (e) {
+      cap = { caption_warning: `Auto-caption failed (${e.message}); edit the post manually.` }
+    }
+    return ok({
+      content_id: up.content_id,
+      brand: up.brand,
+      media_type: up.media_type,
+      platforms: up.platforms,
+      title: cap.title || null,
+      caption: cap.caption || null,
+      hashtags: cap.hashtags || null,
+      status: 'waiting to schedule (in the calendar backlog)',
+      next: `Open the ${up.brand} calendar and drag this onto an open slot, or call schedule_post to schedule it from here.`,
+      ...(cap.caption_warning ? { caption_warning: cap.caption_warning } : {}),
+    })
+  },
+
   async next_slots({ brand, count }) {
     const profile = await resolveBrand(brand)
     const body = await api('/api/content/next-slots', {
@@ -242,6 +267,7 @@ const TOOLS = [
   { name: 'list_brands', description: 'List the ScaleSolo brand profiles you can post for, each with its Upload-Post handle and the platforms it is connected to (the valid choices for this brand).', inputSchema: { type: 'object', properties: {} } },
   { name: 'upload_media', description: 'Upload a local video or image file to ScaleSolo under a brand and create a draft post. Optionally set target platforms (defaults to the brand\'s connected platforms). Returns a content_id. Does NOT publish.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id (e.g. "RayvaughnCEO").' }, file_path: { type: 'string', description: 'Absolute path to the local video/image file.' }, platforms: platformsSchema }, required: ['brand', 'file_path'] } },
   { name: 'autocaption', description: 'Run ScaleSolo autopilot on an uploaded post: analyze the media and generate a title, caption, and hashtags. Returns them for review. Does NOT publish.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' } }, required: ['content_id'] } },
+  { name: 'add_to_backlog', description: 'Upload a local video/image AND auto-caption it in one step, then leave it UNSCHEDULED in the calendar\'s "Waiting to schedule" backlog for that brand. Use this when the user wants a post prepared to drag onto the calendar later. Never posts or schedules anything.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id (e.g. "RayvaughnCEO").' }, file_path: { type: 'string', description: 'Absolute path to the local video/image file.' }, platforms: platformsSchema }, required: ['brand', 'file_path'] } },
   { name: 'next_slots', description: "List the next open posting time slots from a brand's posting schedule (ISO + human-readable local time).", inputSchema: { type: 'object', properties: { brand: { type: 'string' }, count: { type: 'number', description: 'How many slots (default 5).' } }, required: ['brand'] } },
   { name: 'get_post', description: 'Read a draft/scheduled post (title, caption, hashtags, media, platforms, slot) for review.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' } }, required: ['content_id'] } },
   { name: 'update_post', description: 'Apply edits to a post\'s title / caption / hashtags / first_comment before scheduling. Does NOT publish.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' }, title: { type: 'string' }, caption: { type: 'string' }, hashtags: { type: 'string' }, first_comment: { type: 'string' } }, required: ['content_id'] } },
