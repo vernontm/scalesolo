@@ -188,6 +188,59 @@ const impls = {
     })
   },
 
+  // Make ONE carousel post from several images, caption it, and leave it
+  // unscheduled in the backlog. Posts as a photo carousel (incl. TikTok
+  // photo mode) when scheduled. Images only — no videos in a carousel.
+  async upload_carousel({ brand, file_paths, platforms }) {
+    if (!Array.isArray(file_paths) || file_paths.length < 2) {
+      throw new Error('Provide at least 2 image file paths for a carousel.')
+    }
+    if (file_paths.length > 35) throw new Error('Carousels support at most 35 images.')
+    const profile = await resolveBrand(brand)
+    const urls = []
+    for (const fp of file_paths) {
+      const ext = extname(fp).slice(1).toLowerCase()
+      if (VIDEO_EXT.has(ext)) throw new Error(`Carousels are images only; "${fp}" looks like a video.`)
+      const contentType = MIME[ext] || 'image/jpeg'
+      const bytes = await readFile(fp)
+      const init = await api('/api/content/upload-media', {
+        method: 'POST', query: { mode: 'init' },
+        json: { profile_id: profile.id, content_type: contentType, kind: 'image' },
+      })
+      const put = await fetch(init.signed_url, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${init.token}`, 'Content-Type': contentType, 'x-upsert': 'true' },
+        body: bytes,
+      })
+      if (!put.ok) throw new Error(`Storage upload failed for "${fp}" (${put.status})`)
+      urls.push(init.public_url)
+    }
+    const chosen = platforms?.length ? normPlatforms(platforms) : await connectedPlatforms(profile.id)
+    const created = await api('/api/content', {
+      method: 'POST',
+      json: {
+        profile_id: profile.id,
+        title: basename(file_paths[0]).replace(/\.[^.]+$/, '').slice(0, 80),
+        media_urls: urls, media_type: 'carousel', post_type: 'post',
+        status: 'draft', generated_by: 'mcp',
+        platforms: chosen.length ? chosen : null,
+      },
+    })
+    const id = created?.item?.id
+    if (!id) throw new Error('Row created but no id returned')
+    let cap = {}
+    try { cap = JSON.parse((await impls.autocaption({ content_id: id })).content[0].text) }
+    catch (e) { cap = { caption_warning: `Auto-caption failed (${e.message}); edit the post manually.` } }
+    return ok({
+      content_id: id, brand: profile.business_name, media_type: 'carousel',
+      slides: urls.length, platforms: chosen,
+      title: cap.title || null, caption: cap.caption || null, hashtags: cap.hashtags || null,
+      status: 'waiting to schedule (in the calendar backlog)',
+      next: `Open the ${profile.business_name} calendar and drag this onto an open slot, or call schedule_post.`,
+      ...(cap.caption_warning ? { caption_warning: cap.caption_warning } : {}),
+    })
+  },
+
   async next_slots({ brand, count }) {
     const profile = await resolveBrand(brand)
     const body = await api('/api/content/next-slots', {
@@ -270,6 +323,7 @@ const TOOLS = [
   { name: 'upload_media', description: 'Upload a local video or image file to ScaleSolo under a brand and create a draft post. Optionally set target platforms (defaults to the brand\'s connected platforms). Returns a content_id. Does NOT publish.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id (e.g. "RayvaughnCEO").' }, file_path: { type: 'string', description: 'Absolute path to the local video/image file.' }, platforms: platformsSchema }, required: ['brand', 'file_path'] } },
   { name: 'autocaption', description: 'Run ScaleSolo autopilot on an uploaded post: analyze the media and generate a title, caption, and hashtags. Returns them for review. Does NOT publish.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' } }, required: ['content_id'] } },
   { name: 'add_to_backlog', description: 'Upload a local video/image AND auto-caption it in one step, then leave it UNSCHEDULED in the calendar\'s "Waiting to schedule" backlog for that brand. Use this when the user wants a post prepared to drag onto the calendar later. Never posts or schedules anything.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id (e.g. "RayvaughnCEO").' }, file_path: { type: 'string', description: 'Absolute path to the local video/image file.' }, platforms: platformsSchema }, required: ['brand', 'file_path'] } },
+  { name: 'upload_carousel', description: 'Make ONE carousel post from several local images (2-35), auto-caption it, and leave it UNSCHEDULED in the calendar backlog for that brand. Posts as a photo carousel (including TikTok photo mode) when scheduled. Images only. Never posts or schedules anything.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, file_paths: { type: 'array', items: { type: 'string' }, description: 'Absolute paths to 2-35 local image files, in slide order.' }, platforms: platformsSchema }, required: ['brand', 'file_paths'] } },
   { name: 'next_slots', description: "List the next open posting time slots from a brand's posting schedule (ISO + human-readable local time).", inputSchema: { type: 'object', properties: { brand: { type: 'string' }, count: { type: 'number', description: 'How many slots (default 5).' } }, required: ['brand'] } },
   { name: 'get_post', description: 'Read a draft/scheduled post (title, caption, hashtags, media, platforms, slot) for review.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' } }, required: ['content_id'] } },
   { name: 'update_post', description: 'Apply edits to a post\'s title / caption / hashtags / first_comment before scheduling. Does NOT publish.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' }, title: { type: 'string' }, caption: { type: 'string' }, hashtags: { type: 'string' }, first_comment: { type: 'string' } }, required: ['content_id'] } },
