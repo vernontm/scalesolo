@@ -928,6 +928,23 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
   // whenever the calendar items change (so a just-scheduled post leaves
   // the backlog and appears on the grid).
   const [backlog, setBacklog] = useState([])
+  // Which backlog card the cursor is over → reveals its delete button.
+  const [hoverBacklogId, setHoverBacklogId] = useState(null)
+  // Delete an unscheduled post straight from the queue.
+  const deleteFromBacklog = async (it) => {
+    // Optimistic: pull it immediately, restore on failure.
+    setBacklog((arr) => arr.filter((x) => x.id !== it.id))
+    try {
+      const r = await fetch(`/api/content?id=${it.id}`, {
+        method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Could not delete')
+      toast({ kind: 'success', message: `Deleted “${it.title || 'post'}” from the queue.` })
+    } catch (err) {
+      setBacklog((arr) => [it, ...arr.filter((x) => x.id !== it.id)])
+      toast({ kind: 'error', message: err.message })
+    }
+  }
   useEffect(() => {
     if (!profileId || !token) return
     let cancelled = false
@@ -1005,6 +1022,14 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
     e.preventDefault(); e.stopPropagation()
     const item = dragItemRef.current
     if (!item || dragKind !== 'backlog') return
+    onDragEnd()
+    // Optimistic FIRST: move the card onto the grid and out of the backlog
+    // the instant you drop it. The live Upload-Post submission below can take
+    // 10-15s; making the user wait on it froze the card that whole time.
+    // We reconcile with the server row on success and roll back on failure.
+    const provisional = { ...item, scheduled_datetime: slot.iso, status: 'scheduled', _pending: true }
+    setLocalItems((arr) => [...arr.filter((x) => x.id !== item.id), provisional])
+    setBacklog((arr) => arr.filter((x) => x.id !== item.id))
     try {
       // The post needs platforms or approve won't submit it to Upload-Post
       // (it would schedule locally then ghost). If the row has none (e.g. an
@@ -1032,17 +1057,16 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
       })
       const ab = await a.json().catch(() => ({}))
       if (!a.ok) throw new Error(ab?.error || 'Scheduling failed at Upload-Post')
-      // Optimistic: drop it onto the grid + remove from the backlog with no
-      // page-wide refetch. Prefer the server's returned row so status /
-      // handles are accurate.
+      // Reconcile: replace the provisional card with the server's row so
+      // status / handles are accurate.
       const placed = (ab && ab.item) ? ab.item : { ...item, scheduled_datetime: slot.iso, status: 'scheduled', platforms }
       setLocalItems((arr) => [...arr.filter((x) => x.id !== item.id), placed])
-      setBacklog((arr) => arr.filter((x) => x.id !== item.id))
       toast({ kind: 'success', message: `Scheduled “${item.title || 'post'}” for ${slot.label}.` })
     } catch (err) {
+      // Roll back: pull it off the grid and restore it to the backlog.
+      setLocalItems((arr) => arr.filter((x) => x.id !== item.id))
+      setBacklog((arr) => (arr.some((x) => x.id === item.id) ? arr : [item, ...arr]))
       toast({ kind: 'error', message: err.message })
-    } finally {
-      onDragEnd()
     }
   }
 
@@ -1175,12 +1199,16 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
                 const isVid = it.media_type === 'video' && !it.cover_image_url
                 return (
                   <div key={it.id} draggable onDragStart={(e) => onDragStart(e, it, 'backlog')} onDragEnd={onDragEnd}
-                    title="Drag onto an open slot to schedule"
+                    onClick={() => onOpen && onOpen(it)}
+                    onMouseEnter={() => setHoverBacklogId(it.id)}
+                    onMouseLeave={() => setHoverBacklogId((cur) => (cur === it.id ? null : cur))}
+                    title="Click to edit · drag onto an open slot to schedule"
                     style={{
+                      position: 'relative',
                       display: 'flex', gap: 8, alignItems: 'flex-start', padding: 7,
                       background: 'var(--surface-2)', border: '1px solid var(--border)',
                       borderLeft: `3px solid ${it.media_type === 'video' ? '#0ea5e9' : it.media_type === 'text' ? '#f59e0b' : '#a855f7'}`,
-                      borderRadius: 7, cursor: 'grab', opacity: it.id === dragId ? 0.5 : 1,
+                      borderRadius: 7, cursor: 'pointer', opacity: it.id === dragId ? 0.5 : 1,
                     }}>
                     {thumb ? (
                       isVid
@@ -1189,9 +1217,22 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
                     ) : (
                       <div style={{ width: 34, height: 34, borderRadius: 4, background: 'var(--surface)', border: '1px solid var(--border)', display: 'grid', placeItems: 'center', color: 'var(--muted)', fontWeight: 700, fontSize: 13, flexShrink: 0 }}>{it.media_type === 'text' ? '“”' : '?'}</div>
                     )}
-                    <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)', lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                    <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)', lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', paddingRight: 16 }}>
                       {it.title || 'Untitled'}
                     </div>
+                    {hoverBacklogId === it.id && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); deleteFromBacklog(it) }}
+                        title="Delete from queue"
+                        style={{
+                          position: 'absolute', top: 4, right: 4, width: 20, height: 20,
+                          display: 'grid', placeItems: 'center', padding: 0,
+                          background: 'var(--surface)', border: '1px solid var(--border)',
+                          borderRadius: 5, color: '#ef4444', cursor: 'pointer',
+                        }}>
+                        <Trash2 size={12} />
+                      </button>
+                    )}
                   </div>
                 )
               })}
