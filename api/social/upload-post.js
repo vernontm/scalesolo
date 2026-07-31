@@ -590,12 +590,23 @@ export default async function handler(req, res) {
     // ping later when the scheduler fires it.
     const isFuture = resolvedScheduledIso && new Date(resolvedScheduledIso).getTime() > Date.now() + 5000
     if (isFuture) {
+      // Resolve the brand's timezone so the "Goes live …" note reads in the
+      // brand's local time, not the server's UTC. resolvedTimezone is only
+      // set on the auto-schedule path; the explicit-slot path needs a lookup.
+      let notifyTz = resolvedTimezone
+      if (!notifyTz) {
+        try {
+          const tzRows = await supaFetch(`profiles?id=eq.${profile_id}&select=timezone`)
+          notifyTz = tzRows?.[0]?.timezone || null
+        } catch { /* fall back to the default zone in notify */ }
+      }
       NotifyKind.postScheduled({
         user_id: auth.user.id,
         profile_id,
         platforms,
         scheduled_for: resolvedScheduledIso,
         title: savedItem?.title || null,
+        timezone: notifyTz,
       }).catch(() => {})
     } else {
       NotifyKind.postPublished({

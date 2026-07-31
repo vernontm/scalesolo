@@ -111,13 +111,23 @@ export const NotifyKind = {
     href:  '/content',
     meta:  { platforms, post_url },
   }),
-  postScheduled: ({ user_id, profile_id, platforms = [], scheduled_for = null, title = null }) => notify({
+  postScheduled: ({ user_id, profile_id, platforms = [], scheduled_for = null, title = null, timezone = null }) => notify({
     user_id, profile_id,
     kind: 'post.scheduled', level: 'info',
     title: `Scheduled${title ? `: ${title}` : ''}`,
-    body:  scheduled_for ? `Goes live ${new Date(scheduled_for).toLocaleString()}` : null,
+    // Format in the BRAND's timezone — this runs on Vercel, whose default TZ
+    // is UTC, so a bare toLocaleString() showed e.g. 5:00 PM for a 12:00 PM
+    // CDT slot. Default to the app's default zone when none is stored, and
+    // append the zone abbreviation (CDT/PST/…) so it's unambiguous.
+    body:  scheduled_for
+      ? `Goes live ${new Date(scheduled_for).toLocaleString('en-US', {
+          timeZone: timezone || 'America/Los_Angeles',
+          month: 'short', day: 'numeric', year: 'numeric',
+          hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+        })}`
+      : null,
     href:  '/schedule',
-    meta:  { platforms, scheduled_for },
+    meta:  { platforms, scheduled_for, timezone },
   }),
   runDone: ({ user_id, profile_id, space_id, space_name = null }) => notify({
     user_id, profile_id,
