@@ -401,13 +401,41 @@ function ItemDetail({ item, onClose, onUpdate }) {
 }
 
 // ── Media preview block ───────────────────────────────────────────────────
-// Shows what the post is going to ship with. For videos: a full
-// 9:16 playable preview so the user can scrub the actual upload
-// (not just the still-frame they see on the calendar). For images
-// / carousels: a strip of thumbs. If a custom IG cover is set, it
-// renders side-by-side with the source so the user can compare what
-// IG will show vs what the source video frames look like. Skipped
+// Shows what the post is going to ship with. For videos: a playable
+// preview sized to the video's OWN aspect ratio so the user can scrub
+// the actual upload (not just the still-frame they see on the calendar).
+// For images / carousels: a strip of thumbs. If a custom IG cover is
+// set, it renders side-by-side with the source so the user can compare
+// what IG will show vs what the source video frames look like. Skipped
 // entirely for text-only posts (nothing to preview).
+
+// Video that adapts its frame to the file's real dimensions. Starts at
+// 9:16 (the most common upload) to avoid a layout jump, then snaps to
+// the true ratio once metadata loads. objectFit 'contain' guarantees no
+// frame is ever cropped even before the ratio is known — a 3:4 or 1:1
+// upload previews exactly as shot instead of being center-cropped into
+// a 9:16 window.
+function AdaptiveVideo({ src }) {
+  const [ratio, setRatio] = useState('9 / 16')
+  return (
+    <video
+      src={src}
+      controls
+      playsInline
+      preload="metadata"
+      onLoadedMetadata={(e) => {
+        const { videoWidth: w, videoHeight: h } = e.currentTarget
+        if (w > 0 && h > 0) setRatio(`${w} / ${h}`)
+      }}
+      style={{
+        width: '100%', aspectRatio: ratio,
+        borderRadius: 8, background: '#000',
+        border: '1px solid var(--border)',
+        objectFit: 'contain',
+      }}
+    />
+  )
+}
 function MediaPreviewBlock({ item }) {
   const isVideo = item.media_type === 'video'
   const isText  = item.media_type === 'text'
@@ -442,18 +470,7 @@ function MediaPreviewBlock({ item }) {
               <div style={{ fontSize: 10, color: isEmbedded ? '#0ea5e9' : 'var(--muted)', marginBottom: 4, fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
                 {isEmbedded ? 'Video (with cover intro)' : 'Video'}
               </div>
-              <video
-                src={playable}
-                controls
-                playsInline
-                preload="metadata"
-                style={{
-                  width: '100%', aspectRatio: '9 / 16',
-                  borderRadius: 8, background: '#000',
-                  border: '1px solid var(--border)',
-                  objectFit: 'cover',
-                }}
-              />
+              <AdaptiveVideo src={playable} />
             </div>
           )
         })()}
