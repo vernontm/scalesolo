@@ -906,6 +906,14 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
   const username = await resolveUploadpostUser(profile_id)
   await uploadpostEnsureUserProfile(username).catch(() => {})
 
+  // Per-brand TikTok Draft mode: publish-now must honor it too (this path
+  // builds its own Upload-Post request, separate from /api/social/upload-post).
+  let tiktokDraftMode = false
+  try {
+    const pr = await supaFetch(`profiles?id=eq.${profile_id}&select=tiktok_draft_mode`)
+    tiktokDraftMode = !!pr?.[0]?.tiktok_draft_mode
+  } catch { /* default direct post */ }
+
   const rows = await supaFetch(
     `content_scripts?id=in.(${script_ids.map((id) => encodeURIComponent(id)).join(',')})&select=*`
   )
@@ -1023,6 +1031,8 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
         // chars) as the actual caption. Send the full caption there, not
         // just the title.
         if (hasTikTok && desc) form.append('tiktok_title', desc.slice(0, 2200))
+        // Draft mode → send to TikTok inbox/drafts instead of the feed.
+        if (hasTikTok && tiktokDraftMode) form.append('post_mode', 'MEDIA_UPLOAD')
         if (platforms.includes('instagram')) {
           if (desc) form.append('instagram_title', desc.slice(0, 2200))
           // Generated Instagram Reel cover (Schedule page → Generate cover).
@@ -1079,6 +1089,8 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
           const src = desc.replace(/\s+/g, ' ').trim()
           fd.append('tiktok_title', src.length <= 90 ? src : src.slice(0, 90).replace(/\s+\S*$/, ''))
         }
+        // Draft mode → send to TikTok inbox/drafts instead of the feed.
+        if (hasTikTok && tiktokDraftMode) fd.append('post_mode', 'MEDIA_UPLOAD')
         if (platforms.includes('instagram') && desc) fd.append('instagram_title', desc.slice(0, 2200))
         if (platforms.includes('facebook')) {
           const fbSrc = (desc || cleanTitle).replace(/\s*\n+\s*/g, ' ').trim()

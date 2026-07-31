@@ -363,6 +363,43 @@ const impls = {
       submitted_to_upload_post: !!(row.uploadpost_request_id || res?.request_id),
     })
   },
+
+  // CONFIRM GATE — publishes RIGHT NOW, no scheduler wait. Submits the post to
+  // Upload-Post immediately (cancels any pending scheduled job first so it
+  // can't double-post). For a brand in TikTok Draft mode this lands in the
+  // TikTok inbox/drafts instantly instead of the feed. Call ONLY after the
+  // user has explicitly confirmed the caption + platforms.
+  async post_now({ content_id, platforms }) {
+    if (!content_id) throw new Error('content_id is required')
+    const row0 = (await api('/api/content', { query: { id: content_id } }))?.item
+    if (!row0) throw new Error('post not found')
+    // If platforms passed, set them on the row first so publish uses them.
+    let targets = normPlatforms(platforms)
+    if (!targets.length) targets = normPlatforms(row0.platforms)
+    if (!targets.length) targets = await connectedPlatforms(row0.profile_id)
+    if (!targets.length) throw new Error('No platforms selected and none connected for this brand. Pass platforms, e.g. ["tiktok"].')
+    if (Array.isArray(platforms) && platforms.length) {
+      await api('/api/content', { method: 'PATCH', query: { id: content_id }, json: { platforms: targets } })
+    }
+    // publish-selected submits to Upload-Post immediately (no scheduled_date).
+    const res = await api('/api/content/bulk-actions', {
+      method: 'POST', query: { action: 'publish-selected' },
+      json: { profile_id: row0.profile_id, script_ids: [content_id] },
+    })
+    const result = Array.isArray(res?.results) ? res.results.find((x) => x.id === content_id) : null
+    if (result && result.ok === false) {
+      throw new Error(result.error || 'Publish failed at Upload-Post')
+    }
+    const row = (await api('/api/content', { query: { id: content_id } }))?.item || {}
+    return ok({
+      content_id,
+      status: row.status || 'posted',
+      platforms: row.platforms || targets,
+      posted_now: true,
+      uploadpost_request_id: row.uploadpost_request_id || result?.request_id || null,
+      note: 'Submitted to Upload-Post immediately. In TikTok Draft mode it lands in the app inbox/drafts now.',
+    })
+  },
 }
 
 // ── Tool schemas ─────────────────────────────────────────────────────
@@ -380,7 +417,8 @@ const TOOLS = [
   { name: 'get_post', description: 'Read a draft/scheduled post (title, caption, hashtags, media, platforms, slot) for review.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' } }, required: ['content_id'] } },
   { name: 'update_post', description: 'Apply edits to a post\'s title / caption / hashtags / first_comment before scheduling. Does NOT publish.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' }, title: { type: 'string' }, caption: { type: 'string' }, hashtags: { type: 'string' }, first_comment: { type: 'string' } }, required: ['content_id'] } },
   { name: 'set_platforms', description: 'Set which social platforms a post will go to. Does NOT publish.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' }, platforms: platformsSchema }, required: ['content_id', 'platforms'] } },
-  { name: 'schedule_post', description: 'PUBLISHES/SCHEDULES the post to social via Upload-Post at the given time and platforms. This is the only tool that posts to social — call it ONLY after the user has explicitly confirmed the caption, the platforms, and the slot. If platforms is omitted it uses the ones already on the post, else the brand\'s connected platforms.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' }, scheduled_datetime: { type: 'string', description: 'ISO 8601 datetime (use an iso value from next_slots).' }, platforms: platformsSchema }, required: ['content_id', 'scheduled_datetime'] } },
+  { name: 'schedule_post', description: 'PUBLISHES/SCHEDULES the post to social via Upload-Post at the given time and platforms. Call it ONLY after the user has explicitly confirmed the caption, the platforms, and the slot. If platforms is omitted it uses the ones already on the post, else the brand\'s connected platforms.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' }, scheduled_datetime: { type: 'string', description: 'ISO 8601 datetime (use an iso value from next_slots).' }, platforms: platformsSchema }, required: ['content_id', 'scheduled_datetime'] } },
+  { name: 'post_now', description: 'PUBLISHES the post RIGHT NOW with no scheduler wait — submits to Upload-Post immediately (and cancels any pending scheduled job so it can\'t double-post). For a brand in TikTok Draft mode this lands in the TikTok inbox/drafts instantly. Call ONLY after the user has explicitly confirmed the caption and platforms. Use this instead of schedule_post when the user wants it out immediately rather than at a future slot.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' }, platforms: platformsSchema }, required: ['content_id'] } },
 ]
 
 // ── Wire up the server ───────────────────────────────────────────────

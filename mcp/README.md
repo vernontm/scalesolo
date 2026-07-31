@@ -67,6 +67,7 @@ Ray / ray@vernontm.com, who owns the 5 brand profiles).
 | `update_post` | Edit title/caption/hashtags/first_comment | no |
 | `set_platforms` | Set which platforms a post targets | no |
 | `schedule_post` | Schedule to Upload-Post at a chosen slot | **YES** |
+| `post_now` | Publish immediately (no scheduler); Draft-mode brands land in the TikTok inbox now | **YES** |
 
 ## Example flow
 
