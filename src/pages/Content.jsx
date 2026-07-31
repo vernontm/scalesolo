@@ -993,9 +993,22 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
     const item = dragItemRef.current
     if (!item || dragKind !== 'backlog') return
     try {
+      // The post needs platforms or approve won't submit it to Upload-Post
+      // (it would schedule locally then ghost). If the row has none (e.g. an
+      // MCP upload that skipped platforms), fall back to the brand's
+      // connected platforms.
+      let platforms = Array.isArray(item.platforms) ? item.platforms.filter(Boolean) : []
+      if (!platforms.length) {
+        try {
+          const cr = await fetch(`/api/account/uploadpost-connected?profile_id=${profileId}`, { headers: { Authorization: `Bearer ${token}` } })
+          const cb = await cr.json().catch(() => ({}))
+          platforms = Array.isArray(cb.connected_platforms) ? cb.connected_platforms : []
+        } catch { /* leave empty */ }
+      }
+      if (!platforms.length) throw new Error('This brand has no connected platforms — connect one before scheduling.')
       const p = await fetch(`/api/content?id=${item.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ scheduled_datetime: slot.iso }),
+        body: JSON.stringify({ scheduled_datetime: slot.iso, platforms }),
       })
       if (!p.ok) throw new Error((await p.json().catch(() => ({})))?.error || 'Could not set the time')
       const a = await fetch(`/api/content?action=approve&id=${item.id}`, {
