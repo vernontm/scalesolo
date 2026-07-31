@@ -4,7 +4,6 @@ import {
   Check, Trash2, Edit3, Send, Eye, AlertCircle, Link2, Plus, ExternalLink,
   Image as ImageIcon, RotateCcw, Loader2,
 } from 'lucide-react'
-import { PlatformBadge } from '../components/PlatformBadge.jsx'
 import BulkUploadView from '../components/BulkUploadView.jsx'
 import GenerateMonthModal from '../components/GenerateMonthModal.jsx'
 import { toast } from '../components/Toast.jsx'
@@ -888,7 +887,12 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
       const d = new Date(date)
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
     }
-    for (const it of items) {
+    // Merge optimistic overrides over the server items (same id → local
+    // wins) so a just-dropped post shows at its new time without a refetch.
+    const byId = new Map()
+    for (const it of items) byId.set(it.id, it)
+    for (const it of localItems) byId.set(it.id, it)
+    for (const it of byId.values()) {
       if (!it.scheduled_datetime) continue
       const k = keyOf(it.scheduled_datetime)
       if (!m.has(k)) m.set(k, [])
@@ -899,7 +903,7 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
       arr.sort((a, b) => new Date(a.scheduled_datetime) - new Date(b.scheduled_datetime))
     }
     return m
-  }, [items])
+  }, [items, localItems])
 
   const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   const todayKey = dayKey(new Date())
@@ -911,6 +915,12 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
   const [dragId, setDragId] = useState(null)
   const [dragKind, setDragKind] = useState(null) // 'calendar' | 'backlog' | null
   const dragItemRef = useRef(null)
+  // The specific slot the cursor is over, so only THAT slot glows (lets
+  // you aim any slot directly instead of filling top-down).
+  const [hoverSlot, setHoverSlot] = useState(null)
+  // Optimistic overrides keyed by content id — a dropped post appears /
+  // moves instantly without a full re-fetch of the whole page.
+  const [localItems, setLocalItems] = useState([])
 
   // Backlog: unscheduled ready-to-post rows for this brand. Refreshed
   // whenever the calendar items change (so a just-scheduled post leaves
@@ -983,6 +993,7 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
   const onDragEnd = () => {
     setDragId(null)
     setDragKind(null)
+    setHoverSlot(null)
     dragItemRef.current = null
   }
 
@@ -1019,9 +1030,13 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
       })
       const ab = await a.json().catch(() => ({}))
       if (!a.ok) throw new Error(ab?.error || 'Scheduling failed at Upload-Post')
+      // Optimistic: drop it onto the grid + remove from the backlog with no
+      // page-wide refetch. Prefer the server's returned row so status /
+      // handles are accurate.
+      const placed = (ab && ab.item) ? ab.item : { ...item, scheduled_datetime: slot.iso, status: 'scheduled', platforms }
+      setLocalItems((arr) => [...arr.filter((x) => x.id !== item.id), placed])
       setBacklog((arr) => arr.filter((x) => x.id !== item.id))
       toast({ kind: 'success', message: `Scheduled “${item.title || 'post'}” for ${slot.label}.` })
-      onChange?.()
     } catch (err) {
       toast({ kind: 'error', message: err.message })
     } finally {
@@ -1049,7 +1064,8 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
         const b = await r.json().catch(() => ({}))
         console.warn('reschedule failed:', b?.error || r.status)
       } else {
-        onChange?.()
+        // Optimistic move — no full-page refetch.
+        setLocalItems((arr) => [...arr.filter((x) => x.id !== item.id), { ...item, scheduled_datetime: next.toISOString() }])
       }
     } catch (err) {
       console.warn('reschedule threw:', err.message)
@@ -1254,7 +1270,6 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {dayItems.map((item) => {
                     const isDragging = item.id === dragId
-                    const platforms = Array.isArray(item.platforms) ? item.platforms : []
                     // Prefer the generated Instagram cover when one is set —
                     // that's what'll actually appear in the feed, so showing
                     // the source video here was misleading on covered posts.
@@ -1372,16 +1387,8 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
                               }}>Pending</span>
                             )}
                           </div>
-                          {platforms.length > 0 && (
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, marginTop: 4 }}>
-                              {platforms.slice(0, 5).map((p) => (
-                                <PlatformBadge key={p} id={p} size={14} />
-                              ))}
-                              {platforms.length > 5 && (
-                                <span style={{ fontSize: 9, color: 'var(--muted)', alignSelf: 'center' }}>+{platforms.length - 5}</span>
-                              )}
-                            </div>
-                          )}
+                          {/* Platform icons hidden for a compact card — the
+                              targets live on the post's detail drawer. */}
                         </div>
                       </div>
                     )
@@ -1398,20 +1405,28 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
                 const active = dragKind === 'backlog'
                 return (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 6 }}>
-                    {slots.map((slot) => (
-                      <div key={slot.time}
-                        onDragOver={(e) => { if (active) { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move' } }}
-                        onDrop={(e) => onDropSlot(e, slot)}
-                        style={{
-                          fontSize: 10, textAlign: 'center', padding: '3px 4px', borderRadius: 5,
-                          border: `1px dashed ${active ? 'rgba(239,68,68,0.65)' : 'var(--border)'}`,
-                          color: active ? 'var(--red)' : 'var(--muted)',
-                          background: active ? 'rgba(239,68,68,0.07)' : 'transparent',
-                          transition: 'all 0.12s',
-                        }}>
-                        ＋ {slot.label}
-                      </div>
-                    ))}
+                    {slots.map((slot) => {
+                      const skey = `${k}|${slot.time}`
+                      const isHover = active && hoverSlot === skey
+                      return (
+                        <div key={slot.time}
+                          onDragOver={(e) => { if (active) { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; if (hoverSlot !== skey) setHoverSlot(skey) } }}
+                          onDragLeave={() => { if (hoverSlot === skey) setHoverSlot(null) }}
+                          onDrop={(e) => onDropSlot(e, slot)}
+                          style={{
+                            fontSize: 10, textAlign: 'center', padding: '3px 4px', borderRadius: 5,
+                            fontWeight: isHover ? 800 : 400,
+                            border: `1px ${isHover ? 'solid' : 'dashed'} ${isHover ? 'var(--red)' : active ? 'rgba(239,68,68,0.5)' : 'var(--border)'}`,
+                            color: isHover ? '#fff' : active ? 'var(--red)' : 'var(--muted)',
+                            background: isHover ? 'var(--red)' : active ? 'rgba(239,68,68,0.06)' : 'transparent',
+                            boxShadow: isHover ? '0 0 0 2px rgba(239,68,68,0.35), 0 0 12px rgba(239,68,68,0.55)' : 'none',
+                            transform: isHover ? 'scale(1.04)' : 'none',
+                            transition: 'all 0.1s',
+                          }}>
+                          ＋ {slot.label}
+                        </div>
+                      )
+                    })}
                   </div>
                 )
               })()}
