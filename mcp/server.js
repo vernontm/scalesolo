@@ -20,8 +20,10 @@
 //   SCALESOLO_INTERNAL_SECRET
 //   SCALESOLO_USER_ID        the ScaleSolo auth user to act as
 
-import { readFile, readdir } from 'node:fs/promises'
+import { readFile, readdir, unlink } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
+import { execFileSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
@@ -41,6 +43,34 @@ const IMAGE_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif'])
 const MIME = {
   mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', m4v: 'video/x-m4v',
   jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif',
+}
+
+// ── Ensure a video is H.264 ──────────────────────────────────────────
+// TikTok's app errors on HEVC/H.265 drafts (and some other codecs), so any
+// non-H.264 video is transcoded to H.264 + AAC + faststart before upload.
+// Needs ffmpeg/ffprobe on PATH; if they're missing we upload as-is (with a
+// note) rather than failing the whole upload. Returns { path, transcoded, note? }.
+function videoCodec(path) {
+  try {
+    return execFileSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0',
+      '-show_entries', 'stream=codec_name', '-of', 'default=nw=1:nk=1', path],
+      { encoding: 'utf8', timeout: 30000 }).trim().toLowerCase()
+  } catch { return null }
+}
+function ensureH264(path) {
+  const codec = videoCodec(path)
+  if (codec === null) return { path, transcoded: false, note: 'ffmpeg/ffprobe not found — uploaded as-is (transcode skipped)' }
+  if (codec === 'h264') return { path, transcoded: false }
+  const out = join(tmpdir(), `ss-h264-${Date.now()}-${basename(path).replace(/\.[^.]+$/, '')}.mp4`)
+  try {
+    execFileSync('ffmpeg', ['-y', '-i', path,
+      '-c:v', 'libx264', '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-crf', '20', '-preset', 'veryfast',
+      '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', out],
+      { timeout: 900000, stdio: 'ignore' })
+    return { path: out, transcoded: true, from: codec }
+  } catch (e) {
+    return { path, transcoded: false, note: `transcode failed (${e.message.slice(0, 80)}) — uploaded as-is` }
+  }
 }
 
 // ── ScaleSolo API helper (adds impersonation headers) ────────────────
@@ -112,8 +142,19 @@ const impls = {
     const profile = await resolveBrand(brand)
     const ext = extname(file_path).slice(1).toLowerCase()
     const kind = VIDEO_EXT.has(ext) ? 'video' : 'image'
-    const contentType = MIME[ext] || (kind === 'video' ? 'video/mp4' : 'image/jpeg')
-    const bytes = await readFile(file_path)
+    let contentType = MIME[ext] || (kind === 'video' ? 'video/mp4' : 'image/jpeg')
+
+    // Videos: make sure it's H.264 (TikTok drafts choke on HEVC). Transcode
+    // to a temp file if needed; upload that instead of the original.
+    let uploadPath = file_path
+    let transcodeNote = null
+    if (kind === 'video') {
+      const t = ensureH264(file_path)
+      uploadPath = t.path
+      if (t.transcoded) { contentType = 'video/mp4'; transcodeNote = `transcoded ${t.from} → h264 for TikTok compatibility` }
+      else if (t.note) { transcodeNote = t.note }
+    }
+    const bytes = await readFile(uploadPath)
 
     // 1. init signed URL
     const init = await api('/api/content/upload-media', {
@@ -126,6 +167,8 @@ const impls = {
       headers: { Authorization: `Bearer ${init.token}`, 'Content-Type': contentType, 'x-upsert': 'true' },
       body: bytes,
     })
+    // Clean up the temp transcode regardless of upload outcome.
+    if (uploadPath !== file_path) { try { await unlink(uploadPath) } catch {} }
     if (!put.ok) throw new Error(`Storage upload failed (${put.status}): ${(await put.text()).slice(0, 200)}`)
     // Platforms: use what was passed, else default to the brand's connected set.
     const chosen = platforms?.length ? normPlatforms(platforms) : await connectedPlatforms(profile.id)
@@ -143,7 +186,7 @@ const impls = {
     })
     const id = created?.item?.id
     if (!id) throw new Error('Row created but no id returned')
-    return ok({ content_id: id, brand: profile.business_name, media_type: init.media_type, media_url: init.public_url, platforms: chosen })
+    return ok({ content_id: id, brand: profile.business_name, media_type: init.media_type, media_url: init.public_url, platforms: chosen, ...(transcodeNote ? { transcode: transcodeNote } : {}) })
   },
 
   async autocaption({ content_id }) {
