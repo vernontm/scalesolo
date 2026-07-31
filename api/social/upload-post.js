@@ -141,9 +141,11 @@ export default async function handler(req, res) {
     // additional DB roundtrips. Failure is non-fatal — publish proceeds
     // without the tag suffix if the profile lookup fails.
     let profile_social_tags = {}
+    let tiktokDraftMode = false
     try {
-      const rows = await supaFetch(`profiles?id=eq.${profile_id}&select=social_platform_tags`)
+      const rows = await supaFetch(`profiles?id=eq.${profile_id}&select=social_platform_tags,tiktok_draft_mode`)
       profile_social_tags = rows?.[0]?.social_platform_tags || {}
+      tiktokDraftMode = !!rows?.[0]?.tiktok_draft_mode
     } catch { /* default to empty map */ }
 
     const effectiveUser = upload_post_user || await resolveUploadpostUser(profile_id)
@@ -217,6 +219,13 @@ export default async function handler(req, res) {
         ? trim(fullCaption || cleanTitle, 2200)
         : trim(cleanTitle || fullCaption, 90)
       fd.append('tiktok_title', tiktokTitle)
+      // Draft mode (per-brand opt-in): send the post to the user's TikTok
+      // inbox/drafts to publish natively from the app — TikTok's own guidance
+      // is that app-published posts get more organic reach. In this mode
+      // TikTok ignores the caption/hashtags we send, so the brand's workflow
+      // texts the copy to the user to paste in the app. Default stays
+      // DIRECT_POST when the flag is off.
+      if (tiktokDraftMode) fd.append('tiktok_post_mode', 'MEDIA_UPLOAD')
     }
     if (platforms.includes('instagram')) {
       fd.append('instagram_title', trim(fullCaption || cleanTitle, 2200))
