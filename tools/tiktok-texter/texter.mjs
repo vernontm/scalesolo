@@ -97,19 +97,21 @@ function sendIMessage(to, message, timeoutMs = 20000) {
   execFileSync('osascript', ['-', to, message], { input: APPLESCRIPT, stdio: ['pipe', 'ignore', 'pipe'], timeout: timeoutMs })
 }
 
-function buildMessage(item) {
+// Two messages per go-live:
+//   1. context — which post this is (kind + title), plus the nudge
+//   2. ONLY the caption + hashtags, so the whole message is paste-ready
+function buildMessages(item) {
   const title = (item.title || 'Untitled').trim()
   const caption = (item.caption || '').trim()
   const hashtags = (item.hashtags || '').trim()
-  const parts = [
-    '🎬 TikTok draft is live — post it now',
-    title,
-    '',
-    caption || '(no caption)',
-  ]
-  if (hashtags) parts.push('', hashtags)
-  parts.push('', 'Open TikTok → your drafts/inbox and publish. (Draft mode drops the caption, so paste the above.)')
-  return parts.join('\n')
+  const kind = item.media_type === 'carousel' ? 'carousel'
+    : item.media_type === 'video' ? 'video' : 'post'
+
+  const context = `🎬 TikTok draft is live — post it from the app.\n${kind}: "${title}"\n(next text is the caption + hashtags, ready to paste)`
+
+  const paste = [caption, hashtags].filter(Boolean).join('\n\n')
+
+  return [context, paste].filter((m) => m && m.trim())
 }
 
 async function main() {
@@ -134,7 +136,7 @@ async function main() {
 
   for (const it of due) {
     try {
-      sendIMessage(IMESSAGE_TO, buildMessage(it))
+      for (const msg of buildMessages(it)) sendIMessage(IMESSAGE_TO, msg)
       state.sent[it.id] = now
       log(`texted "${(it.title || '').slice(0, 60)}" (${it.id})`)
     } catch (e) {
@@ -156,8 +158,17 @@ async function main() {
 if (process.argv.includes('--test')) {
   try {
     log('sending test — if a "Terminal wants access to control Messages" dialog appears, click OK (you have ~2 min)…')
-    sendIMessage(IMESSAGE_TO, "✅ ScaleSolo TikTok texter is connected. You'll get post captions + hashtags here when a RayvaughnCEO TikTok draft goes live.", 120000)
-    log(`test message sent to ${IMESSAGE_TO}`)
+    // Preview the real two-message shape with sample copy.
+    const sample = {
+      media_type: 'video',
+      title: 'When to use a Skill in Claude',
+      caption: "Here's when to use a Skill in Claude, and how to build one, so it runs your repeat tasks the same way every time. Follow @RayvaughnCEO for more AI tips for small business owners.",
+      hashtags: '#katytx #katytexas #cypresstx #cincoranch #thingstodoinkaty',
+    }
+    const msgs = buildMessages(sample)
+    sendIMessage(IMESSAGE_TO, msgs[0], 120000)
+    for (const m of msgs.slice(1)) sendIMessage(IMESSAGE_TO, m)
+    log(`test messages sent to ${IMESSAGE_TO}`)
     process.exit(0)
   } catch (e) {
     log('test send failed:', e.message)
