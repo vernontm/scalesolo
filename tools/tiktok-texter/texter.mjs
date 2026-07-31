@@ -83,7 +83,7 @@ const APPLESCRIPT = `on run argv
   set targetTo to item 1 of argv
   set targetMessage to item 2 of argv
   tell application "Messages"
-    set svc to 1st account whose service type = iMessage
+    set svc to 1st service whose service type = iMessage
     set theBuddy to participant targetTo of svc
     send targetMessage to theBuddy
   end tell
