@@ -1567,9 +1567,9 @@ const TABS = [
 export default function Content() {
   const { session } = useAuth()
   const { selectedProfileId } = useProfile()
-  // Library tab is the bulk-upload + manage table — the primary surface
-  // for the Schedule page. Calendar / Drafts / Approvals still selectable.
-  const [tab, setTab] = useState('library')
+  // Calendar is the default surface for the Schedule page (backlog +
+  // drag-to-slot scheduling). Library / Drafts / Approvals still selectable.
+  const [tab, setTab] = useState('calendar')
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
