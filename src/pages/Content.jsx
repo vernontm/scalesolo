@@ -1114,22 +1114,39 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
         } catch { /* leave empty */ }
       }
       if (!platforms.length) throw new Error('This brand has no connected platforms — connect one before scheduling.')
+      // Two-step: set the time, then approve (which submits to Upload-Post).
+      // If approve fails AFTER the time is set, we must clear the time again —
+      // otherwise the row has a scheduled_datetime but status 'caption_ready',
+      // which shows in NEITHER the backlog (wants no time) nor the calendar
+      // (wants status scheduled), i.e. it vanishes. Track that so the catch
+      // can undo the persisted PATCH, not just the on-screen card.
+      let timeWasSet = false
       const p = await fetch(`/api/content?id=${item.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ scheduled_datetime: slot.iso, platforms }),
       })
       if (!p.ok) throw new Error((await p.json().catch(() => ({})))?.error || 'Could not set the time')
+      timeWasSet = true
       const a = await fetch(`/api/content?action=approve&id=${item.id}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       })
       const ab = await a.json().catch(() => ({}))
-      if (!a.ok) throw new Error(ab?.error || 'Scheduling failed at Upload-Post')
+      if (!a.ok) { const e = new Error(ab?.error || 'Scheduling failed at Upload-Post'); e.timeWasSet = timeWasSet; throw e }
       // Reconcile: replace the provisional card with the server's row so
       // status / handles are accurate.
       const placed = (ab && ab.item) ? ab.item : { ...item, scheduled_datetime: slot.iso, status: 'scheduled', platforms }
       setLocalItems((arr) => [...arr.filter((x) => x.id !== item.id), placed])
       toast({ kind: 'success', message: `Scheduled “${item.title || 'post'}” for ${slot.label}.` })
     } catch (err) {
+      // Undo the persisted time so the post doesn't get stranded invisibly
+      // between the backlog and the calendar. Best-effort; the card is
+      // restored to the backlog regardless.
+      if (err?.timeWasSet) {
+        fetch(`/api/content?id=${item.id}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ scheduled_datetime: null }),
+        }).catch(() => {})
+      }
       // Roll back: pull it off the grid and restore it to the backlog.
       setLocalItems((arr) => arr.filter((x) => x.id !== item.id))
       setBacklog((arr) => (arr.some((x) => x.id === item.id) ? arr : [item, ...arr]))
