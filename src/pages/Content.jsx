@@ -202,10 +202,33 @@ function ItemDetail({ item, onClose, onUpdate }) {
   // gets a clear "Scheduled to TikTok, Instagram for Wed May 21 at
   // 9:00 AM" confirmation before the modal stays open or closes.
   const [success, setSuccess] = useState(null)
+  // Editable caption + hashtags (edit before delivery). Drafts start from
+  // the row; Save PATCHes them — which also re-pushes to the scheduled
+  // Upload-Post job so the edited copy is what actually publishes.
+  const [captionDraft, setCaptionDraft] = useState(item.caption || '')
+  const [hashtagsDraft, setHashtagsDraft] = useState(item.hashtags || '')
+  const [savingCaption, setSavingCaption] = useState(false)
+  const captionDirty = captionDraft !== (item.caption || '') || hashtagsDraft !== (item.hashtags || '')
+  const saveCaption = async () => {
+    setSavingCaption(true); setError(null); setSuccess(null)
+    try {
+      const r = await fetch(`/api/content?id=${item.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ caption: captionDraft, hashtags: limitHashtags(hashtagsDraft, 5) }),
+      })
+      const b = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(b?.error || 'Could not save the caption')
+      setSuccess(b.upload_post_resynced
+        ? 'Saved and pushed to the scheduled post — the edited caption is what will publish.'
+        : 'Caption saved.')
+      onUpdate()
+    } catch (e) { setError(e.message) } finally { setSavingCaption(false) }
+  }
   // Copy-to-clipboard feedback for the caption field (mobile-friendly).
   const [copied, setCopied] = useState(false)
   const copyCaption = async () => {
-    const text = item.caption || ''
+    const text = captionDraft || ''
     try {
       await navigator.clipboard.writeText(text)
     } catch {
@@ -312,47 +335,56 @@ function ItemDetail({ item, onClose, onUpdate }) {
                 the focus here: a tap-to-select field with a big Copy button
                 that's easy to hit on mobile. */}
             <div style={{ marginBottom: 14 }}>
-              <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                 <div style={{ flex: 1, fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Caption</div>
                 <button
                   onClick={copyCaption}
-                  disabled={!item.caption}
+                  disabled={!captionDraft}
                   style={{
                     display: 'inline-flex', alignItems: 'center', gap: 6,
-                    padding: '7px 14px', fontSize: 12.5, fontWeight: 700,
-                    borderRadius: 8, cursor: item.caption ? 'pointer' : 'not-allowed',
+                    padding: '7px 12px', fontSize: 12.5, fontWeight: 700,
+                    borderRadius: 8, cursor: captionDraft ? 'pointer' : 'not-allowed',
                     border: '1px solid var(--border)',
                     background: copied ? 'rgba(46,204,113,0.15)' : 'var(--surface-3, var(--surface-2))',
                     color: copied ? '#2ecc71' : 'var(--text)',
-                    opacity: item.caption ? 1 : 0.5,
+                    opacity: captionDraft ? 1 : 0.5,
                   }}>
                   {copied ? <Check size={14} /> : <Copy size={14} />}
                   {copied ? 'Copied' : 'Copy'}
                 </button>
+                <button
+                  onClick={saveCaption}
+                  disabled={!captionDirty || savingCaption}
+                  className="btn-primary"
+                  style={{ padding: '7px 14px', fontSize: 12.5, opacity: (!captionDirty || savingCaption) ? 0.5 : 1 }}>
+                  {savingCaption ? <span className="spinner" /> : <Check size={14} />} Save
+                </button>
               </div>
               <textarea
-                readOnly
-                value={item.caption || ''}
-                placeholder="No caption yet."
-                onFocus={(e) => e.target.select()}
-                onClick={(e) => e.target.select()}
-                rows={Math.min(10, Math.max(3, String(item.caption || '').split('\n').length + 1))}
+                value={captionDraft}
+                onChange={(e) => setCaptionDraft(e.target.value)}
+                placeholder="Write the caption…"
+                rows={Math.min(12, Math.max(4, String(captionDraft || '').split('\n').length + 1))}
                 style={{
                   width: '100%', resize: 'vertical', boxSizing: 'border-box',
                   fontSize: 13.5, lineHeight: 1.6, color: 'var(--text)',
-                  padding: 12, borderRadius: 10, border: '1px solid var(--border)',
+                  padding: 12, borderRadius: 10,
+                  border: `1px solid ${captionDirty ? 'var(--red)' : 'var(--border)'}`,
                   background: 'var(--surface-2)', fontFamily: 'inherit',
-                  WebkitUserSelect: 'text', userSelect: 'text',
                 }}
               />
             </div>
 
-            {item.hashtags && (
-              <div style={{ marginBottom: 14 }}>
-                <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>Hashtags</div>
-                <div style={{ fontSize: 12.5, color: 'var(--red)' }}>{limitHashtags(item.hashtags, 5)}</div>
-              </div>
-            )}
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>Hashtags <span style={{ textTransform: 'none', fontWeight: 500 }}>(max 5)</span></div>
+              <input
+                className="input"
+                value={hashtagsDraft}
+                onChange={(e) => setHashtagsDraft(e.target.value)}
+                placeholder="#tag1 #tag2 …"
+                style={{ width: '100%', boxSizing: 'border-box', color: 'var(--red)', border: `1px solid ${hashtagsDraft !== (item.hashtags || '') ? 'var(--red)' : 'var(--border)'}` }}
+              />
+            </div>
 
             <div style={{ marginTop: 4, padding: 14, background: 'var(--surface-2)', borderRadius: 10, border: '1px solid var(--border)' }}>
               <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>Schedule</div>
@@ -1100,12 +1132,42 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
     dragItemRef.current = null
   }
 
+  // Move an already-on-calendar post to a new datetime. Optimistic: the card
+  // jumps immediately; on failure it rolls back AND surfaces the real error
+  // (previously a failed Upload-Post reschedule returned 502 and the move was
+  // silently dropped, so it looked like drag just didn't work).
+  const rescheduleTo = async (item, iso, label) => {
+    // optimistic move
+    setLocalItems((arr) => [...arr.filter((x) => x.id !== item.id), { ...item, scheduled_datetime: iso }])
+    try {
+      const r = await fetch(`/api/content?id=${item.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ scheduled_datetime: iso }),
+      })
+      const b = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(b?.error || `Couldn't move the post (${r.status}).`)
+      // Reconcile with the server row (new request_id after a resync, etc.).
+      if (b.item) setLocalItems((arr) => [...arr.filter((x) => x.id !== item.id), b.item])
+      toast({ kind: 'success', message: `Moved “${item.title || 'post'}”${label ? ` to ${label}` : ''}.` })
+    } catch (err) {
+      // Roll back the override → falls back to the server row's old time.
+      setLocalItems((arr) => arr.filter((x) => x.id !== item.id))
+      toast({ kind: 'error', message: err.message })
+    }
+  }
+
   // Drop a backlog post onto an open slot → schedule it LIVE: set the
   // time, then approve (which submits to Upload-Post for that slot).
   const onDropSlot = async (e, slot) => {
     e.preventDefault(); e.stopPropagation()
     const item = dragItemRef.current
-    if (!item || dragKind !== 'backlog') return
+    if (!item) return
+    // Moving an already-scheduled post onto a specific open slot → just
+    // reschedule it to that exact time. (Without this, the slot row's
+    // stopPropagation ate calendar-item drops and nothing moved.)
+    if (dragKind === 'calendar') { onDragEnd(); await rescheduleTo(item, slot.iso, slot.label); return }
+    if (dragKind !== 'backlog') return
     onDragEnd()
     // Optimistic FIRST: move the card onto the grid and out of the backlog
     // the instant you drop it. The live Upload-Post submission below can take
@@ -1180,25 +1242,10 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
     const orig = new Date(item.scheduled_datetime)
     const next = new Date(dayDate)
     next.setHours(orig.getHours(), orig.getMinutes(), 0, 0)
-    if (next.getTime() === orig.getTime()) { onDragEnd(); return }
-    try {
-      const r = await fetch(`/api/content?id=${item.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ scheduled_datetime: next.toISOString() }),
-      })
-      if (!r.ok) {
-        const b = await r.json().catch(() => ({}))
-        console.warn('reschedule failed:', b?.error || r.status)
-      } else {
-        // Optimistic move — no full-page refetch.
-        setLocalItems((arr) => [...arr.filter((x) => x.id !== item.id), { ...item, scheduled_datetime: next.toISOString() }])
-      }
-    } catch (err) {
-      console.warn('reschedule threw:', err.message)
-    } finally {
-      onDragEnd()
-    }
+    onDragEnd()
+    if (next.getTime() === orig.getTime()) return
+    const label = next.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+    await rescheduleTo(item, next.toISOString(), label)
   }
 
   return (
