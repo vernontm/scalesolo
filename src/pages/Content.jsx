@@ -1589,7 +1589,9 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
               {(() => {
                 const slots = openSlotsFor(d)
                 if (!slots.length) return null
-                const active = dragKind === 'backlog'
+                // Active for BOTH backlog drags (schedule new) and calendar
+                // drags (move an existing post to this exact time).
+                const active = dragKind === 'backlog' || dragKind === 'calendar'
                 return (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 6 }}>
                     {slots.map((slot) => {
