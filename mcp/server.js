@@ -402,6 +402,69 @@ const impls = {
     return ok(result)
   },
 
+  // Generate a short AI video with Veo 3.1 (KIE.ai), billed to the brand
+  // owner's ScaleSolo credits (~110,000 ai_tokens per clip). Text-to-video, or
+  // image-to-video when image_urls is given (animate a photo). Credit-gated by
+  // the generate endpoint (402 if too low). Returns the finished video URL;
+  // optionally drops it into the calendar backlog as a captioned draft post.
+  async generate_video({ brand, prompt, image_urls, aspect = '9:16', duration = 8, add_to_backlog: alsoBacklog = false, platforms }) {
+    if (!prompt) throw new Error('prompt is required')
+    const profile = await resolveBrand(brand)
+    let sub
+    try {
+      sub = await api('/api/videos/generate', {
+        method: 'POST',
+        json: {
+          profile_id: profile.id, prompt, aspect, duration,
+          image_urls: (Array.isArray(image_urls) && image_urls.length) ? image_urls : undefined,
+        },
+      })
+    } catch (e) {
+      if (/insufficient|not enough|402/i.test(e.message)) {
+        throw new Error(`Not enough ScaleSolo credits to generate a video (~110,000 ai_tokens needed). ${e.message}`)
+      }
+      throw e
+    }
+    const taskId = sub?.taskId
+    if (!taskId) throw new Error('Video generation did not start (no taskId).')
+
+    // Veo clips take ~1-4 min. Poll up to ~12 min.
+    let url = null
+    for (let i = 0; i < 120; i++) {
+      await new Promise((r) => setTimeout(r, 6000))
+      let st
+      try { st = await api('/api/videos/status', { query: { taskId, profile_id: profile.id } }) }
+      catch { continue }
+      const state = String(st?.state || '').toLowerCase()
+      if (state === 'success' && st?.url) { url = st.url; break }
+      if (state === 'failed') throw new Error(st?.error || 'Video generation failed at KIE.')
+    }
+    if (!url) throw new Error('Video generation timed out (no video after ~12 min).')
+
+    const result = { brand: profile.business_name, model: 'veo3_fast', prompt, aspect, duration, video: url }
+    if (alsoBacklog) {
+      const chosen = platforms?.length ? normPlatforms(platforms) : await connectedPlatforms(profile.id)
+      const created = await api('/api/content', {
+        method: 'POST',
+        json: {
+          profile_id: profile.id, title: String(prompt).slice(0, 80),
+          media_urls: [url], media_type: 'video', post_type: 'video',
+          status: 'draft', generated_by: 'mcp', platforms: chosen.length ? chosen : null,
+        },
+      })
+      const id = created?.item?.id
+      if (id) {
+        result.content_id = id
+        try {
+          const cap = JSON.parse((await impls.autocaption({ content_id: id })).content[0].text)
+          result.title = cap.title || null; result.caption = cap.caption || null; result.hashtags = cap.hashtags || null
+        } catch { /* caption is best-effort */ }
+        result.status = 'waiting to schedule (in the calendar backlog)'
+      }
+    }
+    return ok(result)
+  },
+
   async next_slots({ brand, count }) {
     const profile = await resolveBrand(brand)
     const body = await api('/api/content/next-slots', {
@@ -524,6 +587,7 @@ const TOOLS = [
   { name: 'batch_add_to_backlog', description: 'Upload MANY local files at once, each becoming its OWN separate post (upload + auto-caption), all left UNSCHEDULED in the brand\'s "Waiting to schedule" backlog. Pass file_paths (a list) and/or folder (a directory whose video/image files are all uploaded). Runs one at a time, continues past failures, and returns a per-file result list. Use this to prep a batch of posts to schedule later. Never posts or schedules anything. (For ONE post made of multiple images, use upload_carousel instead.)', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, file_paths: { type: 'array', items: { type: 'string' }, description: 'Absolute paths to local video/image files — each becomes its own post.' }, folder: { type: 'string', description: 'Optional absolute path to a directory; all video/image files inside are uploaded (in filename order).' }, platforms: platformsSchema }, required: ['brand'] } },
   { name: 'upload_carousel', description: 'Make ONE carousel post from several local images (2-35), auto-caption it, and leave it UNSCHEDULED in the calendar backlog for that brand. Posts as a photo carousel (including TikTok photo mode) when scheduled. Images only. Never posts or schedules anything.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, file_paths: { type: 'array', items: { type: 'string' }, description: 'Absolute paths to 2-35 local image files, in slide order.' }, platforms: platformsSchema }, required: ['brand', 'file_paths'] } },
   { name: 'generate_image', description: 'Generate AI image(s) for a brand via KIE.ai (nano-banana / GPT-Image). Billed to the brand owner\'s ScaleSolo credits (~4,000 ai_tokens per image); returns an insufficient-credits error if the balance is too low, so it can never overspend. Returns the finished image URLs. Set add_to_backlog to also drop them into the calendar backlog as a captioned draft post.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, prompt: { type: 'string', description: 'What to generate.' }, count: { type: 'number', description: '1-8 images (default 1).' }, aspect: { type: 'string', description: 'Aspect ratio, e.g. "1:1", "9:16", "16:9", "4:5" (default "1:1").' }, model: { type: 'string', description: 'nano-banana (default), nano-banana-pro, or gpt-2.' }, reference_urls: { type: 'array', items: { type: 'string' }, description: 'Optional reference image URLs for image-to-image / likeness.' }, enhance_prompt: { type: 'boolean', description: 'Let Claude expand the prompt with composition/lighting first.' }, add_to_backlog: { type: 'boolean', description: 'Also create a captioned draft post from the generated images in the calendar backlog.' }, platforms: platformsSchema }, required: ['brand', 'prompt'] } },
+  { name: 'generate_video', description: 'Generate a short AI video (Veo 3.1 via KIE.ai) for a brand. Text-to-video, or image-to-video when image_urls is given (animate a photo). Billed to the brand owner\'s ScaleSolo credits (~110,000 ai_tokens per clip); returns an insufficient-credits error if too low, so it can never overspend. Returns the finished video URL. Set add_to_backlog to also create a captioned draft post from it. Takes 1-4 minutes.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, prompt: { type: 'string', description: 'What the video should show / how it should move.' }, image_urls: { type: 'array', items: { type: 'string' }, description: 'Optional reference image URL(s) to animate (image-to-video).' }, aspect: { type: 'string', description: 'Aspect ratio, e.g. "9:16" (default), "16:9", "1:1".' }, duration: { type: 'number', description: 'Clip length in seconds: 4, 6, or 8 (default 8).' }, add_to_backlog: { type: 'boolean', description: 'Also create a captioned draft post from the video in the calendar backlog.' }, platforms: platformsSchema }, required: ['brand', 'prompt'] } },
   { name: 'next_slots', description: "List the next open posting time slots from a brand's posting schedule (ISO + human-readable local time).", inputSchema: { type: 'object', properties: { brand: { type: 'string' }, count: { type: 'number', description: 'How many slots (default 5).' } }, required: ['brand'] } },
   { name: 'get_post', description: 'Read a draft/scheduled post (title, caption, hashtags, media, platforms, slot) for review.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' } }, required: ['content_id'] } },
   { name: 'update_post', description: 'Apply edits to a post\'s title / caption / hashtags / first_comment before scheduling. Does NOT publish.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' }, title: { type: 'string' }, caption: { type: 'string' }, hashtags: { type: 'string' }, first_comment: { type: 'string' } }, required: ['content_id'] } },
