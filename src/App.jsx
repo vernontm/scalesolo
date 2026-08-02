@@ -193,7 +193,8 @@ function AppShell() {
             <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/create"    element={<Create />} />
-            <Route path="/create/carousel" element={<Placeholder title="Carousel builder" hint="A guided carousel builder (photo → slides → captions) is landing here. For now, carousels can be generated via the ScaleSolo MCP." />} />
+            <Route path="/create/carousel" element={<Placeholder title="Carousel builder" hint="A streamlined carousel builder (topic → slides → captions → schedule) is landing here." />} />
+            <Route path="/create/walkthrough" element={<Placeholder title="AI Walkthrough builder" hint="A streamlined avatar-walkthrough builder (photo + voice + topic → finished video) is landing here." />} />
             <Route path="/spaces"    element={<Spaces />} />
             <Route path="/schedule"        element={<Content />} />
             <Route path="/schedule/queue"  element={<ApprovalQueue />} />

@@ -18,7 +18,7 @@ const CARDS = [
     icon: Clapperboard,
     title: 'AI Walkthrough Video',
     desc: 'A talking-head avatar video over an animated walkthrough. Pick a photo, a voice, and a topic — the rest generates.',
-    to: '/studio',
+    to: '/create/walkthrough',
     accent: '#0ea5e9',
   },
 ]
