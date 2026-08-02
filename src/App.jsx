@@ -34,6 +34,7 @@ const Contacts      = lazy(() => import('./pages/Contacts.jsx'))
 const Profiles      = lazy(() => import('./pages/Profiles.jsx'))
 const Campaigns     = lazy(() => import('./pages/Campaigns.jsx'))
 const Content        = lazy(() => import('./pages/Content.jsx'))
+const Create         = lazy(() => import('./pages/Create.jsx'))
 const ApprovalQueue  = lazy(() => import('./pages/ApprovalQueue.jsx'))
 const Avatars        = lazy(() => import('./pages/Avatars.jsx'))
 const LandingPages  = lazy(() => import('./pages/LandingPages.jsx'))
@@ -191,6 +192,8 @@ function AppShell() {
                 If we Navigate away, link-session never runs. */}
             <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/create"    element={<Create />} />
+            <Route path="/create/carousel" element={<Placeholder title="Carousel builder" hint="A guided carousel builder (photo → slides → captions) is landing here. For now, carousels can be generated via the ScaleSolo MCP." />} />
             <Route path="/spaces"    element={<Spaces />} />
             <Route path="/schedule"        element={<Content />} />
             <Route path="/schedule/queue"  element={<ApprovalQueue />} />

@@ -9,6 +9,7 @@ import { useAgent } from '../context/AgentContext.jsx'
 const titles = {
   '/dashboard': { t: 'Dashboard',        s: "Welcome back — here's your overview." },
   '/agent':     { t: 'AI CEO',           s: 'Your always-on strategist.' },
+  '/create':    { t: 'Create',           s: 'Pick a format and start a guided build.' },
   '/spaces':    { t: 'Spaces',           s: 'Visual content workflows.' },
   '/schedule':  { t: 'Schedule',         s: 'Library, calendar, and social publishing.' },
   '/content':   { t: 'Schedule',         s: 'Library, calendar, and social publishing.' },

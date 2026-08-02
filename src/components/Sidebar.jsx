@@ -21,6 +21,7 @@ import {
   ShieldCheck,
   LayoutGrid,
   Gift,
+  Wand2,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import ProfileSwitcher from './ProfileSwitcher.jsx'
@@ -45,6 +46,7 @@ const navGroups = [
   {
     label: 'Create',
     items: [
+      { to: '/create', label: 'Create', icon: Wand2 },
       { to: '/spaces',  label: 'Spaces',   icon: Boxes },
       { to: '/schedule', label: 'Schedule', icon: Sparkles },
       { to: '/campaigns', label: 'Campaigns', icon: Megaphone },
