@@ -139,16 +139,63 @@ function stopKeepAlive() {
   console.log('[keepalive] stopped (no active jobs)')
 }
 
-// Increment / decrement active job count and toggle the keep-alive.
+// ── Self-stop (scale-to-zero) ─────────────────────────────────────────
+// Fly config runs 0 machines by default and auto-starts one on a render
+// request. Nothing stops it afterward, so the worker stops ITS OWN machine
+// via the Fly Machines API once it's been idle (activeJobs === 0) for
+// SELF_STOP_IDLE_MS. This is why auto_stop is off in fly.toml — a long bake
+// can never be suspended mid-flight; we only stop when there's provably no
+// work. Cost then accrues only while a render actually runs.
+//   Needs: FLY_API_TOKEN (secret) + FLY_APP_NAME + FLY_MACHINE_ID (Fly injects
+//   the latter two). Without the token, self-stop no-ops (machine stays up).
+const SELF_STOP_IDLE_MS = Number(process.env.SELF_STOP_IDLE_MS || 180_000) // 3 min
+const FLY_API_TOKEN = process.env.FLY_API_TOKEN
+const FLY_APP_NAME = process.env.FLY_APP_NAME
+const FLY_MACHINE_ID = process.env.FLY_MACHINE_ID
+let idleStopTimer = null
+
+async function stopSelfMachine() {
+  if (activeJobs > 0) return // race guard: a job started while the timer fired
+  if (!FLY_MACHINE_ID || !FLY_APP_NAME) return // not on Fly — nothing to stop
+  if (!FLY_API_TOKEN) {
+    console.warn('[self-stop] FLY_API_TOKEN not set — cannot stop machine; it will stay up (idle billing). Run: fly secrets set FLY_API_TOKEN=... -a ' + FLY_APP_NAME)
+    return
+  }
+  try {
+    console.log(`[self-stop] idle ${SELF_STOP_IDLE_MS / 1000}s, no jobs — stopping machine ${FLY_MACHINE_ID}`)
+    const r = await fetch(`https://api.machines.dev/v1/apps/${FLY_APP_NAME}/machines/${FLY_MACHINE_ID}/stop`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${FLY_API_TOKEN}`, 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+    if (!r.ok) console.warn(`[self-stop] Fly stop returned ${r.status}: ${(await r.text()).slice(0, 200)}`)
+  } catch (e) {
+    console.warn('[self-stop] failed:', e?.message)
+  }
+}
+
+function armIdleStop() {
+  if (idleStopTimer || !FLY_MACHINE_ID) return
+  idleStopTimer = setTimeout(() => {
+    idleStopTimer = null
+    if (activeJobs === 0) stopSelfMachine()
+  }, SELF_STOP_IDLE_MS)
+}
+function cancelIdleStop() {
+  if (idleStopTimer) { clearTimeout(idleStopTimer); idleStopTimer = null }
+}
+
+// Increment / decrement active job count and toggle the keep-alive + self-stop.
 // Pair every jobStart() with a jobEnd() (in a finally block) so the
 // counter never drifts on errors.
 function jobStart() {
   activeJobs += 1
+  cancelIdleStop()               // work in flight → don't stop
   if (activeJobs === 1) startKeepAlive()
 }
 function jobEnd() {
   activeJobs = Math.max(0, activeJobs - 1)
-  if (activeJobs === 0) stopKeepAlive()
+  if (activeJobs === 0) { stopKeepAlive(); armIdleStop() }
 }
 
 // Shared-secret middleware for every job route.
@@ -3307,4 +3354,10 @@ app.post('/jobs/polish', requireSecret, async (req, res) => {
   }
 })
 
-app.listen(PORT, () => console.log(`[worker] listening on :${PORT}`))
+app.listen(PORT, () => {
+  console.log(`[worker] listening on :${PORT}`)
+  // Booted (auto-started by a render request). Arm the idle self-stop so that
+  // if no job actually lands — or once all jobs finish — the machine stops
+  // itself instead of billing idle. A real jobStart() cancels this.
+  armIdleStop()
+})
