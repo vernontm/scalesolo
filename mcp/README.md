@@ -62,6 +62,7 @@ Ray / ray@vernontm.com, who owns the 5 brand profiles).
 | `add_to_backlog` | Upload one file + auto-caption → left in the calendar backlog | no |
 | `batch_add_to_backlog` | Upload MANY files (list and/or a folder), each its own backlog post | no |
 | `upload_carousel` | Several images → ONE carousel post in the backlog | no |
+| `generate_image` | AI-generate image(s) (KIE.ai), billed to the brand's ScaleSolo credits | no (returns URLs) |
 | `next_slots` | Next open time slots from the brand's schedule | no |
 | `get_post` | Read a draft/scheduled post | no |
 | `update_post` | Edit title/caption/hashtags/first_comment | no |

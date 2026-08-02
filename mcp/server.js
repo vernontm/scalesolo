@@ -335,6 +335,73 @@ const impls = {
     })
   },
 
+  // Generate image(s) with AI (KIE.ai / nano-banana etc.), billed to the
+  // brand owner's ScaleSolo credits (~4,000 ai_tokens per image). The generate
+  // endpoint reserves credits up-front and returns 402 if the balance is too
+  // low, so this tool can't spend credits the user doesn't have. Returns the
+  // finished image URLs; optionally drops them into the calendar backlog as a
+  // draft post (add_to_backlog).
+  async generate_image({ brand, prompt, count = 1, aspect = '1:1', model = 'nano-banana', reference_urls, enhance_prompt = false, add_to_backlog: alsoBacklog = false, platforms }) {
+    if (!prompt) throw new Error('prompt is required')
+    const profile = await resolveBrand(brand)
+    const n = Math.max(1, Math.min(8, Number(count) || 1))
+    let sub
+    try {
+      sub = await api('/api/images/generate', {
+        method: 'POST',
+        json: {
+          profile_id: profile.id, prompt, model, count: n, aspect,
+          reference_urls: (Array.isArray(reference_urls) && reference_urls.length) ? reference_urls : undefined,
+          enhance_prompt: !!enhance_prompt,
+        },
+      })
+    } catch (e) {
+      if (/insufficient|not enough|402/i.test(e.message)) {
+        throw new Error(`Not enough ScaleSolo credits to generate ${n} image(s) (~${4000 * n} ai_tokens needed). ${e.message}`)
+      }
+      throw e
+    }
+    const taskId = sub?.taskId
+    if (!taskId) throw new Error('Image generation did not start (no taskId).')
+
+    // Poll for results (~4 min ceiling; images usually land in 5-30s).
+    let urls = []
+    for (let i = 0; i < 80; i++) {
+      await new Promise((r) => setTimeout(r, 3000))
+      let st
+      try { st = await api('/api/images/status', { query: { taskId, profile_id: profile.id } }) }
+      catch { continue }
+      const got = (Array.isArray(st?.urls) ? st.urls : Array.isArray(st?.images) ? st.images : [])
+        .map((u) => (typeof u === 'string' ? u : u?.url)).filter(Boolean)
+      if (got.length) { urls = got; break }
+      if (String(st?.state || '').toLowerCase() === 'failed') throw new Error(st?.error || 'Image generation failed at KIE.')
+    }
+    if (!urls.length) throw new Error('Image generation timed out (no images after ~4 min).')
+
+    const result = { brand: profile.business_name, model, prompt, count: urls.length, images: urls }
+    if (alsoBacklog) {
+      const chosen = platforms?.length ? normPlatforms(platforms) : await connectedPlatforms(profile.id)
+      const created = await api('/api/content', {
+        method: 'POST',
+        json: {
+          profile_id: profile.id, title: String(prompt).slice(0, 80),
+          media_urls: urls, media_type: urls.length > 1 ? 'carousel' : 'image', post_type: 'post',
+          status: 'draft', generated_by: 'mcp', platforms: chosen.length ? chosen : null,
+        },
+      })
+      const id = created?.item?.id
+      if (id) {
+        result.content_id = id
+        try {
+          const cap = JSON.parse((await impls.autocaption({ content_id: id })).content[0].text)
+          result.title = cap.title || null; result.caption = cap.caption || null; result.hashtags = cap.hashtags || null
+        } catch { /* caption is best-effort */ }
+        result.status = 'waiting to schedule (in the calendar backlog)'
+      }
+    }
+    return ok(result)
+  },
+
   async next_slots({ brand, count }) {
     const profile = await resolveBrand(brand)
     const body = await api('/api/content/next-slots', {
@@ -456,6 +523,7 @@ const TOOLS = [
   { name: 'add_to_backlog', description: 'Upload a local video/image AND auto-caption it in one step, then leave it UNSCHEDULED in the calendar\'s "Waiting to schedule" backlog for that brand. Use this when the user wants a post prepared to drag onto the calendar later. Never posts or schedules anything.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id (e.g. "RayvaughnCEO").' }, file_path: { type: 'string', description: 'Absolute path to the local video/image file.' }, platforms: platformsSchema }, required: ['brand', 'file_path'] } },
   { name: 'batch_add_to_backlog', description: 'Upload MANY local files at once, each becoming its OWN separate post (upload + auto-caption), all left UNSCHEDULED in the brand\'s "Waiting to schedule" backlog. Pass file_paths (a list) and/or folder (a directory whose video/image files are all uploaded). Runs one at a time, continues past failures, and returns a per-file result list. Use this to prep a batch of posts to schedule later. Never posts or schedules anything. (For ONE post made of multiple images, use upload_carousel instead.)', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, file_paths: { type: 'array', items: { type: 'string' }, description: 'Absolute paths to local video/image files — each becomes its own post.' }, folder: { type: 'string', description: 'Optional absolute path to a directory; all video/image files inside are uploaded (in filename order).' }, platforms: platformsSchema }, required: ['brand'] } },
   { name: 'upload_carousel', description: 'Make ONE carousel post from several local images (2-35), auto-caption it, and leave it UNSCHEDULED in the calendar backlog for that brand. Posts as a photo carousel (including TikTok photo mode) when scheduled. Images only. Never posts or schedules anything.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, file_paths: { type: 'array', items: { type: 'string' }, description: 'Absolute paths to 2-35 local image files, in slide order.' }, platforms: platformsSchema }, required: ['brand', 'file_paths'] } },
+  { name: 'generate_image', description: 'Generate AI image(s) for a brand via KIE.ai (nano-banana / GPT-Image). Billed to the brand owner\'s ScaleSolo credits (~4,000 ai_tokens per image); returns an insufficient-credits error if the balance is too low, so it can never overspend. Returns the finished image URLs. Set add_to_backlog to also drop them into the calendar backlog as a captioned draft post.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, prompt: { type: 'string', description: 'What to generate.' }, count: { type: 'number', description: '1-8 images (default 1).' }, aspect: { type: 'string', description: 'Aspect ratio, e.g. "1:1", "9:16", "16:9", "4:5" (default "1:1").' }, model: { type: 'string', description: 'nano-banana (default), nano-banana-pro, or gpt-2.' }, reference_urls: { type: 'array', items: { type: 'string' }, description: 'Optional reference image URLs for image-to-image / likeness.' }, enhance_prompt: { type: 'boolean', description: 'Let Claude expand the prompt with composition/lighting first.' }, add_to_backlog: { type: 'boolean', description: 'Also create a captioned draft post from the generated images in the calendar backlog.' }, platforms: platformsSchema }, required: ['brand', 'prompt'] } },
   { name: 'next_slots', description: "List the next open posting time slots from a brand's posting schedule (ISO + human-readable local time).", inputSchema: { type: 'object', properties: { brand: { type: 'string' }, count: { type: 'number', description: 'How many slots (default 5).' } }, required: ['brand'] } },
   { name: 'get_post', description: 'Read a draft/scheduled post (title, caption, hashtags, media, platforms, slot) for review.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' } }, required: ['content_id'] } },
   { name: 'update_post', description: 'Apply edits to a post\'s title / caption / hashtags / first_comment before scheduling. Does NOT publish.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' }, title: { type: 'string' }, caption: { type: 'string' }, hashtags: { type: 'string' }, first_comment: { type: 'string' } }, required: ['content_id'] } },
