@@ -47,24 +47,26 @@ const FORMAT_GUIDES = {
 
 // Draft the slide plan + post caption from the topic, in the brand's voice,
 // chosen structure (format), and visual style.
-async function planCarousel({ topic, slideCount, brandMd, brandColors, style, format, hasRefs, sig }) {
+async function planCarousel({ topic, slideCount, brandMd, brandColors, style, format, hasRefs, person, sig }) {
   const out = await anthropicMessage({
     model: 'claude-sonnet-5',
     max_tokens: 8000,
     system: [
       'You plan short-form social CAROUSELS (multi-slide photo posts) for a brand.',
       'Return ONLY valid JSON, no preamble, matching exactly:',
-      '{ "title": string, "caption": string, "hashtags": string, "slides": [ { "kind": "cover"|"tip"|"cta", "headline": string, "body": string, "image_prompt": string } ] }',
+      `{ "title": string, "caption": string, "hashtags": string, "slides": [ { "kind": "cover"|"tip"|"cta", "headline": string, "body": string, ${person ? '"pose": string, ' : ''}"image_prompt": string } ] }`,
       '',
       `Produce EXACTLY ${slideCount} slides: slide 1 kind "cover", the last slide kind "cta", the rest "tip".`,
       FORMAT_GUIDES[format] ? `STRUCTURE: ${FORMAT_GUIDES[format]}` : '',
+      person ? 'pose: a short description of how the featured PERSON should stand/gesture on THIS slide (vary it slide to slide, e.g. "arms crossed, confident direct eye contact" or "mid-gesture explaining, three-quarter turn"). The person is rendered from a reference photo and placed on the slide, so do NOT describe the person\'s face/clothing/identity, only the pose and expression.' : '',
       'headline: punchy, <= 8 words. body: for "tip" slides write 2 to 4 short sentences (about 25 to 55 words) that actually teach the point, broken into 1 or 2 tiny paragraphs; for "cover" a 1-line promise is fine; for "cta" a short 1 to 2 sentence nudge. Never leave a tip body empty.',
       'image_prompt: a complete prompt for an image model to render a 3:4 branded graphic for THIS slide. It MUST:',
       '  - render BOTH the exact HEADLINE (large, crisp, the visual focal point) AND the full BODY text beneath it, all spelled exactly as given, as clean legible typography with clear hierarchy (big bold headline, smaller readable body paragraph). Layout the body as real sentences/paragraphs, not a caption.',
       '  - lay out headline top, body below it, with comfortable margins so no text is cut off or crowded; body text must be fully legible, not tiny.',
       `  - use the brand's colors${brandColors ? ` (${brandColors})` : ''} and a clean, cohesive layout consistent across all slides`,
       style ? `  - FOLLOW THIS VISUAL STYLE on every slide: ${style}` : '',
-      hasRefs ? '  - COMPOSE WITH THE PROVIDED REFERENCE IMAGE(S): place the referenced subject (a person, logo, or product) naturally in the frame; keep a person\'s exact face/likeness or a logo\'s exact form; the headline text must not overlap it.' : '',
+      person ? '  - RESERVE about half the frame (one side) as clean empty background for a person portrait that is composited in separately; put the headline and body text on the OPPOSITE side. Do NOT describe or draw any person yourself.'
+        : hasRefs ? '  - COMPOSE WITH THE PROVIDED REFERENCE IMAGE(S): place the referenced subject (a logo or product) naturally in the frame; keep its exact form; the headline text must not overlap it.' : '',
       sig ? '  - LEAVE the bottom-left corner clear (a small empty margin, no text or key subject there): a name + handle signature is added afterward. Do NOT render any name, handle, @username, or signature yourself.' : '',
       '  - describe composition/background so the set looks like one designed series',
       '  - NOT include watermarks, other brands\' logos, page numbers, or slide numbers',
@@ -113,6 +115,70 @@ async function genImage(originalReq, { profile_id, prompt, model, reference_urls
   throw new Error('slide image timed out')
 }
 
+// ── Person (two-stage) pipeline ────────────────────────────────────────
+// When a reference photo contains a person, we mirror the approved house
+// pipeline: Seedream 5 Pro renders a photoreal portrait that locks the
+// person's likeness onto the requested pose (plain background), then GPT
+// Image 2 builds the branded slide graphic AROUND that portrait. One-stage
+// image-to-image drifts the face and looks flat; two-stage keeps the
+// likeness and the crisp text.
+
+// Generic (any-brand) portrait prompt — honors whoever is in the reference.
+function portraitPrompt(pose) {
+  return (
+    'Photorealistic studio portrait photograph of the SAME person shown in the reference image(s). '
+    + 'Preserve their EXACT facial identity, bone structure, skin tone, hairstyle and facial hair with no drift, '
+    + 'as if photographed on the same day. '
+    + `POSE: ${pose || 'relaxed confident stance, direct eye contact, natural expression'}. `
+    + 'Upper body clearly visible, both hands (if shown) anatomically correct with five fingers each. '
+    + 'Soft professional lighting, natural visible skin texture, authentic sharp DSLR realism, subtle imperfections. '
+    + 'NOT CGI, not 3D-rendered, not a digital painting, not airbrushed or plastic. '
+    + 'The person is isolated on a PURE SOLID WHITE background (#ffffff) with soft edges. '
+    + 'No text, no graphics, no props, no border.'
+  )
+}
+
+// Instruction prepended to the slide's graphic prompt for stage 2, telling
+// GPT to keep the handed portrait untouched and compose the slide around it.
+const COMPOSITE_CLAUSE = (
+  'Using the provided portrait photo of the person EXACTLY as-is (do NOT change, redraw or restyle their '
+  + 'face, hair, skin, build or pose; keep their exact likeness), build the slide described below. '
+  + 'Cleanly remove the plain background behind the person so their figure blends seamlessly into the slide '
+  + "background with soft edges (NO photo box, frame or rectangle), placed to ONE side at about 45 to 55% width, "
+  + 'bleeding off that edge. Put the headline and ALL body text on the OPPOSITE side with comfortable margins so '
+  + 'no text overlaps the person and nothing is cut off. Keep one cohesive layout across the set.\n\nSLIDE: '
+)
+
+// Cheap vision check: does the first reference photo contain a real person
+// (a visible human face/figure)? Drives whether we run the two-stage path.
+async function refHasPerson(refUrl) {
+  try {
+    const out = await anthropicMessage({
+      model: 'claude-sonnet-5',
+      max_tokens: 5,
+      system: 'Answer with a single word: "yes" if the image clearly contains a real human person (a face or body), otherwise "no".',
+      messages: [{ role: 'user', content: [
+        { type: 'image', source: { type: 'url', url: refUrl } },
+        { type: 'text', text: 'Does this image contain a person?' },
+      ] }],
+    })
+    const t = (out?.content || []).map((c) => c?.text || '').join('').trim().toLowerCase()
+    return t.startsWith('y')
+  } catch { return false }
+}
+
+// Two-stage slide render: Seedream portrait → GPT Image 2 graphic.
+async function genPersonSlide(originalReq, { profile_id, refs, pose, graphicPrompt, aspect }) {
+  const portrait = await genImage(originalReq, {
+    profile_id, prompt: portraitPrompt(pose), model: 'seedream',
+    reference_urls: refs, aspect,
+  })
+  return genImage(originalReq, {
+    profile_id, prompt: `${COMPOSITE_CLAUSE}${graphicPrompt}`, model: 'gpt-2',
+    reference_urls: [portrait], aspect,
+  })
+}
+
 export default async function handler(req, res) {
   setCors(req, res)
   if (req.method === 'OPTIONS') return res.status(204).end()
@@ -129,8 +195,13 @@ export default async function handler(req, res) {
     const refs = (Array.isArray(reference_urls) ? reference_urls.filter(Boolean) : [])
     // Style directive = preset theme + any free-text the user added.
     const style = [THEME_PROMPTS[theme] || '', String(extra_style || '').trim()].filter(Boolean).join(' ')
-    // With references, use an image-to-image model that honors them + renders
-    // text well; otherwise the default text-to-image graphic model.
+
+    // Auto-detect a PERSON in the references. When present, every slide uses
+    // the two-stage house pipeline (Seedream portrait → GPT Image 2 graphic)
+    // so the person's likeness lands. Logos/products stay single-stage.
+    const person = refs.length > 0 && await refHasPerson(refs[0])
+    // Single-stage model (non-person): image-to-image when refs present,
+    // else the text-to-image graphic model.
     const useModel = model || (refs.length ? 'gpt-2' : 'nano-banana')
 
     let brandMd = '', brandColors = ''
@@ -157,18 +228,22 @@ export default async function handler(req, res) {
       return { name, handle, dark: signature?.dark !== false }
     })()
 
-    const plan = await planCarousel({ topic, slideCount: n, brandMd, brandColors, style, format, hasRefs: refs.length > 0, sig })
+    const plan = await planCarousel({ topic, slideCount: n, brandMd, brandColors, style, format, hasRefs: refs.length > 0, person, sig })
     const slides = plan.slides.slice(0, n)
 
     let urls
     try {
       urls = await Promise.all(slides.map((s) => {
-        const prompt = style ? `${s.image_prompt}\n\nSTYLE: ${style}` : s.image_prompt
-        return genImage(req, { profile_id, prompt, model: useModel, reference_urls: refs.length ? refs : undefined, aspect })
+        const graphicPrompt = style ? `${s.image_prompt}\n\nSTYLE: ${style}` : s.image_prompt
+        if (person) {
+          return genPersonSlide(req, { profile_id, refs, pose: s.pose, graphicPrompt, aspect })
+        }
+        return genImage(req, { profile_id, prompt: graphicPrompt, model: useModel, reference_urls: refs.length ? refs : undefined, aspect })
       }))
     } catch (e) {
       if (e.code === 'insufficient_credits') {
-        return res.status(402).json({ error: `Not enough credits to render ${n} slides (~${4000 * n} ai_tokens). ${e.message}`, code: 'insufficient_credits' })
+        const est = 4000 * n * (person ? 2 : 1)
+        return res.status(402).json({ error: `Not enough credits to render ${n} slides (~${est} ai_tokens${person ? ', two stages per slide for the person likeness' : ''}). ${e.message}`, code: 'insufficient_credits' })
       }
       return res.status(502).json({ error: `Slide generation failed: ${e.message}` })
     }

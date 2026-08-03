@@ -70,7 +70,7 @@ export default function CarouselBuilder() {
   // Load saved references + signature (persist per brand) + topic ideas.
   useEffect(() => {
     if (!refsKey) return
-    try { const s = JSON.parse(localStorage.getItem(refsKey) || '[]'); if (Array.isArray(s)) setRefs(s.map((u) => ({ url: u, selected: false }))) } catch {}
+    try { const s = JSON.parse(localStorage.getItem(refsKey) || '[]'); if (Array.isArray(s)) setRefs(s.map((u) => ({ url: u, selected: true }))) } catch {}
     try {
       const g = JSON.parse(localStorage.getItem(sigKey) || 'null')
       if (g && typeof g === 'object') { setSigOn(g.on !== false); setSigName(g.name || ''); setSigHandle(g.handle || ''); setSigDark(g.dark !== false) }
@@ -284,7 +284,7 @@ export default function CarouselBuilder() {
                 Drag images here, or <label style={{ color: '#a855f7', cursor: 'pointer', fontWeight: 600 }}>browse<input type="file" accept="image/*" multiple hidden onChange={(e) => { uploadFiles(e.target.files); e.target.value = '' }} /></label>
                 {uploading && ' · uploading…'}
               </div>
-              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>Saved for next time. Click a thumbnail to use it in this carousel.</div>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>Saved for next time. Highlighted thumbnails are used. If a reference is a person, each slide is rendered in two steps (portrait then graphic) to lock the likeness.</div>
             </div>
             {refs.length > 0 && (
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
@@ -330,7 +330,7 @@ export default function CarouselBuilder() {
             <Sparkles size={15} /> Generate carousel
           </button>
           <div style={{ textAlign: 'center', fontSize: 11.5, color: 'var(--muted)', marginTop: 10 }}>
-            ~{(4000 * slides).toLocaleString()} AI tokens ({slides} slides{selectedRefs.length ? `, ${selectedRefs.length} ref${selectedRefs.length > 1 ? 's' : ''}` : ''}). Nothing posts automatically.
+            ~{(4000 * slides).toLocaleString()}+ AI tokens ({slides} slides{selectedRefs.length ? `, ${selectedRefs.length} ref${selectedRefs.length > 1 ? 's' : ''}` : ''}). A person reference doubles it (two steps per slide). Nothing posts automatically.
           </div>
         </div>
       </div>
