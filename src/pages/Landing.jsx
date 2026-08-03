@@ -721,11 +721,10 @@ function CarouselBuildPanel() {
               {tick < GEN_END && <span style={{ animation: 'ssCaret 0.9s step-end infinite' }}>|</span>}
             </span>
           </div>
-          {(generating || slidesShown === 0) && (
-            <div style={{ height: 6, borderRadius: 999, background: 'rgba(255,255,255,0.08)', overflow: 'hidden', marginBottom: 12 }}>
-              <div style={{ height: '100%', width: `${genPct}%`, borderRadius: 999, background: 'linear-gradient(90deg, var(--red), #f59e0b)', transition: 'width 0.12s linear' }} />
-            </div>
-          )}
+          {/* Always mounted so the panel height never changes mid-loop. */}
+          <div style={{ height: 6, borderRadius: 999, background: 'rgba(255,255,255,0.08)', overflow: 'hidden', marginBottom: 12, opacity: (generating || slidesShown === 0) ? 1 : 0, transition: 'opacity 0.3s' }}>
+            <div style={{ height: '100%', width: `${genPct}%`, borderRadius: 999, background: 'linear-gradient(90deg, var(--red), #f59e0b)', transition: 'width 0.12s linear' }} />
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
             {DEMO_SLIDES.map((src, i) => (
               <div key={src} style={{ aspectRatio: '3 / 4', borderRadius: 8, overflow: 'hidden', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
@@ -745,11 +744,9 @@ function CarouselBuildPanel() {
               {done ? <span style={{ color: '#2ecc71', fontWeight: 700, animation: 'ssRowIn 0.4s var(--ease) both' }}>Saved to backlog ✓</span> : '7 slides'}
             </div>
           </div>
-          {done && (
-            <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-soft)', animation: 'ssRowIn 0.4s var(--ease) both' }}>
-              <Check size={13} style={{ color: '#2ecc71' }} /> Caption + hashtags written in your voice. Ready to schedule.
-            </div>
-          )}
+          <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-soft)', minHeight: 18, opacity: done ? 1 : 0, transition: 'opacity 0.3s' }}>
+            <Check size={13} style={{ color: '#2ecc71' }} /> Caption + hashtags written in your voice. Ready to schedule.
+          </div>
       </div>
     </div>
   )
