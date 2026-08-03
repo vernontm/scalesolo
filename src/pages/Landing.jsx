@@ -251,52 +251,55 @@ export default function Landing() {
         <div aria-hidden style={heroFlameWisp} />
 
         <div style={heroGrid} className="hero-grid">
-          {/* Static headline. White base text with the brand-red
-              gradient applied only to "faceless brand". The
-              mobile-line-break <br /> below shows up only at
-              <= 860px so the H1 breaks cleanly into two visual
-              lines on phones: "Launch your faceless / brand in
-              minutes." */}
-          <h1
-            style={{ ...heroH1, textAlign: 'center', margin: 0, color: 'var(--text)' }}
-            className="fade-up"
-          >
-            Create <span className="brand-text">30 days of content</span><br className="mobile-line-break" /> in minutes.
-          </h1>
-
-          {/* Subhead + CTAs + trust pills below the video */}
-          <div style={heroCopy} className="hero-copy">
-            <p style={{ ...heroSub, margin: '0 auto 24px', textAlign: 'center' }} className="fade-up">
-              ScaleSolo is your AI social media manager. Design carousels, avatar videos, and a
-              month of posts, then drop them on a calendar that publishes for you. It even hooks
-              into Claude, so your AI can run the whole thing.
-            </p>
-            <div style={{ ...heroCtas, justifyContent: 'center' }} className="fade-up hero-ctas">
-              <button onClick={goPricing} className="btn-primary" style={ctaSizing}>
-                Start free <ArrowRight size={14} />
-              </button>
-              <button
-                type="button"
-                onClick={() => setDemoOpen(true)}
-                className="btn-secondary"
-                style={ctaSizing}
+          {/* Two-column hero: copy + CTAs left, the product literally
+              building a real carousel on the right. Stacks and centers
+              under 940px. */}
+          <div className="hero2">
+            <div className="hero2-copy">
+              <h1
+                style={{ ...heroH1, margin: 0, marginBottom: 18, color: 'var(--text)' }}
+                className="fade-up hero2-h1"
               >
-                <Play size={13} fill="currentColor" /> See how it works
-              </button>
+                Create <span className="brand-text">30 days of content</span> in minutes.
+              </h1>
+              <p style={{ ...heroSub, margin: '0 0 22px' }} className="fade-up hero2-sub">
+                ScaleSolo is your AI social media manager. Design carousels, avatar videos, and a
+                month of posts, then drop them on a calendar that publishes for you. It even hooks
+                into Claude, so your AI can run the whole thing.
+              </p>
+              <div style={{ ...heroCtas, marginBottom: 10 }} className="fade-up hero2-row">
+                <button onClick={goPricing} className="btn-primary" style={ctaSizing}>
+                  Start free <ArrowRight size={14} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDemoOpen(true)}
+                  className="btn-secondary"
+                  style={ctaSizing}
+                >
+                  <Play size={13} fill="currentColor" /> See how it works
+                </button>
+              </div>
+              <div className="fade-up hero2-micro" style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 20 }}>
+                3-day free trial. Cancel anytime. Keep everything you make.
+              </div>
+              <div style={{ ...trustPills, marginBottom: 16 }} className="fade-up hero2-row">
+                <span style={pill}><Check size={11} /> 3-day trial</span>
+                <span style={pill}><Check size={11} /> Posts to 9+ platforms</span>
+                <span style={pill}><Check size={11} /> Works with Claude (MCP)</span>
+              </div>
+              <div className="fade-up ss-platform-strip hero2-row" style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 11, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', fontFamily: 'var(--font-display)', fontWeight: 700 }}>Publishes natively to</span>
+                {trustLogos.map(({ name, Icon, tint }) => (
+                  <span key={name} title={name} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-soft)', fontSize: 12.5 }}>
+                    <Icon size={15} style={{ color: tint }} /> {name}
+                  </span>
+                ))}
+                <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>+ 4 more</span>
+              </div>
             </div>
-            <div style={{ ...trustPills, justifyContent: 'center', marginBottom: 0 }} className="fade-up hero-pills">
-              <span style={pill}><Check size={11} /> 3-day trial</span>
-              <span style={pill}><Check size={11} /> Posts to 9+ platforms</span>
-              <span style={pill}><Check size={11} /> Works with Claude (MCP)</span>
-            </div>
-            <div className="fade-up ss-platform-strip" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 18, flexWrap: 'wrap', marginTop: 26 }}>
-              <span style={{ fontSize: 11, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', fontFamily: 'var(--font-display)', fontWeight: 700 }}>Publishes natively to</span>
-              {trustLogos.map(({ name, Icon, tint }) => (
-                <span key={name} title={name} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-soft)', fontSize: 12.5 }}>
-                  <Icon size={15} style={{ color: tint }} /> {name}
-                </span>
-              ))}
-              <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>+ 4 more</span>
+            <div className="fade-up">
+              <CarouselBuildPanel />
             </div>
           </div>
         </div>
@@ -306,7 +309,6 @@ export default function Landing() {
       {/* Real product, real output: a carousel building itself from the
           user's actual slides, the self-filling calendar, Claude driving
           the account over MCP, and a likeness-locked outfit change. */}
-      <CarouselBuildDemo />
       <CalendarShowcase />
       <McpShowcase />
       <OutfitShowcase />
@@ -657,6 +659,14 @@ function DemoKeyframes() {
       @keyframes ssWipeLine { 0%, 8% { left: 0%; } 46%, 62% { left: 100%; } 96%, 100% { left: 0%; } }
       .ss-demo-grid { display: grid; grid-template-columns: 1.05fr 1fr; gap: 44px; align-items: center; }
       @media (max-width: 900px) { .ss-demo-grid { grid-template-columns: 1fr; gap: 26px; } }
+      .hero2 { display: grid; grid-template-columns: 1.04fr 0.96fr; gap: 48px; align-items: center; text-align: left; }
+      .hero2-h1 { font-size: clamp(36px, 4.3vw, 58px) !important; }
+      .hero2-sub { font-size: 16px; }
+      @media (max-width: 940px) {
+        .hero2 { grid-template-columns: 1fr; gap: 30px; text-align: center; }
+        .hero2-row { justify-content: center !important; }
+        .hero2-h1 { font-size: clamp(32px, 8.5vw, 44px) !important; }
+      }
       @media (max-width: 640px) {
         .hero-section h1 { font-size: clamp(34px, 9.5vw, 44px) !important; }
         .ss-cal-grid { gap: 3px !important; }
@@ -668,8 +678,9 @@ function DemoKeyframes() {
   )
 }
 
-// 1) Carousel builder: topic types itself, slides pop in, lands in backlog.
-function CarouselBuildDemo() {
+// 1) Carousel builder panel: topic types itself, slides pop in, lands in
+// backlog. Lives in the HERO as the primary product visual.
+function CarouselBuildPanel() {
   // Typing runs at 2 chars per 100ms tick so the demo gets to the
   // payoff (the slides) quickly.
   const TYPE_END = 23, GEN_END = 40, SLIDES_END = 82, LOOP = 125
@@ -680,26 +691,9 @@ function CarouselBuildDemo() {
   const slidesShown = tick < GEN_END ? 0 : Math.min(7, Math.floor((tick - GEN_END) / 6) + 1)
   const done = tick >= SLIDES_END
   return (
-    <section style={section} className="fade-up" ref={ref}>
+    <div ref={ref}>
       <DemoKeyframes />
-      <div className="ss-demo-grid">
-        <div className="showcase-copy">
-          <div className="feat-eyebrow">Carousel builder, built in</div>
-          <h2 className="showcase-title">Type a topic. Get a designed carousel.</h2>
-          <p className="showcase-body">
-            These slides were made in ScaleSolo, cover to CTA, from one sentence. The design
-            system stays locked across every slide: same background, same fonts, same brand
-            accent, and you can put yourself on every slide from a single photo.
-          </p>
-          <ul className="showcase-list">
-            <li><Check size={14} /> Pick a format: listicle, how-to, myth vs fact, checklist</li>
-            <li><Check size={14} /> Your likeness on every slide from one reference photo</li>
-            <li><Check size={14} /> Caption and hashtags written in your brand voice</li>
-            <li><Check size={14} /> Lands in your backlog ready to schedule</li>
-          </ul>
-          <DemoCta stat="7 designed slides in about 90 seconds" label="Build your first carousel free" />
-        </div>
-        <div style={demoPanel}>
+      <div style={demoPanel}>
           <div style={demoKicker}><Wand2 size={12} /> Watch it build, real output</div>
           <div style={{
             display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px',
@@ -741,9 +735,8 @@ function CarouselBuildDemo() {
               <Check size={13} style={{ color: '#2ecc71' }} /> Caption + hashtags written in your voice. Ready to schedule.
             </div>
           )}
-        </div>
       </div>
-    </section>
+    </div>
   )
 }
 
@@ -828,23 +821,21 @@ function CalendarShowcase() {
 
 // 3) Claude driving the account over MCP.
 function McpShowcase() {
-  const LOOP = 190
-  const [ref, tick] = useDemoTicker(LOOP)
+  // Fully static mockup: the complete conversation is visible at once so
+  // the panel never grows or shifts while you read it.
   const USER_MSG = 'Plan my week: 2 carousels, a fresh headshot, and a teaser video.'
-  const typed = USER_MSG.slice(0, Math.min(tick * 2, USER_MSG.length))
   const MCP_VIDEO_URL = '/landing/demo/mcp-talk.mp4' // real Veo output: the burgundy-blazer headshot talking
   const TOOLS = [
-    { at: 40, text: 'create_carousel  "5 Content Ideas That Book Clients"', thumb: '/landing/demo/slide-01.jpg' },
-    { at: 52, text: 'create_carousel  "Turn Followers Into Customers"' },
-    { at: 64, text: 'generate_image  "studio headshot, burgundy blazer"', thumb: '/landing/demo/outfit-after.jpg' },
-    { at: 78, text: 'generate_video  "8s brand teaser, vertical"', video: MCP_VIDEO_URL },
-    { at: 94, text: 'schedule_post  Tue 11:00 AM' },
-    { at: 104, text: 'schedule_post  Thu 11:00 AM' },
-    { at: 114, text: 'schedule_post  Fri 6:00 PM' },
+    { text: 'create_carousel  "5 Content Ideas That Book Clients"', thumb: '/landing/demo/slide-01.jpg' },
+    { text: 'create_carousel  "Turn Followers Into Customers"', thumb: '/landing/demo/slide-02.jpg' },
+    { text: 'generate_image  "studio headshot, burgundy blazer"', thumb: '/landing/demo/outfit-after.jpg' },
+    { text: 'generate_video  "8s brand teaser, vertical"', video: MCP_VIDEO_URL },
+    { text: 'schedule_post  Tue 11:00 AM' },
+    { text: 'schedule_post  Thu 11:00 AM' },
+    { text: 'schedule_post  Fri 6:00 PM' },
   ]
-  const replyAt = 128
   return (
-    <section style={section} className="fade-up" ref={ref}>
+    <section style={section} className="fade-up">
       <div className="ss-demo-grid">
         <div className="showcase-copy">
           <div className="feat-eyebrow">Claude + MCP</div>
@@ -870,10 +861,10 @@ function McpShowcase() {
               background: 'rgba(239,68,68,0.16)', border: '1px solid rgba(239,68,68,0.3)',
               fontSize: 12.5, color: 'var(--text)',
             }}>
-              {typed}{typed.length < USER_MSG.length && <span style={{ animation: 'ssCaret 0.9s step-end infinite' }}>|</span>}
+              {USER_MSG}
             </div>
-            {TOOLS.filter((t) => tick >= t.at).map((t) => (
-              <div key={t.text} style={{ display: 'flex', flexDirection: 'column', gap: 6, animation: 'ssRowIn 0.35s var(--ease) both' }}>
+            {TOOLS.map((t) => (
+              <div key={t.text} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <div style={{
                   ...demoMono, display: 'flex', alignItems: 'center', gap: 8,
                   fontSize: 10.5, color: 'var(--text-soft)', padding: '6px 10px',
@@ -894,11 +885,11 @@ function McpShowcase() {
                 )}
               </div>
             ))}
-            {tick >= replyAt && (
+            {(
               <div style={{
                 alignSelf: 'flex-start', maxWidth: '85%', padding: '9px 12px', borderRadius: '12px 12px 12px 4px',
                 background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)',
-                fontSize: 12.5, color: 'var(--text)', animation: 'ssRowIn 0.35s var(--ease) both',
+                fontSize: 12.5, color: 'var(--text)',
               }}>
                 Done. 2 carousels, a new headshot, and a teaser video are ready, and your
                 week is scheduled: Tue, Thu, and Fri.
