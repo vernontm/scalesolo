@@ -28,7 +28,7 @@ import { useProfile } from '../context/ProfileContext.jsx'
 import { useCredits, fmtCount } from '../context/CreditsContext.jsx'
 import { useSpacesRun } from '../context/SpacesRunContext.jsx'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { toast, confirmDialog, chooseDialog } from '../components/Toast.jsx'
+import { toast, confirmDialog } from '../components/Toast.jsx'
 import {
   NODE_REGISTRY, NODE_CATEGORIES, downloadUrl, readImageItems,
   AUTORUN_OPTIONS, autoRunIntervalMs, NODE_COST_HINT, nodeCostLabel,
@@ -3306,55 +3306,27 @@ function SpaceBuilder({ space, onSave, onClose }) {
       const node = nodesRef.current.find((n) => n.id === nodeId)
       const label = node?.data?.name || NODE_REGISTRY[node?.data?.type]?.label || 'this node'
       const directParents = (edgesRef.current || []).filter((e) => e.target === nodeId).map((e) => e.source)
-      const hasParents = directParents.length > 0
-      // Accept either canvas status ('done') or worker status ('success')
-      // so a freshly-finished server run is recognized as cached without
-      // waiting for the status-translation step to land.
-      const allParentsCached = directParents.every((pid) => {
+      window.__spaceUserClickAt = Date.now()
+      // No parents → nothing to decide.
+      if (!directParents.length) return 'self_only'
+      // Decide the scope AUTOMATICALLY — the old "run up to here or this
+      // node only?" dialog asked users a question the graph already
+      // answers. Pure source nodes (uploads, text, brand, pickers) carry
+      // their data in props, so they never need a run to be usable as
+      // inputs; generator parents count as ready when they hold cached
+      // output ('done' from the canvas or 'success' from the worker).
+      const PURE_SOURCES = new Set(['image_upload', 'text_input', 'manual_caption', 'avatar_picker', 'audio_upload', 'auto_run'])
+      const allParentsReady = directParents.every((pid) => {
         const p = nodesRef.current.find((n) => n.id === pid)
+        if (PURE_SOURCES.has(p?.data?.type)) return true
         const s = p?.data?.status
         return (s === 'done' || s === 'success') && p?.data?.output
       })
-      // No parents → nothing to choose; just run.
-      if (!hasParents) {
-        window.__spaceUserClickAt = Date.now()
-        return 'self_only'
-      }
-      // All parents already cached → user explicitly DOESN'T want to
-      // re-run upstream. Skip the dialog and just run this node only.
-      // Saves a click on Save-to-drafts / Schedule-post after a long
-      // multi-clip image-gen run.
-      if (allParentsCached) {
-        window.__spaceUserClickAt = Date.now()
-        return 'self_only'
-      }
-      const options = [
-        {
-          key: 'self_only',
-          label: 'Run this node only',
-          hint: allParentsCached
-            ? 'Reuses cached upstream. Free aggregators (Collection, Combine, etc.) auto-thread; expensive nodes (Avatar render, Script gen, Polish) only fire if cached.'
-            : 'Some upstream nodes haven\'t run yet. Pick "Run up to here" so they catch up, or run them individually first.',
-          primary: true,
-        },
-        {
-          key: 'up_to_here',
-          label: 'Run up to this node',
-          hint: 'Cached upstream nodes are reused, uncached ones run. No credit burn on already-done renders. Anything downstream of this node stays untouched.',
-        },
-      ]
-      window.__spaceUserDialogOpen = true
-      try {
-        const choice = await chooseDialog({
-          title: `Run ${label}`,
-          message: 'Pick the scope. Downstream nodes won\'t run either way — use the global Run button to fire the whole space.',
-          options,
-        })
-        if (choice) window.__spaceUserClickAt = Date.now()
-        return choice
-      } finally {
-        window.__spaceUserDialogOpen = false
-      }
+      if (allParentsReady) return 'self_only'
+      // Something upstream still needs to produce output — run up to this
+      // node (cached nodes are reused, only uncached ones fire).
+      toast({ kind: 'info', message: `Catching up the nodes feeding ${label}, then running it.`, ttl: 3500 })
+      return 'up_to_here'
     }
     // Server-side schedule hooks. Called from the auto_run node body
     // when the user clicks Start / Stop. Persists or removes the

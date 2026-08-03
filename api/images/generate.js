@@ -136,13 +136,19 @@ function buildInput(kieModel, { prompt, aspect, count, quality, reference_urls }
   const numImages = Math.max(1, Math.min(8, Number(count) || 1))
   const aspect_ratio = aspect || 'auto'
 
+  // Seedream's quality field has its own enum — resolution strings like
+  // "4K" from the node UI 500 with "quality is not within the range of
+  // allowed options". Normalize: anything that isn't a known seedream value
+  // becomes "high" (the value the production carousel pipeline uses).
+  const seedreamQuality = ['basic', 'high'].includes(String(quality || '').toLowerCase())
+    ? String(quality).toLowerCase() : 'high'
   if (kieModel === 'seedream/5-pro-image-to-image') {
     // Seedream drives likeness off the reference photos via image_urls.
     return {
       prompt,
       image_urls: refs,
       aspect_ratio,
-      quality: quality || 'high',
+      quality: seedreamQuality,
       output_format: 'png',
       nsfw_checker: false,
     }
@@ -151,7 +157,7 @@ function buildInput(kieModel, { prompt, aspect, count, quality, reference_urls }
     return {
       prompt,
       aspect_ratio,
-      quality: quality || 'high',
+      quality: seedreamQuality,
       output_format: 'png',
       nsfw_checker: false,
     }
