@@ -183,6 +183,23 @@ export default function Landing() {
       {/* Floating particle field , sits behind everything, decorative only */}
       <ParticleField />
 
+      {/* ── FOUNDING BANNER ─────────────────────────────────────────── */}
+      <button
+        type="button"
+        onClick={goPricing}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+          padding: '9px 14px', cursor: 'pointer', border: 'none',
+          borderBottom: '1px solid rgba(239,68,68,0.25)',
+          background: 'linear-gradient(90deg, rgba(239,68,68,0.16), rgba(245,158,11,0.12))',
+          color: 'var(--text)', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 12.5,
+        }}
+      >
+        <Sparkles size={12} style={{ color: '#f59e0b' }} />
+        Founding pricing: locked for life for the first 100 accounts
+        <ArrowRight size={12} />
+      </button>
+
       {/* ── NAV ─────────────────────────────────────────────────────── */}
       <header style={navBar}>
         <div style={navInner}>
@@ -272,7 +289,7 @@ export default function Landing() {
               <span style={pill}><Check size={11} /> Posts to 9+ platforms</span>
               <span style={pill}><Check size={11} /> Works with Claude (MCP)</span>
             </div>
-            <div className="fade-up" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 18, flexWrap: 'wrap', marginTop: 26 }}>
+            <div className="fade-up ss-platform-strip" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 18, flexWrap: 'wrap', marginTop: 26 }}>
               <span style={{ fontSize: 11, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', fontFamily: 'var(--font-display)', fontWeight: 700 }}>Publishes natively to</span>
               {trustLogos.map(({ name, Icon, tint }) => (
                 <span key={name} title={name} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-soft)', fontSize: 12.5 }}>
@@ -640,6 +657,13 @@ function DemoKeyframes() {
       @keyframes ssWipeLine { 0%, 8% { left: 0%; } 46%, 62% { left: 100%; } 96%, 100% { left: 0%; } }
       .ss-demo-grid { display: grid; grid-template-columns: 1.05fr 1fr; gap: 44px; align-items: center; }
       @media (max-width: 900px) { .ss-demo-grid { grid-template-columns: 1fr; gap: 26px; } }
+      @media (max-width: 640px) {
+        .hero-section h1 { font-size: clamp(34px, 9.5vw, 44px) !important; }
+        .ss-cal-grid { gap: 3px !important; }
+        .ss-cal-time { display: none; }
+        .ss-platform-strip { gap: 10px !important; }
+        .ss-platform-strip span { font-size: 11.5px !important; }
+      }
     `}</style>
   )
 }
@@ -754,7 +778,7 @@ function CalendarShowcase() {
               }}>{c.label}</span>
             ))}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 5 }}>
+          <div className="ss-cal-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 5 }}>
             {Array.from({ length: 28 }, (_, i) => {
               const isFilled = filledSet.has(i)
               const color = CHIPS[i % CHIPS.length].color
@@ -768,7 +792,7 @@ function CalendarShowcase() {
                   {isFilled && (
                     <div style={{ animation: 'ssPopIn 0.4s var(--ease) both' }}>
                       <div style={{ height: 4, borderRadius: 999, background: color, marginBottom: 2 }} />
-                      <span style={{ fontSize: 7.5, color: 'var(--muted)' }}>11:00</span>
+                      <span className="ss-cal-time" style={{ fontSize: 7.5, color: 'var(--muted)' }}>11:00</span>
                     </div>
                   )}
                 </div>
@@ -808,7 +832,7 @@ function McpShowcase() {
   const [ref, tick] = useDemoTicker(LOOP)
   const USER_MSG = 'Plan my week: 2 carousels, a fresh headshot, and a teaser video.'
   const typed = USER_MSG.slice(0, Math.min(tick * 2, USER_MSG.length))
-  const MCP_VIDEO_URL = null // set to '/landing/demo/mcp-talk.mp4' once rendered
+  const MCP_VIDEO_URL = '/landing/demo/mcp-talk.mp4' // real Veo output: the burgundy-blazer headshot talking
   const TOOLS = [
     { at: 40, text: 'create_carousel  "5 Content Ideas That Book Clients"', thumb: '/landing/demo/slide-01.jpg' },
     { at: 52, text: 'create_carousel  "Turn Followers Into Customers"' },
@@ -849,22 +873,24 @@ function McpShowcase() {
               {typed}{typed.length < USER_MSG.length && <span style={{ animation: 'ssCaret 0.9s step-end infinite' }}>|</span>}
             </div>
             {TOOLS.filter((t) => tick >= t.at).map((t) => (
-              <div key={t.text} style={{
-                ...demoMono, display: 'flex', alignItems: 'center', gap: 8,
-                fontSize: 10.5, color: 'var(--text-soft)', padding: '6px 10px',
-                background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8,
-                animation: 'ssRowIn 0.35s var(--ease) both',
-              }}>
-                <span style={{ color: '#2ecc71', fontWeight: 700 }}>✓</span>
-                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.text}</span>
-                {/* REAL output previews: the actual generated slide / headshot. */}
-                {t.thumb && (
-                  <img src={t.thumb} alt="Generated output preview" loading="lazy" decoding="async"
-                    style={{ width: 26, height: 34, objectFit: 'cover', objectPosition: 'top', borderRadius: 5, border: '1px solid rgba(255,255,255,0.18)', flexShrink: 0 }} />
-                )}
+              <div key={t.text} style={{ display: 'flex', flexDirection: 'column', gap: 6, animation: 'ssRowIn 0.35s var(--ease) both' }}>
+                <div style={{
+                  ...demoMono, display: 'flex', alignItems: 'center', gap: 8,
+                  fontSize: 10.5, color: 'var(--text-soft)', padding: '6px 10px',
+                  background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8,
+                }}>
+                  <span style={{ color: '#2ecc71', fontWeight: 700 }}>✓</span>
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.text}</span>
+                  {/* REAL output preview: the actual generated slide / headshot. */}
+                  {t.thumb && (
+                    <img src={t.thumb} alt="Generated output preview" loading="lazy" decoding="async"
+                      style={{ width: 26, height: 34, objectFit: 'cover', objectPosition: 'top', borderRadius: 5, border: '1px solid rgba(255,255,255,0.18)', flexShrink: 0 }} />
+                  )}
+                </div>
+                {/* REAL Veo output: the generated headshot talking, as a chat attachment. */}
                 {t.video && (
                   <video src={t.video} muted playsInline autoPlay loop preload="metadata"
-                    style={{ width: 26, height: 34, objectFit: 'cover', borderRadius: 5, border: '1px solid rgba(255,255,255,0.18)', flexShrink: 0 }} />
+                    style={{ width: 132, aspectRatio: '9 / 16', objectFit: 'cover', borderRadius: 10, border: '1px solid rgba(255,255,255,0.15)', marginLeft: 24, boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }} />
                 )}
               </div>
             ))}
