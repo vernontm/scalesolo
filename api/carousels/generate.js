@@ -16,6 +16,7 @@ import { loadBrandContext, renderBrandContextMarkdown } from '../_lib/brand-cont
 import { invokeHandler } from '../_lib/internal-invoke.js'
 import { capHashtags } from '../_lib/hashtags.js'
 import { compositeLockup } from '../_lib/carousel-lockup.js'
+import { compositeSlideText } from '../_lib/carousel-text.js'
 import imagesGenerate from '../images/generate.js'
 import imagesStatus from '../images/status.js'
 
@@ -31,6 +32,13 @@ const THEME_PROMPTS = {
   futuristic: 'Futuristic sci-fi aesthetic, sleek techno typography, neon glow, glassmorphism panels, HUD accents, dark gradient background.',
   minimal: 'Ultra minimal editorial, elegant serif type, muted monochrome palette, lots of whitespace, calm and sophisticated.',
   retro: 'Retro vintage aesthetic, warm nostalgic palette, film grain texture, throwback display typography.',
+}
+
+// Default text ink per theme (dark backgrounds → light text, and vice versa).
+// Only used when the user has not chosen a signature ink.
+const THEME_INK = {
+  modern: 'dark', bold: 'dark', cursive: 'dark', minimal: 'dark', retro: 'dark',
+  edgy: 'light', futuristic: 'light',
 }
 
 // Carousel STRUCTURE (how the slides are organized), separate from the visual
@@ -58,11 +66,12 @@ async function planCarousel({ topic, slideCount, brandMd, format, person }) {
     system: [
       'You plan the COPY for a short-form social CAROUSEL (multi-slide photo post) for a brand. You do NOT design visuals.',
       'Return ONLY valid JSON, no preamble, matching exactly:',
-      `{ "title": string, "caption": string, "hashtags": string, "slides": [ { "kind": "cover"|"tip"|"cta", "headline": string, "body": string${person ? ', "pose": string' : ', "focal": string'} } ] }`,
+      `{ "title": string, "caption": string, "hashtags": string, "slides": [ { "kind": "cover"|"tip"|"cta", "headline": string, "body": string, "accent": string${person ? ', "pose": string' : ', "focal": string'} } ] }`,
       '',
       `Produce EXACTLY ${slideCount} slides: slide 1 kind "cover", the last slide kind "cta", the rest "tip".`,
       FORMAT_GUIDES[format] ? `STRUCTURE: ${FORMAT_GUIDES[format]}` : '',
       'headline: punchy, <= 8 words. body: for "tip" slides write 2 to 4 short sentences (about 25 to 55 words) that actually teach the point, in 1 or 2 tiny paragraphs; for "cover" a single 1-line promise; for "cta" a short 1 to 2 sentence nudge. Never leave a tip body empty.',
+      'accent: 1 to 3 words taken VERBATIM from THIS slide\'s headline (an exact substring, same casing as written) to emphasize in the brand accent color. Pick the punchiest keyword(s). Leave "" only if nothing should be emphasized.',
       person
         ? 'pose: a short description of how the featured PERSON stands/gestures/expresses on THIS slide. VARY it every slide (e.g. "arms crossed, confident direct eye contact", "mid-gesture explaining, three-quarter turn", "one hand in pocket, relaxed"). Describe ONLY pose and expression, never their face, identity, clothing, or the background.'
         : 'focal: OPTIONAL short description of one supporting visual element unique to this slide that sits inside the shared background (e.g. "a glowing app dashboard mockup", "three stacked cards"). Leave it an empty string "" if the slide is just text. Do NOT describe the background itself, it is fixed for the whole set.',
@@ -208,35 +217,34 @@ function buildStyle({ themeStyle, brandColors, extraStyle }) {
   ].filter(Boolean).join(' ')
 }
 
-// Shared layout wording: text placement, person placement, signature reserve.
-// Byte-identical across slides; only the copy and (person mode) the pose vary.
-function slideLayout({ person, sig }) {
+// Shared VISUAL layout wording. The headline + body are NOT rendered by the
+// image model (they are composited later with locked typography), so every
+// prompt forbids text and reserves the text zone. Byte-identical across slides.
+function slideLayout({ person, focal }) {
   const parts = []
   if (person) {
-    parts.push('Feature the person LARGE on the RIGHT, shown head to about the waist, roughly 55 to 62 percent of the frame width, bleeding off the right and bottom edges so they occupy real space. Use the provided portrait EXACTLY as-is (do not change their face, hair, skin, build or pose). Blend them into the background with matched lighting and a natural contact shadow so they look genuinely photographed in the scene, NOT a flat cutout pasted on top (no hard sticker edge, no floating, no white halo). Put the headline and body text on the LEFT, not overlapping the person.')
+    parts.push('Feature the person LARGE on the RIGHT, shown head to about the waist, roughly 55 to 62 percent of the frame width, bleeding off the right and bottom edges so they occupy real space. Use the provided portrait EXACTLY as-is (do not change their face, hair, skin, build or pose). Blend them into the background with matched lighting and a natural contact shadow so they look genuinely photographed in the scene, NOT a flat cutout pasted on top (no hard sticker edge, no floating, no white halo). Leave the entire LEFT ~48 percent of the frame as clean, relatively empty background (only the background shows there) reserved for text added later.')
   } else {
-    parts.push('A large bold HEADLINE with a smaller readable BODY paragraph beneath it, clear hierarchy, comfortable margins, nothing cut off.')
+    parts.push('Keep the TOP-LEFT ~55 percent of the frame as clean, relatively empty background reserved for text added later.')
+    parts.push(focal ? `Place this supporting visual in the lower or right portion of the frame: ${focal}.` : 'Keep the composition clean and uncluttered.')
   }
-  parts.push('All lettering crisp and correctly spelled.')
-  parts.push(sig
-    ? 'Leave the bottom-left about 18 percent as clean empty space (a signature is added later). No name, handle, logo, watermark, page number or slide number anywhere.'
-    : 'No watermark, page number or slide number anywhere.')
+  parts.push('CRITICAL: render absolutely NO text, letters, words, headlines, captions, labels, numbers, watermark, page number or slide number ANYWHERE in the image. The image is a background/subject only, text is added afterward.')
   return parts.join(' ')
 }
 
-// The COVER slide is designed from scratch and becomes the STYLE ANCHOR for
-// the whole set. Every other slide is told to reproduce its exact background.
-function coverPrompt({ style, copy, person, sig }) {
-  return `Design a vertical 3:4 social media carousel COVER slide from scratch. STYLE: ${style}\n\n${slideLayout({ person, sig })}\n\n${copy}`
+// The COVER slide's VISUAL is designed from scratch and becomes the STYLE
+// ANCHOR for the whole set. Every other slide reproduces its exact background.
+function coverPrompt({ style, person, focal }) {
+  return `Design the VISUAL for a vertical 3:4 social media carousel COVER slide from scratch (background and subject only, no text). STYLE: ${style}\n\n${slideLayout({ person, focal })}`
 }
 
 // A FOLLOWER slide reproduces the anchor's exact look (handed in as a reference
-// image) and only swaps in this slide's copy (and, person mode, a new portrait).
-function followPrompt({ style, copy, person, sig }) {
+// image); only the person portrait / focal graphic changes. No text either.
+function followPrompt({ style, person, focal }) {
   const roles = person
     ? 'Reference image 1 is the STYLE ANCHOR: reproduce its EXACT background, colors, lighting and design system so this slide looks like the same series. Reference image 2 is the PORTRAIT of the person to feature.'
     : 'The provided reference image is the STYLE ANCHOR: reproduce its EXACT background, colors, lighting and design system so this slide looks like the same series.'
-  return `This is another slide in the SAME carousel series. ${roles} Do NOT copy the anchor's text or its foreground subject. STYLE: ${style}\n\n${slideLayout({ person, sig })}\n\n${copy}`
+  return `Design the VISUAL for another slide in the SAME carousel series (background and subject only, no text). ${roles} Do NOT copy the anchor's foreground subject. STYLE: ${style}\n\n${slideLayout({ person, focal })}`
 }
 
 // Locked portrait prompt: SUBJECT + WARDROBE + per-slide POSE + CAMERA.
@@ -312,37 +320,27 @@ export default async function handler(req, res) {
     const outfitLocked = person ? resolveOutfit(theme, outfit) : ''
     const subjectLocked = person ? await describeSubject(refs[0]) : ''
     const poseAt = (i) => (person ? (String(slides[i]?.pose || '').trim() || DEFAULT_POSES[i % DEFAULT_POSES.length]) : '')
-
-    // Per-slide COPY block (the one text variable). Same wording template.
-    const copyOf = (s) => {
-      const head = `a large bold HEADLINE reading exactly "${String(s.headline || '').trim()}"`
-      const body = String(s.body || '').trim()
-      const bodyClause = body ? `, and beneath it a smaller readable BODY paragraph reading exactly "${body}"` : ''
-      const focal = !person && String(s.focal || '').trim() ? ` Supporting visual on this slide only: ${String(s.focal).trim()}.` : ''
-      return `Render on this slide, spelled exactly and once: ${head}${bodyClause}.${focal}`
-    }
+    const focalAt = (i) => (person ? '' : String(slides[i]?.focal || '').trim())
 
     let urls
     try {
-      // 1) Design the COVER fully — it becomes the style ANCHOR for the set.
-      const coverCopy = copyOf(slides[0])
+      // 1) Design the COVER visual (no text) — it is the style ANCHOR.
       let coverUrl
       if (person) {
         const portrait = await genPortrait(req, { profile_id, refs, subject: subjectLocked, outfit: outfitLocked, pose: poseAt(0), aspect })
-        coverUrl = await genImage(req, { profile_id, prompt: coverPrompt({ style, copy: coverCopy, person: true, sig }), model: 'gpt-2', reference_urls: [portrait], aspect })
+        coverUrl = await genImage(req, { profile_id, prompt: coverPrompt({ style, person: true, focal: '' }), model: 'gpt-2', reference_urls: [portrait], aspect })
       } else {
-        coverUrl = await genImage(req, { profile_id, prompt: coverPrompt({ style, copy: coverCopy, person: false, sig }), model: 'gpt-2', reference_urls: refs.length ? refs : undefined, aspect })
+        coverUrl = await genImage(req, { profile_id, prompt: coverPrompt({ style, person: false, focal: focalAt(0) }), model: 'gpt-2', reference_urls: refs.length ? refs : undefined, aspect })
       }
 
-      // 2) Every follower slide reproduces the anchor's exact look + new copy.
+      // 2) Every follower reproduces the anchor's exact look (visual only).
       const rest = await Promise.all(slides.slice(1).map(async (s, idx) => {
         const i = idx + 1
-        const copy = copyOf(s)
         if (person) {
           const portrait = await genPortrait(req, { profile_id, refs, subject: subjectLocked, outfit: outfitLocked, pose: poseAt(i), aspect })
-          return genImage(req, { profile_id, prompt: followPrompt({ style, copy, person: true, sig }), model: 'gpt-2', reference_urls: [coverUrl, portrait], aspect })
+          return genImage(req, { profile_id, prompt: followPrompt({ style, person: true, focal: '' }), model: 'gpt-2', reference_urls: [coverUrl, portrait], aspect })
         }
-        return genImage(req, { profile_id, prompt: followPrompt({ style, copy, person: false, sig }), model: 'gpt-2', reference_urls: [coverUrl, ...refs], aspect })
+        return genImage(req, { profile_id, prompt: followPrompt({ style, person: false, focal: focalAt(i) }), model: 'gpt-2', reference_urls: [coverUrl, ...refs], aspect })
       }))
       urls = [coverUrl, ...rest]
     } catch (e) {
@@ -351,6 +349,20 @@ export default async function handler(req, res) {
         return res.status(402).json({ error: `Not enough credits to render ${n} slides (~${est} ai_tokens${person ? ', two stages per slide for the person likeness' : ''}). ${e.message}`, code: 'insufficient_credits' })
       }
       return res.status(502).json({ error: `Slide generation failed: ${e.message}` })
+    }
+
+    // Composite the LOCKED headline + body typography onto every slide (same
+    // fonts, sizes, weights, tracking and leading on all slides). Accent words
+    // pick up the brand color. Best-effort per slide.
+    {
+      const ink = (signature && typeof signature.dark === 'boolean')
+        ? (signature.dark ? 'dark' : 'light')
+        : (THEME_INK[theme] || 'dark')
+      const accentColor = profRow?.brand_color || '#ff3b30'
+      urls = await Promise.all(urls.map((u, i) => compositeSlideText(u, {
+        headline: slides[i]?.headline, body: slides[i]?.body, accent: slides[i]?.accent,
+        theme, ink, accentColor, person, profileId: profile_id,
+      })))
     }
 
     // Composite the brand name + handle signature onto each slide (best-effort;
