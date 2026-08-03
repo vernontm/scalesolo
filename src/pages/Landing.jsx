@@ -700,7 +700,7 @@ function CarouselBuildPanel() {
     <div ref={ref}>
       <DemoKeyframes />
       <div style={demoPanel}>
-          <div style={demoKicker}><Wand2 size={12} /> Watch it build, real output</div>
+          <div style={demoKicker}><Wand2 size={12} /> Generate a carousel</div>
           <div style={{
             display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px',
             background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.10)',
