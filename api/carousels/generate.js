@@ -21,26 +21,35 @@ import imagesStatus from '../images/status.js'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 // Draft the slide plan + post caption from the topic, in the brand's voice.
-async function planCarousel({ topic, slideCount, brandMd, brandColors }) {
+// personMode adds a per-slide `pose` so a real person can be placed in each
+// slide (two-stage Seedream portrait → GPT graphic).
+async function planCarousel({ topic, slideCount, brandMd, brandColors, personMode }) {
+  const schema = personMode
+    ? '{ "title": string, "caption": string, "hashtags": string, "slides": [ { "kind": "cover"|"tip"|"cta", "headline": string, "body": string, "pose": string, "image_prompt": string } ] }'
+    : '{ "title": string, "caption": string, "hashtags": string, "slides": [ { "kind": "cover"|"tip"|"cta", "headline": string, "body": string, "image_prompt": string } ] }'
   const out = await anthropicMessage({
     model: 'claude-sonnet-5',
-    max_tokens: 2000,
+    max_tokens: 2200,
     system: [
       'You plan short-form social CAROUSELS (multi-slide photo posts) for a brand.',
       'Return ONLY valid JSON, no preamble, matching exactly:',
-      '{ "title": string, "caption": string, "hashtags": string, "slides": [ { "kind": "cover"|"tip"|"cta", "headline": string, "body": string, "image_prompt": string } ] }',
+      schema,
       '',
       `Produce EXACTLY ${slideCount} slides: slide 1 kind "cover", the last slide kind "cta", the rest "tip".`,
       'headline: punchy, <= 8 words. body: 1 short sentence (tips), empty "" for cover/cta.',
       'image_prompt: a complete prompt for an image model to render a 3:4 branded graphic for THIS slide. It MUST:',
-      `  - include the EXACT slide text to render (headline${''}), spelled correctly, as large crisp legible typography`,
+      '  - include the EXACT slide text to render (headline), spelled correctly, as large crisp legible typography',
       `  - use the brand's colors${brandColors ? ` (${brandColors})` : ''} and a clean, cohesive, modern editorial layout consistent across all slides`,
       '  - describe composition/background so the set looks like one designed series',
       '  - NOT include watermarks, logos of other brands, page numbers, or slide numbers',
+      personMode
+        ? '  - COMPOSE AROUND A PERSON: the image_prompt must place the provided person on one side of the frame (keep their exact face/likeness), with the headline text laid out clearly on the other side and NOT overlapping the person.\n' +
+          'pose: a short description of the person\'s pose/expression for THIS slide (e.g. "three-quarter turn, one hand raised in a precision pinch gesture, focused instructive expression, upper body only"). Vary poses across slides. No phones/props that crowd the frame.'
+        : '',
       'caption: a scroll-stopping caption for the whole carousel (<= 400 chars). hashtags: at most 5, space-separated, each starting with #.',
       'NO em dashes anywhere. Use periods, commas, or "to" for ranges.',
       brandMd ? `\nBrand context:\n${brandMd}` : '',
-    ].join('\n'),
+    ].filter(Boolean).join('\n'),
     messages: [{ role: 'user', content: `Topic: ${topic}` }],
   })
   const text = (out?.content || []).map((c) => c?.text || '').join('').trim()
@@ -50,10 +59,10 @@ async function planCarousel({ topic, slideCount, brandMd, brandColors }) {
   return plan
 }
 
-// Generate one slide image via the credit-gated image endpoint, then poll to
-// completion. Returns the finished (mirrored) URL. Throws on failure so the
-// caller can stop the run (image endpoint already refunds its own reservation).
-async function renderSlide(originalReq, { profile_id, prompt, model, reference_urls, aspect }) {
+// One credit-gated image generation via the reused image endpoints (which
+// handle billing + refunds). Returns the finished (mirrored) URL. Throws on
+// failure so the caller can stop the run.
+async function genImage(originalReq, { profile_id, prompt, model, reference_urls, aspect }) {
   const gen = await invokeHandler(imagesGenerate, originalReq, {
     method: 'POST',
     body: { profile_id, prompt, model, aspect, count: 1, reference_urls, enhance_prompt: false },
@@ -74,6 +83,20 @@ async function renderSlide(originalReq, { profile_id, prompt, model, reference_u
   throw new Error('slide image timed out')
 }
 
+// Render one slide. In person mode: Seedream makes a photoreal portrait of the
+// person from their photos in the slide's pose, then GPT Image 2 composes the
+// branded graphic (crisp text + layout) around that portrait — the two-stage
+// likeness pipeline. Otherwise: one graphic via nano-banana.
+async function renderSlide(originalReq, { profile_id, slide, model, personRefs, aspect }) {
+  if (personRefs && personRefs.length) {
+    const portraitPrompt = `Photoreal, high-quality portrait of the person from the reference image(s). ${slide.pose || 'upper body, three-quarter turn, confident expression'}. Plain neutral background, natural studio lighting, keep their exact face, hair, skin tone, and proportions identical to the references. No text.`
+    const portrait = await genImage(originalReq, { profile_id, prompt: portraitPrompt, model: 'seedream', reference_urls: personRefs, aspect })
+    const composePrompt = `${slide.image_prompt}\n\nPlace the person from the reference image naturally in the frame. Keep their exact face and likeness from the reference. The person occupies one side; the headline text is on the other side and must not overlap the person.`
+    return await genImage(originalReq, { profile_id, prompt: composePrompt, model: 'gpt-2', reference_urls: [portrait], aspect })
+  }
+  return await genImage(originalReq, { profile_id, prompt: slide.image_prompt, model, reference_urls: undefined, aspect })
+}
+
 export default async function handler(req, res) {
   setCors(req, res)
   if (req.method === 'OPTIONS') return res.status(204).end()
@@ -83,10 +106,14 @@ export default async function handler(req, res) {
   if (!auth) return
 
   try {
-    const { profile_id, topic, slide_count = 6, reference_urls, model = 'nano-banana', aspect = '3:4' } = req.body || {}
+    const { profile_id, topic, slide_count = 6, reference_urls, person_mode = false, model = 'nano-banana', aspect = '3:4' } = req.body || {}
     if (!profile_id || !topic) return res.status(400).json({ error: 'profile_id + topic required' })
     await assertProfileAccess(auth.user.id, profile_id)
     const n = Math.max(3, Math.min(8, Number(slide_count) || 6))
+    const personRefs = (person_mode && Array.isArray(reference_urls)) ? reference_urls.filter(Boolean) : null
+    if (person_mode && !(personRefs && personRefs.length)) {
+      return res.status(400).json({ error: 'Person mode needs reference_urls (1-3 photos of the person).' })
+    }
 
     // Brand voice + colors for a cohesive, on-brand set.
     let brandMd = '', brandColors = ''
@@ -98,17 +125,16 @@ export default async function handler(req, res) {
       brandColors = [p?.brand_color, p?.brand_color_secondary].filter(Boolean).join(' and ')
     } catch { /* brandless is fine */ }
 
-    const plan = await planCarousel({ topic, slideCount: n, brandMd, brandColors })
+    const plan = await planCarousel({ topic, slideCount: n, brandMd, brandColors, personMode: !!personRefs })
     const slides = plan.slides.slice(0, n)
 
-    // Render slides in parallel (each bills + refunds independently). If any
-    // slide fails, surface it — a partial carousel isn't useful. Insufficient
-    // credits stops with a clear 402.
-    const refs = (Array.isArray(reference_urls) && reference_urls.length) ? reference_urls : undefined
+    // Render slides in parallel (each image bills + refunds independently). If
+    // any slide fails, surface it — a partial carousel isn't useful.
+    // Insufficient credits stops with a clear 402.
     let urls
     try {
       urls = await Promise.all(slides.map((s) => renderSlide(req, {
-        profile_id, prompt: s.image_prompt, model, reference_urls: refs, aspect,
+        profile_id, slide: s, model, personRefs, aspect,
       })))
     } catch (e) {
       if (e.code === 'insufficient_credits') {

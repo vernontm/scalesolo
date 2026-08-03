@@ -13,19 +13,53 @@ export default function CarouselBuilder() {
 
   const [topic, setTopic] = useState('')
   const [slides, setSlides] = useState(6)
+  const [personMode, setPersonMode] = useState(false)
+  const [personUrls, setPersonUrls] = useState([])
+  const [uploading, setUploading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [result, setResult] = useState(null)
 
+  const perSlide = personMode ? 8000 : 4000
+
+  const uploadPhotos = async (files) => {
+    if (!selectedProfileId) { setError('Pick a brand profile first.'); return }
+    setUploading(true); setError(null)
+    try {
+      const out = []
+      for (const file of Array.from(files).slice(0, 3 - personUrls.length)) {
+        const initR = await fetch('/api/content/upload-media?mode=init', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ profile_id: selectedProfileId, content_type: file.type || 'image/jpeg', kind: 'image' }),
+        })
+        const init = await initR.json().catch(() => ({}))
+        if (!init.signed_url) throw new Error(init.error || 'Upload init failed')
+        const put = await fetch(init.signed_url, {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${init.token}`, 'Content-Type': file.type || 'image/jpeg', 'x-upsert': 'true' },
+          body: file,
+        })
+        if (!put.ok) throw new Error('Photo upload failed')
+        out.push(init.public_url)
+      }
+      setPersonUrls((u) => [...u, ...out].slice(0, 3))
+    } catch (e) { setError(e.message) } finally { setUploading(false) }
+  }
+
   const generate = async () => {
     if (!topic.trim()) return
     if (!selectedProfileId) { setError('Pick a brand profile first.'); return }
+    if (personMode && !personUrls.length) { setError('Add at least one photo of the person, or turn off “Put me in it”.'); return }
     setBusy(true); setError(null); setResult(null)
     try {
       const r = await fetch('/api/carousels/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ profile_id: selectedProfileId, topic: topic.trim(), slide_count: slides }),
+        body: JSON.stringify({
+          profile_id: selectedProfileId, topic: topic.trim(), slide_count: slides,
+          person_mode: personMode, reference_urls: personMode ? personUrls : undefined,
+        }),
       })
       const b = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(b?.error || `Generation failed (${r.status})`)
@@ -72,12 +106,39 @@ export default function CarouselBuilder() {
               ))}
             </div>
           </div>
+          {/* Put me in it — two-stage likeness (Seedream portrait → composed graphic). */}
+          <div style={{ marginBottom: 16, padding: 12, borderRadius: 10, border: `1px solid ${personMode ? '#a855f7' : 'var(--border)'}`, background: 'var(--surface-2)' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+              <input type="checkbox" checked={personMode} onChange={(e) => setPersonMode(e.target.checked)} />
+              <span style={{ fontWeight: 700, fontSize: 13.5 }}>Put me in it</span>
+              <span style={{ fontSize: 12, color: 'var(--muted)' }}>Use a person's likeness on every slide</span>
+            </label>
+            {personMode && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  {personUrls.map((u, i) => (
+                    <img key={u + i} src={u} alt="" style={{ width: 52, height: 52, borderRadius: 8, objectFit: 'cover', border: '1px solid var(--border)' }} />
+                  ))}
+                  {personUrls.length < 3 && (
+                    <label className="btn-secondary" style={{ cursor: 'pointer', padding: '8px 12px', fontSize: 12.5 }}>
+                      {uploading ? 'Uploading…' : '+ Add photo'}
+                      <input type="file" accept="image/*" multiple hidden onChange={(e) => { uploadPhotos(e.target.files); e.target.value = '' }} />
+                    </label>
+                  )}
+                </div>
+                <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6 }}>
+                  1 to 3 clear, front-facing photos. More references = better likeness. Costs 2x (a portrait plus the composed graphic per slide).
+                </div>
+              </div>
+            )}
+          </div>
+
           {error && <div style={{ marginBottom: 14, background: 'var(--red-soft)', color: 'var(--red)', padding: '10px 14px', borderRadius: 10, fontSize: 13 }}><AlertCircle size={14} style={{ verticalAlign: '-2px' }} /> {error}</div>}
-          <button className="btn-primary" onClick={generate} disabled={busy || !topic.trim()} style={{ width: '100%', justifyContent: 'center' }}>
-            {busy ? <><span className="spinner" /> Designing {slides} slides… (~1-2 min)</> : <><Sparkles size={15} /> Generate carousel</>}
+          <button className="btn-primary" onClick={generate} disabled={busy || uploading || !topic.trim()} style={{ width: '100%', justifyContent: 'center' }}>
+            {busy ? <><span className="spinner" /> Designing {slides} slides… (~1-3 min)</> : <><Sparkles size={15} /> Generate carousel</>}
           </button>
           <div style={{ textAlign: 'center', fontSize: 11.5, color: 'var(--muted)', marginTop: 10 }}>
-            ~{(4000 * slides).toLocaleString()} AI tokens ({slides} slides). Nothing posts automatically.
+            ~{(perSlide * slides).toLocaleString()} AI tokens ({slides} slides{personMode ? ', with likeness' : ''}). Nothing posts automatically.
           </div>
         </div>
       )}
