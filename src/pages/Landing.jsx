@@ -241,18 +241,6 @@ export default function Landing() {
         )}
       </header>
 
-      {/* ── TRUST BAR (under the nav) ───────────────────────────────── */}
-      <div style={{
-        display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-        padding: '10px 16px', borderBottom: '1px solid var(--border)',
-        background: 'color-mix(in srgb, var(--bg) 90%, transparent)',
-        position: 'relative', zIndex: 2,
-      }}>
-        <span style={pill}><Check size={11} /> 3-day trial</span>
-        <span style={pill}><Check size={11} /> Posts to 9+ platforms</span>
-        <span style={pill}><Check size={11} /> Works with Claude (MCP)</span>
-      </div>
-
       {/* ── HERO ────────────────────────────────────────────────────── */}
       <section style={hero} className="hero-section">
         {/* Rising-flame glow stack , 4 layers, two animations
