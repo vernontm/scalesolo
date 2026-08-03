@@ -17,7 +17,6 @@ export default async function handler(req, res) {
 
   const workerUrl = process.env.WORKER_URL || ''
   const workerSecret = process.env.WORKER_SHARED_SECRET || ''
-  const shotstackKey = process.env.SHOTSTACK_API_KEY || ''
 
   let workerHealth = null
   if (workerUrl) {
@@ -36,7 +35,6 @@ export default async function handler(req, res) {
       WORKER_URL_host: workerUrl ? new URL(workerUrl).host : null,
       WORKER_SHARED_SECRET_set: !!workerSecret,
       WORKER_SHARED_SECRET_length: workerSecret.length,
-      SHOTSTACK_API_KEY_set: !!shotstackKey,
     },
     worker_health: workerHealth,
     vercel_region: process.env.VERCEL_REGION || null,

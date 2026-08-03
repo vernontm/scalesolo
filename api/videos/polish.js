@@ -32,7 +32,6 @@ import { createClient } from '@supabase/supabase-js'
 import { NotifyKind } from '../_lib/notify.js'
 import { zapcapAddVideoByUrl, zapcapCreateTask, zapcapPollTask } from '../_lib/zapcap.js'
 import { renderTitlePng } from '../_lib/title-svg.js'
-import { buildTimeline as buildShotstackTimeline, submitRender as submitShotstackRender, pollRender as pollShotstackRender } from '../_lib/shotstack.js'
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg'
 const ffmpegPath = ffmpegInstaller.path
 import { spawn } from 'node:child_process'
@@ -339,7 +338,7 @@ export default async function handler(req, res) {
     await assertProfileAccess(auth.user.id, profile_id)
 
     // Trial enforcement. Reassigns the watermark_* lets so every
-    // downstream code path (Shotstack early, worker forward, ffmpeg
+    // downstream code path (worker forward, ffmpeg
     // local fallback) sees the locked values. No way for the client
     // to override.
     if (await isUserOnTrial(auth.user.id)) {
@@ -358,7 +357,7 @@ export default async function handler(req, res) {
       }
     }
 
-    // Pre-compute the work flags + supabase client so the Shotstack and
+    // Pre-compute the work flags + supabase client so the worker and
     // worker paths (which sit ahead of the local ffmpeg path) can share
     // them without re-declaring further down.
     const SUPABASE_URL_EARLY = process.env.SUPABASE_URL
@@ -384,151 +383,6 @@ export default async function handler(req, res) {
       || req.body?.voiceover_url
     )
 
-    // ─── Shotstack passthrough ─────────────────────────────────────────────
-    // Only used when WORKER_URL is NOT set. The Shotstack block sits
-    // higher in the file than the worker block, so without this gate
-    // Shotstack would always win when both env vars are configured —
-    // exactly the bug we hit when migrating to the Fly worker. With
-    // WORKER_URL set, this branch is skipped and execution flows down
-    // to the worker block below. If the worker errors, the final
-    // fallback is the local in-Vercel ffmpeg path.
-    if (process.env.SHOTSTACK_API_KEY && !process.env.WORKER_URL && wantsFfmpegEarly && supabaseEarly) {
-      try {
-        // No local duration probe — Shotstack resolves the video's
-        // natural length server-side via `length: "auto"` on the clip
-        // (and `length: "end"` on overlays). Probing locally meant
-        // streaming the whole video through ffmpeg just to read its
-        // Duration line, which OOM'd the function on big clips.
-        const videoLen = null
-
-        // Title PNG → Storage. Same renderer the ffmpeg path uses, so
-        // typography is pixel-identical across the two backends. We
-        // skip the title silently on render error rather than fail the
-        // whole polish.
-        let titlePngUrl = null
-        if (title) {
-          try {
-            const png = await renderTitlePng({
-              title: String(title).slice(0, 120),
-              font: ts.font, size: Number(ts.size ?? 72),
-              color: ts.color || '#ffffff', bg_color: ts.bg_color || '#e0467a',
-              bg_padding: Math.max(0, Number(ts.bg_padding ?? 28)),
-              bg_mode: ts.bg_mode || 'block',
-              uppercase: !!ts.uppercase, max_width: 1080,
-            })
-            if (png) {
-              const tPath = `${profile_id}/spaces/polished/title-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`
-              const { error } = await supabaseEarly.storage.from('landing-media').upload(tPath, png, {
-                contentType: 'image/png', upsert: false,
-              })
-              if (!error) {
-                titlePngUrl = supabaseEarly.storage.from('landing-media').getPublicUrl(tPath).data.publicUrl
-              }
-            }
-          } catch (e) {
-            console.warn('[polish:shotstack] title PNG step failed, continuing without title:', e.message)
-          }
-        }
-
-        const ssPayload = buildShotstackTimeline({
-          videoUrl: video_url,
-          videoLen,
-          titlePngUrl,
-          titleYpos: ts.y_pos,
-          logoUrl: effectiveLogoUrlEarly && watermark_position !== 'none' ? effectiveLogoUrlEarly : null,
-          watermarkPosition: watermark_position,
-          watermarkSizePct: watermark_size_pct,
-          musicUrl: music_url,
-          musicVolume: music_volume,
-          musicFadeSecs: music_fade_secs,
-          aspectRatio: req.body?.aspect_ratio || '9:16',
-          resolution:  req.body?.resolution  || '1080',
-        })
-
-        const renderId = await submitShotstackRender(ssPayload)
-        const { url: ssUrl } = await pollShotstackRender(renderId)
-
-        // ZapCap captions chain on after Shotstack — same dance as the
-        // local ffmpeg path, just feeding the Shotstack output URL.
-        let zapcapMeta = null
-        let captionedUrl = ssUrl
-        if (wantsCaptionsEarly) {
-          try {
-            const zVideoId = await zapcapAddVideoByUrl(ssUrl, { ttl: '1d' })
-            const zTaskId = await zapcapCreateTask(zVideoId, { templateId: caption_template_id, autoApprove: true })
-            const zResult = await zapcapPollTask(zVideoId, zTaskId, { timeoutMs: 180_000, intervalMs: 2500 })
-            captionedUrl = zResult.downloadUrl || zResult.video?.downloadUrl || zResult.url || ssUrl
-            zapcapMeta = { template_id: caption_template_id, video_id: zVideoId, task_id: zTaskId }
-          } catch (e) {
-            // Captions failure → keep the Shotstack composite, surface
-            // a warning. Same forgiving behavior as the ffmpeg path.
-            console.warn('[polish:shotstack] ZapCap failed, returning composite-only:', e.message)
-            zapcapMeta = { error: e.message }
-          }
-        }
-
-        // Mirror the final asset to our own Storage so the canvas has
-        // a stable URL (Shotstack's CDN URLs expire after ~24h on free
-        // plans). Skipped for files > MIRROR_MAX_BYTES so big clips
-        // don't OOM the Vercel function — for those we accept the
-        // shorter-lived upstream URL since downstream consumers
-        // (Upload-Post) fetch immediately on submit.
-        const MIRROR_MAX_BYTES = 60 * 1024 * 1024  // 60 MB
-        let finalUrl = captionedUrl
-        let bytes = 0
-        try {
-          // HEAD first to peek the Content-Length. Avoid pulling 100+ MB
-          // into a Buffer just to discover we shouldn't have.
-          const head = await fetch(captionedUrl, { method: 'HEAD' }).catch(() => null)
-          const len = Number(head?.headers?.get('content-length') || 0)
-          if (len && len > MIRROR_MAX_BYTES) {
-            console.warn(`[polish:shotstack] skipping mirror — file ${(len / 1024 / 1024).toFixed(1)} MB > ${(MIRROR_MAX_BYTES / 1024 / 1024)} MB cap`)
-            bytes = len
-          } else {
-            const buf = await fetchToBuffer(captionedUrl)
-            bytes = buf.byteLength
-            const outPath = `${profile_id}/spaces/polished/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`
-            const { error } = await supabaseEarly.storage.from('landing-media').upload(outPath, buf, {
-              contentType: 'video/mp4', upsert: false,
-            })
-            if (!error) {
-              finalUrl = supabaseEarly.storage.from('landing-media').getPublicUrl(outPath).data.publicUrl
-            }
-          }
-        } catch (e) {
-          console.warn('[polish:shotstack] could not mirror to Storage, using upstream URL:', e.message)
-        }
-
-        if (customerId) {
-          try {
-            await supaFetch('rpc/consume_credits', {
-              method: 'POST',
-              body: {
-                p_customer_id: customerId, p_pool_type: 'ai_tokens', p_amount: fee,
-                p_action: 'consume:video-polish', p_profile_id: profile_id,
-                p_metadata: { via: 'shotstack', video_url, has_title: !!title, has_captions: wantsCaptionsEarly, zapcap: zapcapMeta, bytes },
-              },
-            })
-          } catch (e) {
-            console.error('video-polish (shotstack): consume_credits threw', e?.message)
-          }
-        }
-
-        NotifyKind.renderDone({
-          user_id: auth.user.id,
-          profile_id,
-          video_url: finalUrl,
-        }).catch(() => {})
-
-        return res.status(200).json({ video_url: finalUrl, bytes, zapcap: zapcapMeta, via: 'shotstack' })
-      } catch (e) {
-        // Any failure in the Shotstack path → fall through to the
-        // worker / local-ffmpeg paths below. The user still gets a
-        // polish; we just lose the speed benefit for this one run.
-        console.warn('[polish] Shotstack path failed, falling back:', e.message)
-      }
-    }
-
     // ─── Worker passthrough ────────────────────────────────────────────────
     // When WORKER_URL is set the heavy ffmpeg compositing runs on Fly /
     // Railway / wherever the worker lives. Vercel's job is then just:
@@ -536,9 +390,8 @@ export default async function handler(req, res) {
     // No video bytes pass through Vercel anymore — solves the OOM that
     // plagued the in-function ffmpeg path on big clips.
     //
-    // Ordering: worker is the PREFERRED fast path. Shotstack (block above)
-    // is the fallback when WORKER_URL is unset OR the worker errors.
-    // Local ffmpeg is the last-resort fallback after both.
+    // Ordering: worker is the PREFERRED fast path; local ffmpeg is the
+    // last-resort fallback when the worker is unset or errors.
     const WORKER_URL = process.env.WORKER_URL
     const WORKER_SECRET = process.env.WORKER_SHARED_SECRET
     if (WORKER_URL && wantsFfmpegEarly) {
