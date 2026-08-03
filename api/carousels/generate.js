@@ -29,7 +29,9 @@ async function planCarousel({ topic, slideCount, brandMd, brandColors, personMod
     : '{ "title": string, "caption": string, "hashtags": string, "slides": [ { "kind": "cover"|"tip"|"cta", "headline": string, "body": string, "image_prompt": string } ] }'
   const out = await anthropicMessage({
     model: 'claude-sonnet-5',
-    max_tokens: 2200,
+    // Enough headroom for N slides each with a long image_prompt — 2200 was
+    // truncating the JSON mid-array and breaking the parse.
+    max_tokens: 8000,
     system: [
       'You plan short-form social CAROUSELS (multi-slide photo posts) for a brand.',
       'Return ONLY valid JSON, no preamble, matching exactly:',
@@ -52,9 +54,22 @@ async function planCarousel({ topic, slideCount, brandMd, brandColors, personMod
     ].filter(Boolean).join('\n'),
     messages: [{ role: 'user', content: `Topic: ${topic}` }],
   })
-  const text = (out?.content || []).map((c) => c?.text || '').join('').trim()
-  const jsonStr = text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)
-  const plan = JSON.parse(jsonStr)
+  let text = (out?.content || []).map((c) => c?.text || '').join('').trim()
+  // Strip markdown fences, isolate the JSON object.
+  text = text.replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim()
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}') + 1
+  if (start < 0 || end <= start) throw new Error('Planner returned no JSON')
+  let jsonStr = text.slice(start, end)
+  let plan
+  try {
+    plan = JSON.parse(jsonStr)
+  } catch {
+    // Common model slips: trailing commas before } or ]. Repair and retry.
+    try { plan = JSON.parse(jsonStr.replace(/,(\s*[}\]])/g, '$1')) } catch {
+      throw new Error('Could not parse the slide plan. Try again or reduce the slide count.')
+    }
+  }
   if (!Array.isArray(plan?.slides) || !plan.slides.length) throw new Error('Planner returned no slides')
   return plan
 }
