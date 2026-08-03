@@ -1,5 +1,5 @@
 // POST /api/carousels/generate
-// Body: { profile_id, topic, slide_count?, reference_urls?, theme?, extra_style?, model?, aspect? }
+// Body: { profile_id, topic, slide_count?, reference_urls?, theme?, extra_style?, outfit?, format?, signature?, model?, aspect? }
 // Returns: { content_id, title, caption, hashtags, images: [url,...] }
 //
 // Streamlined carousel builder. Claude drafts a slide plan in the brand's
@@ -45,31 +45,27 @@ const FORMAT_GUIDES = {
   questions: 'Common QUESTIONS answered. Each tip slide poses one question as the headline and answers it in the body.',
 }
 
-// Draft the slide plan + post caption from the topic, in the brand's voice,
-// chosen structure (format), and visual style.
-async function planCarousel({ topic, slideCount, brandMd, brandColors, style, format, hasRefs, person, sig }) {
+// Draft the WORDS for the carousel: title, caption, hashtags, and per-slide
+// copy. Deliberately NOT the visual design. Everything visual (background,
+// palette, layout, person placement) is a LOCKED scene assembled in code and
+// reused byte-identical on every slide, so the only things that change slide
+// to slide are the copy and (in person mode) the pose. This is what makes a
+// set of separately-generated images read as one cohesive series.
+async function planCarousel({ topic, slideCount, brandMd, format, person }) {
   const out = await anthropicMessage({
     model: 'claude-sonnet-5',
     max_tokens: 8000,
     system: [
-      'You plan short-form social CAROUSELS (multi-slide photo posts) for a brand.',
+      'You plan the COPY for a short-form social CAROUSEL (multi-slide photo post) for a brand. You do NOT design visuals.',
       'Return ONLY valid JSON, no preamble, matching exactly:',
-      `{ "title": string, "caption": string, "hashtags": string, "slides": [ { "kind": "cover"|"tip"|"cta", "headline": string, "body": string, ${person ? '"pose": string, ' : ''}"image_prompt": string } ] }`,
+      `{ "title": string, "caption": string, "hashtags": string, "slides": [ { "kind": "cover"|"tip"|"cta", "headline": string, "body": string${person ? ', "pose": string' : ', "focal": string'} } ] }`,
       '',
       `Produce EXACTLY ${slideCount} slides: slide 1 kind "cover", the last slide kind "cta", the rest "tip".`,
       FORMAT_GUIDES[format] ? `STRUCTURE: ${FORMAT_GUIDES[format]}` : '',
-      person ? 'pose: a short description of how the featured PERSON should stand/gesture on THIS slide (vary it slide to slide, e.g. "arms crossed, confident direct eye contact" or "mid-gesture explaining, three-quarter turn"). The person is rendered from a reference photo and placed on the slide, so do NOT describe the person\'s face/clothing/identity, only the pose and expression.' : '',
-      'headline: punchy, <= 8 words. body: for "tip" slides write 2 to 4 short sentences (about 25 to 55 words) that actually teach the point, broken into 1 or 2 tiny paragraphs; for "cover" a 1-line promise is fine; for "cta" a short 1 to 2 sentence nudge. Never leave a tip body empty.',
-      'image_prompt: a complete prompt for an image model to render a 3:4 branded graphic for THIS slide. It MUST:',
-      '  - render BOTH the exact HEADLINE (large, crisp, the visual focal point) AND the full BODY text beneath it, all spelled exactly as given, as clean legible typography with clear hierarchy (big bold headline, smaller readable body paragraph). Layout the body as real sentences/paragraphs, not a caption.',
-      '  - lay out headline top, body below it, with comfortable margins so no text is cut off or crowded; body text must be fully legible, not tiny.',
-      `  - use the brand's colors${brandColors ? ` (${brandColors})` : ''} and a clean, cohesive layout consistent across all slides`,
-      style ? `  - FOLLOW THIS VISUAL STYLE on every slide: ${style}` : '',
-      person ? '  - RESERVE about half the frame (one side) as clean empty background for a person portrait that is composited in separately; put the headline and body text on the OPPOSITE side. Do NOT describe or draw any person yourself.'
-        : hasRefs ? '  - COMPOSE WITH THE PROVIDED REFERENCE IMAGE(S): place the referenced subject (a logo or product) naturally in the frame; keep its exact form; the headline text must not overlap it.' : '',
-      sig ? '  - LEAVE the bottom-left corner clear (a small empty margin, no text or key subject there): a name + handle signature is added afterward. Do NOT render any name, handle, @username, or signature yourself.' : '',
-      '  - describe composition/background so the set looks like one designed series',
-      '  - NOT include watermarks, other brands\' logos, page numbers, or slide numbers',
+      'headline: punchy, <= 8 words. body: for "tip" slides write 2 to 4 short sentences (about 25 to 55 words) that actually teach the point, in 1 or 2 tiny paragraphs; for "cover" a single 1-line promise; for "cta" a short 1 to 2 sentence nudge. Never leave a tip body empty.',
+      person
+        ? 'pose: a short description of how the featured PERSON stands/gestures/expresses on THIS slide. VARY it every slide (e.g. "arms crossed, confident direct eye contact", "mid-gesture explaining, three-quarter turn", "one hand in pocket, relaxed"). Describe ONLY pose and expression, never their face, identity, clothing, or the background.'
+        : 'focal: OPTIONAL short description of one supporting visual element unique to this slide that sits inside the shared background (e.g. "a glowing app dashboard mockup", "three stacked cards"). Leave it an empty string "" if the slide is just text. Do NOT describe the background itself, it is fixed for the whole set.',
       'caption: a scroll-stopping caption for the whole carousel (<= 400 chars). hashtags: at most 5, space-separated, each starting with #.',
       'NO em dashes anywhere. Use periods, commas, or "to" for ranges.',
       brandMd ? `\nBrand context:\n${brandMd}` : '',
@@ -115,42 +111,52 @@ async function genImage(originalReq, { profile_id, prompt, model, reference_urls
   throw new Error('slide image timed out')
 }
 
-// ── Person (two-stage) pipeline ────────────────────────────────────────
-// When a reference photo contains a person, we mirror the approved house
-// pipeline: Seedream 5 Pro renders a photoreal portrait that locks the
-// person's likeness onto the requested pose (plain background), then GPT
-// Image 2 builds the branded slide graphic AROUND that portrait. One-stage
-// image-to-image drifts the face and looks flat; two-stage keeps the
-// likeness and the crisp text.
+// ── Consistency model ──────────────────────────────────────────────────
+// Design philosophy (from the house RayvaughnCEO pipeline): FREEZE every
+// axis that defines the look, expose only POSE and COPY. A set of separately
+// generated images reads as one cohesive series because ~95% of every prompt
+// is byte-identical across slides. Here the frozen axes are:
+//   - IDENTITY: the same reference photo(s) + one locked SUBJECT paragraph
+//   - WARDROBE: one locked OUTFIT string (theme-derived or user-described)
+//   - CAMERA/realism: one fixed block
+//   - SCENE (background, palette, layout, person placement): one locked block
+// and the only per-slide variables are POSE (person body language) and the
+// slide COPY. Two stages: Seedream 5 Pro locks likeness onto the pose, then
+// GPT Image 2 composes that portrait into the frozen scene with the copy.
 
-// Generic (any-brand) portrait prompt — honors whoever is in the reference.
-function portraitPrompt(pose) {
-  return (
-    'Photorealistic studio portrait photograph of the SAME person shown in the reference image(s). '
-    + 'Preserve their EXACT facial identity, bone structure, skin tone, hairstyle and facial hair with no drift, '
-    + 'as if photographed on the same day. '
-    + `POSE: ${pose || 'relaxed confident stance, direct eye contact, natural expression'}. `
-    + 'Upper body clearly visible, both hands (if shown) anatomically correct with five fingers each. '
-    + 'Soft professional lighting, natural visible skin texture, authentic sharp DSLR realism, subtle imperfections. '
-    + 'NOT CGI, not 3D-rendered, not a digital painting, not airbrushed or plastic. '
-    + 'The person is isolated on a PURE SOLID WHITE background (#ffffff) with soft edges. '
-    + 'No text, no graphics, no props, no border.'
-  )
-}
-
-// Instruction prepended to the slide's graphic prompt for stage 2, telling
-// GPT to keep the handed portrait untouched and compose the slide around it.
-const COMPOSITE_CLAUSE = (
-  'Using the provided portrait photo of the person EXACTLY as-is (do NOT change, redraw or restyle their '
-  + 'face, hair, skin, build or pose; keep their exact likeness), build the slide described below. '
-  + 'Cleanly remove the plain background behind the person so their figure blends seamlessly into the slide '
-  + "background with soft edges (NO photo box, frame or rectangle), placed to ONE side at about 45 to 55% width, "
-  + 'bleeding off that edge. Put the headline and ALL body text on the OPPOSITE side with comfortable margins so '
-  + 'no text overlaps the person and nothing is cut off. Keep one cohesive layout across the set.\n\nSLIDE: '
+// Fixed realism block — identical on every portrait call.
+const CAMERA = (
+  'Photorealistic studio portrait, 85mm lens look, soft directional key light with gentle fill, '
+  + 'natural visible skin texture and pores, sharp DSLR realism, subtle natural imperfections. '
+  + 'NOT CGI, not 3D-rendered, not a digital painting, not airbrushed or plastic.'
 )
 
-// Cheap vision check: does the first reference photo contain a real person
-// (a visible human face/figure)? Drives whether we run the two-stage path.
+// Fallback pose rotation (used when the planner does not supply a pose).
+const DEFAULT_POSES = [
+  'arms crossed loosely across the chest, shoulders squared, chin slightly lifted, direct confident eye contact',
+  'three-quarter turn, one hand raised near chest in a precision pinch gesture, focused instructive expression',
+  'mid-gesture mid-sentence, one hand open in a natural explanatory motion, animated engaged expression',
+  'standing squarely, one hand loosely in a pocket, relaxed open shoulders, calm steady eye contact',
+  'three-quarter profile, gaze off-frame, one hand gesturing outward presenting, thoughtful expression',
+  'leaning slightly toward camera, one open hand offering gesture near chest, subtle confident smile',
+  'both hands lightly framing an idea at chest height, eyebrows raised, enthusiastic expression',
+]
+
+// Default wardrobe per theme (used when the user does not describe an outfit).
+const THEME_OUTFITS = {
+  modern: 'a clean well-fitted plain crew-neck t-shirt in a neutral tone',
+  bold: 'a sharp fitted solid-color t-shirt',
+  edgy: 'a fitted dark tee or casual jacket with a street edge',
+  cursive: 'refined smart-casual attire, a fitted knit or light shirt',
+  futuristic: 'a sleek modern top or minimal technical jacket',
+  minimal: 'a plain premium crew-neck tee in a muted tone',
+  retro: 'a casual vintage-styled top',
+}
+function resolveOutfit(theme, userOutfit) {
+  return String(userOutfit || '').trim() || THEME_OUTFITS[theme] || 'a clean, well-fitted outfit that suits the visual style'
+}
+
+// Cheap vision check: does the first reference photo contain a real person?
 async function refHasPerson(refUrl) {
   try {
     const out = await anthropicMessage({
@@ -167,14 +173,71 @@ async function refHasPerson(refUrl) {
   } catch { return false }
 }
 
-// Two-stage slide render: Seedream portrait → GPT Image 2 graphic.
-async function genPersonSlide(originalReq, { profile_id, refs, pose, graphicPrompt, aspect }) {
+// Vision pass, run ONCE per carousel: describe the person's fixed identity so
+// the same locked paragraph rides every Seedream call (like the house `S`).
+async function describeSubject(refUrl) {
+  try {
+    const out = await anthropicMessage({
+      model: 'claude-sonnet-5',
+      max_tokens: 400,
+      system: [
+        'You write a locked identity description of a person for consistent AI portrait regeneration.',
+        'In 90 to 140 words, describe ONLY their fixed identity: face shape, skin tone, eye and eyebrow shape, nose, lips, facial hair, hairstyle (length, texture, how it is worn), approximate age range, build, and any permanent distinguishing features (glasses, moles).',
+        'Do NOT mention clothing, background, pose, expression, lighting, camera, or that it is a photo. Output one plain descriptive paragraph, no preamble.',
+      ].join(' '),
+      messages: [{ role: 'user', content: [
+        { type: 'image', source: { type: 'url', url: refUrl } },
+        { type: 'text', text: 'Describe this person.' },
+      ] }],
+    })
+    const desc = (out?.content || []).map((c) => c?.text || '').join('').trim()
+    if (!desc) return ''
+    return `SUBJECT: This is the exact same person shown in the reference photos. ${desc} Preserve this precise facial identity, bone structure, skin tone, hairstyle and facial hair with no drift, as if photographed on the same day. Both hands (if shown) anatomically correct and complete with five fingers each.`
+  } catch { return '' }
+}
+
+// The LOCKED scene: background + palette + layout + (person placement) +
+// signature reserve. Assembled once and reused byte-identical on every slide,
+// so backgrounds and composition never drift across the set.
+function buildScene({ themeStyle, brandColors, extraStyle, person, sig }) {
+  const parts = ['SCENE AND LAYOUT (keep IDENTICAL on every slide of this set): a vertical 3:4 social carousel slide.']
+  parts.push(`Background and visual style: ${themeStyle || 'clean modern editorial design'}.${extraStyle ? ` ${extraStyle}.` : ''}`)
+  parts.push(brandColors
+    ? `Palette: build around the brand colors ${brandColors}. Use the EXACT same background and palette on every slide.`
+    : 'Use one cohesive palette and the EXACT same background on every slide.')
+  if (person) {
+    parts.push('A real photographed person (provided as a separate portrait) stands on the RIGHT, shown from head to about the waist, LARGE and life-size at roughly 55 to 62 percent of the frame width, bleeding off the right and bottom edges so they occupy real space in the scene. Use the provided portrait EXACTLY as-is: do not change, redraw or restyle their face, hair, skin, build or pose. Cleanly remove the plain background behind them and blend them INTO this scene with matched lighting and a natural contact shadow so they look genuinely photographed in it, NOT a flat cutout pasted on top: no hard sticker edge, no floating, no white halo.')
+    parts.push('All typography sits on the LEFT sharing one left alignment edge: a large bold HEADLINE with a smaller readable BODY paragraph beneath it, never overlapping the person, comfortable margins, nothing cut off.')
+  } else {
+    parts.push('Typography: a large bold HEADLINE with a smaller readable BODY paragraph beneath it, clear hierarchy, comfortable margins, nothing cut off.')
+  }
+  parts.push('All lettering crisp and correctly spelled.')
+  parts.push(sig
+    ? 'Leave the bottom-left about 18 percent as clean empty space (a signature is added later). No name, handle, logo, watermark, page number or slide number anywhere.'
+    : 'No watermark, page number or slide number anywhere.')
+  return parts.join(' ')
+}
+
+// Locked portrait prompt: SUBJECT + WARDROBE + per-slide POSE + CAMERA.
+function portraitPrompt({ subject, outfit, pose }) {
+  return [
+    subject || 'SUBJECT: the exact same person shown in the reference photos, preserve their precise facial identity, hair, build and skin tone with no drift.',
+    `WARDROBE: they are wearing ${outfit}. Keep this outfit identical in every image.`,
+    `POSE: ${pose || DEFAULT_POSES[0]}.`,
+    CAMERA,
+    'Show them from the head to about the waist, upper body and torso clearly visible. The person is isolated on a PURE SOLID WHITE background (#ffffff) with soft edges. No text, no graphics, no props, no border.',
+  ].join('\n\n')
+}
+
+// Two-stage slide render: Seedream portrait (locked identity + outfit, varying
+// pose) → GPT Image 2 composes it into the locked scene with the slide copy.
+async function genPersonSlide(originalReq, { profile_id, refs, subject, outfit, pose, scene, copy, aspect }) {
   const portrait = await genImage(originalReq, {
-    profile_id, prompt: portraitPrompt(pose), model: 'seedream',
+    profile_id, prompt: portraitPrompt({ subject, outfit, pose }), model: 'seedream',
     reference_urls: refs, aspect,
   })
   return genImage(originalReq, {
-    profile_id, prompt: `${COMPOSITE_CLAUSE}${graphicPrompt}`, model: 'gpt-2',
+    profile_id, prompt: `${scene}\n\n${copy}`, model: 'gpt-2',
     reference_urls: [portrait], aspect,
   })
 }
@@ -188,13 +251,13 @@ export default async function handler(req, res) {
   if (!auth) return
 
   try {
-    const { profile_id, topic, slide_count = 6, reference_urls, theme, extra_style, format, signature, model, aspect = '3:4' } = req.body || {}
+    const { profile_id, topic, slide_count = 6, reference_urls, theme, extra_style, outfit, format, signature, model, aspect = '3:4' } = req.body || {}
     if (!profile_id || !topic) return res.status(400).json({ error: 'profile_id + topic required' })
     await assertProfileAccess(auth.user.id, profile_id)
     const n = Math.max(3, Math.min(8, Number(slide_count) || 6))
     const refs = (Array.isArray(reference_urls) ? reference_urls.filter(Boolean) : [])
-    // Style directive = preset theme + any free-text the user added.
-    const style = [THEME_PROMPTS[theme] || '', String(extra_style || '').trim()].filter(Boolean).join(' ')
+    const themeStyle = THEME_PROMPTS[theme] || ''
+    const extraStyle = String(extra_style || '').trim()
 
     // Auto-detect a PERSON in the references. When present, every slide uses
     // the two-stage house pipeline (Seedream portrait → GPT Image 2 graphic)
@@ -228,17 +291,32 @@ export default async function handler(req, res) {
       return { name, handle, dark: signature?.dark !== false }
     })()
 
-    const plan = await planCarousel({ topic, slideCount: n, brandMd, brandColors, style, format, hasRefs: refs.length > 0, person, sig })
+    const plan = await planCarousel({ topic, slideCount: n, brandMd, format, person })
     const slides = plan.slides.slice(0, n)
+
+    // Freeze the shared axes ONCE, then reuse them byte-identical per slide.
+    const scene = buildScene({ themeStyle, brandColors, extraStyle, person, sig })
+    const outfitLocked = person ? resolveOutfit(theme, outfit) : ''
+    const subjectLocked = person ? await describeSubject(refs[0]) : ''
+
+    // Per-slide COPY block (the one text variable). Same wording template.
+    const copyOf = (s) => {
+      const head = `a large bold HEADLINE reading exactly "${String(s.headline || '').trim()}"`
+      const body = String(s.body || '').trim()
+      const bodyClause = body ? `, and beneath it a smaller readable BODY paragraph reading exactly "${body}"` : ''
+      const focal = !person && String(s.focal || '').trim() ? ` Supporting visual on this slide only: ${String(s.focal).trim()}.` : ''
+      return `Render on this slide, spelled exactly and once: ${head}${bodyClause}.${focal}`
+    }
 
     let urls
     try {
-      urls = await Promise.all(slides.map((s) => {
-        const graphicPrompt = style ? `${s.image_prompt}\n\nSTYLE: ${style}` : s.image_prompt
+      urls = await Promise.all(slides.map((s, i) => {
+        const copy = copyOf(s)
         if (person) {
-          return genPersonSlide(req, { profile_id, refs, pose: s.pose, graphicPrompt, aspect })
+          const pose = String(s.pose || '').trim() || DEFAULT_POSES[i % DEFAULT_POSES.length]
+          return genPersonSlide(req, { profile_id, refs, subject: subjectLocked, outfit: outfitLocked, pose, scene, copy, aspect })
         }
-        return genImage(req, { profile_id, prompt: graphicPrompt, model: useModel, reference_urls: refs.length ? refs : undefined, aspect })
+        return genImage(req, { profile_id, prompt: `${scene}\n\n${copy}`, model: useModel, reference_urls: refs.length ? refs : undefined, aspect })
       }))
     } catch (e) {
       if (e.code === 'insufficient_credits') {

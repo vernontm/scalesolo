@@ -48,6 +48,7 @@ export default function CarouselBuilder() {
   const [format, setFormat] = useState('listicle')
   const [theme, setTheme] = useState('modern')
   const [extraStyle, setExtraStyle] = useState('')
+  const [outfit, setOutfit] = useState('')
   const [sigOn, setSigOn] = useState(true)
   const [sigName, setSigName] = useState('')
   const [sigHandle, setSigHandle] = useState('')
@@ -73,7 +74,7 @@ export default function CarouselBuilder() {
     try { const s = JSON.parse(localStorage.getItem(refsKey) || '[]'); if (Array.isArray(s)) setRefs(s.map((u) => ({ url: u, selected: true }))) } catch {}
     try {
       const g = JSON.parse(localStorage.getItem(sigKey) || 'null')
-      if (g && typeof g === 'object') { setSigOn(g.on !== false); setSigName(g.name || ''); setSigHandle(g.handle || ''); setSigDark(g.dark !== false) }
+      if (g && typeof g === 'object') { setSigOn(g.on !== false); setSigName(g.name || ''); setSigHandle(g.handle || ''); setSigDark(g.dark !== false); setOutfit(g.outfit || '') }
     } catch {}
     fetchIdeas()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -82,8 +83,8 @@ export default function CarouselBuilder() {
   // Persist the signature settings whenever they change.
   useEffect(() => {
     if (!sigKey) return
-    try { localStorage.setItem(sigKey, JSON.stringify({ on: sigOn, name: sigName, handle: sigHandle, dark: sigDark })) } catch {}
-  }, [sigKey, sigOn, sigName, sigHandle, sigDark])
+    try { localStorage.setItem(sigKey, JSON.stringify({ on: sigOn, name: sigName, handle: sigHandle, dark: sigDark, outfit })) } catch {}
+  }, [sigKey, sigOn, sigName, sigHandle, sigDark, outfit])
 
   const persistRefs = (list) => { try { if (refsKey) localStorage.setItem(refsKey, JSON.stringify(list.map((r) => r.url))) } catch {} }
 
@@ -153,6 +154,7 @@ export default function CarouselBuilder() {
         body: JSON.stringify({
           profile_id: selectedProfileId, topic: topic.trim(), slide_count: slides,
           format, theme, extra_style: extraStyle.trim() || undefined,
+          outfit: outfit.trim() || undefined,
           reference_urls: selectedRefs.length ? selectedRefs : undefined,
           signature: { enabled: sigOn, name: sigName.trim() || undefined, handle: sigHandle.trim() || undefined, dark: sigDark },
         }),
@@ -297,6 +299,9 @@ export default function CarouselBuilder() {
                   </div>
                 ))}
               </div>
+            )}
+            {refs.length > 0 && (
+              <input className="input" value={outfit} onChange={(e) => setOutfit(e.target.value)} placeholder="Outfit for the person (optional, e.g. black tee + chain). Blank = matches the style." style={{ width: '100%', boxSizing: 'border-box', marginTop: 10, fontSize: 12.5 }} />
             )}
           </div>
 
