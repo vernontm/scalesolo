@@ -241,6 +241,18 @@ export default function Landing() {
         )}
       </header>
 
+      {/* ── TRUST BAR (under the nav) ───────────────────────────────── */}
+      <div style={{
+        display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+        padding: '10px 16px', borderBottom: '1px solid var(--border)',
+        background: 'color-mix(in srgb, var(--bg) 90%, transparent)',
+        position: 'relative', zIndex: 2,
+      }}>
+        <span style={pill}><Check size={11} /> 3-day trial</span>
+        <span style={pill}><Check size={11} /> Posts to 9+ platforms</span>
+        <span style={pill}><Check size={11} /> Works with Claude (MCP)</span>
+      </div>
+
       {/* ── HERO ────────────────────────────────────────────────────── */}
       <section style={hero} className="hero-section">
         {/* Rising-flame glow stack , 4 layers, two animations
@@ -262,31 +274,18 @@ export default function Landing() {
               >
                 Create <span className="brand-text">30 days of content</span> in minutes.
               </h1>
-              <p style={{ ...heroSub, margin: '0 0 22px' }} className="fade-up hero2-sub">
+              <p style={{ ...heroSub, margin: '0 0 10px' }} className="fade-up hero2-sub">
                 ScaleSolo is your AI social media manager. Design carousels, avatar videos, and a
                 month of posts, then drop them on a calendar that publishes for you. It even hooks
                 into Claude, so your AI can run the whole thing.
               </p>
-              <div style={{ ...heroCtas, marginBottom: 10 }} className="fade-up hero2-row">
+              <div className="fade-up hero2-micro" style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 18 }}>
+                3-day free trial. Cancel anytime. Keep everything you make.
+              </div>
+              <div style={{ ...heroCtas, marginBottom: 20 }} className="fade-up hero2-row">
                 <button onClick={goPricing} className="btn-primary" style={ctaSizing}>
                   Start free <ArrowRight size={14} />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setDemoOpen(true)}
-                  className="btn-secondary"
-                  style={ctaSizing}
-                >
-                  <Play size={13} fill="currentColor" /> See how it works
-                </button>
-              </div>
-              <div className="fade-up hero2-micro" style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 20 }}>
-                3-day free trial. Cancel anytime. Keep everything you make.
-              </div>
-              <div style={{ ...trustPills, marginBottom: 16 }} className="fade-up hero2-row">
-                <span style={pill}><Check size={11} /> 3-day trial</span>
-                <span style={pill}><Check size={11} /> Posts to 9+ platforms</span>
-                <span style={pill}><Check size={11} /> Works with Claude (MCP)</span>
               </div>
               <div className="fade-up ss-platform-strip hero2-row" style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 11, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', fontFamily: 'var(--font-display)', fontWeight: 700 }}>Publishes natively to</span>
