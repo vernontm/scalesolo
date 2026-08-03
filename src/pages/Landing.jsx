@@ -262,10 +262,13 @@ export default function Landing() {
               >
                 Create <span className="brand-text">30 days of content</span> in minutes.
               </h1>
-              <p style={{ ...heroSub, margin: '0 0 10px' }} className="fade-up hero2-sub">
+              <p style={{ ...heroSub, margin: '0 0 10px' }} className="fade-up hero2-sub hero2-sub-full">
                 ScaleSolo is your AI social media manager. Design carousels, avatar videos, and a
                 month of posts, then drop them on a calendar that publishes for you. It even hooks
                 into Claude, so your AI can run the whole thing.
+              </p>
+              <p style={{ ...heroSub, margin: '0 0 10px' }} className="fade-up hero2-sub hero2-sub-short">
+                Your AI social media manager. Carousels, videos, and a calendar that posts for you.
               </p>
               <div className="fade-up hero2-micro" style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 18 }}>
                 3-day free trial. Cancel anytime. Keep everything you make.
@@ -529,6 +532,10 @@ export default function Landing() {
         </div>
       </footer>
 
+      {/* Sticky mobile CTA — appears after the visitor scrolls past the
+          hero. Hidden on desktop via .ss-mobile-cta. */}
+      <MobileCtaBar />
+
       {/* Demo-video lightbox. Triggered by the "See how it works" CTA
           in the hero. Click backdrop / close button / Esc to dismiss.
           Video plays unmuted with native controls so the visitor can
@@ -646,10 +653,25 @@ function DemoKeyframes() {
       .hero2 { display: grid; grid-template-columns: 1.04fr 0.96fr; gap: 48px; align-items: center; text-align: left; }
       .hero2-h1 { font-size: clamp(36px, 4.3vw, 58px) !important; }
       .hero2-sub { font-size: 16px; }
+      .hero2-sub-short { display: none; }
+      .ss-mobile-cta { display: none; }
       @media (max-width: 940px) {
-        .hero2 { grid-template-columns: 1fr; gap: 30px; text-align: center; }
+        .hero2 { grid-template-columns: 1fr; gap: 26px; text-align: center; }
+        /* Product first on phones: the live builder panel leads, copy follows. */
+        .hero2 > div:last-child { order: -1; }
         .hero2-row { justify-content: center !important; }
         .hero2-h1 { font-size: clamp(32px, 8.5vw, 44px) !important; }
+        .hero2-sub-full { display: none; }
+        .hero2-sub-short { display: block; }
+        .ss-mobile-cta {
+          display: block; position: fixed; left: 0; right: 0; bottom: 0; z-index: 90;
+          padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+          background: color-mix(in srgb, var(--bg) 80%, transparent);
+          -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+          border-top: 1px solid var(--border);
+          animation: ssRowIn 0.25s var(--ease) both;
+        }
+        .ss-footer { padding-bottom: 96px; }
       }
       @media (max-width: 640px) {
         .hero-section h1 { font-size: clamp(34px, 9.5vw, 44px) !important; }
@@ -939,6 +961,26 @@ function OutfitShowcase() {
         </div>
       </div>
     </section>
+  )
+}
+
+// Sticky bottom CTA for phones — shows once the visitor scrolls past the
+// hero so it never covers the hero's own Start free button.
+function MobileCtaBar() {
+  const [show, setShow] = useState(false)
+  useEffect(() => {
+    const onScroll = () => setShow(window.scrollY > 480)
+    window.addEventListener('scroll', onScroll, { passive: true })
+    onScroll()
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
+  if (!show) return null
+  return (
+    <div className="ss-mobile-cta">
+      <button className="btn-primary" onClick={scrollToPricing} style={{ width: '100%', justifyContent: 'center', padding: '13px 16px', fontSize: 14.5 }}>
+        Start trial for free <ArrowRight size={14} />
+      </button>
+    </div>
   )
 }
 
