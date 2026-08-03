@@ -324,21 +324,22 @@ export default async function handler(req, res) {
 
     let urls
     try {
+      // Person mode: kick off ALL portraits in parallel up front so no follower
+      // waits on its own portrait serially (keeps the run under the time limit).
+      const portraits = person
+        ? slides.map((_, i) => genPortrait(req, { profile_id, refs, subject: subjectLocked, outfit: outfitLocked, pose: poseAt(i), aspect }))
+        : null
+
       // 1) Design the COVER visual (no text) — it is the style ANCHOR.
-      let coverUrl
-      if (person) {
-        const portrait = await genPortrait(req, { profile_id, refs, subject: subjectLocked, outfit: outfitLocked, pose: poseAt(0), aspect })
-        coverUrl = await genImage(req, { profile_id, prompt: coverPrompt({ style, person: true, focal: '' }), model: 'gpt-2', reference_urls: [portrait], aspect })
-      } else {
-        coverUrl = await genImage(req, { profile_id, prompt: coverPrompt({ style, person: false, focal: focalAt(0) }), model: 'gpt-2', reference_urls: refs.length ? refs : undefined, aspect })
-      }
+      const coverUrl = person
+        ? await genImage(req, { profile_id, prompt: coverPrompt({ style, person: true, focal: '' }), model: 'gpt-2', reference_urls: [await portraits[0]], aspect })
+        : await genImage(req, { profile_id, prompt: coverPrompt({ style, person: false, focal: focalAt(0) }), model: 'gpt-2', reference_urls: refs.length ? refs : undefined, aspect })
 
       // 2) Every follower reproduces the anchor's exact look (visual only).
       const rest = await Promise.all(slides.slice(1).map(async (s, idx) => {
         const i = idx + 1
         if (person) {
-          const portrait = await genPortrait(req, { profile_id, refs, subject: subjectLocked, outfit: outfitLocked, pose: poseAt(i), aspect })
-          return genImage(req, { profile_id, prompt: followPrompt({ style, person: true, focal: '' }), model: 'gpt-2', reference_urls: [coverUrl, portrait], aspect })
+          return genImage(req, { profile_id, prompt: followPrompt({ style, person: true, focal: '' }), model: 'gpt-2', reference_urls: [coverUrl, await portraits[i]], aspect })
         }
         return genImage(req, { profile_id, prompt: followPrompt({ style, person: false, focal: focalAt(i) }), model: 'gpt-2', reference_urls: [coverUrl, ...refs], aspect })
       }))

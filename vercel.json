@@ -21,6 +21,11 @@
     { "path": "/api/cron/cleanup-uploadpost-orphans", "schedule": "*/30 * * * *" }
   ],
   "functions": {
+    "api/carousels/generate.js": {
+      "maxDuration": 300,
+      "memory": 2048,
+      "includeFiles": "api/_fonts/**"
+    },
     "api/videos/combine.js": {
       "includeFiles": "node_modules/@ffmpeg/core/**",
       "maxDuration": 300,
