@@ -787,17 +787,18 @@ function CalendarShowcase() {
 
 // 3) Claude driving the account over MCP.
 function McpShowcase() {
-  const LOOP = 170
+  const LOOP = 190
   const [ref, tick] = useDemoTicker(LOOP)
-  const USER_MSG = 'Make 3 carousels for next week and schedule them at 11am.'
-  const typed = USER_MSG.slice(0, Math.min(tick * 1.2, USER_MSG.length))
+  const USER_MSG = 'Plan my week: 2 carousels, a fresh headshot, and a teaser video.'
+  const typed = USER_MSG.slice(0, Math.min(tick * 2, USER_MSG.length))
   const TOOLS = [
-    { at: 52, text: 'create_carousel  "5 Content Ideas That Book Clients"' },
-    { at: 66, text: 'create_carousel  "Myth vs Fact: Posting Every Day"' },
-    { at: 80, text: 'create_carousel  "Turn Followers Into Customers"' },
+    { at: 40, text: 'create_carousel  "5 Content Ideas That Book Clients"' },
+    { at: 52, text: 'create_carousel  "Turn Followers Into Customers"' },
+    { at: 64, text: 'generate_image  "studio headshot, burgundy blazer"' },
+    { at: 78, text: 'generate_video  "8s brand teaser, vertical"' },
     { at: 94, text: 'schedule_post  Tue 11:00 AM' },
     { at: 104, text: 'schedule_post  Thu 11:00 AM' },
-    { at: 114, text: 'schedule_post  Sat 11:00 AM' },
+    { at: 114, text: 'schedule_post  Fri 6:00 PM' },
   ]
   const replyAt = 128
   return (
@@ -807,15 +808,15 @@ function McpShowcase() {
           <div className="feat-eyebrow">Claude + MCP</div>
           <h2 className="showcase-title">Tell Claude. It's posted.</h2>
           <p className="showcase-body">
-            ScaleSolo plugs straight into Claude through MCP. Your AI assistant can create
-            carousels, generate images and video, write captions, and schedule posts, all in
-            your brand voice, all on your account. You talk, it ships.
+            ScaleSolo plugs straight into Claude through MCP. Your AI assistant can design
+            carousels, generate images and full videos, write captions, and schedule posts,
+            all in your brand voice, all on your account. You talk, it ships.
           </p>
           <ul className="showcase-list">
             <li><Check size={14} /> Built-in MCP connection, approve it once</li>
-            <li><Check size={14} /> Create, caption, and schedule from a chat</li>
+            <li><Check size={14} /> Generate images and videos straight from the chat</li>
+            <li><Check size={14} /> Create, caption, and schedule without opening the app</li>
             <li><Check size={14} /> Uses your brand voice, templates, and credits</li>
-            <li><Check size={14} /> Works alongside the app, everything lands in one calendar</li>
           </ul>
         </div>
         <div style={demoPanel}>
@@ -844,8 +845,8 @@ function McpShowcase() {
                 background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)',
                 fontSize: 12.5, color: 'var(--text)', animation: 'ssRowIn 0.35s var(--ease) both',
               }}>
-                Done. 3 carousels are designed in your brand style and scheduled for Tue, Thu,
-                and Sat at 11am.
+                Done. 2 carousels, a new headshot, and a teaser video are ready, and your
+                week is scheduled: Tue, Thu, and Fri.
               </div>
             )}
           </div>
