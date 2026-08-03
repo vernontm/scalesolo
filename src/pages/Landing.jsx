@@ -5,7 +5,7 @@ import {
   Layers, Wand2, RefreshCw, ShieldCheck, Quote, Play,
   Instagram, Youtube, Twitter, Linkedin, Music2, Captions as CaptionsIcon,
   Mic2, ShoppingBag, GraduationCap, Newspaper, Menu, X, PenLine, Film,
-  Volume2, VolumeX,
+  Volume2, VolumeX, Star,
 } from 'lucide-react'
 import PricingPlans from '../components/PricingPlans.jsx'
 import WorkflowDemo from '../components/WorkflowDemo.jsx'
@@ -272,6 +272,15 @@ export default function Landing() {
               <span style={pill}><Check size={11} /> Posts to 9+ platforms</span>
               <span style={pill}><Check size={11} /> Works with Claude (MCP)</span>
             </div>
+            <div className="fade-up" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 18, flexWrap: 'wrap', marginTop: 26 }}>
+              <span style={{ fontSize: 11, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', fontFamily: 'var(--font-display)', fontWeight: 700 }}>Publishes natively to</span>
+              {trustLogos.map(({ name, Icon, tint }) => (
+                <span key={name} title={name} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-soft)', fontSize: 12.5 }}>
+                  <Icon size={15} style={{ color: tint }} /> {name}
+                </span>
+              ))}
+              <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>+ 4 more</span>
+            </div>
           </div>
         </div>
       </section>
@@ -286,6 +295,9 @@ export default function Landing() {
       <OutfitShowcase />
 
 
+
+      {/* ── TESTIMONIALS ────────────────────────────────────────────── */}
+      <TestimonialsSection />
 
       {/* ── BUILT-IN TEMPLATES ──────────────────────────────────────── */}
       <TemplatesStrip />
@@ -453,6 +465,9 @@ export default function Landing() {
           </FaqItem>
         </div>
       </section>
+
+      {/* ── FINAL CTA ───────────────────────────────────────────────── */}
+      <FinalCta />
 
       {/* ── FOOTER ──────────────────────────────────────────────────── */}
       <footer className="ss-footer">
@@ -658,6 +673,7 @@ function CarouselBuildDemo() {
             <li><Check size={14} /> Caption and hashtags written in your brand voice</li>
             <li><Check size={14} /> Lands in your backlog ready to schedule</li>
           </ul>
+          <DemoCta stat="7 designed slides in about 90 seconds" label="Build your first carousel free" />
         </div>
         <div style={demoPanel}>
           <div style={demoKicker}><Wand2 size={12} /> Watch it build, real output</div>
@@ -779,6 +795,7 @@ function CalendarShowcase() {
             <li><Check size={14} /> Publishes natively to TikTok, IG, YouTube, X, LinkedIn + more</li>
             <li><Check size={14} /> Draft mode for TikTok when you want to post from the app</li>
           </ul>
+          <DemoCta stat="A month of posts scheduled in minutes" label="Fill your calendar free" />
         </div>
       </div>
     </section>
@@ -819,6 +836,7 @@ function McpShowcase() {
             <li><Check size={14} /> Create, caption, and schedule without opening the app</li>
             <li><Check size={14} /> Uses your brand voice, templates, and credits</li>
           </ul>
+          <DemoCta stat="A whole week of content from one message" label="Connect Claude free" />
         </div>
         <div style={demoPanel}>
           <div style={demoKicker}><Sparkles size={12} /> Claude, connected via MCP</div>
@@ -916,6 +934,7 @@ function OutfitShowcase() {
             <li><Check size={14} /> Feeds straight into carousels and avatar videos</li>
             <li><Check size={14} /> Every render saves to your library automatically</li>
           </ul>
+          <DemoCta stat="One photo in, unlimited wardrobe out" label="Try the studio free" />
         </div>
       </div>
     </section>
@@ -957,6 +976,73 @@ function TemplatesStrip() {
           </div>
         ))}
       </div>
+    </section>
+  )
+}
+
+// Scroll helper shared by the section CTAs (mirrors the hero's goPricing).
+function scrollToPricing() {
+  document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+// Outcome stat + contextual CTA + risk-reversal microcopy for demo sections.
+function DemoCta({ stat, label }) {
+  return (
+    <div style={{ marginTop: 18 }}>
+      {stat && (
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '6px 12px', borderRadius: 999, background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.30)', color: 'var(--red)', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 12, marginBottom: 12 }}>
+          <Zap size={12} /> {stat}
+        </div>
+      )}
+      <div>
+        <button className="btn-primary" onClick={scrollToPricing} style={{ padding: '11px 20px', fontSize: 13.5 }}>
+          {label} <ArrowRight size={13} />
+        </button>
+        <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 8 }}>3-day free trial. Cancel anytime. Keep everything you make.</div>
+      </div>
+    </div>
+  )
+}
+
+function TestimonialsSection() {
+  return (
+    <section style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
+      <h2 style={sectionH}>Founders run their whole brand on <span className="brand-text">ScaleSolo</span>.</h2>
+      <p style={sectionSub}>From solo creators to agencies running four brands at once.</p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14, maxWidth: 1080, margin: '0 auto' }}>
+        {testimonials.map((t) => (
+          <div key={t.name} style={{ padding: 20, borderRadius: 14, background: 'linear-gradient(160deg, rgba(255,255,255,0.045), rgba(255,255,255,0.015))', border: '1px solid rgba(255,255,255,0.10)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', gap: 3 }}>
+              {[0, 1, 2, 3, 4].map((i) => <Star key={i} size={13} fill="#f59e0b" stroke="none" />)}
+            </div>
+            <p style={{ fontSize: 13.5, color: 'var(--text-soft)', lineHeight: 1.6, flex: 1, margin: 0 }}>"{t.quote}"</p>
+            <div>
+              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 13.5, color: 'var(--text)' }}>{t.name}</div>
+              <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>{t.role}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function FinalCta() {
+  return (
+    <section style={{ ...section, position: 'relative', textAlign: 'center', paddingTop: 60, paddingBottom: 90 }} className="fade-up">
+      <div aria-hidden style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', width: 680, height: 420, background: 'radial-gradient(ellipse, rgba(239,68,68,0.16), transparent 65%)', pointerEvents: 'none' }} />
+      <h2 style={{ ...sectionH, position: 'relative' }}>
+        Your next 30 days of content<br />are <span className="brand-text">one click away</span>.
+      </h2>
+      <p style={{ ...sectionSub, position: 'relative' }}>
+        Design it, schedule it, and let ScaleSolo post it. You stay the creator. It stays the manager.
+      </p>
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 12, flexWrap: 'wrap', position: 'relative' }}>
+        <button className="btn-primary" onClick={scrollToPricing} style={{ padding: '14px 28px', fontSize: 15 }}>
+          Start free <ArrowRight size={15} />
+        </button>
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 12, position: 'relative' }}>3-day free trial. Cancel anytime. Keep everything you make.</div>
     </section>
   )
 }
