@@ -799,10 +799,23 @@ a:focus-visible {
 @media (max-width: 700px) {
   .founding-banner {
     text-align: center !important;
-    padding: 32px 22px 24px !important;
+    padding: 30px 20px 24px !important;
   }
-  .founding-banner ul li  { justify-content: center; }
-  .founding-feature-grid  { grid-template-columns: 1fr !important; }
+  /* Header stacks and centers: crown above the title, subtitle under it. */
+  .founding-banner .founding-header { flex-direction: column !important; align-items: center !important; gap: 16px !important; }
+  .founding-banner .founding-meta   { flex-direction: column !important; align-items: center !important; gap: 10px !important; }
+  /* CTA block: spots pill centered above a full-width Claim button. */
+  .founding-banner .founding-cta { flex-direction: column !important; align-items: stretch !important; width: 100%; gap: 10px !important; }
+  .founding-banner .founding-cta button { width: 100%; min-width: 0 !important; justify-content: center; }
+  .founding-banner .founding-cta > span { align-self: center; }
+  /* Features: one clean left-aligned column, centered as a block. */
+  .founding-feature-grid {
+    grid-template-columns: 1fr !important;
+    max-width: 330px;
+    margin-left: auto !important;
+    margin-right: auto !important;
+  }
+  .founding-banner ul li { justify-content: flex-start; text-align: left; }
 }
 
 /* ── Stack-replaced section ──────────────────────────────────────────── */

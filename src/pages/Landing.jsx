@@ -652,6 +652,10 @@ function DemoKeyframes() {
       @media (max-width: 900px) {
         .ss-demo-grid { grid-template-columns: 1fr; gap: 26px; }
         .ss-mcp-grid > div:last-child { order: -1; }
+        /* Center the copy columns on phones: headings, body, bullet
+           lists, stat chips, CTAs, and their microcopy. */
+        .ss-demo-grid .showcase-copy { text-align: center; }
+        .ss-demo-grid .showcase-list li { justify-content: center; }
       }
       .hero2 { display: grid; grid-template-columns: 1.04fr 0.96fr; gap: 48px; align-items: center; text-align: left; }
       .hero2-h1 { font-size: clamp(36px, 4.3vw, 58px) !important; }

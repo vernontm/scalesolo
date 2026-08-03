@@ -164,8 +164,8 @@ export default function PricingPlans() {
         {/* Row 1: header. Title reflects the active billing cycle so
             the founding price the visitor sees in the banner matches
             what they'd be charged when they click Claim. */}
-        <div style={foundingHeaderRow}>
-          <div style={foundingMeta}>
+        <div style={foundingHeaderRow} className="founding-header">
+          <div style={foundingMeta} className="founding-meta">
             <div style={foundingIcon}><Crown size={20} strokeWidth={2.4} /></div>
             <div>
               <div style={foundingTitle}>
@@ -178,7 +178,7 @@ export default function PricingPlans() {
               <div style={foundingSub}>{FOUNDING.blurb}</div>
             </div>
           </div>
-          <div style={foundingCtaWrap}>
+          <div style={foundingCtaWrap} className="founding-cta">
             <span style={remainingPill}>
               {foundingSoldOut ? 'Sold out' : `${foundingRemaining} of ${FOUNDING.cap} spots left`}
             </span>
