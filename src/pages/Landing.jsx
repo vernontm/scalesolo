@@ -192,7 +192,6 @@ export default function Landing() {
           </div>
           <nav style={navLinks} className="hide-on-narrow">
             <a href="#features" style={navLink}>Features</a>
-            <a href="#use-cases" style={navLink}>Use cases</a>
             <a href="#faq" style={navLink}>FAQ</a>
             <a href="#pricing" style={navLink}>Pricing</a>
             <a href="/blog" style={navLink}>Blog</a>
@@ -214,7 +213,6 @@ export default function Landing() {
         {menuOpen && (
           <div className="nav-mobile-panel">
             <a href="#features"  style={navLink} onClick={closeMenu}>Features</a>
-            <a href="#use-cases" style={navLink} onClick={closeMenu}>Use cases</a>
             <a href="#faq"       style={navLink} onClick={closeMenu}>FAQ</a>
             <a href="#pricing"   style={navLink} onClick={closeMenu}>Pricing</a>
             <a href="/blog"      style={navLink} onClick={closeMenu}>Blog</a>
@@ -298,126 +296,8 @@ export default function Landing() {
       </section>
 
 
-      {/* ── BRAND PROFILE SHOWCASE ──────────────────────────────────── */}
-      <section style={section} className="fade-up">
-        <div className="showcase-grid">
-          <div className="showcase-img-wrap">
-            <img
-              loading="lazy" decoding="async"
-              src="https://vbvmfiepwyxlfafbwtkb.supabase.co/storage/v1/object/public/landing-media/brand_profile.png"
-              alt="ScaleSolo brand profile, voice, training, and performance insights"
-              className="showcase-img"
-              onError={(e) => { e.currentTarget.style.opacity = '0' }}
-            />
-          </div>
-          <div className="showcase-copy">
-            <div className="feat-eyebrow">Brand profiles</div>
-            <h2 className="showcase-title">The first platform that actually sounds like you.</h2>
-            <p className="showcase-body">
-              Bring your own voice or build it here. Paste in the brand-voice profile you already
-              use with ChatGPT, Claude, or Gemini, or fill out our guided brief, and ScaleSolo
-              uses it to write every caption, script, and hook so the output stays seamless and
-              authentic to you.
-            </p>
-            <ul className="showcase-list">
-              <li><Check size={14} /> Import your voice from any AI tool, or build it on ScaleSolo</li>
-              <li><Check size={14} /> Studies your past scripts, hooks, and top-performing posts</li>
-              <li><Check size={14} /> Learns what lands and what flops to sharpen every run</li>
-              <li><Check size={14} /> Run multiple brands side-by-side with no cross-contamination</li>
-            </ul>
-          </div>
-        </div>
-      </section>
-
-      {/* ── USE CASES ───────────────────────────────────────────────── */}
-      <section id="use-cases" style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
-        <h2 style={sectionH}>What kind of <span className="brand-text">faceless brand</span> will you launch?</h2>
-        <p style={sectionSub}>
-          ScaleSolo runs them all the same way. Pick a workflow, set your cadence, walk away.
-          Here are a few of the brands solo founders are building right now.
-        </p>
-        <div className="usecase-grid">
-          <UseCaseCard
-            Icon={Mic2}
-            tag="AI podcast"
-            title="A daily short-form podcast on autopilot."
-            body="Drop a topic, ScaleSolo writes a punchy 60-second podcast script in your voice, narrates it, and posts it every day. Build a podcast brand entirely on Reels, Shorts, and TikTok with zero recording."
-            steps={[
-              'AI writes a 60s script in your brand voice',
-              'Voice clone narrates the daily episode',
-              'Posts as Shorts, Reels, and TikToks automatically',
-            ]}
-          />
-          <UseCaseCard
-            Icon={ShoppingBag}
-            tag="Product brand"
-            title="Promote a product without filming."
-            body="Run a faceless e-commerce or SaaS brand with daily demo videos, hooks, and CTAs. Your AI avatar shows the product, ScaleSolo writes the angles, and ads post at scale."
-            steps={[
-              'AI avatar demos features in 30s reels',
-              'Hooks and CTAs auto-generated per platform',
-              'Posts to TikTok Shop, IG Reels, YouTube Shorts',
-            ]}
-          />
-          <UseCaseCard
-            Icon={GraduationCap}
-            tag="Niche education"
-            title="Build authority while you sleep."
-            body="Pick a niche, drop your perspective, and ScaleSolo turns it into daily explainers in your tone of voice. Fitness, finance, mindset, productivity, you name it."
-            steps={[
-              'Pulls topics from your backlog or trends',
-              'Avatar delivers in your brand voice',
-              'Hooks and CTAs tailored per platform',
-            ]}
-          />
-          <UseCaseCard
-            Icon={Newspaper}
-            tag="News & curation"
-            title="Be the go-to source in your niche."
-            body="Aggregate, summarize, and rewrite the news in your brand voice. ScaleSolo turns daily updates into a 60-second video and posts before your competitors are awake."
-            steps={[
-              'AI scans and summarizes the day',
-              'Renders a daily 60s recap with captions',
-              'Posts to all 9+ platforms automatically',
-            ]}
-          />
-        </div>
-      </section>
-
       {/* ── BUILT-IN TEMPLATES ──────────────────────────────────────── */}
       <TemplatesStrip />
-
-      {/* ── TOOLS REPLACED ──────────────────────────────────────────── */}
-      <section style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
-        <h2 style={sectionH}>Your whole stack, <span className="brand-text">in one engine.</span></h2>
-        <p style={sectionSub}>
-          Most faceless brands run on a Frankenstein bundle of seven AI tools, seven logins, and seven monthly bills. ScaleSolo collapses all of it into one workflow that writes, films, captions, scores, and posts on its own.
-        </p>
-        <div className="kill-grid">
-          <div className="kill-track">
-            {[0, 1].map((set) => (
-              <div className="kill-set" key={set} aria-hidden={set === 1}>
-                <KillCard Icon={PenLine}     name="AI script writer"        cost="$30/mo" delay={0} />
-                <KillCard Icon={Mic2}         name="Voice cloning"            cost="$22/mo" delay={1} />
-                <KillCard Icon={UserCircle2}  name="AI avatar studio"         cost="$60/mo" delay={2} />
-                <KillCard Icon={CaptionsIcon} name="Captions and titles"      cost="$20/mo" delay={3} />
-                <KillCard Icon={Film}         name="Video editor"             cost="$25/mo" delay={4} />
-                <KillCard Icon={Music2}       name="Music and SFX"            cost="$15/mo" delay={5} />
-                <KillCard Icon={Calendar}     name="Multi-platform scheduler" cost="$30/mo" delay={6} />
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="kill-total-wrap">
-          <div className="kill-total">
-            <div className="kill-total-num">$200+</div>
-            <div className="kill-total-label">
-              in monthly subscriptions, gone.<br />
-              <span className="kill-total-sub">Run the whole pipeline on one ScaleSolo plan.</span>
-            </div>
-          </div>
-        </div>
-      </section>
 
       {/* ── PRICING ─────────────────────────────────────────────────── */}
       <section id="pricing" style={{ ...section, position: 'relative' }} className="fade-up">
@@ -608,7 +488,6 @@ export default function Landing() {
             <div className="ss-footer-col">
               <div className="ss-footer-col-title">Product</div>
               <a href="#features"  className="ss-footer-link">Features</a>
-              <a href="#use-cases" className="ss-footer-link">Use cases</a>
               <a href="#pricing"   className="ss-footer-link">Pricing</a>
               <a href="/blog"      className="ss-footer-link">Blog</a>
             </div>
