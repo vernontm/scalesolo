@@ -15,6 +15,7 @@
 // We download the video / photos here and forward as multipart/form-data
 // because Upload-Post wants the bytes, not a URL.
 
+import sharp from 'sharp'
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { isUserOnTrial } from '../_lib/billing.js'
 import { resolveUploadpostUser, uploadpostEnsureUserProfile } from '../_lib/uploadpost.js'
@@ -34,6 +35,23 @@ async function fetchToBlob(url) {
   if (!r.ok) throw new Error(`Fetch ${url} → ${r.status}`)
   const ab = await r.arrayBuffer()
   return new Blob([ab])
+}
+
+// TikTok photo mode only accepts JPG/JPEG/WEBP (PNG is silently rejected at
+// validation) and rejects oversized images. Normalize any image to a JPEG
+// that fits within 1440x1920 (covers 3:4 / 9:16 / 1:1) so carousels post
+// cleanly. Used only when TikTok is a target; other platforms take the
+// original bytes. Falls back to the raw blob if sharp can't decode it.
+async function fetchTikTokSafeJpeg(url) {
+  const r = await fetch(url)
+  if (!r.ok) throw new Error(`Fetch ${url} → ${r.status}`)
+  const buf = Buffer.from(await r.arrayBuffer())
+  const out = await sharp(buf)
+    .rotate() // honor EXIF orientation before we strip metadata
+    .resize({ width: 1440, height: 1920, fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: 90 })
+    .toBuffer()
+  return new Blob([out], { type: 'image/jpeg' })
 }
 
 function ext(url, fallback) {
@@ -375,7 +393,19 @@ export default async function handler(req, res) {
       fd.append('video', video_url)
       fd.append('async_upload', 'true')
     } else {
+      // For TikTok, normalize every slide to a TikTok-safe JPEG (PNG is
+      // rejected there); other platforms get the original bytes.
+      const tiktokPhotos = platforms.includes('tiktok')
       for (let i = 0; i < photos.length; i++) {
+        if (tiktokPhotos) {
+          try {
+            const jpeg = await fetchTikTokSafeJpeg(photos[i])
+            fd.append('photos[]', jpeg, `photo-${i}.jpg`)
+            continue
+          } catch (e) {
+            console.warn(`[tiktok-photo] JPEG convert failed for ${photos[i]} (${e?.message}); sending original`)
+          }
+        }
         const blob = await fetchToBlob(photos[i])
         fd.append('photos[]', blob, `photo-${i}.${ext(photos[i], 'jpg')}`)
       }

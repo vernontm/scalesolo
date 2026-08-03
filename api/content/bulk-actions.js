@@ -26,6 +26,7 @@ import {
 import uploadPostHandler from '../social/upload-post.js'
 import { invokeHandler } from '../_lib/internal-invoke.js'
 import { capHashtags } from '../_lib/hashtags.js'
+import sharp from 'sharp'
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
 
@@ -1106,6 +1107,21 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
           const fr = await fetch(url)
           if (!fr.ok) throw new Error(`media fetch ${url} → ${fr.status}`)
           const ab = await fr.arrayBuffer()
+          // TikTok photo mode rejects PNG + oversized images. Normalize to a
+          // JPEG within 1440x1920 for TikTok; other platforms take originals.
+          if (hasTikTok) {
+            try {
+              const jpeg = await sharp(Buffer.from(ab))
+                .rotate()
+                .resize({ width: 1440, height: 1920, fit: 'inside', withoutEnlargement: true })
+                .jpeg({ quality: 90 })
+                .toBuffer()
+              fd.append('photos[]', new Blob([jpeg], { type: 'image/jpeg' }), `image_${i + 1}.jpg`)
+              continue
+            } catch (e) {
+              console.warn(`[tiktok-photo] JPEG convert failed for ${url} (${e?.message}); sending original`)
+            }
+          }
           const extMatch = (url.match(/\.([a-z0-9]+)(?:\?|#|$)/i)?.[1] || 'jpg').toLowerCase()
           const mime = extMatch === 'png'  ? 'image/png'
                      : extMatch === 'webp' ? 'image/webp'
