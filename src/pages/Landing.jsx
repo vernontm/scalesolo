@@ -649,17 +649,26 @@ function DemoKeyframes() {
       @keyframes ssWipe { 0%, 8% { clip-path: inset(0 0 0 0); } 46%, 62% { clip-path: inset(0 0 0 100%); } 96%, 100% { clip-path: inset(0 0 0 0); } }
       @keyframes ssWipeLine { 0%, 8% { left: 0%; } 46%, 62% { left: 100%; } 96%, 100% { left: 0%; } }
       .ss-demo-grid { display: grid; grid-template-columns: 1.05fr 1fr; gap: 44px; align-items: center; }
-      @media (max-width: 900px) { .ss-demo-grid { grid-template-columns: 1fr; gap: 26px; } }
+      @media (max-width: 900px) {
+        .ss-demo-grid { grid-template-columns: 1fr; gap: 26px; }
+        .ss-mcp-grid > div:last-child { order: -1; }
+      }
       .hero2 { display: grid; grid-template-columns: 1.04fr 0.96fr; gap: 48px; align-items: center; text-align: left; }
       .hero2-h1 { font-size: clamp(36px, 4.3vw, 58px) !important; }
       .hero2-sub { font-size: 16px; }
       .hero2-sub-short { display: none; }
       .ss-mobile-cta { display: none; }
       @media (max-width: 940px) {
-        .hero2 { grid-template-columns: 1fr; gap: 26px; text-align: center; }
-        /* Product first on phones: the live builder panel leads, copy follows. */
+        /* Phone order: headline, then the live builder panel, then the
+           rest of the copy. display:contents promotes the copy column's
+           children to flex items so the H1 can sit above the panel
+           without duplicating it. Everything centers. */
+        .hero2 { display: flex; flex-direction: column; gap: 22px; text-align: center; }
+        .hero2-copy { display: contents; }
+        .hero2-h1 { order: -2; margin-bottom: 0 !important; }
         .hero2 > div:last-child { order: -1; }
         .hero2-row { justify-content: center !important; }
+        .hero2-sub, .hero2-micro { text-align: center; margin-left: auto !important; margin-right: auto !important; }
         .hero2-h1 { font-size: clamp(32px, 8.5vw, 44px) !important; }
         .hero2-sub-full { display: none; }
         .hero2-sub-short { display: block; }
@@ -842,7 +851,7 @@ function McpShowcase() {
   ]
   return (
     <section style={section} className="fade-up">
-      <div className="ss-demo-grid">
+      <div className="ss-demo-grid ss-mcp-grid">
         <div className="showcase-copy">
           <div className="feat-eyebrow">Claude + MCP</div>
           <h2 className="showcase-title">Tell Claude. It's posted.</h2>
