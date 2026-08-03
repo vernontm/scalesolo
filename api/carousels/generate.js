@@ -9,6 +9,7 @@
 // job is driven by an immediate self-kick to /api/carousels/process plus an
 // every-minute cron safety net.
 
+import { waitUntil } from '@vercel/functions'
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 import { kickCarouselJob } from '../_lib/carousel-kick.js'
 
@@ -37,8 +38,9 @@ export default async function handler(req, res) {
     const job = Array.isArray(inserted) ? inserted[0] : inserted
     if (!job?.id) return res.status(500).json({ error: 'Could not create the generation job' })
 
-    // Best-effort immediate kick; the cron picks it up regardless.
-    await kickCarouselJob(job.id, auth.user.id)
+    // Fire the immediate kick in the background so this request returns at
+    // once; the every-minute cron picks the job up regardless.
+    waitUntil(kickCarouselJob(job.id, auth.user.id))
 
     return res.status(202).json({ job_id: job.id, status: 'queued' })
   } catch (err) {
