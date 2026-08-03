@@ -15,6 +15,7 @@ import { message as anthropicMessage } from '../_lib/anthropic.js'
 import { loadBrandContext, renderBrandContextMarkdown } from '../_lib/brand-context.js'
 import { invokeHandler } from '../_lib/internal-invoke.js'
 import { capHashtags } from '../_lib/hashtags.js'
+import { compositeLockup } from '../_lib/carousel-lockup.js'
 import imagesGenerate from '../images/generate.js'
 import imagesStatus from '../images/status.js'
 
@@ -46,7 +47,7 @@ const FORMAT_GUIDES = {
 
 // Draft the slide plan + post caption from the topic, in the brand's voice,
 // chosen structure (format), and visual style.
-async function planCarousel({ topic, slideCount, brandMd, brandColors, style, format, hasRefs }) {
+async function planCarousel({ topic, slideCount, brandMd, brandColors, style, format, hasRefs, sig }) {
   const out = await anthropicMessage({
     model: 'claude-sonnet-5',
     max_tokens: 8000,
@@ -64,6 +65,7 @@ async function planCarousel({ topic, slideCount, brandMd, brandColors, style, fo
       `  - use the brand's colors${brandColors ? ` (${brandColors})` : ''} and a clean, cohesive layout consistent across all slides`,
       style ? `  - FOLLOW THIS VISUAL STYLE on every slide: ${style}` : '',
       hasRefs ? '  - COMPOSE WITH THE PROVIDED REFERENCE IMAGE(S): place the referenced subject (a person, logo, or product) naturally in the frame; keep a person\'s exact face/likeness or a logo\'s exact form; the headline text must not overlap it.' : '',
+      sig ? '  - LEAVE the bottom-left corner clear (a small empty margin, no text or key subject there): a name + handle signature is added afterward. Do NOT render any name, handle, @username, or signature yourself.' : '',
       '  - describe composition/background so the set looks like one designed series',
       '  - NOT include watermarks, other brands\' logos, page numbers, or slide numbers',
       'caption: a scroll-stopping caption for the whole carousel (<= 400 chars). hashtags: at most 5, space-separated, each starting with #.',
@@ -120,7 +122,7 @@ export default async function handler(req, res) {
   if (!auth) return
 
   try {
-    const { profile_id, topic, slide_count = 6, reference_urls, theme, extra_style, format, model, aspect = '3:4' } = req.body || {}
+    const { profile_id, topic, slide_count = 6, reference_urls, theme, extra_style, format, signature, model, aspect = '3:4' } = req.body || {}
     if (!profile_id || !topic) return res.status(400).json({ error: 'profile_id + topic required' })
     await assertProfileAccess(auth.user.id, profile_id)
     const n = Math.max(3, Math.min(8, Number(slide_count) || 6))
@@ -132,14 +134,30 @@ export default async function handler(req, res) {
     const useModel = model || (refs.length ? 'gpt-2' : 'nano-banana')
 
     let brandMd = '', brandColors = ''
+    let profRow = null
     try {
       brandMd = renderBrandContextMarkdown(await loadBrandContext(profile_id), { exclude: ['exemplars'] })
-      const pr = await supaFetch(`profiles?id=eq.${profile_id}&select=brand_color,brand_color_secondary`)
-      const p = pr?.[0]
-      brandColors = [p?.brand_color, p?.brand_color_secondary].filter(Boolean).join(' and ')
+      const pr = await supaFetch(`profiles?id=eq.${profile_id}&select=brand_color,brand_color_secondary,owner_name,business_name,instagram_handle,tiktok_handle,threads_handle,youtube_handle,x_handle`)
+      profRow = pr?.[0] || null
+      brandColors = [profRow?.brand_color, profRow?.brand_color_secondary].filter(Boolean).join(' and ')
     } catch { /* brandless is fine */ }
 
-    const plan = await planCarousel({ topic, slideCount: n, brandMd, brandColors, style, format, hasRefs: refs.length > 0 })
+    // Signature lockup: on by default. Name + handle come from the request
+    // (user override) or fall back to the brand profile. `dark` = true renders
+    // a near-black signature (for light slides); false renders white.
+    const sig = (() => {
+      if (signature && signature.enabled === false) return null
+      const name = String(signature?.name || profRow?.owner_name || profRow?.business_name || '').trim()
+      const handle = String(
+        signature?.handle
+        || profRow?.instagram_handle || profRow?.tiktok_handle || profRow?.threads_handle
+        || profRow?.youtube_handle || profRow?.x_handle || ''
+      ).trim()
+      if (!name && !handle) return null
+      return { name, handle, dark: signature?.dark !== false }
+    })()
+
+    const plan = await planCarousel({ topic, slideCount: n, brandMd, brandColors, style, format, hasRefs: refs.length > 0, sig })
     const slides = plan.slides.slice(0, n)
 
     let urls
@@ -153,6 +171,12 @@ export default async function handler(req, res) {
         return res.status(402).json({ error: `Not enough credits to render ${n} slides (~${4000 * n} ai_tokens). ${e.message}`, code: 'insufficient_credits' })
       }
       return res.status(502).json({ error: `Slide generation failed: ${e.message}` })
+    }
+
+    // Composite the brand name + handle signature onto each slide (best-effort;
+    // falls back to the un-signed slide on any failure).
+    if (sig) {
+      urls = await Promise.all(urls.map((u) => compositeLockup(u, { ...sig, profileId: profile_id })))
     }
 
     const title = String(plan.title || topic).slice(0, 120)

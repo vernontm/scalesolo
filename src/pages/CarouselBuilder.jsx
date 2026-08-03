@@ -48,6 +48,10 @@ export default function CarouselBuilder() {
   const [format, setFormat] = useState('listicle')
   const [theme, setTheme] = useState('modern')
   const [extraStyle, setExtraStyle] = useState('')
+  const [sigOn, setSigOn] = useState(true)
+  const [sigName, setSigName] = useState('')
+  const [sigHandle, setSigHandle] = useState('')
+  const [sigDark, setSigDark] = useState(true)
   const [ideas, setIdeas] = useState([])
   const [ideasLoading, setIdeasLoading] = useState(false)
   const [refs, setRefs] = useState([])       // [{ url, selected }]
@@ -61,14 +65,25 @@ export default function CarouselBuilder() {
   const progressTimer = useRef(null)
 
   const refsKey = selectedProfileId ? `scalesolo.carousel.refs.${selectedProfileId}` : null
+  const sigKey = selectedProfileId ? `scalesolo.carousel.sig.${selectedProfileId}` : null
 
-  // Load saved references (persist per brand, no re-upload) + topic ideas.
+  // Load saved references + signature (persist per brand) + topic ideas.
   useEffect(() => {
     if (!refsKey) return
     try { const s = JSON.parse(localStorage.getItem(refsKey) || '[]'); if (Array.isArray(s)) setRefs(s.map((u) => ({ url: u, selected: false }))) } catch {}
+    try {
+      const g = JSON.parse(localStorage.getItem(sigKey) || 'null')
+      if (g && typeof g === 'object') { setSigOn(g.on !== false); setSigName(g.name || ''); setSigHandle(g.handle || ''); setSigDark(g.dark !== false) }
+    } catch {}
     fetchIdeas()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProfileId])
+
+  // Persist the signature settings whenever they change.
+  useEffect(() => {
+    if (!sigKey) return
+    try { localStorage.setItem(sigKey, JSON.stringify({ on: sigOn, name: sigName, handle: sigHandle, dark: sigDark })) } catch {}
+  }, [sigKey, sigOn, sigName, sigHandle, sigDark])
 
   const persistRefs = (list) => { try { if (refsKey) localStorage.setItem(refsKey, JSON.stringify(list.map((r) => r.url))) } catch {} }
 
@@ -139,6 +154,7 @@ export default function CarouselBuilder() {
           profile_id: selectedProfileId, topic: topic.trim(), slide_count: slides,
           format, theme, extra_style: extraStyle.trim() || undefined,
           reference_urls: selectedRefs.length ? selectedRefs : undefined,
+          signature: { enabled: sigOn, name: sigName.trim() || undefined, handle: sigHandle.trim() || undefined, dark: sigDark },
         }),
       })
       const b = await r.json().catch(() => ({}))
@@ -280,6 +296,31 @@ export default function CarouselBuilder() {
                     <button onClick={() => removeRef(r.url)} title="Remove" style={{ position: 'absolute', top: -6, left: -6, width: 16, height: 16, borderRadius: 999, border: 'none', background: 'rgba(0,0,0,0.7)', color: '#fff', cursor: 'pointer', display: 'grid', placeItems: 'center', padding: 0 }}><X size={10} /></button>
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+
+          {/* Signature (name + handle lockup on every slide) */}
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
+              <div style={{ ...label, marginBottom: 0, flex: 1 }}>Signature</div>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--muted)', cursor: 'pointer' }}>
+                <input type="checkbox" checked={sigOn} onChange={(e) => setSigOn(e.target.checked)} /> Add to each slide
+              </label>
+            </div>
+            {sigOn && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input className="input" value={sigName} onChange={(e) => setSigName(e.target.value)} placeholder="Name (blank = your brand)" style={{ flex: 1, boxSizing: 'border-box', fontSize: 12.5 }} />
+                  <input className="input" value={sigHandle} onChange={(e) => setSigHandle(e.target.value)} placeholder="@handle" style={{ flex: 1, boxSizing: 'border-box', fontSize: 12.5 }} />
+                </div>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>Ink:</span>
+                  {[{ k: true, l: 'Dark' }, { k: false, l: 'Light' }].map((o) => (
+                    <button key={o.l} onClick={() => setSigDark(o.k)} style={{ padding: '5px 12px', borderRadius: 999, cursor: 'pointer', fontSize: 12, fontWeight: 600, border: `1px solid ${sigDark === o.k ? '#a855f7' : 'var(--border)'}`, background: sigDark === o.k ? 'rgba(168,85,247,0.14)' : 'var(--surface-2)', color: sigDark === o.k ? '#a855f7' : 'var(--text)' }}>{o.l}</button>
+                  ))}
+                  <span style={{ fontSize: 11, color: 'var(--muted)', marginLeft: 4 }}>Dark for light slides, light for dark slides.</span>
+                </div>
               </div>
             )}
           </div>
