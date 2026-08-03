@@ -249,20 +249,6 @@ export default function Landing() {
             Create <span className="brand-text">30 days of content</span><br className="mobile-line-break" /> in minutes.
           </h1>
 
-          {/* Hero video with rotating conic-gradient halo, centered
-              between the headline and the subhead/CTAs. */}
-          <div style={{ ...shotWrap, marginTop: 0, marginBottom: 0, width: '100%' }} className="fade-up hero-shot">
-            <div aria-hidden style={shotUnderGlow} />
-            <div style={shotFrame}>
-              <div aria-hidden style={{ ...shotHalo, animation: 'glowSpin 12s linear infinite' }} />
-              <HeroShot
-                src={HERO_IMAGE}
-                muted={heroMuted}
-                onToggleMute={() => setHeroMuted((m) => !m)}
-              />
-            </div>
-          </div>
-
           {/* Subhead + CTAs + trust pills below the video */}
           <div style={heroCopy} className="hero-copy">
             <p style={{ ...heroSub, margin: '0 auto 24px', textAlign: 'center' }} className="fade-up">
@@ -292,6 +278,15 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ── LIVE DEMOS ──────────────────────────────────────────────── */}
+      {/* Real product, real output: a carousel building itself from the
+          user's actual slides, the self-filling calendar, Claude driving
+          the account over MCP, and a likeness-locked outfit change. */}
+      <CarouselBuildDemo />
+      <CalendarShowcase />
+      <McpShowcase />
+      <OutfitShowcase />
+
       {/* ── STATS BAR ───────────────────────────────────────────────── */}
       <section style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
         <div className="stats-grid">
@@ -302,14 +297,6 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── LIVE DEMOS ──────────────────────────────────────────────── */}
-      {/* Real product, real output: a carousel building itself from the
-          user's actual slides, the self-filling calendar, Claude driving
-          the account over MCP, and a likeness-locked outfit change. */}
-      <CarouselBuildDemo />
-      <CalendarShowcase />
-      <McpShowcase />
-      <OutfitShowcase />
 
       {/* ── BRAND PROFILE SHOWCASE ──────────────────────────────────── */}
       <section style={section} className="fade-up">
@@ -774,9 +761,11 @@ function DemoKeyframes() {
 
 // 1) Carousel builder: topic types itself, slides pop in, lands in backlog.
 function CarouselBuildDemo() {
-  const TYPE_END = 44, GEN_END = 62, SLIDES_END = 104, LOOP = 150
+  // Typing runs at 2 chars per 100ms tick so the demo gets to the
+  // payoff (the slides) quickly.
+  const TYPE_END = 23, GEN_END = 40, SLIDES_END = 82, LOOP = 125
   const [ref, tick] = useDemoTicker(LOOP)
-  const typed = DEMO_TOPIC.slice(0, Math.min(tick, TYPE_END) * 1)
+  const typed = DEMO_TOPIC.slice(0, Math.min(tick * 2, DEMO_TOPIC.length))
   const generating = tick >= TYPE_END && tick < GEN_END
   const genPct = generating ? Math.round(((tick - TYPE_END) / (GEN_END - TYPE_END)) * 100) : (tick >= GEN_END ? 100 : 0)
   const slidesShown = tick < GEN_END ? 0 : Math.min(7, Math.floor((tick - GEN_END) / 6) + 1)
