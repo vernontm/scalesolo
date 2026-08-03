@@ -2587,6 +2587,8 @@ function ImageUploadBody({ data, onPatch }) {
   const [err, setErr] = useState(null)
   const [editingIdx, setEditingIdx] = useState(-1)
   const [draftName, setDraftName] = useState('')
+  // Hover state for the glass action overlay on the media preview.
+  const [hovered, setHovered] = useState(false)
   // Library picker modal state — shown when the user clicks "From library".
   const [libraryOpen, setLibraryOpen] = useState(false)
   // Per-file upload progress. Map of localId → { name, kind, size, pct,
@@ -2837,56 +2839,75 @@ function ImageUploadBody({ data, onPatch }) {
 
   return (
     <>
-      {items.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
-          {items.map((it, idx) => {
-            // Resolve this media's processing stage. videoIdx mirrors
-            // the idx the worker assigns to its videos[] output — for
-            // mixed (image + video) bags, downstream pipelines only fan
-            // out videos so images stay at stage=null and get no badge.
-            const stage = it.kind === 'video' ? stageByIdx.get(idx) : null
-            const badge = !stage ? null
-              : stage.failed    ? { label: '!', color: '#ef4444', bg: 'rgba(239,68,68,0.95)',  title: 'Failed somewhere downstream' }
-              : stage.scheduled ? { label: '✓', color: '#fff',     bg: 'rgba(46,204,113,0.95)', title: 'Scheduled to publish' }
-              : stage.polished  ? { label: '●', color: '#fff',     bg: 'rgba(14,165,233,0.95)', title: 'Polished, awaiting schedule' }
-              : stage.captioned ? { label: '●', color: '#fff',     bg: 'rgba(245,158,11,0.95)', title: 'Captioned, awaiting polish' }
-              : null
-            return (
-            <div key={`${it.url}-${idx}`} style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 2 }}>
-              {/* One large preview — the media IS the node. */}
-              <div style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)', background: '#000' }}>
-                {it.kind === 'video' ? (
-                  <video src={it.url} muted playsInline preload="metadata" style={{ width: '100%', maxHeight: 300, objectFit: 'contain', display: 'block' }} />
-                ) : (
-                  <img src={it.url} alt={it.name} style={{ width: '100%', maxHeight: 300, objectFit: 'contain', display: 'block' }} />
-                )}
-                {/* Per-clip status badge — green ✓ means fully scheduled,
-                    blue ● polished but not yet scheduled, amber ●
-                    captioned but not yet polished, red ! failed. */}
-                {badge && (
-                  <div
-                    title={badge.title}
-                    style={{
-                      position: 'absolute', top: 2, left: 2,
-                      width: 18, height: 18, borderRadius: 999,
-                      background: badge.bg, color: badge.color,
-                      display: 'grid', placeItems: 'center',
-                      fontSize: 11, fontWeight: 800,
-                      boxShadow: '0 1px 4px rgba(0,0,0,0.5)',
-                      pointerEvents: 'auto',
-                    }}
-                  >{badge.label}</div>
-                )}
-                <button
-                  onClick={(e) => { e.stopPropagation(); remove(idx) }}
-                  style={{
-                    position: 'absolute', top: 2, right: 2,
-                    background: 'rgba(0,0,0,0.6)', color: '#fff',
-                    border: 'none', borderRadius: 999, width: 18, height: 18,
-                    cursor: 'pointer', fontSize: 10, display: 'grid', placeItems: 'center',
-                  }}
-                  aria-label="Remove">×</button>
-              </div>
+      {items.length > 0 && (() => {
+        // Single hero media — full-bleed to the node's edges (the body
+        // wrapper pads 12px; negative margins cancel it) with a glass
+        // action overlay on hover. The media IS the node.
+        const it = items[0]
+        const idx = 0
+        const stage = it.kind === 'video' ? stageByIdx.get(idx) : null
+        const badge = !stage ? null
+          : stage.failed    ? { label: '!', color: '#ef4444', bg: 'rgba(239,68,68,0.95)',  title: 'Failed somewhere downstream' }
+          : stage.scheduled ? { label: '✓', color: '#fff',     bg: 'rgba(46,204,113,0.95)', title: 'Scheduled to publish' }
+          : stage.polished  ? { label: '●', color: '#fff',     bg: 'rgba(14,165,233,0.95)', title: 'Polished, awaiting schedule' }
+          : stage.captioned ? { label: '●', color: '#fff',     bg: 'rgba(245,158,11,0.95)', title: 'Captioned, awaiting polish' }
+          : null
+        const glassBtn = {
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          padding: '9px 14px', borderRadius: 10, cursor: 'pointer',
+          background: 'rgba(15,15,18,0.45)', color: '#fff',
+          border: '1px solid rgba(255,255,255,0.25)',
+          backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+          fontSize: 12, fontFamily: 'var(--font-display)', fontWeight: 700,
+          boxShadow: '0 4px 18px rgba(0,0,0,0.35)',
+        }
+        const glassIcon = { ...glassBtn, padding: 9 }
+        return (
+          <div
+            className="nodrag"
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
+            style={{
+              // Full-bleed: cancel the body's 12px padding. Keep a real
+              // bottom gap while the replace-progress panel / an error is
+              // visible below, so it doesn't overlap the media.
+              position: 'relative', margin: (uploads.length || err) ? '-12px -12px 12px' : -12,
+              overflow: 'hidden',
+              borderBottomLeftRadius: (uploads.length || err) ? 0 : 11,
+              borderBottomRightRadius: (uploads.length || err) ? 0 : 11,
+              background: '#000',
+            }}
+          >
+            {it.kind === 'video' ? (
+              <video src={it.url} muted playsInline preload="metadata" style={{ width: '100%', display: 'block' }} />
+            ) : (
+              <img src={it.url} alt={it.name} style={{ width: '100%', display: 'block' }} />
+            )}
+
+            {/* Per-clip status badge — green ✓ scheduled, blue ● polished,
+                amber ● captioned, red ! failed. Always visible. */}
+            {badge && (
+              <div
+                title={badge.title}
+                style={{
+                  position: 'absolute', top: 8, left: 8,
+                  width: 20, height: 20, borderRadius: 999,
+                  background: badge.bg, color: badge.color,
+                  display: 'grid', placeItems: 'center',
+                  fontSize: 11, fontWeight: 800,
+                  boxShadow: '0 1px 4px rgba(0,0,0,0.5)',
+                }}
+              >{badge.label}</div>
+            )}
+
+            {/* @name — always visible on a soft scrim so mentions stay
+                discoverable. Double-click to rename. */}
+            <div style={{
+              position: 'absolute', left: 0, right: 0, bottom: 0,
+              padding: '18px 10px 7px',
+              background: 'linear-gradient(transparent, rgba(0,0,0,0.62))',
+              pointerEvents: 'none',
+            }}>
               {editingIdx === idx ? (
                 <input className="nodrag"
                   autoFocus
@@ -2896,10 +2917,10 @@ function ImageUploadBody({ data, onPatch }) {
                   onKeyDown={(e) => { if (e.key === 'Enter') commitName(idx); if (e.key === 'Escape') { setEditingIdx(-1); setDraftName('') } }}
                   onClick={(e) => e.stopPropagation()}
                   style={{
-                    fontSize: 10, padding: '2px 4px',
-                    background: 'var(--surface)', color: 'var(--text)',
-                    border: '1px solid var(--red)', borderRadius: 4, outline: 'none',
-                    fontFamily: 'inherit',
+                    fontSize: 11, padding: '2px 6px', pointerEvents: 'auto',
+                    background: 'rgba(0,0,0,0.55)', color: '#fff',
+                    border: '1px solid var(--red)', borderRadius: 5, outline: 'none',
+                    fontFamily: 'inherit', width: '80%',
                   }}
                 />
               ) : (
@@ -2907,18 +2928,47 @@ function ImageUploadBody({ data, onPatch }) {
                   onDoubleClick={(e) => { e.stopPropagation(); setEditingIdx(idx); setDraftName(it.name) }}
                   title={`@${it.name.replace(/\s+/g, '')} — double-click to rename`}
                   style={{
-                    fontSize: 10, padding: '2px 4px', borderRadius: 4,
-                    color: 'var(--muted)', textAlign: 'center',
-                    cursor: 'text', userSelect: 'none',
+                    fontSize: 11, color: 'rgba(255,255,255,0.92)',
+                    cursor: 'text', userSelect: 'none', pointerEvents: 'auto',
                     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    textShadow: '0 1px 3px rgba(0,0,0,0.6)',
                   }}
                 >@{it.name.replace(/\s+/g, '')}</div>
               )}
             </div>
-            )
-          })}
-        </div>
-      )}
+
+            {/* Glassmorphism action overlay — fades in on hover. */}
+            <div style={{
+              position: 'absolute', inset: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              opacity: hovered ? 1 : 0, transition: 'opacity 0.15s ease',
+              pointerEvents: hovered ? 'auto' : 'none',
+              background: hovered ? 'rgba(0,0,0,0.18)' : 'transparent',
+            }}>
+              <button type="button" style={glassBtn} disabled={busy}
+                onClick={(e) => { e.stopPropagation(); inpRef.current?.click() }}>
+                {busy ? <Loader2 size={13} className="spin" /> : <Upload size={13} />} Replace
+              </button>
+              <button type="button" style={glassIcon} disabled={busy} title="Pick from this brand's library"
+                onClick={(e) => { e.stopPropagation(); setLibraryOpen(true) }}>
+                <LibraryIcon size={14} />
+              </button>
+              {unhookedTargets.length > 0 && (
+                <button type="button" style={glassIcon}
+                  title={`Connect to ${unhookedTargets.length} generator${unhookedTargets.length === 1 ? '' : 's'} on the canvas`}
+                  onClick={(e) => { e.stopPropagation(); hookToAllGenerators() }}>
+                  <Link2 size={14} />
+                </button>
+              )}
+              <button type="button" style={{ ...glassIcon, position: 'absolute', top: 8, right: 8, padding: 6, borderRadius: 999 }}
+                title="Remove media"
+                onClick={(e) => { e.stopPropagation(); remove(idx) }}>
+                <X size={12} />
+              </button>
+            </div>
+          </div>
+        )
+      })()}
       {/* Per-file upload progress panel. Visible during an active
           upload + briefly after for the success flash; lingers on
           failures so the user can see what didn't make it. */}
@@ -2981,6 +3031,7 @@ function ImageUploadBody({ data, onPatch }) {
           ))}
         </div>
       )}
+      {items.length === 0 && (<>
       <div style={{ display: 'flex', gap: 6 }}>
         <button
           type="button"
@@ -2992,7 +3043,7 @@ function ImageUploadBody({ data, onPatch }) {
             background: 'var(--surface-2)', borderStyle: 'dashed',
           }}>
           {busy ? <Loader2 size={13} className="spin" /> : <Upload size={13} />}
-          {busy ? 'Uploading…' : items.length ? 'Replace media' : 'Upload media'}
+          {busy ? 'Uploading…' : 'Upload media'}
         </button>
         <button
           type="button"
@@ -3033,6 +3084,7 @@ function ImageUploadBody({ data, onPatch }) {
       <div style={{ marginTop: 4, fontSize: 10, color: 'var(--muted)', lineHeight: 1.4 }}>
         One piece of media per node (drop files on the canvas to add more nodes). It gets a unique name automatically — reference it in any generator prompt with @name (e.g. "she's holding @logo").
       </div>
+      </>)}
       <input ref={inpRef} type="file" accept="image/*,video/mp4,video/quicktime,video/webm" onChange={onPick} style={{ display: 'none' }} />
       {err && <div style={{ marginTop: 6, color: 'var(--red)', fontSize: 11 }}>{err}</div>}
       {libraryOpen && (
