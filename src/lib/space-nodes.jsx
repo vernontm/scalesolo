@@ -9588,6 +9588,8 @@ export async function runSpace({ ctx, nodes, edges, onNodeChange }) {
     }
     const node = nodes.find((n) => n.id === id)
     if (!node) continue
+    // Visual GROUP containers aren't runnable nodes — skip silently.
+    if (node.type === 'spaceGroup') continue
     const def = NODE_REGISTRY[node.data?.type || node.type]
     if (!def) {
       onNodeChange?.(id, { status: 'failed', error: `Unknown type: ${node.data?.type || node.type}` })

@@ -478,7 +478,37 @@ function SpaceNode({ id, data, selected }) {
 
 // (autosave fingerprint helper now lives in src/lib/useAutosave.js)
 
-const NODE_TYPES = { space: SpaceNode }
+// Visual GROUP container — a dashed frame that holds member nodes (they
+// carry parentId and drag with it). Not runnable; purely organizational.
+function GroupNode({ id, data, selected }) {
+  return (
+    <div style={{
+      width: '100%', height: '100%', borderRadius: 16,
+      border: `1.5px dashed ${selected ? 'var(--red)' : 'rgba(255,255,255,0.22)'}`,
+      background: selected ? 'rgba(239,68,68,0.05)' : 'rgba(255,255,255,0.03)',
+      position: 'relative',
+    }}>
+      <div style={{ position: 'absolute', top: -26, left: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{
+          fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 11,
+          letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--muted)',
+        }}>{data?.label || 'Group'}</span>
+        <button
+          type="button"
+          className="nodrag"
+          onClick={(e) => { e.stopPropagation(); window.__spaceUngroup?.(id) }}
+          style={{
+            fontSize: 10, padding: '2px 8px', borderRadius: 999, cursor: 'pointer',
+            background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--text-soft)',
+            fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '0.04em',
+          }}
+        >Ungroup</button>
+      </div>
+    </div>
+  )
+}
+
+const NODE_TYPES = { space: SpaceNode, spaceGroup: GroupNode }
 const EDGE_TYPES = { scissor: ScissorEdge }
 
 // With the simplified handle scheme there's just one "in" handle (and an
@@ -2370,6 +2400,107 @@ function SpaceBuilder({ space, onSave, onClose }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [copySelectedNodes, pasteClipboard])
 
+  // ── Sticky multi-select + selection actions ─────────────────────────
+  // Clicking a node toggles it into the selection (no modifier key needed);
+  // clicking the canvas clears. ReactFlow's own exclusive click-select is
+  // disabled (elementsSelectable=false) so accumulation doesn't get fought.
+  const onNodeClick = useCallback((e, node) => {
+    // Clicks on interactive controls inside a node body don't change selection.
+    if (e.target?.closest?.('button, input, select, textarea, a, [contenteditable="true"]')) return
+    setNodes((arr) => arr.map((n) => n.id === node.id ? { ...n, selected: !n.selected } : n))
+  }, [])
+  const onPaneClick = useCallback(() => {
+    setNodes((arr) => arr.some((n) => n.selected) ? arr.map((n) => n.selected ? { ...n, selected: false } : n) : arr)
+  }, [])
+  const clearSelection = () => setNodes((arr) => arr.map((n) => n.selected ? { ...n, selected: false } : n))
+
+  const deleteSelection = () => {
+    const dead = new Set(nodesRef.current.filter((n) => n.selected).map((n) => n.id))
+    if (!dead.size) return
+    pushHistory()
+    setNodes((arr) => {
+      const groups = new Map(arr.filter((n) => n.type === 'spaceGroup').map((n) => [n.id, n]))
+      return arr.filter((n) => !dead.has(n.id)).map((n) => {
+        // Children of a deleted group float free at absolute coordinates.
+        if (n.parentId && dead.has(n.parentId)) {
+          const g = groups.get(n.parentId)
+          return { ...n, parentId: undefined, position: { x: n.position.x + (g?.position?.x || 0), y: n.position.y + (g?.position?.y || 0) } }
+        }
+        return n
+      })
+    })
+    setEdges((eds) => eds.filter((e) => !dead.has(e.source) && !dead.has(e.target)))
+  }
+
+  const duplicateSelection = () => {
+    const sel = nodesRef.current.filter((n) => n.selected && n.type !== 'spaceGroup')
+    if (!sel.length) return
+    pushHistory()
+    const stamp = Date.now().toString(36)
+    const idMap = new Map(sel.map((n, i) => [n.id, `n_${stamp}_${i.toString(36)}_${Math.random().toString(36).slice(2, 5)}`]))
+    const groups = new Map(nodesRef.current.filter((n) => n.type === 'spaceGroup').map((n) => [n.id, n]))
+    const clones = sel.map((n) => {
+      const parentKept = n.parentId && idMap.has(n.parentId)
+      const abs = n.parentId && !parentKept
+        ? { x: n.position.x + (groups.get(n.parentId)?.position?.x || 0), y: n.position.y + (groups.get(n.parentId)?.position?.y || 0) }
+        : n.position
+      return {
+        ...n,
+        id: idMap.get(n.id),
+        parentId: parentKept ? idMap.get(n.parentId) : undefined,
+        position: { x: abs.x + 48, y: abs.y + 48 },
+        selected: true,
+        data: { ...n.data, status: 'idle', output: null, error: null },
+      }
+    })
+    const cloneEdges = edgesRef.current
+      .filter((e) => idMap.has(e.source) && idMap.has(e.target))
+      .map((e, i) => ({ ...e, id: `e_${stamp}_${i.toString(36)}_dup`, source: idMap.get(e.source), target: idMap.get(e.target) }))
+    setNodes((arr) => [...arr.map((n) => n.selected ? { ...n, selected: false } : n), ...clones])
+    setEdges((eds) => [...eds, ...cloneEdges])
+  }
+
+  const groupSelection = () => {
+    const arr = nodesRef.current
+    const sel = arr.filter((n) => n.selected && n.type !== 'spaceGroup' && !n.parentId)
+    if (sel.length < 2) return
+    pushHistory()
+    const PAD = 28, TOP = 48
+    const w = (n) => n.measured?.width ?? n.width ?? 280
+    const h = (n) => n.measured?.height ?? n.height ?? 160
+    const minX = Math.min(...sel.map((n) => n.position.x)) - PAD
+    const minY = Math.min(...sel.map((n) => n.position.y)) - TOP
+    const maxX = Math.max(...sel.map((n) => n.position.x + w(n))) + PAD
+    const maxY = Math.max(...sel.map((n) => n.position.y + h(n))) + PAD
+    const gid = `g_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`
+    const selIds = new Set(sel.map((n) => n.id))
+    setNodes((cur) => [
+      // Parent must precede children in the array (ReactFlow requirement).
+      { id: gid, type: 'spaceGroup', position: { x: minX, y: minY }, style: { width: maxX - minX, height: maxY - minY }, data: { label: 'Group' }, selected: false },
+      ...cur.map((n) => selIds.has(n.id)
+        ? { ...n, parentId: gid, position: { x: n.position.x - minX, y: n.position.y - minY }, selected: false }
+        : n),
+    ])
+  }
+
+  // Ungroup — called from the group frame's header button.
+  useEffect(() => {
+    window.__spaceUngroup = (gid) => {
+      pushHistory()
+      setNodes((arr) => {
+        const g = arr.find((n) => n.id === gid)
+        if (!g) return arr
+        return arr.filter((n) => n.id !== gid).map((n) => n.parentId === gid
+          ? { ...n, parentId: undefined, position: { x: n.position.x + g.position.x, y: n.position.y + g.position.y } }
+          : n)
+      })
+    }
+    return () => { window.__spaceUngroup = null }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const selectedCount = nodes.filter((n) => n.selected).length
+
   // Drag from palette → drop on canvas. Dropping REAL FILES (from Finder /
   // the OS) anywhere on the canvas spawns one Upload media node per file at
   // the drop point — upload runs in the background and each node auto-names
@@ -4170,6 +4301,9 @@ function SpaceBuilder({ space, onSave, onClose }) {
           onConnect={onConnect}
           nodeTypes={NODE_TYPES}
           edgeTypes={EDGE_TYPES}
+          elementsSelectable={false}
+          onNodeClick={onNodeClick}
+          onPaneClick={onPaneClick}
           isValidConnection={isValidSpaceConnection}
           connectionMode="strict"
           connectionRadius={45}
@@ -4193,6 +4327,41 @@ function SpaceBuilder({ space, onSave, onClose }) {
         </ReactFlow>
 
         <FloatingPalette onAdd={(type) => addNode(type)} />
+
+        {/* Floating selection bar — appears when 2+ nodes are selected. */}
+        {selectedCount >= 2 && (
+          <div style={{
+            position: 'absolute', bottom: 18, left: '50%', transform: 'translateX(-50%)',
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '10px 14px', borderRadius: 14, zIndex: 60,
+            background: 'rgba(15,15,18,0.55)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
+            border: '1px solid rgba(255,255,255,0.18)', boxShadow: '0 10px 30px rgba(0,0,0,0.45)',
+          }}>
+            <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 12, color: '#fff', marginRight: 4 }}>
+              {selectedCount} selected
+            </span>
+            {[
+              { label: 'Duplicate', icon: Copy, onClick: duplicateSelection },
+              { label: 'Group', icon: Boxes, onClick: groupSelection },
+              { label: 'Delete', icon: Trash2, onClick: deleteSelection, danger: true },
+            ].map((a) => (
+              <button key={a.label} type="button" onClick={a.onClick} style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '7px 12px', borderRadius: 9, cursor: 'pointer',
+                background: a.danger ? 'rgba(239,68,68,0.20)' : 'rgba(255,255,255,0.10)',
+                border: `1px solid ${a.danger ? 'rgba(239,68,68,0.45)' : 'rgba(255,255,255,0.20)'}`,
+                color: a.danger ? '#ff8f8f' : '#fff',
+                fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 11.5,
+              }}>
+                <a.icon size={13} /> {a.label}
+              </button>
+            ))}
+            <button type="button" onClick={clearSelection} title="Clear selection" style={{
+              display: 'grid', placeItems: 'center', width: 28, height: 28, borderRadius: 999, cursor: 'pointer',
+              background: 'transparent', border: '1px solid rgba(255,255,255,0.18)', color: 'rgba(255,255,255,0.75)',
+            }}><X size={13} /></button>
+          </div>
+        )}
 
         {/* Live server-run progress panel. Two states:
               - running: pulsing green dot + progress bar
