@@ -18,10 +18,11 @@
     { "path": "/api/cron/sync-scheduled-posts", "schedule": "*/10 * * * *" },
     { "path": "/api/cron/distill-brand-voice",  "schedule": "30 6 * * *" },
     { "path": "/api/cron/run-scheduled-workflows", "schedule": "* * * * *" },
+    { "path": "/api/cron/run-carousel-jobs", "schedule": "* * * * *" },
     { "path": "/api/cron/cleanup-uploadpost-orphans", "schedule": "*/30 * * * *" }
   ],
   "functions": {
-    "api/carousels/generate.js": {
+    "api/carousels/process.js": {
       "maxDuration": 300,
       "memory": 2048,
       "includeFiles": "api/_fonts/**"

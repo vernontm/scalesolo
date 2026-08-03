@@ -29,6 +29,7 @@
     "@sentry/react": "^8.40.0",
     "@sparticuz/chromium": "^148.0.0",
     "@supabase/supabase-js": "^2.104.0",
+    "@vercel/functions": "^3.7.6",
     "@xyflow/react": "^12.3.5",
     "canvas-confetti": "^1.9.4",
     "dompurify": "^3.0.11",

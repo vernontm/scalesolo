@@ -147,7 +147,7 @@ export default function CarouselBuilder() {
     if (!topic.trim()) return
     if (!selectedProfileId) { setError('Pick a brand profile first.'); return }
     setBusy(true); setError(null); setResult(null)
-    startProgress(slides * (selectedRefs.length ? 26000 : 15000))
+    setProgress({ pct: 3, msg: 'Getting started…' })
     try {
       const r = await fetch('/api/carousels/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
@@ -161,8 +161,41 @@ export default function CarouselBuilder() {
       })
       const b = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(b?.error || `Generation failed (${r.status})`)
-      stopProgress(true); setResult(b)
-    } catch (e) { stopProgress(false); setError(e.message) } finally { setBusy(false) }
+      if (!b.job_id) throw new Error('No job returned')
+      pollJob(b.job_id)
+    } catch (e) { stopProgress(false); setBusy(false); setError(e.message) }
+  }
+
+  // Poll the background job until it finishes. Progress + stage come from the
+  // server so the bar reflects real work (survives closing this tab: the job
+  // keeps running and the finished carousel lands in the backlog regardless).
+  const pollJob = (jobId) => {
+    const started = Date.now()
+    const tick = async () => {
+      try {
+        const r = await fetch(`/api/carousels/status?job_id=${encodeURIComponent(jobId)}`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        })
+        const b = await r.json().catch(() => ({}))
+        if (!r.ok) throw new Error(b?.error || 'Lost the job')
+        if (b.status === 'done') {
+          setProgress({ pct: 100, msg: 'Done!' })
+          setResult({ content_id: b.content_id, title: b.title, caption: b.caption, hashtags: b.hashtags, images: b.images || [] })
+          setTimeout(() => setProgress(null), 700)
+          setBusy(false)
+          return
+        }
+        if (b.status === 'failed') { stopProgress(false); setBusy(false); setError(b.error || 'Generation failed'); return }
+        setProgress({ pct: Math.max(3, b.progress || 3), msg: b.stage || 'Working…' })
+        if (Date.now() - started > 30 * 60 * 1000) { stopProgress(false); setBusy(false); setError('Generation is taking unusually long. Check your backlog shortly.'); return }
+        progressTimer.current = setTimeout(tick, 3000)
+      } catch (e) {
+        // Transient error — keep trying for a while.
+        if (Date.now() - started > 30 * 60 * 1000) { stopProgress(false); setBusy(false); setError(e.message); return }
+        progressTimer.current = setTimeout(tick, 5000)
+      }
+    }
+    tick()
   }
 
   const themeCss = THEMES.find((t) => t.key === theme)?.css || {}
