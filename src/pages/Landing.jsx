@@ -282,7 +282,7 @@ export default function Landing() {
               <div className="fade-up hero2-micro" style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 18 }}>
                 3-day free trial. Cancel anytime. Keep everything you make.
               </div>
-              <div style={{ ...heroCtas, marginBottom: 20 }} className="fade-up hero2-row">
+              <div style={{ ...heroCtas, justifyContent: 'flex-start', marginBottom: 20 }} className="fade-up hero2-row">
                 <button onClick={goPricing} className="btn-primary" style={ctaSizing}>
                   Start free <ArrowRight size={14} />
                 </button>
