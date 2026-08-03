@@ -36,6 +36,7 @@ const Campaigns     = lazy(() => import('./pages/Campaigns.jsx'))
 const Content        = lazy(() => import('./pages/Content.jsx'))
 const Create         = lazy(() => import('./pages/Create.jsx'))
 const CarouselBuilder = lazy(() => import('./pages/CarouselBuilder.jsx'))
+const WalkthroughBuilder = lazy(() => import('./pages/WalkthroughBuilder.jsx'))
 const ApprovalQueue  = lazy(() => import('./pages/ApprovalQueue.jsx'))
 const Avatars        = lazy(() => import('./pages/Avatars.jsx'))
 const LandingPages  = lazy(() => import('./pages/LandingPages.jsx'))
@@ -195,7 +196,7 @@ function AppShell() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/create"    element={<Create />} />
             <Route path="/create/carousel" element={<CarouselBuilder />} />
-            <Route path="/create/walkthrough" element={<Placeholder title="AI Walkthrough builder" hint="A streamlined avatar-walkthrough builder (photo + voice + topic → finished video) is landing here." />} />
+            <Route path="/create/walkthrough" element={<WalkthroughBuilder />} />
             <Route path="/spaces"    element={<Spaces />} />
             <Route path="/schedule"        element={<Content />} />
             <Route path="/schedule/queue"  element={<ApprovalQueue />} />
