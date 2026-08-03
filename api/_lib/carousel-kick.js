@@ -4,9 +4,12 @@
 // swallowed because the every-minute cron re-kicks any unfinished job.
 
 function baseUrl() {
-  if (process.env.SITE_URL) return process.env.SITE_URL.replace(/\/$/, '')
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`
-  return 'https://scalesolo.ai'
+  const raw = process.env.SITE_URL
+    ? process.env.SITE_URL.replace(/\/$/, '')
+    : (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://www.scalesolo.ai')
+  // The apex 307-redirects to www, and the redirect hop loses the internal
+  // auth POST — pin the canonical host so the kick lands directly.
+  return raw === 'https://scalesolo.ai' ? 'https://www.scalesolo.ai' : raw
 }
 
 export async function kickCarouselJob(jobId, userId) {
