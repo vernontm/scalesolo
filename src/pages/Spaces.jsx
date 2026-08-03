@@ -108,7 +108,23 @@ function ScissorEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, t
   const [edgePath, labelX, labelY] = getSmoothStepPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition })
   return (
     <>
-      <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={{ stroke: 'var(--red)', strokeWidth: 1.5, ...style }} />
+      {/* Solid connector + a pulsing glow that travels along the line
+          (replaces the old animated dashes). */}
+      <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={{ stroke: 'var(--red)', strokeWidth: 1.75, opacity: 0.85, ...style, strokeDasharray: 'none', animation: 'none' }} />
+      <path
+        d={edgePath}
+        fill="none"
+        stroke="#ff9b26"
+        strokeWidth={3}
+        strokeLinecap="round"
+        strokeDasharray="16 240"
+        style={{
+          pointerEvents: 'none',
+          animation: 'spaceEdgePulse 2.4s linear infinite',
+          filter: 'drop-shadow(0 0 5px rgba(255,155,38,0.85))',
+          opacity: 0.9,
+        }}
+      />
       {/* Wider invisible hit area for stable hover */}
       <path
         d={edgePath}
@@ -362,59 +378,7 @@ function SpaceNode({ id, data, selected }) {
             }}
           ><SettingsIcon size={12} /></button>
         )}
-        {/* Hide the Run button on pure data emitters — input nodes with
-            no upstream work to re-execute. Clicking Run on these is a
-            no-op that just re-emits cached data, which confused users
-            who expected something to happen. The runner already
-            auto-executes free emitters when downstream nodes need them.
-            auto_run is the exception: its Run button toggles the
-            scheduler state. collection is passive too. */}
-        {data.type !== 'collection' && data.type !== 'text_input'
-          && !((!def.inputs || def.inputs.length === 0) && data.type !== 'auto_run') && (
-          <button
-            type="button"
-            className="nodrag space-node-runbtn"
-            title={status === 'running' ? 'Stop run' : 'Run this node'}
-            onClick={async (e) => {
-              e.stopPropagation()
-              if (status === 'running') { window.__spaceAbortRun?.(); return }
-              const choice = await window.__spaceChooseRunScope?.(id)
-              if (!choice) return
-              window.__spaceRunFromNode?.(id, choice)
-            }}
-            style={{
-              marginLeft: 'auto',
-              background: status === 'running'
-                ? 'rgba(239,68,68,0.18)'
-                : 'linear-gradient(135deg, rgba(46,204,113,0.18), rgba(46,204,113,0.10))',
-              border: `1px solid ${status === 'running' ? 'rgba(239,68,68,0.45)' : 'rgba(46,204,113,0.45)'}`,
-              color: status === 'running' ? 'var(--red)' : '#2ecc71',
-              cursor: 'pointer',
-              padding: '5px 10px', borderRadius: 6,
-              display: 'inline-flex', alignItems: 'center', gap: 5,
-              fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 11,
-              letterSpacing: '0.04em', textTransform: 'uppercase',
-              transition: 'transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease',
-              boxShadow: status === 'running' ? '0 0 0 0 rgba(239,68,68,0)' : '0 1px 2px rgba(0,0,0,0.10)',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = 'translateY(-1px)'
-              e.currentTarget.style.filter = 'brightness(1.1)'
-              e.currentTarget.style.boxShadow = status === 'running'
-                ? '0 4px 12px rgba(239,68,68,0.30)'
-                : '0 4px 12px rgba(46,204,113,0.32)'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'translateY(0)'
-              e.currentTarget.style.filter = 'brightness(1)'
-              e.currentTarget.style.boxShadow = '0 1px 2px rgba(0,0,0,0.10)'
-            }}
-          >
-            {status === 'running' ? <Square size={11} /> : <Play size={12} />}
-            {status === 'running' ? 'Stop' : 'Run'}
-          </button>
-        )}
-        <span style={{ ...statusPill, marginLeft: data.type === 'collection' ? 'auto' : 0, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+        <span style={{ ...statusPill, marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
           {isRunning && <span aria-hidden style={{
             width: 6, height: 6, borderRadius: '50%',
             background: '#f59e0b',
@@ -458,6 +422,56 @@ function SpaceNode({ id, data, selected }) {
       <div style={{ padding: 12 }}>
         <Body data={{ ...data, __id: id }} onPatch={onPatch} />
       </div>
+      {/* Run lives at the BOTTOM of the node — read top-down, act at the
+          end. Hidden on pure data emitters (inputs with no upstream work):
+          clicking Run on those is a no-op that just re-emits cached data.
+          auto_run is the exception (its button toggles the scheduler);
+          collection is passive too. */}
+      {data.type !== 'collection' && data.type !== 'text_input'
+        && !((!def.inputs || def.inputs.length === 0) && data.type !== 'auto_run') && (
+        <div style={{ padding: '0 12px 12px' }}>
+          <button
+            type="button"
+            className="nodrag space-node-runbtn"
+            title={status === 'running' ? 'Stop run' : 'Run this node'}
+            onClick={async (e) => {
+              e.stopPropagation()
+              if (status === 'running') { window.__spaceAbortRun?.(); return }
+              const choice = await window.__spaceChooseRunScope?.(id)
+              if (!choice) return
+              window.__spaceRunFromNode?.(id, choice)
+            }}
+            style={{
+              width: '100%',
+              background: status === 'running'
+                ? 'rgba(239,68,68,0.18)'
+                : 'linear-gradient(135deg, rgba(46,204,113,0.18), rgba(46,204,113,0.10))',
+              border: `1px solid ${status === 'running' ? 'rgba(239,68,68,0.45)' : 'rgba(46,204,113,0.45)'}`,
+              color: status === 'running' ? 'var(--red)' : '#2ecc71',
+              cursor: 'pointer',
+              padding: '8px 10px', borderRadius: 8,
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 11.5,
+              letterSpacing: '0.04em', textTransform: 'uppercase',
+              transition: 'transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease',
+              boxShadow: status === 'running' ? '0 0 0 0 rgba(239,68,68,0)' : '0 1px 2px rgba(0,0,0,0.10)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.filter = 'brightness(1.1)'
+              e.currentTarget.style.boxShadow = status === 'running'
+                ? '0 4px 12px rgba(239,68,68,0.30)'
+                : '0 4px 12px rgba(46,204,113,0.32)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.filter = 'brightness(1)'
+              e.currentTarget.style.boxShadow = '0 1px 2px rgba(0,0,0,0.10)'
+            }}
+          >
+            {status === 'running' ? <Square size={11} /> : <Play size={12} />}
+            {status === 'running' ? 'Stop' : 'Run'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -2038,11 +2052,49 @@ function SpaceBuilder({ space, onSave, onClose }) {
       // settings modal reads the same column). One source of truth so
       // edits on either surface keep both in sync.
       let touchedVideoPolishProps = null
-      setNodes((arr) => arr.map((n) => {
-        if (n.id !== id) return n
+      setNodes((arr) => {
+      // Renaming an Upload media node renames its media item's @-mention
+      // too, and every prompt on the canvas that referenced the old
+      // mention is rewritten to the new one — so "I renamed it to outfit
+      // but it still uses the old reference" can't happen.
+      const renTarget = arr.find((n) => n.id === id)
+      let mentionTo = null, mentionRe = null
+      if (Object.prototype.hasOwnProperty.call(patch, '__name') && renTarget?.data?.type === 'image_upload') {
+        const first = (Array.isArray(renTarget.data?.props?.urls) ? renTarget.data.props.urls : [])[0]
+        const oldName = (typeof first === 'object' && first?.name) ? String(first.name) : ''
+        const newName = String(patch.__name || '').trim()
+        if (oldName && newName && oldName !== newName) {
+          const escTok = oldName.replace(/\s+/g, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+          mentionTo = `@${newName.replace(/\s+/g, '')}`
+          mentionRe = new RegExp(`@"?${escTok}"?(?![A-Za-z0-9_-])`, 'gi')
+        }
+      }
+      const rewriteMentions = (n) => {
+        if (!mentionRe || !n.data?.props) return n
+        let changed = false
+        const nextProps = {}
+        for (const [k, v] of Object.entries(n.data.props)) {
+          if (typeof v === 'string' && !k.startsWith('_ctx')) {
+            const nv = v.replace(mentionRe, mentionTo)
+            nextProps[k] = nv
+            if (nv !== v) changed = true
+          } else nextProps[k] = v
+        }
+        return changed ? { ...n, data: { ...n.data, props: nextProps } } : n
+      }
+      return arr.map((n) => {
+        if (n.id !== id) return rewriteMentions(n)
         if (Object.prototype.hasOwnProperty.call(patch, '__name')) {
           const { __name, ...rest } = patch
-          const nextData = { ...n.data, name: __name, props: { ...(n.data?.props || {}), ...rest } }
+          const nextProps = { ...(n.data?.props || {}), ...rest }
+          // Keep the single media item's @-mention name in lockstep with
+          // the node label (image_upload holds exactly one item).
+          if (n.data?.type === 'image_upload' && Array.isArray(nextProps.urls) && nextProps.urls.length) {
+            const it = nextProps.urls[0]
+            const obj = typeof it === 'string' ? { url: it } : { ...it }
+            nextProps.urls = [{ ...obj, name: String(__name || obj.name || '').trim() || obj.name }]
+          }
+          const nextData = { ...n.data, name: __name, props: nextProps }
           if (hasRealPropChange) { nextData.status = 'idle'; nextData.output = null; nextData.error = null }
           if (n.data?.type === 'video_polish' && Object.keys(rest).length) touchedVideoPolishProps = rest
           return { ...n, data: nextData }
@@ -2058,7 +2110,8 @@ function SpaceBuilder({ space, onSave, onClose }) {
           if (Object.keys(propsToMirror).length) touchedVideoPolishProps = propsToMirror
         }
         return { ...n, data: nextData }
-      }))
+      })
+      })
       // Mirror to profiles.polish_template — fire-and-forget so the UI
       // stays snappy. Failure surfaces via console (not a toast, because
       // the canvas patch already succeeded locally and we don't want to

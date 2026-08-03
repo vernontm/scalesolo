@@ -2444,6 +2444,9 @@ function ImageGenBody({ data, onPatch }) {
         namedImages={data?._ctxNamedImages || []}
       />
 
+      {/* Live KIE stage while rendering (queued / generating + elapsed). */}
+      {data.status === 'running' && <ProgressPill progress={data.progress} fallback="Generating…" />}
+
       <div style={pillRow}>
         <select className="nodrag" style={pillSelect} value={data.props?.model || 'nano-banana-2'} onChange={(e) => onPatch({ model: e.target.value })}>
           <option value="nano-banana-2">Nano Banana 2</option>
@@ -2834,7 +2837,10 @@ function ImageUploadBody({ data, onPatch }) {
   }
   function commitName(idx) {
     const trimmed = (draftName || '').trim() || `media ${idx + 1}`
-    onPatch({ urls: items.map((it, j) => j === idx ? { ...it, name: trimmed } : it) })
+    // __name keeps the node label in lockstep with the item's @-mention;
+    // the canvas patcher also rewrites the old @mention inside every
+    // prompt so renames never leave stale references behind.
+    onPatch({ urls: items.map((it, j) => j === idx ? { ...it, name: trimmed } : it), __name: trimmed })
     setEditingIdx(-1); setDraftName('')
   }
 
@@ -7689,7 +7695,7 @@ export const NODE_REGISTRY = {
     outputs: [{ id: 'out', label: 'Out' }],
     initialProps: { prompt: '', model: 'nano-banana-2', aspect: '1:1', count: 1, quality: '2K', enhance_prompt: true },
     Body: ImageGenBody,
-    run: async ({ data, inputs, inputsByName, ctx }) => {
+    run: async ({ data, inputs, inputsByName, ctx, reportProgress }) => {
       const incoming = inputs?.in
       // Prompt: prefer the node's own prompt prop; if blank, fall back to any
       // text-shaped value from upstream.
@@ -7872,7 +7878,25 @@ export const NODE_REGISTRY = {
       const MAX_ATTEMPTS        = 3
       const TOTAL_DEADLINE_MS   = 9 * 60_000
 
-      const submitAndPollWithRetry = async () => {
+      // Live progress: KIE reports a real STAGE per task (waiting/queuing/
+      // generating), not a percentage — so we surface exactly that, plus an
+      // elapsed clock and, for multi-image runs, a done count. Honest, not
+      // guessed.
+      const runStart = Date.now()
+      const taskStates = []
+      const emitProgress = () => {
+        const total = taskStates.length
+        const done = taskStates.filter((st) => st === 'done').length
+        const stageOf = (st) => st === 'generating' ? 'Generating' : st === 'done' ? 'Done' : 'Queued at the model'
+        const secs = Math.round((Date.now() - runStart) / 1000)
+        const message = total > 1
+          ? `${done}/${total} done · ${taskStates.filter((st) => st === 'generating').length} generating · ${secs}s`
+          : `${stageOf(taskStates[0] || 'queued')}… ${secs}s`
+        reportProgress?.({ message, done, total })
+      }
+      const submitAndPollWithRetry = async (slot = 0) => {
+        taskStates[slot] = 'queued'
+        emitProgress()
         const overallStart = Date.now()
         let lastErr = null
         for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -7906,6 +7930,9 @@ export const NODE_REGISTRY = {
                 continue
               }
               consecutiveErrors = 0
+              taskStates[slot] = s.state === 'generating' ? 'generating'
+                : (s.state === 'success' ? 'done' : taskStates[slot] || 'queued')
+              emitProgress()
               if (s.state === 'success') { resolved = s.images || []; break }
               if (s.state === 'failed') {
                 lastErr = new Error(s.error || 'Generation failed')
@@ -7932,7 +7959,7 @@ export const NODE_REGISTRY = {
       // independent retry budget so a stuck slot doesn't poison its
       // siblings.
       const results = await Promise.allSettled(
-        Array.from({ length: requestedCount }, () => submitAndPollWithRetry())
+        Array.from({ length: requestedCount }, (_, slot) => submitAndPollWithRetry(slot))
       )
       const collected = []
       const errors = []

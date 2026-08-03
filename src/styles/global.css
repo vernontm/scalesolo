@@ -1615,3 +1615,14 @@ a:focus-visible {
     flex-shrink: 0;
   }
 }
+
+/* Traveling glow pulse on Spaces edges (dash 16 + gap 240 = 256 cycle). */
+@keyframes spaceEdgePulse {
+  to { stroke-dashoffset: -256; }
+}
+/* Edges are solid connectors now — neutralize ReactFlow's dashed
+   .animated treatment (the traveling pulse lives on its own path). */
+.react-flow__edge.animated .react-flow__edge-path {
+  stroke-dasharray: none !important;
+  animation: none !important;
+}
