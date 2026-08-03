@@ -196,40 +196,47 @@ async function describeSubject(refUrl) {
   } catch { return '' }
 }
 
-// Prompt for the ONE canonical BACKGROUND PLATE. An abstract background
-// description ("dark, orange glow") still lets the model paint a different
-// backdrop every slide, so we render the background ONCE as a real image and
-// then hand that exact image into every slide. This describes an EMPTY plate.
-function backgroundPrompt({ themeStyle, brandColors, extraStyle }) {
+// The shared STYLE directive (theme + palette + extra). Included on the cover
+// (designed from scratch) and reinforced on every follower slide alongside the
+// cover image itself.
+function buildStyle({ themeStyle, brandColors, extraStyle }) {
   return [
-    'A vertical 3:4 BACKGROUND PLATE for a social media carousel. This is ONLY the background: absolutely NO text, NO people, NO logos, NO UI panels, NO charts, NO icons, NO objects.',
-    `Visual style: ${themeStyle || 'clean modern editorial design'}.${extraStyle ? ` ${extraStyle}.` : ''}`,
-    brandColors ? `Palette: built around the brand colors ${brandColors}.` : 'One cohesive, restrained palette.',
-    'Even, balanced, full-bleed background with generous empty space and consistent lighting, so text and a person can be placed on top of it later. No watermark, no page numbers.',
-  ].join(' ')
+    themeStyle || 'Clean modern editorial design.',
+    brandColors ? `Palette built around the brand colors ${brandColors}.` : 'One cohesive, restrained palette.',
+    extraStyle || '',
+    'High production value, strong visual hierarchy, premium social-media carousel aesthetic. Rich designed background, not a flat empty color.',
+  ].filter(Boolean).join(' ')
 }
 
-// The LOCKED compose instructions: HOW to place text and the person on top of
-// the provided background plate. Byte-identical on every slide; only the copy
-// and (person mode) the portrait change.
-function composeInstructions({ person, sig, hasPlate }) {
+// Shared layout wording: text placement, person placement, signature reserve.
+// Byte-identical across slides; only the copy and (person mode) the pose vary.
+function slideLayout({ person, sig }) {
   const parts = []
   if (person) {
-    parts.push(hasPlate
-      ? 'You are given a BACKGROUND plate image and a PORTRAIT of a person. Keep the BACKGROUND plate EXACTLY as the slide background: identical colors, lighting, texture and composition. Do NOT redesign, recolor or regenerate the background.'
-      : 'You are given a PORTRAIT of a person. Build the slide on the shared background described above (keep it identical to the other slides).')
-    parts.push('Place the PORTRAIT person on the RIGHT, shown head to about the waist, LARGE and life-size at roughly 55 to 62 percent of the frame width, bleeding off the right and bottom edges. Use the portrait EXACTLY as-is (do not change their face, hair, skin, build or pose). Blend them INTO the background with matched lighting and a natural contact shadow so they look genuinely photographed in the scene, NOT a flat cutout pasted on top: no hard sticker edge, no floating, no white halo.')
-    parts.push('Put all typography on the LEFT sharing one left alignment edge: a large bold HEADLINE with a smaller readable BODY paragraph beneath it, never overlapping the person, comfortable margins, nothing cut off.')
+    parts.push('Feature the person LARGE on the RIGHT, shown head to about the waist, roughly 55 to 62 percent of the frame width, bleeding off the right and bottom edges so they occupy real space. Use the provided portrait EXACTLY as-is (do not change their face, hair, skin, build or pose). Blend them into the background with matched lighting and a natural contact shadow so they look genuinely photographed in the scene, NOT a flat cutout pasted on top (no hard sticker edge, no floating, no white halo). Put the headline and body text on the LEFT, not overlapping the person.')
   } else {
-    parts.push(hasPlate
-      ? 'You are given a BACKGROUND plate image. Keep it EXACTLY as the slide background: identical colors, lighting and composition. Do NOT redesign or regenerate the background. Render the text on top of it with clear hierarchy: a large bold HEADLINE and a smaller readable BODY paragraph beneath it, comfortable margins, nothing cut off.'
-      : 'Build the slide on the shared background described above (keep it identical to the other slides). Render the text with clear hierarchy: a large bold HEADLINE and a smaller readable BODY paragraph beneath it, comfortable margins, nothing cut off.')
+    parts.push('A large bold HEADLINE with a smaller readable BODY paragraph beneath it, clear hierarchy, comfortable margins, nothing cut off.')
   }
   parts.push('All lettering crisp and correctly spelled.')
   parts.push(sig
     ? 'Leave the bottom-left about 18 percent as clean empty space (a signature is added later). No name, handle, logo, watermark, page number or slide number anywhere.'
     : 'No watermark, page number or slide number anywhere.')
   return parts.join(' ')
+}
+
+// The COVER slide is designed from scratch and becomes the STYLE ANCHOR for
+// the whole set. Every other slide is told to reproduce its exact background.
+function coverPrompt({ style, copy, person, sig }) {
+  return `Design a vertical 3:4 social media carousel COVER slide from scratch. STYLE: ${style}\n\n${slideLayout({ person, sig })}\n\n${copy}`
+}
+
+// A FOLLOWER slide reproduces the anchor's exact look (handed in as a reference
+// image) and only swaps in this slide's copy (and, person mode, a new portrait).
+function followPrompt({ style, copy, person, sig }) {
+  const roles = person
+    ? 'Reference image 1 is the STYLE ANCHOR: reproduce its EXACT background, colors, lighting and design system so this slide looks like the same series. Reference image 2 is the PORTRAIT of the person to feature.'
+    : 'The provided reference image is the STYLE ANCHOR: reproduce its EXACT background, colors, lighting and design system so this slide looks like the same series.'
+  return `This is another slide in the SAME carousel series. ${roles} Do NOT copy the anchor's text or its foreground subject. STYLE: ${style}\n\n${slideLayout({ person, sig })}\n\n${copy}`
 }
 
 // Locked portrait prompt: SUBJECT + WARDROBE + per-slide POSE + CAMERA.
@@ -243,18 +250,11 @@ function portraitPrompt({ subject, outfit, pose }) {
   ].join('\n\n')
 }
 
-// Two-stage slide render: Seedream portrait (locked identity + outfit, varying
-// pose) → GPT Image 2 composes it onto the SHARED background plate with the copy.
-async function genPersonSlide(originalReq, { profile_id, refs, subject, outfit, pose, instructions, bgPlate, copy, aspect }) {
-  const portrait = await genImage(originalReq, {
+// Render a person portrait (Seedream) locking identity + outfit, varying pose.
+function genPortrait(originalReq, { profile_id, refs, subject, outfit, pose, aspect }) {
+  return genImage(originalReq, {
     profile_id, prompt: portraitPrompt({ subject, outfit, pose }), model: 'seedream',
     reference_urls: refs, aspect,
-  })
-  // bgPlate first (the background), portrait second (the person).
-  const composeRefs = [bgPlate, portrait].filter(Boolean)
-  return genImage(originalReq, {
-    profile_id, prompt: `${instructions}\n\n${copy}`, model: 'gpt-2',
-    reference_urls: composeRefs, aspect,
   })
 }
 
@@ -275,13 +275,10 @@ export default async function handler(req, res) {
     const themeStyle = THEME_PROMPTS[theme] || ''
     const extraStyle = String(extra_style || '').trim()
 
-    // Auto-detect a PERSON in the references. When present, every slide uses
-    // the two-stage house pipeline (Seedream portrait → GPT Image 2 graphic)
-    // so the person's likeness lands. Logos/products stay single-stage.
+    // Auto-detect a PERSON in the references. When present, every slide adds a
+    // two-stage step (Seedream portrait → GPT Image 2 graphic) so the person's
+    // likeness lands. Logos/products are passed straight through as references.
     const person = refs.length > 0 && await refHasPerson(refs[0])
-    // Single-stage model (non-person): image-to-image when refs present,
-    // else the text-to-image graphic model.
-    const useModel = model || (refs.length ? 'gpt-2' : 'nano-banana')
 
     let brandMd = '', brandColors = ''
     let profRow = null
@@ -311,31 +308,10 @@ export default async function handler(req, res) {
     const slides = plan.slides.slice(0, n)
 
     // Freeze the shared axes ONCE, then reuse them byte-identical per slide.
+    const style = buildStyle({ themeStyle, brandColors, extraStyle })
     const outfitLocked = person ? resolveOutfit(theme, outfit) : ''
-
-    // Render the ONE canonical background plate + (person mode) derive the
-    // locked subject, in parallel. The SAME plate image is handed into every
-    // slide so the background is pixel-consistent across the set.
-    let bgPlate = null, subjectLocked = ''
-    try {
-      const [plateUrl, subj] = await Promise.all([
-        genImage(req, { profile_id, prompt: backgroundPrompt({ themeStyle, brandColors, extraStyle }), model: 'nano-banana', aspect }),
-        person ? describeSubject(refs[0]) : Promise.resolve(''),
-      ])
-      bgPlate = plateUrl
-      subjectLocked = subj
-    } catch (e) {
-      if (e.code === 'insufficient_credits') {
-        return res.status(402).json({ error: `Not enough credits to render the background (${e.message}).`, code: 'insufficient_credits' })
-      }
-      // Non-fatal: fall back to describing the background in text per slide.
-      bgPlate = null
-    }
-    // When no plate, fall back to a text background description on every slide
-    // (still identical wording, just less pixel-perfect than a shared image).
-    const bgFallback = bgPlate ? '' : `SHARED BACKGROUND (keep identical every slide): ${backgroundPrompt({ themeStyle, brandColors, extraStyle })} `
-    // Compose instructions know whether a real plate image is being passed.
-    const instructions = composeInstructions({ person, sig, hasPlate: !!bgPlate })
+    const subjectLocked = person ? await describeSubject(refs[0]) : ''
+    const poseAt = (i) => (person ? (String(slides[i]?.pose || '').trim() || DEFAULT_POSES[i % DEFAULT_POSES.length]) : '')
 
     // Per-slide COPY block (the one text variable). Same wording template.
     const copyOf = (s) => {
@@ -343,24 +319,35 @@ export default async function handler(req, res) {
       const body = String(s.body || '').trim()
       const bodyClause = body ? `, and beneath it a smaller readable BODY paragraph reading exactly "${body}"` : ''
       const focal = !person && String(s.focal || '').trim() ? ` Supporting visual on this slide only: ${String(s.focal).trim()}.` : ''
-      return `${bgFallback}Render on this slide, spelled exactly and once: ${head}${bodyClause}.${focal}`
+      return `Render on this slide, spelled exactly and once: ${head}${bodyClause}.${focal}`
     }
 
     let urls
     try {
-      urls = await Promise.all(slides.map((s, i) => {
+      // 1) Design the COVER fully — it becomes the style ANCHOR for the set.
+      const coverCopy = copyOf(slides[0])
+      let coverUrl
+      if (person) {
+        const portrait = await genPortrait(req, { profile_id, refs, subject: subjectLocked, outfit: outfitLocked, pose: poseAt(0), aspect })
+        coverUrl = await genImage(req, { profile_id, prompt: coverPrompt({ style, copy: coverCopy, person: true, sig }), model: 'gpt-2', reference_urls: [portrait], aspect })
+      } else {
+        coverUrl = await genImage(req, { profile_id, prompt: coverPrompt({ style, copy: coverCopy, person: false, sig }), model: 'gpt-2', reference_urls: refs.length ? refs : undefined, aspect })
+      }
+
+      // 2) Every follower slide reproduces the anchor's exact look + new copy.
+      const rest = await Promise.all(slides.slice(1).map(async (s, idx) => {
+        const i = idx + 1
         const copy = copyOf(s)
         if (person) {
-          const pose = String(s.pose || '').trim() || DEFAULT_POSES[i % DEFAULT_POSES.length]
-          return genPersonSlide(req, { profile_id, refs, subject: subjectLocked, outfit: outfitLocked, pose, instructions, bgPlate, copy, aspect })
+          const portrait = await genPortrait(req, { profile_id, refs, subject: subjectLocked, outfit: outfitLocked, pose: poseAt(i), aspect })
+          return genImage(req, { profile_id, prompt: followPrompt({ style, copy, person: true, sig }), model: 'gpt-2', reference_urls: [coverUrl, portrait], aspect })
         }
-        // Non-person: compose text (and any logo refs) onto the shared plate.
-        const composeRefs = [bgPlate, ...refs].filter(Boolean)
-        return genImage(req, { profile_id, prompt: `${instructions}\n\n${copy}`, model: composeRefs.length ? 'gpt-2' : useModel, reference_urls: composeRefs.length ? composeRefs : undefined, aspect })
+        return genImage(req, { profile_id, prompt: followPrompt({ style, copy, person: false, sig }), model: 'gpt-2', reference_urls: [coverUrl, ...refs], aspect })
       }))
+      urls = [coverUrl, ...rest]
     } catch (e) {
       if (e.code === 'insufficient_credits') {
-        const est = 4000 * (n * (person ? 2 : 1) + 1)
+        const est = 4000 * (n * (person ? 2 : 1))
         return res.status(402).json({ error: `Not enough credits to render ${n} slides (~${est} ai_tokens${person ? ', two stages per slide for the person likeness' : ''}). ${e.message}`, code: 'insufficient_credits' })
       }
       return res.status(502).json({ error: `Slide generation failed: ${e.message}` })
