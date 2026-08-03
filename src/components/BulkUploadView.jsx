@@ -1433,7 +1433,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
     }
     const ok = await confirmDialog({
       title: `Approve ${ids.length} ${ids.length === 1 ? 'post' : 'posts'}?`,
-      message: 'Each post lands status=scheduled and gets registered with Upload-Post at its scheduled time.',
+      message: 'Each post lands status=scheduled and is queued to publish at its scheduled time.',
       confirmText: 'Approve all',
     })
     if (!ok) return
@@ -1553,7 +1553,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         const labels = changed.map(labelOf).join(', ')
         toast({
           kind: 'success',
-          message: `Updated on Upload-Post${labels ? ` · ${labels}` : ''}`,
+          message: `Schedule updated${labels ? ` · ${labels}` : ''}`,
         })
       }
     } catch (e) {
@@ -1691,10 +1691,10 @@ export default function BulkUploadView({ profileId, token, onChange }) {
       const coverIntroSucceeded = coverIntroMeta && !coverIntroMeta.failed
       // Step 3 — PATCH the row. patchScript handles optimistic UI +
       // Upload-Post resync when the row is already scheduled.
-      toast({ kind: 'info', message: 'Finishing up: saving + resyncing Upload-Post…', ttl: 3000 })
+      toast({ kind: 'info', message: 'Finishing up: saving + resyncing the schedule…', ttl: 3000 })
       await patchScript(row.id, { media_url_with_cover: polished.video_url, embed_cover_intro: true })
       if (coverIntroSucceeded) {
-        toast({ kind: 'success', message: `"${rowLabel}" repaired. Music mixed, cover intro embedded, Upload-Post resynced.`, ttl: 6000 })
+        toast({ kind: 'success', message: `"${rowLabel}" repaired. Music mixed, cover intro embedded, schedule resynced.`, ttl: 6000 })
       } else {
         const reason = coverIntroMeta?.reason || 'worker may need redeploy to pick up cover-intro support'
         toast({
@@ -1725,13 +1725,13 @@ export default function BulkUploadView({ profileId, token, onChange }) {
       console.log('[delete-cascade]', { id, cancel })
       if (cancel?.attempted) {
         if (cancel.ok) {
-          toast({ kind: 'success', message: `Deleted + cancelled on Upload-Post (${cancel.strategy}).` })
+          toast({ kind: 'success', message: 'Deleted + unscheduled.' })
         } else if (cancel.status === 404 || cancel.reason === 'not_found') {
-          toast({ kind: 'info', message: `Deleted. Upload-Post had no matching job (already fired or never queued).` })
+          toast({ kind: 'info', message: 'Deleted. Nothing was queued to publish (already posted or never scheduled).' })
         } else {
           toast({
             kind: 'warn',
-            message: `Deleted locally, but Upload-Post cancel failed (${cancel.strategy}: ${cancel.reason || 'unknown'}). The orphan-cleanup cron will catch it within 30 min.`,
+            message: `Deleted locally, but unscheduling failed (${cancel.reason || 'unknown'}). Cleanup will catch it within 30 min.`,
             ttl: 9000,
           })
         }
@@ -1783,7 +1783,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
       const body = await r.json()
       if (!r.ok) throw new Error(body?.error || `${label} failed (${r.status})`)
       const summary = body.updated != null ? `${label}: ${body.updated}/${body.total ?? ids.length} updated`
-        : body.scheduled != null ? `${label}: ${body.scheduled} scheduled${body.submitted ? `, ${body.submitted} queued at Upload-Post` : ''}${body.submit_failed ? `, ${body.submit_failed} submit-failed` : ''}${body.skipped ? `, ${body.skipped} skipped` : ''}`
+        : body.scheduled != null ? `${label}: ${body.scheduled} scheduled${body.submitted ? `, ${body.submitted} queued to publish` : ''}${body.submit_failed ? `, ${body.submit_failed} submit-failed` : ''}${body.skipped ? `, ${body.skipped} skipped` : ''}`
         : body.submitted != null ? `${label}: ${body.submitted} submitted${body.failed ? `, ${body.failed} failed` : ''}`
         : body.resynced != null ? `${label}: ${body.resynced} resynced${body.failed ? `, ${body.failed} failed` : ''}${body.skipped ? `, ${body.skipped} skipped` : ''}`
         : `${label} done`
@@ -2234,7 +2234,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         <button
           className="btn-primary" disabled={!selected.size || busyAction !== null}
           onClick={async () => {
-            const ok = await confirmDialog({ title: `Publish ${selected.size} selected?`, message: 'Submits each row to upload-post.com immediately (or schedules per its scheduled_at).', confirmText: 'Publish' })
+            const ok = await confirmDialog({ title: `Publish ${selected.size} selected?`, message: 'Publishes each row immediately (or schedules it for its set time).', confirmText: 'Publish' })
             if (ok) callBulk('publish-selected', 'Publish')
           }}
           style={{ padding: '8px 12px' }}
@@ -2247,7 +2247,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           className="btn-ghost" disabled={busyAction !== null}
           onClick={async () => {
             const ok = await confirmDialog({
-              title: 'Resync scheduled posts with Upload-Post?',
+              title: 'Resync scheduled posts?',
               message: 'Cancels each scheduled job and re-submits with the current platforms / caption / hashtags / media. Safe to run anytime.',
               confirmText: 'Resync',
             })

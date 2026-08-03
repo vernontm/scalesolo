@@ -288,7 +288,7 @@ function StepPlatforms({ value, onChange, connected }) {
   return (
     <Section
       title="Which platforms?"
-      hint={loading ? 'Loading your connected accounts…' : `${connectedSet.size} platforms connected to Upload-Post.`}
+      hint={loading ? 'Loading your connected accounts…' : `${connectedSet.size} platforms connected.`}
     >
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
         {ALL_PLATFORMS.map((p) => {

@@ -89,7 +89,7 @@ function SocialTagsPanel({ profileId, token }) {
     <div>
       <h3 style={{ fontSize: 16, fontWeight: 800, marginBottom: 4, letterSpacing: -0.2 }}>Per-platform tags</h3>
       <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 16, lineHeight: 1.5 }}>
-        Tags get appended to every post on the matching platform when you publish via Upload-Post.
+        Tags get appended to every post on the matching platform when it publishes.
         Leave blank to skip. A leading <code>#</code> or <code>@</code> is preserved; bare words are treated as hashtags.
       </p>
 

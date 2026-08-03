@@ -232,7 +232,7 @@ export default function PostPreviewModal({ items, initialIndex, token, onClose, 
             )}
             {row.uploadpost_request_id && (
               <div style={{ fontSize: 11.5, color: '#22c55e', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                <ExternalLink size={11} /> Live on Upload-Post
+                <ExternalLink size={11} /> View live post
               </div>
             )}
           </div>

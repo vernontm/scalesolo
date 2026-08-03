@@ -34,6 +34,7 @@ import {
   AUTORUN_OPTIONS, autoRunIntervalMs, NODE_COST_HINT, nodeCostLabel,
   findUpstreamVideoUrl, findUpstreamScript, findUpstreamLogoUrl,
   findUpstreamAvatarPicker, findUpstreamTextPost,
+  uploadImageToBucket, uploadVideoWithProgress, autoNameMedia, takenMediaNames,
 } from '../lib/space-nodes.jsx'
 
 // Defensive deep-clone for run snapshots — JSON.parse(JSON.stringify(x))
@@ -2316,17 +2317,64 @@ function SpaceBuilder({ space, onSave, onClose }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [copySelectedNodes, pasteClipboard])
 
-  // Drag from palette → drop on canvas
-  const onDragOver = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }
+  // Drag from palette → drop on canvas. Dropping REAL FILES (from Finder /
+  // the OS) anywhere on the canvas spawns one Upload media node per file at
+  // the drop point — upload runs in the background and each node auto-names
+  // itself from its content when it lands.
+  const onDragOver = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = e.dataTransfer.types?.includes('Files') ? 'copy' : 'move' }
+  const dropMediaFiles = async (files, basePos) => {
+    if (!selectedProfileId) { toast({ kind: 'error', message: 'Pick a brand profile first.' }); return }
+    pushHistory()
+    const stamp = Date.now().toString(36)
+    const jobs = files.map((f, i) => ({
+      f,
+      id: `n_${stamp}_${Math.random().toString(36).slice(2, 6)}_${i}`,
+      isVideo: (f.type || '').startsWith('video/') || /\.(mp4|mov|webm|m4v)$/i.test(f.name || ''),
+    }))
+    // Placeholder nodes appear instantly (cascaded so they don't stack).
+    setNodes((arr) => [
+      ...arr,
+      ...jobs.map(({ id }, i) => ({
+        id, type: 'space',
+        position: { x: basePos.x + i * 56, y: basePos.y + i * 44 },
+        data: { type: 'image_upload', name: 'Uploading…', props: { urls: [] }, status: 'running', output: null, error: null },
+      })),
+    ])
+    const setJobData = (id, dataPatch) => setNodes((arr) => arr.map((n) =>
+      n.id === id ? { ...n, data: { ...n.data, ...dataPatch, props: { ...(n.data?.props || {}), ...(dataPatch.props || {}) } } } : n
+    ))
+    // Sequential per file (uploads are the bottleneck anyway) so the
+    // auto-name dedupe sees each previous file's name.
+    for (const { f, id, isVideo } of jobs) {
+      try {
+        const url = isVideo
+          ? await uploadVideoWithProgress(f, selectedProfileId, () => {})
+          : await uploadImageToBucket(f, selectedProfileId)
+        const kind = isVideo ? 'video' : 'image'
+        const name = await autoNameMedia({
+          url, kind, filename: f.name,
+          token: session?.access_token || null,
+          taken: takenMediaNames(nodesRef.current, id),
+        })
+        setJobData(id, { name, status: 'idle', props: { urls: [{ kind, url, name }] } })
+      } catch (err) {
+        setJobData(id, { name: f.name || 'Upload failed', status: 'failed', error: err?.message || 'Upload failed' })
+      }
+    }
+  }
   const onDrop = (e) => {
     e.preventDefault()
-    const type = e.dataTransfer.getData('application/scalesolo-node')
-    if (!type) return
     // ReactFlow positions are relative to the flow viewport; we approximate
     // here with the screen offset minus the wrapper. For MVP this is fine —
     // user can reposition by dragging the node afterward.
     const rect = e.currentTarget.getBoundingClientRect()
-    addNode(type, { x: e.clientX - rect.left - 100, y: e.clientY - rect.top - 50 })
+    const basePos = { x: e.clientX - rect.left - 100, y: e.clientY - rect.top - 50 }
+    const files = Array.from(e.dataTransfer.files || []).filter((f) =>
+      (f.type || '').startsWith('image/') || (f.type || '').startsWith('video/') || /\.(mp4|mov|webm|m4v)$/i.test(f.name || ''))
+    if (files.length) { dropMediaFiles(files, basePos); return }
+    const type = e.dataTransfer.getData('application/scalesolo-node')
+    if (!type) return
+    addNode(type, basePos)
   }
 
   const patchNode = useCallback((id, patch) => {
@@ -2355,9 +2403,24 @@ function SpaceBuilder({ space, onSave, onClose }) {
     const spaceId = spaceIdRef.current
     if (!spaceId) return
     let cancelled = false
+    // Staleness guards. The prime fetch / focus refetch / 30s poll all
+    // re-apply the LATEST run row — which for a just-opened space is
+    // usually an old, already-finished run. Without these guards the
+    // sticky "Run finished" (or a hung "running") panel pops up on every
+    // open even though the user never started anything. Rule: only show
+    // panels for runs we watched running in THIS session, or that
+    // started/finished after the space was opened.
+    const openedAt = Date.now()
+    const seenRunning = new Set()
+    const RUNNING_STALE_MS = 30 * 60_000
     const applyRow = (row) => {
       if (cancelled || !row) return
       if (row.status === 'running') {
+        const startedTs = row.started_at ? new Date(row.started_at).getTime() : 0
+        // A "running" row that's been stuck for ages is a dead run the
+        // sweeper hasn't reaped — hydrate nothing, show nothing.
+        if (startedTs && Date.now() - startedTs > RUNNING_STALE_MS) return
+        seenRunning.add(row.id)
         const np = row.node_progress || {}
         const total = row.node_count || 0
         const completed = Object.values(np).filter((p) => p && (p.status === 'success' || p.status === 'failed')).length
@@ -2444,6 +2507,12 @@ function SpaceBuilder({ space, onSave, onClose }) {
           // catch up on per-node statuses via the loop above.
           return
         }
+        // Only surface the summary for runs that are actually NEWS: ones
+        // we watched running in this session, or that finished after this
+        // space was opened. Old completed runs still hydrate node
+        // statuses above, but never resurrect a "Run finished" panel.
+        const finishedTs = row.finished_at ? new Date(row.finished_at).getTime() : 0
+        if (!seenRunning.has(row.id) && finishedTs < openedAt) return
         // Show the summary panel. Don't clear it on errors either —
         // partial runs need just as much visibility as successes.
         setServerRun({
@@ -4080,11 +4149,8 @@ function SpaceBuilder({ space, onSave, onClose }) {
           connectionMode="strict"
           connectionRadius={45}
           fitView
-          /* Two-finger trackpad vertical scroll → zoom in/out.
-             Horizontal scroll still pans sideways. Drag pans the canvas. */
-          panOnScroll
-          panOnScrollMode="horizontal"
-          panOnScrollSpeed={0.8}
+          /* Mouse wheel / two-finger vertical scroll → zoom in/out (panOnScroll
+             would swallow the wheel, so it stays off). Pinch zooms; drag pans. */
           zoomOnScroll
           zoomOnPinch
           defaultEdgeOptions={{ type: 'scissor', animated: true, style: { stroke: 'var(--red)', strokeWidth: 1.5 } }}
@@ -4508,6 +4574,18 @@ export default function Spaces() {
 
   const [creatingSpace, setCreatingSpace] = useState(false)
   const onCreate = () => setCreatingSpace(true)
+
+  // /spaces?new=1 — deep link from the Create page's "from scratch" card.
+  // Drops straight into a blank board (no picker modal) and strips the param
+  // so refresh/back behaves.
+  useEffect(() => {
+    if (searchParams.get('new') !== '1') return
+    setEditing({ id: null, name: 'Untitled space', nodes: [], edges: [] })
+    const next = new URLSearchParams(searchParams)
+    next.delete('new')
+    setSearchParams(next, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
 
   const onOpen = async (s) => {
     // Reflect the open space in the URL so a refresh keeps the user

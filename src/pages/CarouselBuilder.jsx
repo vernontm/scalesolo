@@ -17,6 +17,31 @@ const THEMES = [
   { key: 'retro', label: 'Retro', css: { fontFamily: '"Courier New", monospace', fontWeight: 700, letterSpacing: '0.04em' } },
 ]
 
+// Selectable TEMPLATES — complete locked looks extracted from real approved
+// carousels. Picking one swaps the person for your likeness, the accent for
+// your brand color, and the copy for yours; the look itself is frozen.
+const TEMPLATES = [
+  { key: 'custom', label: 'Custom', desc: 'Pick a style, background and colors yourself.' },
+  { key: 'editorial', label: 'Editorial', desc: 'Cream editorial, knockout headlines, B&W portrait.', img: '/media/templates/editorial.jpg' },
+]
+
+// Background presets (custom template only). The swatch shows the STYLE;
+// the actual colors are swapped to your brand at generation time (or to any
+// colors you name in the style notes).
+const BACKGROUNDS = [
+  { key: 'auto', group: '', label: 'Auto', css: { background: 'var(--surface-2)' } },
+  { key: 'solid-light', group: 'Solid', label: 'Light', css: { background: '#e9e7e2' } },
+  { key: 'solid-dark', group: 'Solid', label: 'Dark', css: { background: '#1b1d22' } },
+  { key: 'solid-brand', group: 'Solid', label: 'Brand', css: { background: '#3b5bd6' } },
+  { key: 'gradient-soft', group: 'Gradient', label: 'Soft', css: { background: 'linear-gradient(180deg,#aebef0,#f5f6fa)' } },
+  { key: 'gradient-bold', group: 'Gradient', label: 'Bold', css: { background: 'linear-gradient(135deg,#3b5bd6,#9333ea)' } },
+  { key: 'gradient-glow', group: 'Gradient', label: 'Glow', css: { background: 'radial-gradient(85% 65% at 50% 100%,#3b5bd6 0%,#0a0b10 72%)' } },
+  { key: 'texture-paper', group: 'Texture', label: 'Paper', css: { background: 'repeating-linear-gradient(0deg,#efe8da 0 3px,#ece4d4 3px 6px)' } },
+  { key: 'texture-grain', group: 'Texture', label: 'Grain', css: { background: 'radial-gradient(120% 90% at 12% 8%,rgba(99,120,255,0.4),transparent 55%),#101114' } },
+  { key: 'texture-grid', group: 'Texture', label: 'Grid', css: { backgroundColor: '#0c0d12', backgroundImage: 'linear-gradient(rgba(99,120,255,0.28) 1px,transparent 1px),linear-gradient(90deg,rgba(99,120,255,0.28) 1px,transparent 1px)', backgroundSize: '10px 10px' } },
+  { key: 'texture-marble', group: 'Texture', label: 'Marble', css: { background: 'linear-gradient(115deg,transparent 42%,rgba(150,150,165,0.5) 43%,transparent 45%),linear-gradient(100deg,transparent 68%,rgba(150,150,165,0.35) 69%,transparent 71%),#f2f0ec' } },
+]
+
 // Carousel STRUCTURE (how the slides are organized). `key` matches the
 // backend FORMAT_GUIDES that steer the slide planner.
 const FORMATS = [

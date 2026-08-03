@@ -1220,7 +1220,7 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       })
       const ab = await a.json().catch(() => ({}))
-      if (!a.ok) { const e = new Error(ab?.error || 'Scheduling failed at Upload-Post'); e.timeWasSet = timeWasSet; throw e }
+      if (!a.ok) { const e = new Error(ab?.error || 'Scheduling failed'); e.timeWasSet = timeWasSet; throw e }
       // Reconcile: replace the provisional card with the server's row so
       // status / handles are accurate.
       const placed = (ab && ab.item) ? ab.item : { ...item, scheduled_datetime: slot.iso, status: 'scheduled', platforms }

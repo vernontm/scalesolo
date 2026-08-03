@@ -10,7 +10,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const FONTS_DIR = join(__dirname, '_fonts')
+const FONTS_DIR = join(__dirname, '..', '_fonts')
 const SCRIPT_FONT = join(FONTS_DIR, 'GreatVibes-Regular.ttf')   // family: "Great Vibes"
 const SANS_FONT = join(FONTS_DIR, 'Montserrat-ExtraBold.ttf')   // family: "Montserrat"
 

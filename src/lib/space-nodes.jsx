@@ -756,7 +756,7 @@ async function svgToPngDataUrl(file) {
   return c.toDataURL('image/png')
 }
 
-async function uploadImageToBucket(file, profileId) {
+export async function uploadImageToBucket(file, profileId) {
   const isSvg = file.type === 'image/svg+xml' || /\.svg$/i.test(file.name || '')
   const dataUrl = isSvg ? await svgToPngDataUrl(file) : await downscaleToDataUrl(file)
   // After downscaling we always emit JPEG, so normalize the filename to .jpg
@@ -797,7 +797,7 @@ async function uploadVideoToBucket(file, profileId) {
 //   onProgress({ loaded, total, pct })  — fires repeatedly during upload.
 //
 // Returns the public URL on success, throws on failure. Honors AbortSignal.
-async function uploadVideoWithProgress(file, profileId, onProgress, { signal } = {}) {
+export async function uploadVideoWithProgress(file, profileId, onProgress, { signal } = {}) {
   const ext = (file.name?.split('.').pop() || 'mp4').toLowerCase()
   const safeExt = ['mp4', 'mov', 'webm', 'm4v'].includes(ext) ? ext : 'mp4'
   const path = `${profileId || 'shared'}/uploads/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`
@@ -2536,6 +2536,51 @@ export function readImageItems(props) {
   }).filter(Boolean)
 }
 
+// Clean a filename into a friendly base name ("Chicken-Shwarma_01.JPG" →
+// "chicken shwarma 01"). Camera-ish names still come out usable.
+export function cleanFileName(fn) {
+  const base = String(fn || '').replace(/\.[a-z0-9]+$/i, '')
+  return base.replace(/[_\-.]+/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 40)
+}
+
+// Content-derived, canvas-unique name for a freshly uploaded media item.
+// Images get a short vision caption ("chicken shawarma", "logo"); videos and
+// vision failures fall back to the cleaned filename. `taken` is a Set of
+// lowercase names already used on the canvas — collisions get " 2", " 3"…
+// so every @-mention resolves to exactly one item.
+export async function autoNameMedia({ url, kind, filename, token, taken }) {
+  let base = ''
+  if (kind !== 'video' && token && url) {
+    try {
+      const r = await fetch('/api/spaces/name-media', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ url }),
+      })
+      const b = await r.json().catch(() => ({}))
+      if (b?.name) base = b.name
+    } catch { /* fall through to filename */ }
+  }
+  if (!base) base = cleanFileName(filename) || (kind === 'video' ? 'video' : 'image')
+  const used = taken instanceof Set ? taken : new Set()
+  let name = base, i = 2
+  while (used.has(name.toLowerCase())) name = `${base} ${i++}`
+  return name
+}
+
+// All media names currently on the canvas (across every Upload media node),
+// lowercased — feed as `taken` to autoNameMedia. `excludeNodeId` skips the
+// node being renamed so replacing its media doesn't collide with itself.
+export function takenMediaNames(allNodes, excludeNodeId) {
+  const used = new Set()
+  for (const n of allNodes || []) {
+    if (n.id === excludeNodeId) continue
+    if (n.data?.type !== 'image_upload') continue
+    for (const it of readImageItems(n.data.props)) used.add(String(it.name).toLowerCase())
+  }
+  return used
+}
+
 function ImageUploadBody({ data, onPatch }) {
   const inpRef = useRef(null)
   const [busy, setBusy] = useState(false)
@@ -2716,126 +2761,70 @@ function ImageUploadBody({ data, onPatch }) {
     return result
   }, [allNodes, allEdges, myId, items.length])
 
+  // ONE media per node. Picking a file uploads it, auto-names it from its
+  // content (unique across the canvas so @-mentions resolve cleanly), and
+  // REPLACES whatever the node held. More media = more Upload media nodes
+  // (drop files anywhere on the canvas to spawn them).
   async function onPick(e) {
-    const files = Array.from(e.target.files || [])
-    if (!files.length || !profileId) return
+    const f = Array.from(e.target.files || [])[0]
+    if (!f || !profileId) return
     setBusy(true); setErr(null)
 
-    // Initial upload state — one entry per file with status='queued'.
-    // We use a stable local id so updates target the right row even
-    // when files share a name.
-    const initial = files.map((f, i) => {
-      const isVideo = (f.type || '').startsWith('video/') || /\.(mp4|mov|webm|m4v)$/i.test(f.name || '')
-      return {
-        localId: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
-        name: f.name,
-        size: f.size,
-        kind: isVideo ? 'video' : 'image',
-        pct: 0,
-        status: 'queued', // queued | uploading | done | failed
-        error: null,
-      }
-    })
-    setUploads(initial)
-    const updateOne = (localId, patch) => setUploads((prev) =>
-      prev.map((u) => u.localId === localId ? { ...u, ...patch } : u)
-    )
+    const isVideo = (f.type || '').startsWith('video/') || /\.(mp4|mov|webm|m4v)$/i.test(f.name || '')
+    const row = {
+      localId: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name: f.name, size: f.size, kind: isVideo ? 'video' : 'image',
+      pct: 0, status: 'uploading', error: null,
+    }
+    setUploads([row])
+    const updateOne = (patch) => setUploads((prev) => prev.map((u) => u.localId === row.localId ? { ...u, ...patch } : u))
 
-    // Per-file uploader. Returns the new item record on success, throws on
-    // failure (caller catches into the row's `error` field).
-    const uploadOne = async (f, row, namedCount) => {
-      const isVideo = row.kind === 'video'
-      updateOne(row.localId, { status: 'uploading' })
+    try {
+      let item
       if (isVideo) {
-        // HEVC reject — see detectHevc() above for why. Errors here
-        // surface in the per-file progress panel with the full
-        // message, so the user knows exactly how to fix it.
+        // HEVC reject — see detectHevc() above for why.
         if (await detectHevc(f)) {
           throw new Error(
             'HEVC (H.265) not supported. iPhone: Settings → Camera → Formats → "Most Compatible" to record in H.264. ' +
             'Existing clips: re-export from Photos / iMovie / Final Cut with H.264 codec.'
           )
         }
-        // Aspect-ratio classification (no more vertical-only block).
-        // We accept 9:16, 1:1, and 16:9; anything in between snaps to
-        // the closest of those buckets. Truly off-shape inputs (e.g.,
-        // ultra-wide cinema crops, panoramic photos turned into video)
-        // still get rejected so downstream renders don't mangle them.
+        // Aspect-ratio classification. We accept 9:16, 1:1, and 16:9;
+        // anything in between snaps to the closest bucket, truly
+        // off-shape inputs get rejected.
         let orientation = null
         const meta = await probeVideoMeta(f).catch(() => null)
         if (meta && meta.width && meta.height) {
           const aspect = meta.width / meta.height
-          if (aspect <= 0.7)        orientation = '9:16'      // portrait
-          else if (aspect < 1.4)    orientation = '1:1'       // square-ish
-          else if (aspect <= 2.0)   orientation = '16:9'      // landscape
-          else {
-            throw new Error(`Unsupported aspect ratio (${meta.width}×${meta.height}). Use 9:16, 1:1, or 16:9.`)
-          }
+          if (aspect <= 0.7)        orientation = '9:16'
+          else if (aspect < 1.4)    orientation = '1:1'
+          else if (aspect <= 2.0)   orientation = '16:9'
+          else throw new Error(`Unsupported aspect ratio (${meta.width}×${meta.height}). Use 9:16, 1:1, or 16:9.`)
         }
-        const url = await uploadVideoWithProgress(f, profileId, (p) => {
-          updateOne(row.localId, { pct: p.pct })
-        })
-        updateOne(row.localId, { status: 'done', pct: 100 })
-        return { kind: 'video', url, name: `video ${namedCount.video}`, orientation }
+        const url = await uploadVideoWithProgress(f, profileId, (p) => updateOne({ pct: p.pct }))
+        item = { kind: 'video', url, orientation }
       } else {
-        // Images go through the JSON+base64 reference-image API. We
-        // don't get byte-level progress from that path, but image
-        // uploads are small (downscaled to JPEG) so a binary
-        // "uploading → done" is honest enough.
         const u = await uploadImageToBucket(f, profileId)
-        updateOne(row.localId, { status: 'done', pct: 100 })
-        return { kind: 'image', url: u, name: `image ${namedCount.image}` }
+        item = { kind: 'image', url: u }
       }
+      updateOne({ status: 'done', pct: 100 })
+      // Content-derived unique name — becomes the item's @-mention AND the
+      // node's canvas label.
+      const name = await autoNameMedia({
+        url: item.url, kind: item.kind, filename: f.name,
+        token: data?._ctxToken || null,
+        taken: takenMediaNames(allNodes, myId),
+      })
+      item.name = name
+      onPatch({ urls: [item], __name: name })
+      setTimeout(() => setUploads([]), 800)
+    } catch (e2) {
+      updateOne({ status: 'failed', error: e2?.message || String(e2) })
+      setErr(e2?.message || 'Upload failed')
     }
-
-    // Per-kind naming counter so "video 1, video 2" doesn't repeat when
-    // we add to an existing items list. Lock this in BEFORE the parallel
-    // run so concurrent uploads don't all claim the same index.
-    const counters = {
-      video: items.filter((x) => x.kind === 'video').length,
-      image: items.filter((x) => x.kind !== 'video').length,
-    }
-    const assigned = files.map((f, i) => {
-      const row = initial[i]
-      counters[row.kind] += 1
-      return { f, row, idx: { video: counters.video, image: counters.image } }
-    })
-
-    // Concurrency 3. Higher saturates the user's upstream and starves
-    // foreground UI; lower wastes their bandwidth. 3 keeps the network
-    // pipe busy with one big video, while images interleave fast.
-    const CONCURRENCY = 3
-    const results = new Array(assigned.length)
-    let cursor = 0
-    const workers = Array.from({ length: Math.min(CONCURRENCY, assigned.length) }, async () => {
-      while (cursor < assigned.length) {
-        const i = cursor++
-        const { f, row, idx } = assigned[i]
-        try {
-          results[i] = await uploadOne(f, row, idx)
-        } catch (e) {
-          updateOne(row.localId, { status: 'failed', error: e?.message || String(e) })
-          results[i] = null
-        }
-      }
-    })
-    await Promise.all(workers)
-
-    // Stitch successful uploads into the items list. Failures stay
-    // visible in the upload panel so the user can see what didn't make
-    // it and re-pick those files.
-    const additions = results.filter(Boolean)
-    if (additions.length) onPatch({ urls: [...items, ...additions] })
-    const anyFailed = results.some((r) => r === null)
-    if (anyFailed) setErr(`${results.filter((r) => r === null).length} file(s) failed — see panel below.`)
 
     setBusy(false)
     if (inpRef.current) inpRef.current.value = ''
-    // Auto-clear the progress panel a beat after success so the node
-    // shape doesn't stay tall. Failures linger so the user notices.
-    if (!anyFailed) {
-      setTimeout(() => setUploads([]), 800)
-    }
   }
   function remove(idx) {
     onPatch({ urls: items.filter((_, j) => j !== idx) })
@@ -2849,9 +2838,9 @@ function ImageUploadBody({ data, onPatch }) {
   return (
     <>
       {items.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 8 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
           {items.map((it, idx) => {
-            // Resolve this thumbnail's processing stage. videoIdx mirrors
+            // Resolve this media's processing stage. videoIdx mirrors
             // the idx the worker assigns to its videos[] output — for
             // mixed (image + video) bags, downstream pipelines only fan
             // out videos so images stay at stage=null and get no badge.
@@ -2864,11 +2853,12 @@ function ImageUploadBody({ data, onPatch }) {
               : null
             return (
             <div key={`${it.url}-${idx}`} style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <div style={{ position: 'relative', aspectRatio: '1', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)', background: '#000' }}>
+              {/* One large preview — the media IS the node. */}
+              <div style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)', background: '#000' }}>
                 {it.kind === 'video' ? (
-                  <video src={it.url} muted playsInline preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  <video src={it.url} muted playsInline preload="metadata" style={{ width: '100%', maxHeight: 300, objectFit: 'contain', display: 'block' }} />
                 ) : (
-                  <img src={it.url} alt={it.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  <img src={it.url} alt={it.name} style={{ width: '100%', maxHeight: 300, objectFit: 'contain', display: 'block' }} />
                 )}
                 {/* Per-clip status badge — green ✓ means fully scheduled,
                     blue ● polished but not yet scheduled, amber ●
@@ -3002,7 +2992,7 @@ function ImageUploadBody({ data, onPatch }) {
             background: 'var(--surface-2)', borderStyle: 'dashed',
           }}>
           {busy ? <Loader2 size={13} className="spin" /> : <Upload size={13} />}
-          {busy ? 'Uploading…' : items.length ? 'Add more' : 'Upload media'}
+          {busy ? 'Uploading…' : items.length ? 'Replace media' : 'Upload media'}
         </button>
         <button
           type="button"
@@ -3041,9 +3031,9 @@ function ImageUploadBody({ data, onPatch }) {
           : 'Hooked to all generators'}
       </button>
       <div style={{ marginTop: 4, fontSize: 10, color: 'var(--muted)', lineHeight: 1.4 }}>
-        Each item gets an alt tag. Reference one in any generator prompt with @altTag (e.g. "she's holding @logo").
+        One piece of media per node (drop files on the canvas to add more nodes). It gets a unique name automatically — reference it in any generator prompt with @name (e.g. "she's holding @logo").
       </div>
-      <input ref={inpRef} type="file" multiple accept="image/*,video/mp4,video/quicktime,video/webm" onChange={onPick} style={{ display: 'none' }} />
+      <input ref={inpRef} type="file" accept="image/*,video/mp4,video/quicktime,video/webm" onChange={onPick} style={{ display: 'none' }} />
       {err && <div style={{ marginTop: 6, color: 'var(--red)', fontSize: 11 }}>{err}</div>}
       {libraryOpen && (
         <LibraryPickerModal
@@ -3052,23 +3042,15 @@ function ImageUploadBody({ data, onPatch }) {
           onClose={() => setLibraryOpen(false)}
           onPick={(picks) => {
             if (!picks?.length) { setLibraryOpen(false); return }
-            // Each pick is { kind, url, name }. Names get a "lib"
-            // prefix so they don't collide with directly-uploaded items
-            // and the user can tell at a glance which came from where.
-            const counters = {
-              video: items.filter((x) => x.kind === 'video').length,
-              image: items.filter((x) => x.kind !== 'video').length,
-            }
-            const additions = picks.map((p) => {
-              counters[p.kind === 'video' ? 'video' : 'image'] += 1
-              const base = p.kind === 'video' ? 'video' : 'image'
-              return {
-                kind: p.kind === 'video' ? 'video' : 'image',
-                url: p.url,
-                name: p.name || `lib ${base} ${counters[p.kind === 'video' ? 'video' : 'image']}`,
-              }
-            })
-            onPatch({ urls: [...items, ...additions] })
+            // One media per node: the first pick REPLACES the node's media
+            // and renames the node, deduped against the rest of the canvas.
+            const p = picks[0]
+            const kind = p.kind === 'video' ? 'video' : 'image'
+            const taken = takenMediaNames(allNodes, myId)
+            let base = (p.name || cleanFileName(p.url.split('/').pop()) || kind).toLowerCase()
+            let name = base, i = 2
+            while (taken.has(name)) name = `${base} ${i++}`
+            onPatch({ urls: [{ kind, url: p.url, name }], __name: name })
             setLibraryOpen(false)
           }}
         />
@@ -9145,7 +9127,7 @@ export const NODE_REGISTRY = {
           }),
         })
         const body = await r.json().catch(() => ({}))
-        if (!r.ok) throw new Error(body?.error || `Upload-Post failed (${r.status})`)
+        if (!r.ok) throw new Error(body?.error || `Scheduling failed (${r.status})`)
         return {
           request_id: body?.request_id || null,
           scheduled_iso: body?.scheduled_iso || scheduledIso,

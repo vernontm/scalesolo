@@ -10,7 +10,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const FONTS_DIR = join(__dirname, '_fonts')
+const FONTS_DIR = join(__dirname, '..', '_fonts')
 
 // Headline face per theme (family name MUST match the font file's family).
 // Body is always Montserrat (variable) so there is no family collision.
@@ -75,9 +75,50 @@ function headlineSvg(lines, { x, startY, size, lineHeight, family, weight, track
   }).join('\n')
 }
 
+// KNOCKOUT headline (editorial template): runs of accent words sit inside a
+// solid accent-color box with the letters knocked out (background color);
+// everything else is plain ink. Words are laid out individually from real
+// glyph measurements so each box hugs its run exactly.
+function headlineSvgKnockout(lines, { startY, size, lineHeight, family, ink, accentColor, knockText, accentSet, box }) {
+  const gap = Math.round(size * 0.26)         // inter-word gap
+  const padX = Math.round(size * 0.14)        // box side padding
+  const boxTop = Math.round(size * 0.86)      // box rises this far above baseline
+  const boxDrop = Math.round(size * 0.16)     // and drops this far below
+  const parts = []
+  lines.forEach((line, li) => {
+    const y = startY + li * lineHeight
+    const words = line.split(/\s+/).filter(Boolean)
+    // Lay each word out left-to-right with measured widths.
+    let cx = 0
+    const placed = words.map((w) => {
+      const wWidth = measure(w, { family, size, box })
+      const p = { word: w, x: cx, w: wWidth, acc: accentSet && accentSet.has(w.toLowerCase().replace(/[^a-z0-9]/g, '')) }
+      cx += wWidth + gap
+      return p
+    })
+    // Boxes behind consecutive accent runs.
+    let run = null
+    const flush = () => {
+      if (!run) return
+      parts.push(`<rect x="${run.x0 - padX}" y="${y - boxTop}" width="${run.x1 - run.x0 + padX * 2}" height="${boxTop + boxDrop}" fill="${accentColor}" />`)
+      run = null
+    }
+    for (const p of placed) {
+      if (p.acc) { if (!run) run = { x0: p.x, x1: p.x + p.w }; else run.x1 = p.x + p.w }
+      else flush()
+    }
+    flush()
+    // The words themselves (knocked-out inside boxes, ink outside).
+    for (const p of placed) {
+      parts.push(`<text x="${p.x}" y="${y}" font-family="${family}" font-size="${size}" fill="${p.acc ? knockText : ink}">${escapeXml(p.word)}</text>`)
+    }
+  })
+  return parts.join('\n')
+}
+
 // Render the full locked text block (headline + body) as a transparent PNG
 // sized to the text column. Returns { png, width, height }.
-function renderTextBlock({ headline, body, accent, theme, colWidth, ink, accentColor }) {
+export function renderTextBlock({ headline, body, accent, theme, colWidth, ink, accentColor, knockout, knockText }) {
   const hf = HEADLINE_FONT[theme] || HEADLINE_DEFAULT
   const hSize = Math.round(colWidth * 0.135)
   const hLine = Math.round(hSize * (hf.family === 'Great Vibes' ? 1.05 : 1.0))
@@ -104,7 +145,11 @@ function renderTextBlock({ headline, body, accent, theme, colWidth, ink, accentC
   const totalH = hBlockH + (bBlockH ? gap + bBlockH : 0) + Math.round(hSize * 0.3)
 
   const hStartY = hSize
-  const hSvg = headlineSvg(hLines, { x: 0, startY: hStartY, size: hSize, lineHeight: hLine, family: hf.family, weight: null, tracking: hTrack, color, accentColor, accentSet })
+  // Knockout mode shifts content right by the box padding so a box on the
+  // first word isn't clipped by the SVG edge.
+  const hSvg = knockout
+    ? `<g transform="translate(${Math.round(hSize * 0.14)},0)">${headlineSvgKnockout(hLines, { startY: hStartY, size: hSize, lineHeight: hLine, family: hf.family, ink: color, accentColor, knockText: knockText || '#f5f0e8', accentSet, box: colWidth })}</g>`
+    : headlineSvg(hLines, { x: 0, startY: hStartY, size: hSize, lineHeight: hLine, family: hf.family, weight: null, tracking: hTrack, color, accentColor, accentSet })
 
   let by = hBlockH + gap + bSize
   const bSvgParts = []
@@ -134,7 +179,7 @@ async function uploadPng(buf, profileId) {
 // Composite the locked headline + body onto a slide image. `person` shifts the
 // text into the left column; otherwise it spans a wider left-aligned column.
 // Returns the original url on any failure (best-effort).
-export async function compositeSlideText(imageUrl, { headline, body, accent, theme, ink = 'dark', accentColor, person, profileId } = {}) {
+export async function compositeSlideText(imageUrl, { headline, body, accent, theme, ink = 'dark', accentColor, person, profileId, knockout, knockText } = {}) {
   try {
     if (!headline && !body) return imageUrl
     if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) return imageUrl
@@ -147,7 +192,7 @@ export async function compositeSlideText(imageUrl, { headline, body, accent, the
     const marginX = Math.round(W * 0.06)
     const marginTop = Math.round(H * 0.08)
     const colWidth = Math.round(W * (person ? 0.5 : 0.82))
-    const { png } = renderTextBlock({ headline, body, accent, theme, colWidth, ink, accentColor: accentColor || '#ff3b30' })
+    const { png } = renderTextBlock({ headline, body, accent, theme, colWidth, ink, accentColor: accentColor || '#ff3b30', knockout, knockText })
     const out = await base
       .composite([{ input: png, left: marginX, top: marginTop }])
       .png()

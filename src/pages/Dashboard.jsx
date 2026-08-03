@@ -9,11 +9,11 @@ import OnboardingSurvey from '../components/OnboardingSurvey.jsx'
 import VoiceSummaryCard from '../components/VoiceSummaryCard.jsx'
 import GuidedTour, { isTourDone } from '../components/GuidedTour.jsx'
 
-// ScaleSolo's wedge: automated content workflows in your brand voice.
-// The dashboard's job is to reflect that — one big "shipped while you
-// weren't looking" number front and center, plus a brand-completeness
-// gauge so the user knows what's stopping their workflows from feeling
-// truly on-brand. CRM-y / generic SaaS metrics are gone.
+// ScaleSolo's wedge: an advanced social media management tool that hooks
+// to Claude via MCP — create all your content AND schedule it faster than
+// ever. The dashboard's job is efficient wayfinding (create → schedule →
+// track) plus one big "shipped" number, and a brand-completeness gauge so
+// the output sounds like the user. CRM-y / generic SaaS metrics are gone.
 
 const heroStyle = {
   background: 'linear-gradient(135deg, rgba(239,68,68,0.18), rgba(185,28,28,0.10))',
@@ -116,18 +116,6 @@ function BrandCompletenessCard({ profile, onEdit }) {
       )}
     </div>
   )
-}
-
-// Format an integer number of seconds as a compact, glance-readable
-// label. Used by the workflow-speed stat tiles ("2m 14s", "44s", "—").
-function fmtRunSecs(secs) {
-  if (secs == null || !Number.isFinite(secs) || secs <= 0) return '—'
-  if (secs < 60) return `${secs}s`
-  const m = Math.floor(secs / 60)
-  const s = secs % 60
-  if (m < 60) return s ? `${m}m ${s}s` : `${m}m`
-  const h = Math.floor(m / 60)
-  return `${h}h ${m % 60}m`
 }
 
 // Compact metric tile for the pipeline row. Number + label + colored icon.
@@ -377,7 +365,7 @@ function SocialSignalCard({ data, onOpen }) {
       </div>
       {(data?.recent_post_metrics?.length || 0) === 0 && (
         <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 10 }}>
-          Metrics warm up after Upload-Post syncs your first round of posts (typically within an hour of publish).
+          Metrics warm up after your first round of posts syncs (typically within an hour of publishing).
         </div>
       )}
     </div>
@@ -650,15 +638,15 @@ export default function Dashboard() {
           <div style={heroTitle}>{greeting}, {name}.</div>
           <div style={heroSub}>
             {noProfile
-              ? 'Welcome to ScaleSolo. Set up your first brand profile and your workflows can start writing in your voice.'
+              ? 'Welcome to ScaleSolo. Set up your first brand profile and start creating content in your voice.'
               : selectedProfile
-                ? <>You're on <strong>{selectedProfile.business_name}</strong>. Your workflows are running in the background. Here's what shipped.</>
+                ? <>You're on <strong>{selectedProfile.business_name}</strong>. Create content, schedule it in seconds, and let Claude drive it all through MCP.</>
                 : 'Pick a brand profile to begin.'}
           </div>
         </div>
-        <button className="btn-primary" onClick={() => navigate(noProfile ? '/profiles' : '/spaces')}>
+        <button className="btn-primary" onClick={() => navigate(noProfile ? '/profiles' : '/create')}>
           <Zap size={16} strokeWidth={2.5} />
-          {noProfile ? 'Set up brand' : 'Open spaces'}
+          {noProfile ? 'Set up brand' : 'Create content'}
         </button>
       </section>
 
@@ -738,12 +726,12 @@ export default function Dashboard() {
           </div>
           <div style={{ fontSize: 13, color: 'var(--text-soft)', marginTop: 4, lineHeight: 1.45 }}>
             {shippedThisMonth === 0
-              ? 'Wire an Auto-run trigger into a Space and let your brand voice work while you sleep.'
-              : 'Your workflows are running. Open Spaces to tweak cadence or add new ones.'}
+              ? 'Create your first post and schedule it in seconds. It compounds from there.'
+              : 'Keep the streak going. Create more content or check what is queued next.'}
           </div>
         </div>
         <button
-          onClick={() => navigate('/spaces')}
+          onClick={() => navigate('/create')}
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 6,
             padding: '10px 14px', borderRadius: 10,
@@ -752,7 +740,7 @@ export default function Dashboard() {
             cursor: 'pointer',
           }}
         >
-          Open Spaces <ArrowRight size={13} />
+          Create <ArrowRight size={13} />
         </button>
       </div>
 
@@ -768,23 +756,6 @@ export default function Dashboard() {
             <StatTile icon={Calendar} label="Scheduled" value={stats.scheduled}        color="#3b82f6" />
             <StatTile icon={FileText} label="Drafts"   value={stats.drafts}            color="#94a3b8" />
             <StatTile icon={Sparkles} label="Shipped"  value={stats.shipped_month}     color="#2ecc71" />
-          </div>
-        </>
-      )}
-
-      {/* Workflow pipeline speed — end-to-end run times pulled from
-          space_runs.duration_ms over the last 30 days. Lets the user
-          see "I made a fully captioned, polished, scheduled video in
-          X minutes" without doing the math by hand. Only renders when
-          there's at least one successful run to draw stats from. */}
-      {selectedProfile && stats?.run_stats?.total_runs > 0 && (
-        <>
-          <div style={sectionLabel}><span>Workflow speed (last 30 days)</span></div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
-            <StatTile icon={Sparkles} label="Last run"     value={fmtRunSecs(stats.run_stats.last_run_secs)}    color="#0ea5e9" />
-            <StatTile icon={TrendingUp} label="Average"    value={fmtRunSecs(stats.run_stats.avg_run_secs)}     color="#a855f7" />
-            <StatTile icon={Zap}      label="Fastest"      value={fmtRunSecs(stats.run_stats.fastest_run_secs)} color="#2ecc71" />
-            <StatTile icon={CheckCircle2} label="Total runs" value={stats.run_stats.total_runs}                 color="#94a3b8" />
           </div>
         </>
       )}
@@ -834,9 +805,9 @@ export default function Dashboard() {
 
       <div style={sectionLabel}><span>Quick actions</span></div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
-        <QuickAction icon={Boxes}     label="New workflow"  hint="Start from a template or blank" to="/spaces"    color="#ef4444" />
-        <QuickAction icon={Calendar}  label="Schedule"      hint="See what's queued + posted"     to="/schedule"  color="#3b82f6" />
-        <QuickAction icon={BookOpen}  label="Avatars"       hint="Train your talking-head models" to="/avatars"   color="#a855f7" />
+        <QuickAction icon={Boxes}     label="Create content" hint="Templates or start from scratch" to="/create"   color="#ef4444" />
+        <QuickAction icon={Calendar}  label="Schedule"       hint="Drag posts onto open slots"      to="/schedule" color="#3b82f6" />
+        <QuickAction icon={BookOpen}  label="Library"        hint="Everything you've made"          to="/library"  color="#a855f7" />
       </div>
 
       <div style={sectionLabel}>

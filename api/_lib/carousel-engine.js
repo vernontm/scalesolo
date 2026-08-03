@@ -66,6 +66,51 @@ function resolveOutfit(theme, userOutfit) {
   return String(userOutfit || '').trim() || THEME_OUTFITS[theme] || 'a clean, well-fitted outfit that suits the visual style'
 }
 
+// ── Templates ──────────────────────────────────────────────────────────
+// A TEMPLATE is a complete locked design system extracted from an approved
+// real carousel. Selecting one swaps the person for the user's likeness (via
+// their reference photo), the accent color for their brand color, and the
+// copy for their own — everything else about the look is frozen.
+const TEMPLATES = {
+  editorial: {
+    // Ray's "5 content ideas" set: cream editorial, charcoal type, accent
+    // knockout boxes, high-contrast B&W portrait blended into the cream.
+    style: 'Premium editorial magazine look. Clean solid off-white cream background (a warm paper white, #f5f0e8), generous negative space, calm and expensive. The person is a high-contrast BLACK AND WHITE photograph blended directly into the cream background with soft edges (no photo box, no frame).',
+    portraitBW: true,
+    knockout: true,       // accent words boxed in accent color, text knocked out in cream
+    ink: 'dark',
+    knockText: '#f5f0e8', // knocked-out letters match the cream background
+    accentFallback: '#d43a2f',
+    outfit: 'a plain fitted crew-neck t-shirt (reads light or dark in black and white)',
+  },
+}
+
+// ── Background presets ─────────────────────────────────────────────────
+// Solid / gradient / texture backdrops. The UI shows one fixed example of
+// each; at generation time ${primary}/${secondary} are swapped for the
+// brand's colors, unless the user names specific colors in their style notes
+// (the prompt tells the model those override the palette).
+const BACKGROUND_PRESETS = {
+  'solid-light': 'a clean solid light background, a very soft pale tint of ${primary}',
+  'solid-dark': 'a deep solid dark background subtly tinted with ${primary}',
+  'solid-brand': 'a rich solid background in ${primary}',
+  'gradient-soft': 'a smooth soft vertical gradient from a light tint of ${primary} at the top into near-white at the bottom',
+  'gradient-bold': 'a rich saturated diagonal gradient from ${primary} to ${secondary}',
+  'gradient-glow': 'a near-black background with a soft radial glow of ${primary} rising from the bottom center',
+  'texture-paper': 'a warm subtly textured paper background with a faint tint of ${primary}',
+  'texture-grain': 'a dark moody background with fine film grain and a soft ${primary} light leak from one corner',
+  'texture-grid': 'a dark background with a faint receding perspective grid and a ${primary} accent glow',
+  'texture-marble': 'an elegant light marble background with delicate veins, subtly tinted toward ${primary}',
+}
+function resolveBackground(key, brandColors) {
+  const tpl = BACKGROUND_PRESETS[key]
+  if (!tpl) return ''
+  const [primary, secondary] = String(brandColors || '').split(' and ').map((s) => s.trim()).filter(Boolean)
+  return tpl
+    .replaceAll('${primary}', primary || 'a deep slate blue')
+    .replaceAll('${secondary}', secondary || primary || 'a warm neutral')
+}
+
 async function planCarousel({ topic, slideCount, brandMd, format, person }) {
   const out = await anthropicMessage({
     model: 'claude-sonnet-5',
@@ -159,12 +204,19 @@ async function describeSubject(refUrl) {
   } catch { return '' }
 }
 
-function buildStyle({ themeStyle, brandColors, extraStyle }) {
+function buildStyle({ themeStyle, brandColors, extraStyle, background, template }) {
+  // A template is a complete locked look — it replaces theme + palette + the
+  // "rich background" directive entirely (only the accent color is swapped).
+  if (template) {
+    return [template.style, extraStyle || ''].filter(Boolean).join(' ')
+  }
   return [
     themeStyle || 'Clean modern editorial design.',
+    background ? `BACKGROUND (use this exact backdrop on every slide): ${background}.` : '',
     brandColors ? `Palette built around the brand colors ${brandColors}.` : 'One cohesive, restrained palette.',
-    extraStyle || '',
-    'High production value, strong visual hierarchy, premium social-media carousel aesthetic. Rich designed background, not a flat empty color.',
+    extraStyle ? `${extraStyle}. If these notes name specific colors, they OVERRIDE the palette above.` : '',
+    'High production value, strong visual hierarchy, premium social-media carousel aesthetic.',
+    background ? '' : 'Rich designed background, not a flat empty color.',
   ].filter(Boolean).join(' ')
 }
 function slideLayout({ person, focal }) {
@@ -187,17 +239,17 @@ function followPrompt({ style, person, focal }) {
     : 'The provided reference image is the STYLE ANCHOR: reproduce its EXACT background, colors, lighting and design system so this slide looks like the same series.'
   return `Design the VISUAL for another slide in the SAME carousel series (background and subject only, no text). ${roles} Do NOT copy the anchor's foreground subject. STYLE: ${style}\n\n${slideLayout({ person, focal })}`
 }
-function portraitPrompt({ subject, outfit, pose }) {
+function portraitPrompt({ subject, outfit, pose, bw }) {
   return [
     subject || 'SUBJECT: the exact same person shown in the reference photos, preserve their precise facial identity, hair, build and skin tone with no drift.',
     `WARDROBE: they are wearing ${outfit}. Keep this outfit identical in every image.`,
     `POSE: ${pose || DEFAULT_POSES[0]}.`,
-    CAMERA,
+    bw ? `${CAMERA} Converted to rich HIGH-CONTRAST BLACK AND WHITE with clean tonal separation and gentle highlight roll-off.` : CAMERA,
     'Show them from the head to about the waist, upper body and torso clearly visible. The person is isolated on a PURE SOLID WHITE background (#ffffff) with soft edges. No text, no graphics, no props, no border.',
   ].join('\n\n')
 }
-function genPortrait(req, { profile_id, refs, subject, outfit, pose, aspect }) {
-  return genImage(req, { profile_id, prompt: portraitPrompt({ subject, outfit, pose }), model: 'seedream', reference_urls: refs, aspect })
+function genPortrait(req, { profile_id, refs, subject, outfit, pose, bw, aspect }) {
+  return genImage(req, { profile_id, prompt: portraitPrompt({ subject, outfit, pose, bw }), model: 'seedream', reference_urls: refs, aspect })
 }
 
 // ── The step machine ───────────────────────────────────────────────────
@@ -237,14 +289,23 @@ export async function runStep(req, job) {
     const plan = await planCarousel({ topic: request.topic, slideCount: n, brandMd, format: request.format, person })
     const slides = plan.slides.slice(0, n)
 
+    // Template (a full locked look) beats theme + background preset.
+    const template = TEMPLATES[request.template] || null
+    const background = template ? '' : resolveBackground(request.background, brandColors)
+
     Object.assign(state, {
-      refs, person, n, theme: request.theme,
-      style: buildStyle({ themeStyle, brandColors, extraStyle }),
-      outfit: person ? resolveOutfit(request.theme, request.outfit) : '',
+      // Templates force their display face (bold = Anton, the knockout look).
+      refs, person, n, theme: template ? 'bold' : request.theme,
+      style: buildStyle({ themeStyle, brandColors, extraStyle, background, template }),
+      outfit: person ? (String(request.outfit || '').trim() || template?.outfit || resolveOutfit(request.theme, request.outfit)) : '',
       subject: person ? await describeSubject(refs[0]) : '',
-      ink: (request.signature && typeof request.signature.dark === 'boolean')
-        ? (request.signature.dark ? 'dark' : 'light') : (THEME_INK[request.theme] || 'dark'),
-      accentColor: profRow?.brand_color || '#ff3b30',
+      ink: template ? template.ink
+        : (request.signature && typeof request.signature.dark === 'boolean')
+          ? (request.signature.dark ? 'dark' : 'light') : (THEME_INK[request.theme] || 'dark'),
+      accentColor: profRow?.brand_color || template?.accentFallback || '#ff3b30',
+      knockout: !!template?.knockout,
+      knockText: template?.knockText || '#f5f0e8',
+      portraitBW: !!template?.portraitBW,
       sig,
       plan: { title: plan.title, caption: plan.caption, hashtags: plan.hashtags, slides },
       raw: [],
@@ -261,7 +322,7 @@ export async function runStep(req, job) {
   if (job.step === 'cover') {
     if (!raw[0]) {
       raw[0] = person
-        ? await genImage(req, { profile_id, prompt: coverPrompt({ style, person: true, focal: '' }), model: 'gpt-2', reference_urls: [await genPortrait(req, { profile_id, refs, subject: state.subject, outfit: state.outfit, pose: poseAt(0), aspect })], aspect })
+        ? await genImage(req, { profile_id, prompt: coverPrompt({ style, person: true, focal: '' }), model: 'gpt-2', reference_urls: [await genPortrait(req, { profile_id, refs, subject: state.subject, outfit: state.outfit, pose: poseAt(0), bw: state.portraitBW, aspect })], aspect })
         : await genImage(req, { profile_id, prompt: coverPrompt({ style, person: false, focal: focalAt(0) }), model: 'gpt-2', reference_urls: refs.length ? refs : undefined, aspect })
     }
     state.raw = raw
@@ -273,7 +334,7 @@ export async function runStep(req, job) {
     const i = Math.max(1, Number(job.cursor) || 1)
     if (!raw[i]) {
       raw[i] = person
-        ? await genImage(req, { profile_id, prompt: followPrompt({ style, person: true, focal: '' }), model: 'gpt-2', reference_urls: [raw[0], await genPortrait(req, { profile_id, refs, subject: state.subject, outfit: state.outfit, pose: poseAt(i), aspect })], aspect })
+        ? await genImage(req, { profile_id, prompt: followPrompt({ style, person: true, focal: '' }), model: 'gpt-2', reference_urls: [raw[0], await genPortrait(req, { profile_id, refs, subject: state.subject, outfit: state.outfit, pose: poseAt(i), bw: state.portraitBW, aspect })], aspect })
         : await genImage(req, { profile_id, prompt: followPrompt({ style, person: false, focal: focalAt(i) }), model: 'gpt-2', reference_urls: [raw[0], ...refs], aspect })
     }
     state.raw = raw
@@ -287,6 +348,7 @@ export async function runStep(req, job) {
     urls = await Promise.all(urls.map((u, i) => compositeSlideText(u, {
       headline: slides[i]?.headline, body: slides[i]?.body, accent: slides[i]?.accent,
       theme: state.theme, ink: state.ink, accentColor: state.accentColor, person, profileId: profile_id,
+      knockout: !!state.knockout, knockText: state.knockText,
     })))
     if (state.sig) urls = await Promise.all(urls.map((u) => compositeLockup(u, { ...state.sig, profileId: profile_id })))
 

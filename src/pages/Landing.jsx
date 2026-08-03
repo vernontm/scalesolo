@@ -78,7 +78,7 @@ const testimonials = [
   { name: 'Priya K.',   role: 'Agency Owner',       quote: 'I run 4 brands. The brand-profile system means each client gets their own scripts, voice, and avatars. One workflow per brand and we ship 80 posts a week.' },
   { name: 'Marcus T.',  role: 'Solo Founder',       quote: 'The auto-title + finish-video node saved me from buying CapCut. One paste-in render now produces a finished, captioned, watermarked, scored MP4.' },
   { name: 'Lena R.',    role: 'Lifestyle Creator',  quote: 'I wired in my @brand mention once and the script generator never forgets. Tone is consistent across 3 months of content.' },
-  { name: 'Sam D.',     role: 'B2B Marketer',       quote: 'The schedule node + Upload-Post integration replaced two of my tools. Drafts go out at 8am Tuesdays, no babysitting.' },
+  { name: 'Sam D.',     role: 'B2B Marketer',       quote: 'The schedule node replaced two of my tools. Drafts go out at 8am Tuesdays, no babysitting.' },
   { name: 'Aiyana W.',  role: 'Podcast Producer',   quote: 'Upload audio, ScaleSolo transcribes, splits, and renders across looks. We cut 9-clip shorts from a 60-second source in under 4 minutes.' },
 ]
 
