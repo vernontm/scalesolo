@@ -317,9 +317,6 @@ export default function Landing() {
       {/* ── TESTIMONIALS ────────────────────────────────────────────── */}
       <TestimonialsSection />
 
-      {/* ── BUILT-IN TEMPLATES ──────────────────────────────────────── */}
-      <TemplatesStrip />
-
       {/* ── PRICING ─────────────────────────────────────────────────── */}
       <section id="pricing" style={{ ...section, position: 'relative' }} className="fade-up">
         <div aria-hidden style={{ ...sectionAura, top: '40%', left: '50%', transform: 'translate(-50%, -50%)', width: 720, height: 480, opacity: 0.55 }} />
@@ -952,45 +949,6 @@ function OutfitShowcase() {
           </ul>
           <DemoCta stat="One photo in, unlimited wardrobe out" label="Try the studio free" />
         </div>
-      </div>
-    </section>
-  )
-}
-
-// 5) Built-in templates strip.
-function TemplatesStrip() {
-  const items = [
-    { Icon: Layers,   title: 'Carousel builder',    body: 'Topic to designed multi-slide post with caption + hashtags.' },
-    { Icon: Mic2,     title: 'AI avatar podcast',   body: 'A daily talking-head show from a photo, a voice, and a topic.' },
-    { Icon: Wand2,    title: 'Outfit changer',      body: 'Regenerate yourself in any look with likeness locked.' },
-    { Icon: Calendar, title: '30 days of content',  body: 'A month of on-voice posts generated and scheduled in one run.' },
-    { Icon: Film,     title: 'Finished reels',      body: 'Captions, titles, music, and watermarks baked into every render.' },
-    { Icon: Boxes,    title: 'Build your own',      body: 'A drag-and-drop canvas when you want a custom pipeline.' },
-  ]
-  return (
-    <section style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
-      <h2 style={sectionH}>Templates and workflows, <span className="brand-text">already built.</span></h2>
-      <p style={sectionSub}>
-        You don't start from a blank page. Pick a curated workflow, drop in your topic, and
-        ScaleSolo handles design, copy, and scheduling.
-      </p>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14, maxWidth: 1080, margin: '0 auto' }}>
-        {items.map(({ Icon, title, body }) => (
-          <div key={title} style={{
-            padding: 18, borderRadius: 14,
-            background: 'linear-gradient(160deg, rgba(255,255,255,0.045), rgba(255,255,255,0.015))',
-            border: '1px solid rgba(255,255,255,0.10)',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-              <div style={{ width: 34, height: 34, borderRadius: 10, display: 'grid', placeItems: 'center', background: 'rgba(239,68,68,0.14)', color: 'var(--red)' }}>
-                <Icon size={16} />
-              </div>
-              <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', padding: '3px 8px', borderRadius: 999, background: 'rgba(46,204,113,0.14)', color: '#2ecc71' }}>Built in</span>
-            </div>
-            <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 15.5, color: 'var(--text)', marginBottom: 5 }}>{title}</div>
-            <div style={{ fontSize: 12.5, color: 'var(--text-soft)', lineHeight: 1.5 }}>{body}</div>
-          </div>
-        ))}
       </div>
     </section>
   )
