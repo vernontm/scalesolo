@@ -2449,6 +2449,7 @@ function ImageGenBody({ data, onPatch }) {
           <option value="nano-banana-2">Nano Banana 2</option>
           <option value="nano-banana-pro">Nano Banana Pro</option>
           <option value="gpt-2">GPT 2.0</option>
+          <option value="seedream">Seedream 5 Pro</option>
         </select>
         <select className="nodrag" style={pillSelect} value={data.props?.aspect || '1:1'} onChange={(e) => onPatch({ aspect: e.target.value })}>
           <option value="1:1">1:1</option>

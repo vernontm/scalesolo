@@ -109,14 +109,15 @@ function resolveKieModel(uiModel, hasRefs) {
     case 'flux-kontext':                // legacy alias
       return 'nano-banana-pro'
 
-    // Seedream 5 Pro — photoreal people/likeness, image-to-image from
-    // reference photos. Caps ~2K and garbles small text, so use it for the
-    // PERSON, then feed its output as a reference into nano-banana / gpt-2 to
-    // compose the final graphic (the RayvaughnCEO carousel pipeline).
+    // Seedream 5 Pro — photoreal people/likeness. Image-to-image when
+    // reference photos are wired in (locks likeness), text-to-image
+    // otherwise. Caps ~2K and garbles small text, so use it for the
+    // PERSON, then feed its output as a reference into nano-banana / gpt-2
+    // to compose the final graphic (the RayvaughnCEO carousel pipeline).
     case 'seedream':
     case 'seedream-5':
     case 'seedream-5-pro':
-      return 'seedream/5-pro-image-to-image'
+      return hasRefs ? 'seedream/5-pro-image-to-image' : 'seedream/5-pro-text-to-image'
 
     // GPT image — split endpoints for text-to-image and image-to-image.
     case 'gpt-2':
@@ -140,6 +141,15 @@ function buildInput(kieModel, { prompt, aspect, count, quality, reference_urls }
     return {
       prompt,
       image_urls: refs,
+      aspect_ratio,
+      quality: quality || 'high',
+      output_format: 'png',
+      nsfw_checker: false,
+    }
+  }
+  if (kieModel === 'seedream/5-pro-text-to-image') {
+    return {
+      prompt,
       aspect_ratio,
       quality: quality || 'high',
       output_format: 'png',
