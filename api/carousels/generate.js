@@ -196,20 +196,34 @@ async function describeSubject(refUrl) {
   } catch { return '' }
 }
 
-// The LOCKED scene: background + palette + layout + (person placement) +
-// signature reserve. Assembled once and reused byte-identical on every slide,
-// so backgrounds and composition never drift across the set.
-function buildScene({ themeStyle, brandColors, extraStyle, person, sig }) {
-  const parts = ['SCENE AND LAYOUT (keep IDENTICAL on every slide of this set): a vertical 3:4 social carousel slide.']
-  parts.push(`Background and visual style: ${themeStyle || 'clean modern editorial design'}.${extraStyle ? ` ${extraStyle}.` : ''}`)
-  parts.push(brandColors
-    ? `Palette: build around the brand colors ${brandColors}. Use the EXACT same background and palette on every slide.`
-    : 'Use one cohesive palette and the EXACT same background on every slide.')
+// Prompt for the ONE canonical BACKGROUND PLATE. An abstract background
+// description ("dark, orange glow") still lets the model paint a different
+// backdrop every slide, so we render the background ONCE as a real image and
+// then hand that exact image into every slide. This describes an EMPTY plate.
+function backgroundPrompt({ themeStyle, brandColors, extraStyle }) {
+  return [
+    'A vertical 3:4 BACKGROUND PLATE for a social media carousel. This is ONLY the background: absolutely NO text, NO people, NO logos, NO UI panels, NO charts, NO icons, NO objects.',
+    `Visual style: ${themeStyle || 'clean modern editorial design'}.${extraStyle ? ` ${extraStyle}.` : ''}`,
+    brandColors ? `Palette: built around the brand colors ${brandColors}.` : 'One cohesive, restrained palette.',
+    'Even, balanced, full-bleed background with generous empty space and consistent lighting, so text and a person can be placed on top of it later. No watermark, no page numbers.',
+  ].join(' ')
+}
+
+// The LOCKED compose instructions: HOW to place text and the person on top of
+// the provided background plate. Byte-identical on every slide; only the copy
+// and (person mode) the portrait change.
+function composeInstructions({ person, sig, hasPlate }) {
+  const parts = []
   if (person) {
-    parts.push('A real photographed person (provided as a separate portrait) stands on the RIGHT, shown from head to about the waist, LARGE and life-size at roughly 55 to 62 percent of the frame width, bleeding off the right and bottom edges so they occupy real space in the scene. Use the provided portrait EXACTLY as-is: do not change, redraw or restyle their face, hair, skin, build or pose. Cleanly remove the plain background behind them and blend them INTO this scene with matched lighting and a natural contact shadow so they look genuinely photographed in it, NOT a flat cutout pasted on top: no hard sticker edge, no floating, no white halo.')
-    parts.push('All typography sits on the LEFT sharing one left alignment edge: a large bold HEADLINE with a smaller readable BODY paragraph beneath it, never overlapping the person, comfortable margins, nothing cut off.')
+    parts.push(hasPlate
+      ? 'You are given a BACKGROUND plate image and a PORTRAIT of a person. Keep the BACKGROUND plate EXACTLY as the slide background: identical colors, lighting, texture and composition. Do NOT redesign, recolor or regenerate the background.'
+      : 'You are given a PORTRAIT of a person. Build the slide on the shared background described above (keep it identical to the other slides).')
+    parts.push('Place the PORTRAIT person on the RIGHT, shown head to about the waist, LARGE and life-size at roughly 55 to 62 percent of the frame width, bleeding off the right and bottom edges. Use the portrait EXACTLY as-is (do not change their face, hair, skin, build or pose). Blend them INTO the background with matched lighting and a natural contact shadow so they look genuinely photographed in the scene, NOT a flat cutout pasted on top: no hard sticker edge, no floating, no white halo.')
+    parts.push('Put all typography on the LEFT sharing one left alignment edge: a large bold HEADLINE with a smaller readable BODY paragraph beneath it, never overlapping the person, comfortable margins, nothing cut off.')
   } else {
-    parts.push('Typography: a large bold HEADLINE with a smaller readable BODY paragraph beneath it, clear hierarchy, comfortable margins, nothing cut off.')
+    parts.push(hasPlate
+      ? 'You are given a BACKGROUND plate image. Keep it EXACTLY as the slide background: identical colors, lighting and composition. Do NOT redesign or regenerate the background. Render the text on top of it with clear hierarchy: a large bold HEADLINE and a smaller readable BODY paragraph beneath it, comfortable margins, nothing cut off.'
+      : 'Build the slide on the shared background described above (keep it identical to the other slides). Render the text with clear hierarchy: a large bold HEADLINE and a smaller readable BODY paragraph beneath it, comfortable margins, nothing cut off.')
   }
   parts.push('All lettering crisp and correctly spelled.')
   parts.push(sig
@@ -230,15 +244,17 @@ function portraitPrompt({ subject, outfit, pose }) {
 }
 
 // Two-stage slide render: Seedream portrait (locked identity + outfit, varying
-// pose) → GPT Image 2 composes it into the locked scene with the slide copy.
-async function genPersonSlide(originalReq, { profile_id, refs, subject, outfit, pose, scene, copy, aspect }) {
+// pose) → GPT Image 2 composes it onto the SHARED background plate with the copy.
+async function genPersonSlide(originalReq, { profile_id, refs, subject, outfit, pose, instructions, bgPlate, copy, aspect }) {
   const portrait = await genImage(originalReq, {
     profile_id, prompt: portraitPrompt({ subject, outfit, pose }), model: 'seedream',
     reference_urls: refs, aspect,
   })
+  // bgPlate first (the background), portrait second (the person).
+  const composeRefs = [bgPlate, portrait].filter(Boolean)
   return genImage(originalReq, {
-    profile_id, prompt: `${scene}\n\n${copy}`, model: 'gpt-2',
-    reference_urls: [portrait], aspect,
+    profile_id, prompt: `${instructions}\n\n${copy}`, model: 'gpt-2',
+    reference_urls: composeRefs, aspect,
   })
 }
 
@@ -295,9 +311,31 @@ export default async function handler(req, res) {
     const slides = plan.slides.slice(0, n)
 
     // Freeze the shared axes ONCE, then reuse them byte-identical per slide.
-    const scene = buildScene({ themeStyle, brandColors, extraStyle, person, sig })
     const outfitLocked = person ? resolveOutfit(theme, outfit) : ''
-    const subjectLocked = person ? await describeSubject(refs[0]) : ''
+
+    // Render the ONE canonical background plate + (person mode) derive the
+    // locked subject, in parallel. The SAME plate image is handed into every
+    // slide so the background is pixel-consistent across the set.
+    let bgPlate = null, subjectLocked = ''
+    try {
+      const [plateUrl, subj] = await Promise.all([
+        genImage(req, { profile_id, prompt: backgroundPrompt({ themeStyle, brandColors, extraStyle }), model: 'nano-banana', aspect }),
+        person ? describeSubject(refs[0]) : Promise.resolve(''),
+      ])
+      bgPlate = plateUrl
+      subjectLocked = subj
+    } catch (e) {
+      if (e.code === 'insufficient_credits') {
+        return res.status(402).json({ error: `Not enough credits to render the background (${e.message}).`, code: 'insufficient_credits' })
+      }
+      // Non-fatal: fall back to describing the background in text per slide.
+      bgPlate = null
+    }
+    // When no plate, fall back to a text background description on every slide
+    // (still identical wording, just less pixel-perfect than a shared image).
+    const bgFallback = bgPlate ? '' : `SHARED BACKGROUND (keep identical every slide): ${backgroundPrompt({ themeStyle, brandColors, extraStyle })} `
+    // Compose instructions know whether a real plate image is being passed.
+    const instructions = composeInstructions({ person, sig, hasPlate: !!bgPlate })
 
     // Per-slide COPY block (the one text variable). Same wording template.
     const copyOf = (s) => {
@@ -305,7 +343,7 @@ export default async function handler(req, res) {
       const body = String(s.body || '').trim()
       const bodyClause = body ? `, and beneath it a smaller readable BODY paragraph reading exactly "${body}"` : ''
       const focal = !person && String(s.focal || '').trim() ? ` Supporting visual on this slide only: ${String(s.focal).trim()}.` : ''
-      return `Render on this slide, spelled exactly and once: ${head}${bodyClause}.${focal}`
+      return `${bgFallback}Render on this slide, spelled exactly and once: ${head}${bodyClause}.${focal}`
     }
 
     let urls
@@ -314,13 +352,15 @@ export default async function handler(req, res) {
         const copy = copyOf(s)
         if (person) {
           const pose = String(s.pose || '').trim() || DEFAULT_POSES[i % DEFAULT_POSES.length]
-          return genPersonSlide(req, { profile_id, refs, subject: subjectLocked, outfit: outfitLocked, pose, scene, copy, aspect })
+          return genPersonSlide(req, { profile_id, refs, subject: subjectLocked, outfit: outfitLocked, pose, instructions, bgPlate, copy, aspect })
         }
-        return genImage(req, { profile_id, prompt: `${scene}\n\n${copy}`, model: useModel, reference_urls: refs.length ? refs : undefined, aspect })
+        // Non-person: compose text (and any logo refs) onto the shared plate.
+        const composeRefs = [bgPlate, ...refs].filter(Boolean)
+        return genImage(req, { profile_id, prompt: `${instructions}\n\n${copy}`, model: composeRefs.length ? 'gpt-2' : useModel, reference_urls: composeRefs.length ? composeRefs : undefined, aspect })
       }))
     } catch (e) {
       if (e.code === 'insufficient_credits') {
-        const est = 4000 * n * (person ? 2 : 1)
+        const est = 4000 * (n * (person ? 2 : 1) + 1)
         return res.status(402).json({ error: `Not enough credits to render ${n} slides (~${est} ai_tokens${person ? ', two stages per slide for the person likeness' : ''}). ${e.message}`, code: 'insufficient_credits' })
       }
       return res.status(502).json({ error: `Slide generation failed: ${e.message}` })
