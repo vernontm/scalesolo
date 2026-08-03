@@ -71,6 +71,8 @@ export default function CarouselBuilder() {
   const [topic, setTopic] = useState('')
   const [slides, setSlides] = useState(6)
   const [format, setFormat] = useState('listicle')
+  const [template, setTemplate] = useState('custom')
+  const [bg, setBg] = useState('auto')
   const [theme, setTheme] = useState('modern')
   const [extraStyle, setExtraStyle] = useState('')
   const [outfit, setOutfit] = useState('')
@@ -99,7 +101,7 @@ export default function CarouselBuilder() {
     try { const s = JSON.parse(localStorage.getItem(refsKey) || '[]'); if (Array.isArray(s)) setRefs(s.map((u) => ({ url: u, selected: true }))) } catch {}
     try {
       const g = JSON.parse(localStorage.getItem(sigKey) || 'null')
-      if (g && typeof g === 'object') { setSigOn(g.on !== false); setSigName(g.name || ''); setSigHandle(g.handle || ''); setSigDark(g.dark !== false); setOutfit(g.outfit || '') }
+      if (g && typeof g === 'object') { setSigOn(g.on !== false); setSigName(g.name || ''); setSigHandle(g.handle || ''); setSigDark(g.dark !== false); setOutfit(g.outfit || ''); setTemplate(g.template || 'custom'); setBg(g.bg || 'auto') }
     } catch {}
     fetchIdeas()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -108,8 +110,8 @@ export default function CarouselBuilder() {
   // Persist the signature settings whenever they change.
   useEffect(() => {
     if (!sigKey) return
-    try { localStorage.setItem(sigKey, JSON.stringify({ on: sigOn, name: sigName, handle: sigHandle, dark: sigDark, outfit })) } catch {}
-  }, [sigKey, sigOn, sigName, sigHandle, sigDark, outfit])
+    try { localStorage.setItem(sigKey, JSON.stringify({ on: sigOn, name: sigName, handle: sigHandle, dark: sigDark, outfit, template, bg })) } catch {}
+  }, [sigKey, sigOn, sigName, sigHandle, sigDark, outfit, template, bg])
 
   const persistRefs = (list) => { try { if (refsKey) localStorage.setItem(refsKey, JSON.stringify(list.map((r) => r.url))) } catch {} }
 
@@ -179,6 +181,8 @@ export default function CarouselBuilder() {
         body: JSON.stringify({
           profile_id: selectedProfileId, topic: topic.trim(), slide_count: slides,
           format, theme, extra_style: extraStyle.trim() || undefined,
+          template: template !== 'custom' ? template : undefined,
+          background: template === 'custom' && bg !== 'auto' ? bg : undefined,
           outfit: outfit.trim() || undefined,
           reference_urls: selectedRefs.length ? selectedRefs : undefined,
           signature: { enabled: sigOn, name: sigName.trim() || undefined, handle: sigHandle.trim() || undefined, dark: sigDark },
@@ -253,6 +257,14 @@ export default function CarouselBuilder() {
             </div>
             {lightbox !== null && <MediaLightbox images={result.images || []} startIndex={lightbox} title={result.title} onClose={() => setLightbox(null)} />}
           </div>
+        ) : template !== 'custom' && TEMPLATES.find((t) => t.key === template)?.img ? (
+          // Empty state, template picked: show the template's real example.
+          <div style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', border: '1px dashed var(--border)' }}>
+            <img src={TEMPLATES.find((t) => t.key === template).img} alt="Template example" style={{ width: '100%', aspectRatio: '3 / 4', objectFit: 'cover', display: 'block' }} />
+            <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '18px 12px 10px', background: 'linear-gradient(transparent, rgba(0,0,0,0.65))', color: '#fff', fontSize: 11.5, textAlign: 'center' }}>
+              Example. Yours uses your face, brand color and words.
+            </div>
+          </div>
         ) : (
           // Empty state: a theme-styled cover mock so the vibe is visible.
           <div style={{ aspectRatio: '3 / 4', borderRadius: 14, border: '1px dashed var(--border)', background: 'var(--surface)', display: 'grid', placeItems: 'center', padding: 24, textAlign: 'center' }}>
@@ -295,6 +307,33 @@ export default function CarouselBuilder() {
             <textarea className="input" value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="Type a topic, or click an idea above…" rows={2} style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit' }} />
           </div>
 
+          {/* Template */}
+          <div style={{ marginBottom: 16 }}>
+            <div style={label}>Template</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8 }}>
+              {TEMPLATES.map((t) => (
+                <button key={t.key} onClick={() => setTemplate(t.key)} style={{ padding: 0, borderRadius: 10, cursor: 'pointer', overflow: 'hidden', textAlign: 'left', border: `2px solid ${template === t.key ? '#a855f7' : 'var(--border)'}`, background: 'var(--surface-2)' }}>
+                  {t.img ? (
+                    <img src={t.img} alt={t.label} style={{ width: '100%', aspectRatio: '3 / 4', objectFit: 'cover', display: 'block' }} />
+                  ) : (
+                    <div style={{ width: '100%', aspectRatio: '3 / 4', display: 'grid', placeItems: 'center', background: 'var(--surface)' }}>
+                      <Sparkles size={22} style={{ color: template === t.key ? '#a855f7' : 'var(--muted)' }} />
+                    </div>
+                  )}
+                  <div style={{ padding: '7px 9px' }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, color: template === t.key ? '#a855f7' : 'var(--text)' }}>{t.label}</div>
+                    <div style={{ fontSize: 10.5, color: 'var(--muted)', lineHeight: 1.35 }}>{t.desc}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+            {template !== 'custom' && (
+              <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6 }}>
+                The look is locked. Your reference photo becomes the person, the accent switches to your brand color, and the words are yours.
+              </div>
+            )}
+          </div>
+
           {/* Format */}
           <div style={{ marginBottom: 16 }}>
             <div style={label}>Format</div>
@@ -316,7 +355,8 @@ export default function CarouselBuilder() {
             </div>
           </div>
 
-          {/* Theme */}
+          {/* Theme + background (custom template only — a template locks the look) */}
+          {template === 'custom' && (
           <div style={{ marginBottom: 16 }}>
             <div style={label}>Style</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(88px, 1fr))', gap: 8 }}>
@@ -327,8 +367,19 @@ export default function CarouselBuilder() {
                 </button>
               ))}
             </div>
+            <div style={{ ...label, marginTop: 12 }}>Background</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {BACKGROUNDS.map((b) => (
+                <button key={b.key} onClick={() => setBg(b.key)} title={b.group ? `${b.group}: ${b.label}` : b.label} style={{ width: 52, padding: 0, borderRadius: 9, cursor: 'pointer', overflow: 'hidden', border: `2px solid ${bg === b.key ? '#a855f7' : 'var(--border)'}`, background: 'var(--surface-2)' }}>
+                  <div style={{ width: '100%', height: 40, ...b.css }} />
+                  <div style={{ fontSize: 9.5, fontWeight: 700, padding: '3px 0', textAlign: 'center', color: bg === b.key ? '#a855f7' : 'var(--muted)' }}>{b.label}</div>
+                </button>
+              ))}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>Swatches show the style. Colors switch to your brand automatically, or to any colors you name in the notes below.</div>
             <input className="input" value={extraStyle} onChange={(e) => setExtraStyle(e.target.value)} placeholder="Optional: extra style notes (e.g. navy + gold, hand-drawn accents)" style={{ width: '100%', boxSizing: 'border-box', marginTop: 8, fontSize: 12.5 }} />
           </div>
+          )}
 
           {/* References */}
           <div style={{ marginBottom: 16 }}>

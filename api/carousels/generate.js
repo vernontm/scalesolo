@@ -24,12 +24,12 @@ export default async function handler(req, res) {
   if (!auth) return
 
   try {
-    const { profile_id, topic, slide_count = 6, reference_urls, theme, extra_style, outfit, format, signature, aspect = '3:4' } = req.body || {}
+    const { profile_id, topic, slide_count = 6, reference_urls, theme, extra_style, outfit, format, signature, template, background, aspect = '3:4' } = req.body || {}
     if (!profile_id || !topic) return res.status(400).json({ error: 'profile_id + topic required' })
     await assertProfileAccess(auth.user.id, profile_id)
 
     const request = {
-      topic: String(topic), slide_count, reference_urls, theme, extra_style, outfit, format, signature, aspect,
+      topic: String(topic), slide_count, reference_urls, theme, extra_style, outfit, format, signature, template, background, aspect,
     }
     const inserted = await supaFetch('carousel_jobs', {
       method: 'POST', prefer: 'return=representation',
