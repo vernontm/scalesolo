@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Images, Sparkles, ArrowRight, AlertCircle, Check } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
+import MediaLightbox from '../components/MediaLightbox.jsx'
 
 // Streamlined carousel builder: topic + slide count → branded slides →
 // captioned draft in the backlog. One screen, one action.
@@ -19,6 +20,7 @@ export default function CarouselBuilder() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [result, setResult] = useState(null)
+  const [lightbox, setLightbox] = useState(null) // start index into result.images
 
   const perSlide = personMode ? 8000 : 4000
 
@@ -150,9 +152,13 @@ export default function CarouselBuilder() {
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8, marginBottom: 16 }}>
             {(result.images || []).map((u, i) => (
-              <img key={u + i} src={u} alt={`slide ${i + 1}`} style={{ width: '100%', aspectRatio: '3 / 4', objectFit: 'cover', borderRadius: 8, background: '#000', border: '1px solid var(--border)' }} />
+              <img key={u + i} src={u} alt={`slide ${i + 1}`} onClick={() => setLightbox(i)} title="Click to enlarge"
+                style={{ width: '100%', aspectRatio: '3 / 4', objectFit: 'cover', borderRadius: 8, background: '#000', border: '1px solid var(--border)', cursor: 'zoom-in' }} />
             ))}
           </div>
+          {lightbox !== null && (
+            <MediaLightbox images={result.images || []} startIndex={lightbox} title={result.title} onClose={() => setLightbox(null)} />
+          )}
           {result.caption && (
             <div style={{ marginBottom: 16 }}>
               <div style={label}>Caption</div>

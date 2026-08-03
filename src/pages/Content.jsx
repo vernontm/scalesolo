@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import BulkUploadView from '../components/BulkUploadView.jsx'
 import GenerateMonthModal from '../components/GenerateMonthModal.jsx'
+import MediaLightbox from '../components/MediaLightbox.jsx'
 import { toast } from '../components/Toast.jsx'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
@@ -473,13 +474,18 @@ function MediaPreviewBlock({ item }) {
   const isText  = item.media_type === 'text'
   const urls = Array.isArray(item.media_urls) ? item.media_urls.filter(Boolean) : []
   const cover = item.cover_image_url || null
+  // Click a slide → open the fullscreen scroller (all slides).
+  const [lightbox, setLightbox] = useState(null) // start index, or null
   if (isText) return null
   if (!urls.length && !cover) return null
 
   return (
     <div style={{ marginBottom: 14 }}>
+      {lightbox !== null && (
+        <MediaLightbox images={urls} startIndex={lightbox} title={item.title} onClose={() => setLightbox(null)} />
+      )}
       <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
-        <Eye size={11} /> Media preview
+        <Eye size={11} /> Media preview{urls.length > 1 ? ` · ${urls.length} slides` : ''}
       </div>
 
       <div style={{
@@ -532,7 +538,9 @@ function MediaPreviewBlock({ item }) {
                 key={u + '@' + i}
                 src={u}
                 alt={`slide ${i + 1}`}
-                style={{ width: '100%', aspectRatio: '1 / 1', objectFit: 'cover', borderRadius: 6, background: '#000', border: '1px solid var(--border)' }}
+                onClick={() => setLightbox(i)}
+                title="Click to enlarge"
+                style={{ width: '100%', aspectRatio: '1 / 1', objectFit: 'cover', borderRadius: 6, background: '#000', border: '1px solid var(--border)', cursor: 'zoom-in' }}
               />
             ))}
           </div>
@@ -551,7 +559,9 @@ function MediaPreviewBlock({ item }) {
                   key={u + '@' + i}
                   src={u}
                   alt={`slide ${i + 1}`}
-                  style={{ width: '100%', aspectRatio: '1 / 1', objectFit: 'cover', borderRadius: 4, background: '#000', border: '1px solid var(--border)' }}
+                  onClick={() => setLightbox(i)}
+                  title="Click to enlarge"
+                  style={{ width: '100%', aspectRatio: '1 / 1', objectFit: 'cover', borderRadius: 4, background: '#000', border: '1px solid var(--border)', cursor: 'zoom-in' }}
                 />
               ))}
             </div>

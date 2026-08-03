@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Library as LibraryIcon, Download, Play, Image as ImageIcon, Search, X, Trash2, CheckSquare, Square } from 'lucide-react'
+import { Library as LibraryIcon, Download, Play, Image as ImageIcon, Search, X, Trash2, CheckSquare, Square, Layers } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
+import MediaLightbox from '../components/MediaLightbox.jsx'
 
 // All generated assets for the active brand profile, pulled from
 // content_scripts. One tile per item — image / video tiles are clickable
@@ -228,13 +229,15 @@ export default function LibraryPage() {
           {filtered.map((it) => {
             const url = it.media_urls?.[0]
             const isVideo = (it.media_type || 'image') === 'video'
+            const slideCount = Array.isArray(it.media_urls) ? it.media_urls.length : 0
+            const isCarousel = !isVideo && slideCount > 1
             const isSelected = selectedIds.has(it.id)
             return (
               <div
                 key={it.id}
                 onClick={() => {
                   if (selectMode) toggleSelect(it.id)
-                  else setPreviewItem({ url, type: isVideo ? 'video' : 'image', item: it })
+                  else setPreviewItem(it)
                 }}
                 style={{
                   background: 'var(--surface)',
@@ -287,6 +290,11 @@ export default function LibraryPage() {
                       display: 'grid', placeItems: 'center', backdropFilter: 'blur(4px)',
                     }}
                   ><Download size={13} /></button>
+                  {isCarousel && (
+                    <div style={{ position: 'absolute', bottom: 8, left: 8, display: 'inline-flex', alignItems: 'center', gap: 4, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '3px 7px', borderRadius: 6, fontSize: 11, fontWeight: 700, backdropFilter: 'blur(4px)' }}>
+                      <Layers size={12} /> {slideCount}
+                    </div>
+                  )}
                 </div>
                 <div style={{ padding: 10 }}>
                   <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -302,49 +310,18 @@ export default function LibraryPage() {
         </div>
       )}
 
-      {previewItem && (
-        <div
-          onClick={() => setPreviewItem(null)}
-          style={{
-            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)',
-            display: 'grid', placeItems: 'center', zIndex: 200,
-            padding: 24,
-          }}
-        >
-          <button
-            onClick={(e) => { e.stopPropagation(); setPreviewItem(null) }}
-            style={{
-              position: 'absolute', top: 16, right: 16,
-              background: 'rgba(0,0,0,0.6)', border: 'none', color: '#fff',
-              padding: 8, borderRadius: 8, cursor: 'pointer',
-            }}
-          ><X size={16} /></button>
-          <button
-            onClick={(e) => { e.stopPropagation(); downloadUrl(previewItem.url, `${(previewItem.item?.title || 'asset').replace(/\W+/g, '-').toLowerCase()}.${previewItem.type === 'video' ? 'mp4' : 'png'}`) }}
-            style={{
-              position: 'absolute', top: 16, right: 64,
-              background: 'rgba(0,0,0,0.6)', border: 'none', color: '#fff',
-              padding: '8px 12px', borderRadius: 8, cursor: 'pointer',
-              fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 6,
-            }}
-          ><Download size={13} /> Download</button>
-          {previewItem.type === 'video' ? (
-            <video
-              src={previewItem.url}
-              controls autoPlay
-              onClick={(e) => e.stopPropagation()}
-              style={{ maxWidth: '92vw', maxHeight: '88vh', borderRadius: 8, background: '#000' }}
-            />
-          ) : (
-            <img
-              src={previewItem.url}
-              alt=""
-              onClick={(e) => e.stopPropagation()}
-              style={{ maxWidth: '92vw', maxHeight: '88vh', borderRadius: 8 }}
-            />
-          )}
-        </div>
-      )}
+      {previewItem && (() => {
+        const isVid = (previewItem.media_type || 'image') === 'video'
+        const media = Array.isArray(previewItem.media_urls) ? previewItem.media_urls.filter(Boolean) : []
+        return (
+          <MediaLightbox
+            video={isVid ? media[0] : null}
+            images={isVid ? [] : media}
+            title={previewItem.title || 'asset'}
+            onClose={() => setPreviewItem(null)}
+          />
+        )
+      })()}
     </div>
   )
 }
