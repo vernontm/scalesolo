@@ -791,11 +791,12 @@ function McpShowcase() {
   const [ref, tick] = useDemoTicker(LOOP)
   const USER_MSG = 'Plan my week: 2 carousels, a fresh headshot, and a teaser video.'
   const typed = USER_MSG.slice(0, Math.min(tick * 2, USER_MSG.length))
+  const MCP_VIDEO_URL = null // set to '/landing/demo/mcp-talk.mp4' once rendered
   const TOOLS = [
-    { at: 40, text: 'create_carousel  "5 Content Ideas That Book Clients"' },
+    { at: 40, text: 'create_carousel  "5 Content Ideas That Book Clients"', thumb: '/landing/demo/slide-01.jpg' },
     { at: 52, text: 'create_carousel  "Turn Followers Into Customers"' },
-    { at: 64, text: 'generate_image  "studio headshot, burgundy blazer"' },
-    { at: 78, text: 'generate_video  "8s brand teaser, vertical"' },
+    { at: 64, text: 'generate_image  "studio headshot, burgundy blazer"', thumb: '/landing/demo/outfit-after.jpg' },
+    { at: 78, text: 'generate_video  "8s brand teaser, vertical"', video: MCP_VIDEO_URL },
     { at: 94, text: 'schedule_post  Tue 11:00 AM' },
     { at: 104, text: 'schedule_post  Thu 11:00 AM' },
     { at: 114, text: 'schedule_post  Fri 6:00 PM' },
@@ -836,7 +837,17 @@ function McpShowcase() {
                 background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8,
                 animation: 'ssRowIn 0.35s var(--ease) both',
               }}>
-                <span style={{ color: '#2ecc71', fontWeight: 700 }}>✓</span> {t.text}
+                <span style={{ color: '#2ecc71', fontWeight: 700 }}>✓</span>
+                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.text}</span>
+                {/* REAL output previews: the actual generated slide / headshot. */}
+                {t.thumb && (
+                  <img src={t.thumb} alt="Generated output preview" loading="lazy" decoding="async"
+                    style={{ width: 26, height: 34, objectFit: 'cover', objectPosition: 'top', borderRadius: 5, border: '1px solid rgba(255,255,255,0.18)', flexShrink: 0 }} />
+                )}
+                {t.video && (
+                  <video src={t.video} muted playsInline autoPlay loop preload="metadata"
+                    style={{ width: 26, height: 34, objectFit: 'cover', borderRadius: 5, border: '1px solid rgba(255,255,255,0.18)', flexShrink: 0 }} />
+                )}
               </div>
             ))}
             {tick >= replyAt && (
