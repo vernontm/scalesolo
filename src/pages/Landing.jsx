@@ -246,7 +246,7 @@ export default function Landing() {
             style={{ ...heroH1, textAlign: 'center', margin: 0, color: 'var(--text)' }}
             className="fade-up"
           >
-            Launch your <span className="brand-text">faceless<br className="mobile-line-break" /> brand</span> in minutes.
+            Create <span className="brand-text">30 days of content</span><br className="mobile-line-break" /> in minutes.
           </h1>
 
           {/* Hero video with rotating conic-gradient halo, centered
@@ -266,7 +266,9 @@ export default function Landing() {
           {/* Subhead + CTAs + trust pills below the video */}
           <div style={heroCopy} className="hero-copy">
             <p style={{ ...heroSub, margin: '0 auto 24px', textAlign: 'center' }} className="fade-up">
-              The first AI platform that builds a faceless brand for you and runs it on autopilot. No camera. No editor. No daily grind.
+              ScaleSolo is your AI social media manager. Design carousels, avatar videos, and a
+              month of posts, then drop them on a calendar that publishes for you. It even hooks
+              into Claude, so your AI can run the whole thing.
             </p>
             <div style={{ ...heroCtas, justifyContent: 'center' }} className="fade-up hero-ctas">
               <button onClick={goPricing} className="btn-primary" style={ctaSizing}>
@@ -283,8 +285,8 @@ export default function Landing() {
             </div>
             <div style={{ ...trustPills, justifyContent: 'center', marginBottom: 0 }} className="fade-up hero-pills">
               <span style={pill}><Check size={11} /> 3-day trial</span>
-              <span style={pill}><Check size={11} /> 5-min setup</span>
-              <span style={pill}><Check size={11} /> Cancel anytime</span>
+              <span style={pill}><Check size={11} /> Posts to 9+ platforms</span>
+              <span style={pill}><Check size={11} /> Works with Claude (MCP)</span>
             </div>
           </div>
         </div>
@@ -299,6 +301,15 @@ export default function Landing() {
           <Stat number="9+"      label={<>Platforms publishing<br />on full autopilot</>} />
         </div>
       </section>
+
+      {/* ── LIVE DEMOS ──────────────────────────────────────────────── */}
+      {/* Real product, real output: a carousel building itself from the
+          user's actual slides, the self-filling calendar, Claude driving
+          the account over MCP, and a likeness-locked outfit change. */}
+      <CarouselBuildDemo />
+      <CalendarShowcase />
+      <McpShowcase />
+      <OutfitShowcase />
 
       {/* ── BRAND PROFILE SHOWCASE ──────────────────────────────────── */}
       <section style={section} className="fade-up">
@@ -385,6 +396,9 @@ export default function Landing() {
           />
         </div>
       </section>
+
+      {/* ── BUILT-IN TEMPLATES ──────────────────────────────────────── */}
+      <TemplatesStrip />
 
       {/* ── TOOLS REPLACED ──────────────────────────────────────────── */}
       <section style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
@@ -558,6 +572,12 @@ export default function Landing() {
           <FaqItem q="What platforms can it post to?">
             Native publishing to TikTok, Instagram, YouTube, X, LinkedIn, Threads, Facebook, and more. 9+ platforms total, no third-party scheduler tax.
           </FaqItem>
+          <FaqItem q="Can Claude really manage my account?">
+            Yes. ScaleSolo ships a built-in MCP connection, so Claude (or any MCP-compatible AI) can create carousels, write captions, generate images and video, and schedule posts for you, using your brand voice and your credits. You approve the connection once and just talk to your AI.
+          </FaqItem>
+          <FaqItem q="Can it really make 30 days of content in minutes?">
+            That's the core workflow. Tell ScaleSolo your brand and cadence, and it generates a month of on-voice posts, carousels, captions, and hashtags, then fills your posting calendar automatically. You review, tweak what you want, and it publishes on schedule.
+          </FaqItem>
           <FaqItem q="Can I run more than one brand?">
             Yes. Brand profiles isolate each brand's voice, avatar, cadence, and platforms so nothing cross-pollinates. Run as many as your plan allows, all on autopilot.
           </FaqItem>
@@ -691,6 +711,382 @@ export default function Landing() {
         </div>
       )}
     </div>
+  )
+}
+
+// ─── Live demo sections ──────────────────────────────────────────────
+// Auto-looping product demos built from REAL output (the user's actual
+// carousel slides + a real likeness-locked outfit change). Each runs a
+// 100ms ticker only while scrolled into view.
+
+const DEMO_SLIDES = [1, 2, 3, 4, 5, 6, 7].map((i) => `/landing/demo/slide-0${i}.jpg`)
+const DEMO_TOPIC = '5 content ideas that actually book clients'
+
+// Ticker that only runs while the element is on screen. Returns [ref, tick].
+function useDemoTicker(loopTicks) {
+  const ref = useRef(null)
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    let timer = null
+    const el = ref.current
+    if (!el) return
+    const io = new IntersectionObserver(([e]) => {
+      if (e.isIntersecting && !timer) {
+        timer = setInterval(() => setTick((t) => (t + 1) % loopTicks), 100)
+      } else if (!e.isIntersecting && timer) {
+        clearInterval(timer); timer = null
+      }
+    }, { threshold: 0.25 })
+    io.observe(el)
+    return () => { io.disconnect(); if (timer) clearInterval(timer) }
+  }, [loopTicks])
+  return [ref, tick]
+}
+
+const demoPanel = {
+  position: 'relative', borderRadius: 18, padding: 18,
+  background: 'linear-gradient(160deg, rgba(255,255,255,0.045), rgba(255,255,255,0.015))',
+  border: '1px solid rgba(255,255,255,0.10)',
+  boxShadow: '0 30px 80px rgba(0,0,0,0.45)',
+  overflow: 'hidden',
+}
+const demoKicker = {
+  display: 'inline-flex', alignItems: 'center', gap: 6,
+  fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 11,
+  letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)',
+  marginBottom: 12,
+}
+const demoMono = { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }
+
+function DemoKeyframes() {
+  return (
+    <style>{`
+      @keyframes ssPopIn { 0% { opacity: 0; transform: scale(0.75) translateY(8px); } 60% { transform: scale(1.04) translateY(0); } 100% { opacity: 1; transform: scale(1); } }
+      @keyframes ssRowIn { 0% { opacity: 0; transform: translateY(6px); } 100% { opacity: 1; transform: translateY(0); } }
+      @keyframes ssCaret { 0%, 55% { opacity: 1; } 56%, 100% { opacity: 0; } }
+      @keyframes ssWipe { 0%, 8% { clip-path: inset(0 0 0 0); } 46%, 62% { clip-path: inset(0 0 0 100%); } 96%, 100% { clip-path: inset(0 0 0 0); } }
+      @keyframes ssWipeLine { 0%, 8% { left: 0%; } 46%, 62% { left: 100%; } 96%, 100% { left: 0%; } }
+      .ss-demo-grid { display: grid; grid-template-columns: 1.05fr 1fr; gap: 44px; align-items: center; }
+      @media (max-width: 900px) { .ss-demo-grid { grid-template-columns: 1fr; gap: 26px; } }
+    `}</style>
+  )
+}
+
+// 1) Carousel builder: topic types itself, slides pop in, lands in backlog.
+function CarouselBuildDemo() {
+  const TYPE_END = 44, GEN_END = 62, SLIDES_END = 104, LOOP = 150
+  const [ref, tick] = useDemoTicker(LOOP)
+  const typed = DEMO_TOPIC.slice(0, Math.min(tick, TYPE_END) * 1)
+  const generating = tick >= TYPE_END && tick < GEN_END
+  const genPct = generating ? Math.round(((tick - TYPE_END) / (GEN_END - TYPE_END)) * 100) : (tick >= GEN_END ? 100 : 0)
+  const slidesShown = tick < GEN_END ? 0 : Math.min(7, Math.floor((tick - GEN_END) / 6) + 1)
+  const done = tick >= SLIDES_END
+  return (
+    <section style={section} className="fade-up" ref={ref}>
+      <DemoKeyframes />
+      <div className="ss-demo-grid">
+        <div className="showcase-copy">
+          <div className="feat-eyebrow">Carousel builder, built in</div>
+          <h2 className="showcase-title">Type a topic. Get a designed carousel.</h2>
+          <p className="showcase-body">
+            These slides were made in ScaleSolo, cover to CTA, from one sentence. The design
+            system stays locked across every slide: same background, same fonts, same brand
+            accent, and you can put yourself on every slide from a single photo.
+          </p>
+          <ul className="showcase-list">
+            <li><Check size={14} /> Pick a format: listicle, how-to, myth vs fact, checklist</li>
+            <li><Check size={14} /> Your likeness on every slide from one reference photo</li>
+            <li><Check size={14} /> Caption and hashtags written in your brand voice</li>
+            <li><Check size={14} /> Lands in your backlog ready to schedule</li>
+          </ul>
+        </div>
+        <div style={demoPanel}>
+          <div style={demoKicker}><Wand2 size={12} /> Watch it build, real output</div>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px',
+            background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.10)',
+            borderRadius: 10, marginBottom: 12, fontSize: 13, color: 'var(--text)',
+          }}>
+            <Sparkles size={13} style={{ color: '#f59e0b', flexShrink: 0 }} />
+            <span style={{ minHeight: 18 }}>
+              {typed}
+              {tick < GEN_END && <span style={{ animation: 'ssCaret 0.9s step-end infinite' }}>|</span>}
+            </span>
+          </div>
+          {(generating || slidesShown === 0) && (
+            <div style={{ height: 6, borderRadius: 999, background: 'rgba(255,255,255,0.08)', overflow: 'hidden', marginBottom: 12 }}>
+              <div style={{ height: '100%', width: `${genPct}%`, borderRadius: 999, background: 'linear-gradient(90deg, var(--red), #f59e0b)', transition: 'width 0.12s linear' }} />
+            </div>
+          )}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+            {DEMO_SLIDES.map((src, i) => (
+              <div key={src} style={{ aspectRatio: '3 / 4', borderRadius: 8, overflow: 'hidden', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                {i < slidesShown && (
+                  <img
+                    src={src} alt={`Carousel slide ${i + 1} generated by ScaleSolo`}
+                    loading="lazy" decoding="async"
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', animation: 'ssPopIn 0.5s var(--ease) both' }}
+                  />
+                )}
+              </div>
+            ))}
+            <div style={{
+              aspectRatio: '3 / 4', borderRadius: 8, display: 'grid', placeItems: 'center',
+              border: '1px dashed rgba(255,255,255,0.14)', color: 'var(--muted)', fontSize: 11, textAlign: 'center', padding: 6,
+            }}>
+              {done ? <span style={{ color: '#2ecc71', fontWeight: 700, animation: 'ssRowIn 0.4s var(--ease) both' }}>Saved to backlog ✓</span> : '7 slides'}
+            </div>
+          </div>
+          {done && (
+            <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-soft)', animation: 'ssRowIn 0.4s var(--ease) both' }}>
+              <Check size={13} style={{ color: '#2ecc71' }} /> Caption + hashtags written in your voice. Ready to schedule.
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// 2) The scheduling calendar filling itself from the backlog.
+function CalendarShowcase() {
+  const LOOP = 150
+  const [ref, tick] = useDemoTicker(LOOP)
+  const CHIPS = [
+    { label: 'Carousel', color: '#a855f7' },
+    { label: 'Avatar reel', color: '#0ea5e9' },
+    { label: 'Quote post', color: '#f59e0b' },
+    { label: 'Podcast clip', color: '#2ecc71' },
+  ]
+  // Cells fill in a deterministic scatter, 20 of 28 by the end of the loop.
+  const ORDER = [2, 5, 9, 12, 16, 19, 23, 26, 1, 7, 10, 14, 17, 21, 24, 27, 3, 8, 15, 22]
+  const filled = Math.min(ORDER.length, Math.max(0, Math.floor((tick - 12) / 5)))
+  const filledSet = new Set(ORDER.slice(0, filled))
+  const chipGone = (i) => filled > i * 3
+  const doneBadge = filled >= ORDER.length
+  return (
+    <section style={section} className="fade-up" ref={ref}>
+      <div className="ss-demo-grid">
+        <div style={demoPanel}>
+          <div style={demoKicker}><Calendar size={12} /> The scheduling calendar</div>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: 'var(--muted)', alignSelf: 'center', marginRight: 2 }}>Backlog:</span>
+            {CHIPS.map((c, i) => (
+              <span key={c.label} style={{
+                fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 999,
+                background: `${c.color}22`, color: c.color, border: `1px solid ${c.color}55`,
+                opacity: chipGone(i) ? 0.25 : 1, transition: 'opacity 0.4s',
+              }}>{c.label}</span>
+            ))}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 5 }}>
+            {Array.from({ length: 28 }, (_, i) => {
+              const isFilled = filledSet.has(i)
+              const color = CHIPS[i % CHIPS.length].color
+              return (
+                <div key={i} style={{
+                  aspectRatio: '1', borderRadius: 7, padding: 4,
+                  background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)',
+                  display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+                }}>
+                  <span style={{ fontSize: 8.5, color: 'var(--muted)' }}>{i + 1}</span>
+                  {isFilled && (
+                    <div style={{ animation: 'ssPopIn 0.4s var(--ease) both' }}>
+                      <div style={{ height: 4, borderRadius: 999, background: color, marginBottom: 2 }} />
+                      <span style={{ fontSize: 7.5, color: 'var(--muted)' }}>11:00</span>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+          <div style={{ marginTop: 12, minHeight: 18, fontSize: 12, color: 'var(--text-soft)' }}>
+            {doneBadge
+              ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, color: '#2ecc71', fontWeight: 700, animation: 'ssRowIn 0.4s var(--ease) both' }}><Check size={13} /> A month scheduled. Publishing runs itself.</span>
+              : <span>Dragging backlog posts onto open slots…</span>}
+          </div>
+        </div>
+        <div className="showcase-copy">
+          <div className="feat-eyebrow">The scheduling calendar</div>
+          <h2 className="showcase-title">A calendar that fills itself.</h2>
+          <p className="showcase-body">
+            Everything you create lands in a backlog next to your calendar. Drag a post onto any
+            open slot and it goes live at that time, natively, on every platform you picked. Or
+            let ScaleSolo fill the month for you from your posting schedule.
+          </p>
+          <ul className="showcase-list">
+            <li><Check size={14} /> Open slots come from your posting schedule per brand</li>
+            <li><Check size={14} /> Drag and drop from backlog to slot, scheduled in one step</li>
+            <li><Check size={14} /> Publishes natively to TikTok, IG, YouTube, X, LinkedIn + more</li>
+            <li><Check size={14} /> Draft mode for TikTok when you want to post from the app</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// 3) Claude driving the account over MCP.
+function McpShowcase() {
+  const LOOP = 170
+  const [ref, tick] = useDemoTicker(LOOP)
+  const USER_MSG = 'Make 3 carousels for next week and schedule them at 11am.'
+  const typed = USER_MSG.slice(0, Math.min(tick * 1.2, USER_MSG.length))
+  const TOOLS = [
+    { at: 52, text: 'create_carousel  "5 Content Ideas That Book Clients"' },
+    { at: 66, text: 'create_carousel  "Myth vs Fact: Posting Every Day"' },
+    { at: 80, text: 'create_carousel  "Turn Followers Into Customers"' },
+    { at: 94, text: 'schedule_post  Tue 11:00 AM' },
+    { at: 104, text: 'schedule_post  Thu 11:00 AM' },
+    { at: 114, text: 'schedule_post  Sat 11:00 AM' },
+  ]
+  const replyAt = 128
+  return (
+    <section style={section} className="fade-up" ref={ref}>
+      <div className="ss-demo-grid">
+        <div className="showcase-copy">
+          <div className="feat-eyebrow">Claude + MCP</div>
+          <h2 className="showcase-title">Tell Claude. It's posted.</h2>
+          <p className="showcase-body">
+            ScaleSolo plugs straight into Claude through MCP. Your AI assistant can create
+            carousels, generate images and video, write captions, and schedule posts, all in
+            your brand voice, all on your account. You talk, it ships.
+          </p>
+          <ul className="showcase-list">
+            <li><Check size={14} /> Built-in MCP connection, approve it once</li>
+            <li><Check size={14} /> Create, caption, and schedule from a chat</li>
+            <li><Check size={14} /> Uses your brand voice, templates, and credits</li>
+            <li><Check size={14} /> Works alongside the app, everything lands in one calendar</li>
+          </ul>
+        </div>
+        <div style={demoPanel}>
+          <div style={demoKicker}><Sparkles size={12} /> Claude, connected via MCP</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{
+              alignSelf: 'flex-end', maxWidth: '85%', padding: '9px 12px', borderRadius: '12px 12px 4px 12px',
+              background: 'rgba(239,68,68,0.16)', border: '1px solid rgba(239,68,68,0.3)',
+              fontSize: 12.5, color: 'var(--text)',
+            }}>
+              {typed}{typed.length < USER_MSG.length && <span style={{ animation: 'ssCaret 0.9s step-end infinite' }}>|</span>}
+            </div>
+            {TOOLS.filter((t) => tick >= t.at).map((t) => (
+              <div key={t.text} style={{
+                ...demoMono, display: 'flex', alignItems: 'center', gap: 8,
+                fontSize: 10.5, color: 'var(--text-soft)', padding: '6px 10px',
+                background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8,
+                animation: 'ssRowIn 0.35s var(--ease) both',
+              }}>
+                <span style={{ color: '#2ecc71', fontWeight: 700 }}>✓</span> {t.text}
+              </div>
+            ))}
+            {tick >= replyAt && (
+              <div style={{
+                alignSelf: 'flex-start', maxWidth: '85%', padding: '9px 12px', borderRadius: '12px 12px 12px 4px',
+                background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)',
+                fontSize: 12.5, color: 'var(--text)', animation: 'ssRowIn 0.35s var(--ease) both',
+              }}>
+                Done. 3 carousels are designed in your brand style and scheduled for Tue, Thu,
+                and Sat at 11am.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// 4) Likeness-locked outfit change, real before/after with a sweeping wipe.
+function OutfitShowcase() {
+  return (
+    <section style={section} className="fade-up">
+      <div className="ss-demo-grid">
+        <div style={{ ...demoPanel, padding: 14 }}>
+          <div style={demoKicker}><Wand2 size={12} /> Real output, likeness locked</div>
+          <div style={{ position: 'relative', borderRadius: 12, overflow: 'hidden', background: '#f3f0ea', aspectRatio: '5 / 6' }}>
+            <img
+              src="/landing/demo/outfit-after.jpg" alt="AI outfit change result: burgundy blazer, same likeness"
+              loading="lazy" decoding="async"
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top' }}
+            />
+            <img
+              src="/landing/demo/outfit-before.webp" alt="Original reference photo before the AI outfit change"
+              loading="lazy" decoding="async"
+              style={{
+                position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top',
+                background: '#f3f0ea', animation: 'ssWipe 7s ease-in-out infinite',
+              }}
+            />
+            <div style={{
+              position: 'absolute', top: 0, bottom: 0, width: 2, background: 'rgba(0,0,0,0.55)',
+              boxShadow: '0 0 12px rgba(0,0,0,0.35)', animation: 'ssWipeLine 7s ease-in-out infinite',
+            }} />
+            <span style={{ position: 'absolute', top: 10, left: 10, fontSize: 10, fontWeight: 800, letterSpacing: '0.06em', padding: '3px 8px', borderRadius: 999, background: 'rgba(0,0,0,0.55)', color: '#fff' }}>BEFORE</span>
+            <span style={{ position: 'absolute', top: 10, right: 10, fontSize: 10, fontWeight: 800, letterSpacing: '0.06em', padding: '3px 8px', borderRadius: 999, background: 'rgba(0,0,0,0.55)', color: '#fff' }}>AFTER</span>
+          </div>
+          <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ ...demoMono, fontSize: 11, padding: '5px 10px', borderRadius: 999, background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-soft)' }}>
+              "@ray in a burgundy blazer"
+            </span>
+            <span style={{ fontSize: 11, color: '#2ecc71', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 5 }}><Check size={12} /> Likeness locked</span>
+          </div>
+        </div>
+        <div className="showcase-copy">
+          <div className="feat-eyebrow">The creative studio</div>
+          <h2 className="showcase-title">Change the outfit, not the photoshoot.</h2>
+          <p className="showcase-body">
+            Upload one photo of yourself and regenerate it in any outfit, pose, or setting while
+            your face stays exactly you. This example is one prompt on the ScaleSolo canvas.
+            Use the results in carousels, thumbnails, and avatar videos.
+          </p>
+          <ul className="showcase-list">
+            <li><Check size={14} /> One reference photo, unlimited wardrobe</li>
+            <li><Check size={14} /> Drag any image onto the canvas and mention it with @</li>
+            <li><Check size={14} /> Feeds straight into carousels and avatar videos</li>
+            <li><Check size={14} /> Every render saves to your library automatically</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// 5) Built-in templates strip.
+function TemplatesStrip() {
+  const items = [
+    { Icon: Layers,   title: 'Carousel builder',    body: 'Topic to designed multi-slide post with caption + hashtags.' },
+    { Icon: Mic2,     title: 'AI avatar podcast',   body: 'A daily talking-head show from a photo, a voice, and a topic.' },
+    { Icon: Wand2,    title: 'Outfit changer',      body: 'Regenerate yourself in any look with likeness locked.' },
+    { Icon: Calendar, title: '30 days of content',  body: 'A month of on-voice posts generated and scheduled in one run.' },
+    { Icon: Film,     title: 'Finished reels',      body: 'Captions, titles, music, and watermarks baked into every render.' },
+    { Icon: Boxes,    title: 'Build your own',      body: 'A drag-and-drop canvas when you want a custom pipeline.' },
+  ]
+  return (
+    <section style={{ ...section, paddingTop: 24, paddingBottom: 24 }} className="fade-up">
+      <h2 style={sectionH}>Templates and workflows, <span className="brand-text">already built.</span></h2>
+      <p style={sectionSub}>
+        You don't start from a blank page. Pick a curated workflow, drop in your topic, and
+        ScaleSolo handles design, copy, and scheduling.
+      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14, maxWidth: 1080, margin: '0 auto' }}>
+        {items.map(({ Icon, title, body }) => (
+          <div key={title} style={{
+            padding: 18, borderRadius: 14,
+            background: 'linear-gradient(160deg, rgba(255,255,255,0.045), rgba(255,255,255,0.015))',
+            border: '1px solid rgba(255,255,255,0.10)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <div style={{ width: 34, height: 34, borderRadius: 10, display: 'grid', placeItems: 'center', background: 'rgba(239,68,68,0.14)', color: 'var(--red)' }}>
+                <Icon size={16} />
+              </div>
+              <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', padding: '3px 8px', borderRadius: 999, background: 'rgba(46,204,113,0.14)', color: '#2ecc71' }}>Built in</span>
+            </div>
+            <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 15.5, color: 'var(--text)', marginBottom: 5 }}>{title}</div>
+            <div style={{ fontSize: 12.5, color: 'var(--text-soft)', lineHeight: 1.5 }}>{body}</div>
+          </div>
+        ))}
+      </div>
+    </section>
   )
 }
 
