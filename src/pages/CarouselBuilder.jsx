@@ -17,6 +17,18 @@ const THEMES = [
   { key: 'retro', label: 'Retro', css: { fontFamily: '"Courier New", monospace', fontWeight: 700, letterSpacing: '0.04em' } },
 ]
 
+// Carousel STRUCTURE (how the slides are organized). `key` matches the
+// backend FORMAT_GUIDES that steer the slide planner.
+const FORMATS = [
+  { key: 'listicle', label: 'Listicle', hint: 'Numbered list (5 X…)' },
+  { key: 'howto', label: 'How-to', hint: 'Step-by-step tutorial' },
+  { key: 'tips', label: 'Quick tips', hint: 'Standalone punchy tips' },
+  { key: 'mythfact', label: 'Myth vs fact', hint: 'Bust a common myth' },
+  { key: 'story', label: 'Story', hint: 'A narrative that builds' },
+  { key: 'checklist', label: 'Checklist', hint: 'Save-worthy checklist' },
+  { key: 'questions', label: 'Q & A', hint: 'Answer common questions' },
+]
+
 const PROGRESS_MSGS = [
   'Writing your slides in your brand voice…',
   'Designing the slide layouts…',
@@ -33,6 +45,7 @@ export default function CarouselBuilder() {
 
   const [topic, setTopic] = useState('')
   const [slides, setSlides] = useState(6)
+  const [format, setFormat] = useState('listicle')
   const [theme, setTheme] = useState('modern')
   const [extraStyle, setExtraStyle] = useState('')
   const [ideas, setIdeas] = useState([])
@@ -124,7 +137,7 @@ export default function CarouselBuilder() {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
         body: JSON.stringify({
           profile_id: selectedProfileId, topic: topic.trim(), slide_count: slides,
-          theme, extra_style: extraStyle.trim() || undefined,
+          format, theme, extra_style: extraStyle.trim() || undefined,
           reference_urls: selectedRefs.length ? selectedRefs : undefined,
         }),
       })
@@ -204,6 +217,17 @@ export default function CarouselBuilder() {
               </div>
             )}
             <textarea className="input" value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="Type a topic, or click an idea above…" rows={2} style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit' }} />
+          </div>
+
+          {/* Format */}
+          <div style={{ marginBottom: 16 }}>
+            <div style={label}>Format</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {FORMATS.map((f) => (
+                <button key={f.key} onClick={() => setFormat(f.key)} title={f.hint} style={{ padding: '7px 11px', borderRadius: 999, cursor: 'pointer', fontSize: 12.5, fontWeight: 600, border: `1px solid ${format === f.key ? '#a855f7' : 'var(--border)'}`, background: format === f.key ? 'rgba(168,85,247,0.14)' : 'var(--surface-2)', color: format === f.key ? '#a855f7' : 'var(--text)' }}>{f.label}</button>
+              ))}
+            </div>
+            <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6 }}>{FORMATS.find((f) => f.key === format)?.hint}</div>
           </div>
 
           {/* Slides */}

@@ -32,9 +32,21 @@ const THEME_PROMPTS = {
   retro: 'Retro vintage aesthetic, warm nostalgic palette, film grain texture, throwback display typography.',
 }
 
-// Draft the slide plan + post caption from the topic, in the brand's voice and
-// chosen style.
-async function planCarousel({ topic, slideCount, brandMd, brandColors, style, hasRefs }) {
+// Carousel STRUCTURE (how the slides are organized), separate from the visual
+// theme. Steers how the planner shapes the middle slides.
+const FORMAT_GUIDES = {
+  listicle: 'A numbered LISTICLE. The cover promises a count (e.g. "5 X"); each tip slide is ONE numbered item ("1.", "2.", ...) with a short headline + one line.',
+  howto: 'A step-by-step HOW-TO / tutorial. Each tip slide is one sequential step ("Step 1", "Step 2", ...) in order.',
+  tips: 'Standalone quick TIPS. Each tip slide is one punchy, self-contained tip. No strict numbering required.',
+  mythfact: 'MYTH vs FACT. Each tip slide states a common myth then the truth ("Myth: ... / Truth: ...").',
+  story: 'A STORY arc that builds. Cover hooks, tip slides advance a narrative or mini case study, last slide lands the lesson + CTA.',
+  checklist: 'A screenshot-worthy CHECKLIST. Each tip slide is one checklist item with a check-style bullet.',
+  questions: 'Common QUESTIONS answered. Each tip slide poses one question as the headline and answers it in the body.',
+}
+
+// Draft the slide plan + post caption from the topic, in the brand's voice,
+// chosen structure (format), and visual style.
+async function planCarousel({ topic, slideCount, brandMd, brandColors, style, format, hasRefs }) {
   const out = await anthropicMessage({
     model: 'claude-sonnet-5',
     max_tokens: 8000,
@@ -44,6 +56,7 @@ async function planCarousel({ topic, slideCount, brandMd, brandColors, style, ha
       '{ "title": string, "caption": string, "hashtags": string, "slides": [ { "kind": "cover"|"tip"|"cta", "headline": string, "body": string, "image_prompt": string } ] }',
       '',
       `Produce EXACTLY ${slideCount} slides: slide 1 kind "cover", the last slide kind "cta", the rest "tip".`,
+      FORMAT_GUIDES[format] ? `STRUCTURE: ${FORMAT_GUIDES[format]}` : '',
       'headline: punchy, <= 8 words. body: 1 short sentence (tips), empty "" for cover/cta.',
       'image_prompt: a complete prompt for an image model to render a 3:4 branded graphic for THIS slide. It MUST:',
       '  - include the EXACT slide text to render (headline), spelled correctly, as large crisp legible typography',
@@ -106,7 +119,7 @@ export default async function handler(req, res) {
   if (!auth) return
 
   try {
-    const { profile_id, topic, slide_count = 6, reference_urls, theme, extra_style, model, aspect = '3:4' } = req.body || {}
+    const { profile_id, topic, slide_count = 6, reference_urls, theme, extra_style, format, model, aspect = '3:4' } = req.body || {}
     if (!profile_id || !topic) return res.status(400).json({ error: 'profile_id + topic required' })
     await assertProfileAccess(auth.user.id, profile_id)
     const n = Math.max(3, Math.min(8, Number(slide_count) || 6))
@@ -125,7 +138,7 @@ export default async function handler(req, res) {
       brandColors = [p?.brand_color, p?.brand_color_secondary].filter(Boolean).join(' and ')
     } catch { /* brandless is fine */ }
 
-    const plan = await planCarousel({ topic, slideCount: n, brandMd, brandColors, style, hasRefs: refs.length > 0 })
+    const plan = await planCarousel({ topic, slideCount: n, brandMd, brandColors, style, format, hasRefs: refs.length > 0 })
     const slides = plan.slides.slice(0, n)
 
     let urls
