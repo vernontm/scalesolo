@@ -46,7 +46,12 @@ async function fetchTikTokSafeJpeg(url) {
   const r = await fetch(url)
   if (!r.ok) throw new Error(`Fetch ${url} → ${r.status}`)
   const buf = Buffer.from(await r.arrayBuffer())
-  const out = await sharp(buf)
+  // failOn 'none': decode as much as possible instead of throwing on a
+  // truncated/corrupt source. Throwing here fell through to the catch
+  // that ships the ORIGINAL file, which TikTok then rejects at fire time
+  // (the Aug 3-4 carousel misses). A best-effort re-encode always beats
+  // shipping known-bad bytes.
+  const out = await sharp(buf, { failOn: 'none' })
     .rotate() // honor EXIF orientation before we strip metadata
     .resize({ width: 1440, height: 1920, fit: 'inside', withoutEnlargement: true })
     .jpeg({ quality: 90 })
