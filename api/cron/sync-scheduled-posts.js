@@ -202,6 +202,10 @@ function classify(body) {
     // that the platform actually delivered.
     const isResultSuccess = (r) => {
       if (r?.success === true || r?.success === 'true') return true
+      // An explicit failure flag wins over every soft signal below —
+      // Upload-Post stamps upload_timestamp on FAILED attempts too, so
+      // without this guard a validation failure still read as "posted".
+      if (r?.success === false || r?.success === 'false') return false
       if (typeof r?.status === 'string' && /post|deliver|success|complet/i.test(r.status)) return true
       if (r?.upload_timestamp || r?.post_url) return true
       return false
