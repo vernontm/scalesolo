@@ -179,6 +179,24 @@ export default function LandingFaceless() {
   const [openFaq, setOpenFaq] = useState(0)
   const [showStickyCta, setShowStickyCta] = useState(false)
 
+  // Capture affiliate/channel ref code (?ref=…) exactly like the main
+  // landing: localStorage as the primary read path + a 30-day cookie
+  // that survives a localStorage wipe. AuthContext attributes whichever
+  // is present right after signup, so links like
+  // /faceless-brand?ref=onlylocals credit the referring channel.
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search)
+      const ref = params.get('ref')
+      if (ref && /^[a-z0-9_-]{2,64}$/i.test(ref)) {
+        const code = ref.toLowerCase()
+        localStorage.setItem('scalesolo.ref', code)
+        const expires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toUTCString()
+        document.cookie = `scalesolo_ref=${encodeURIComponent(code)}; expires=${expires}; path=/; SameSite=Lax`
+      }
+    } catch {}
+  }, [])
+
   // Esc closes lightbox + lock body scroll while open.
   useEffect(() => {
     if (!demoOpen) return
