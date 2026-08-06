@@ -5,11 +5,13 @@ import {
   Plus, Building2, Edit3, Trash2, X, Save, Sparkles, Check, Crown,
   Upload, ClipboardCopy, MessageSquare, Wand2, Loader2, ChevronRight,
   CircleDashed, CheckCircle2, Mic, Calendar, Share2, Palette, ChevronDown,
-  Music, Play, Pause, Megaphone,
+  Music, Play, Pause, Megaphone, Link2, Inbox, Wand,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { supabase } from '../lib/supabase.js'
+import { toast } from '../components/Toast.jsx'
+import { mapIntakeToProfile } from '../lib/brandIntake.js'
 import VoiceTrainingSection from '../components/VoiceTrainingSection.jsx'
 import SocialExtrasSection from '../components/SocialExtrasSection.jsx'
 import VoiceSummaryCard from '../components/VoiceSummaryCard.jsx'
@@ -1924,9 +1926,46 @@ export default function Profiles() {
   const navigate = useNavigate()
   const [editing, setEditing] = useState(null)
   const [quickstart, setQuickstart] = useState(false)
+  const [intakeFor, setIntakeFor] = useState(null)   // profile whose responses modal is open
+  const [linkBusy, setLinkBusy] = useState(null)      // profile id currently minting a link
 
   const startNew = () => setEditing({})
   const startQuickstart = () => setQuickstart(true)
+
+  // Generate (or rotate) the brand's private intake link and copy it.
+  const getIntakeLink = async (p) => {
+    setLinkBusy(p.id)
+    try {
+      const r = await fetch('/api/intake/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ profile_id: p.id }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(body.error || `Could not create link (${r.status})`)
+      const url = `${window.location.origin}/intake/${body.token}`
+      try {
+        await navigator.clipboard.writeText(url)
+        toast('Intake link copied. Send it to the client.')
+      } catch {
+        // Clipboard blocked (permissions / http): show the link so it can be copied by hand.
+        toast({ message: `Intake link: ${url}`, ttl: 12000 })
+      }
+    } catch (e) {
+      toast({ message: e.message, kind: 'error' })
+    } finally {
+      setLinkBusy(null)
+    }
+  }
+
+  // Prefill the editor from a submission's answers. Client-side only: this
+  // maps answers into editor form fields and opens the editor. The operator
+  // reviews and saves normally; nothing is written to the profile here.
+  const prefillFromSubmission = (profile, submission) => {
+    const mapped = mapIntakeToProfile(submission.answers)
+    setIntakeFor(null)
+    setEditing({ ...profile, ...mapped })
+  }
 
   const onSaved = async (profile) => {
     await refresh()
@@ -2026,6 +2065,27 @@ export default function Profiles() {
                     </button>
                   )}
                 </div>
+                {role === 'owner' && (
+                  <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                    <button
+                      className="btn-ghost"
+                      style={{ padding: '6px 10px', fontSize: 12 }}
+                      disabled={linkBusy === p.id}
+                      title="Generate a private questionnaire link and copy it to send to this client"
+                      onClick={(e) => { e.stopPropagation(); getIntakeLink(p) }}
+                    >
+                      {linkBusy === p.id ? <Loader2 size={12} className="spin" /> : <Link2 size={12} />} Get intake link
+                    </button>
+                    <button
+                      className="btn-ghost"
+                      style={{ padding: '6px 10px', fontSize: 12 }}
+                      title="Review questionnaire responses from this client"
+                      onClick={(e) => { e.stopPropagation(); setIntakeFor(p) }}
+                    >
+                      <Inbox size={12} /> Intake responses
+                    </button>
+                  </div>
+                )}
               </div>
             )
           })}
@@ -2040,6 +2100,96 @@ export default function Profiles() {
           onCreated={onQuickstartCreated}
         />
       )}
+      {intakeFor && (
+        <IntakeResponsesModal
+          profile={intakeFor}
+          token={session.access_token}
+          onClose={() => setIntakeFor(null)}
+          onPrefill={(submission) => prefillFromSubmission(intakeFor, submission)}
+        />
+      )}
+    </div>
+  )
+}
+
+// ─── Intake responses modal ────────────────────────────────────────────────
+// Lists this brand's Brand Intake submissions (newest first) with each
+// compiled summary. "Prefill into editor" maps a submission's answers into
+// the profile editor form fields client-side so the operator can review and
+// save. Nothing is written to the profile from here.
+function IntakeResponsesModal({ profile, token, onClose, onPrefill }) {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [rows, setRows] = useState([])
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(`/api/intake/submissions?profile_id=${profile.id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json().then((body) => ({ ok: r.ok, body })))
+      .then(({ ok, body }) => {
+        if (cancelled) return
+        if (!ok) throw new Error(body?.error || 'Could not load responses')
+        setRows(Array.isArray(body.submissions) ? body.submissions : [])
+      })
+      .catch((e) => { if (!cancelled) setError(e.message) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [profile.id, token])
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card modal-card-lg" onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          <Inbox size={18} style={{ color: 'var(--red)' }} />
+          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, flex: 1 }}>
+            Intake responses: {profile.business_name}
+          </h3>
+          <button aria-label="Close" onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6, borderRadius: 6 }}><X size={18} /></button>
+        </div>
+
+        {loading ? (
+          <div style={{ padding: 40, display: 'grid', placeItems: 'center' }}><span className="spinner" /></div>
+        ) : error ? (
+          <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '10px 14px', borderRadius: 8, fontSize: 13 }}>{error}</div>
+        ) : rows.length === 0 ? (
+          <div style={{ padding: 32, textAlign: 'center', color: 'var(--muted)', fontSize: 13.5, background: 'var(--surface-2)', borderRadius: 10, border: '1px dashed var(--border)' }}>
+            <Inbox size={22} style={{ marginBottom: 8, opacity: 0.5 }} />
+            <div>No responses yet. Use "Get intake link" to send the questionnaire to this client.</div>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 440, overflowY: 'auto' }}>
+            {rows.map((sub) => (
+              <div key={sub.id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 12, background: 'var(--surface-2)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                    {sub.created_at ? new Date(sub.created_at).toLocaleString() : ''}
+                  </span>
+                  <span className="pill pill-muted" style={{ fontSize: 10.5 }}>{sub.status || 'pending'}</span>
+                  <div style={{ flex: 1 }} />
+                  <button
+                    className="btn-primary"
+                    style={{ padding: '6px 10px', fontSize: 12 }}
+                    onClick={() => onPrefill(sub)}
+                    title="Map these answers into the profile editor for review"
+                  >
+                    <Wand size={12} /> Prefill into editor
+                  </button>
+                </div>
+                <pre style={{
+                  margin: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8,
+                  padding: 12, fontSize: 11.5, lineHeight: 1.55, color: 'var(--text-soft)',
+                  whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 200, overflow: 'auto',
+                }}>{sub.summary_md || '(no summary)'}</pre>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ marginTop: 14, fontSize: 11.5, color: 'var(--muted)' }}>
+          Prefilling only fills the editor form. Review and save to apply changes to the brand profile.
+        </div>
+      </div>
     </div>
   )
 }

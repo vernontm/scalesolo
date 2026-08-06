@@ -19,6 +19,7 @@ import LandingPublic from './pages/LandingPublic.jsx'
 const LandingFaceless = lazy(() => import('./pages/LandingFaceless.jsx'))
 import AuthCallback from './pages/AuthCallback.jsx'
 import FormPublic from './pages/FormPublic.jsx'
+import Intake from './pages/Intake.jsx'
 
 // Lazy: heavy or rarely-visited app routes. Spaces alone is ~250KB
 // (ReactFlow + node registry); admin pages are admin-only; Analytics +
@@ -276,6 +277,7 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
           <Route path="/f/:slug" element={<FormPublic />} />
+          <Route path="/intake/:token" element={<Intake />} />
           <Route path="/p/:slug" element={<LandingPublic />} />
           <Route path="/faceless-brand" element={<Suspense fallback={<RouteFallback />}><LandingFaceless /></Suspense>} />
           <Route path="*" element={<Login />} />
@@ -291,6 +293,7 @@ export default function App() {
       <Routes>
         <Route path="/pricing" element={<Pricing />} />
         <Route path="/f/:slug" element={<FormPublic />} />
+        <Route path="/intake/:token" element={<Intake />} />
         {/* Ad landing always serves the dedicated faceless page,
             even for signed-in users who clicked an ad on someone
             else's device. Suspense fallback while the lazy chunk loads. */}
