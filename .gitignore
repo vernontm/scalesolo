@@ -12,7 +12,9 @@ coverage/
 .vscode/
 supabase/.temp/
 supabase/.branches/
-.claude/
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
 test-results/
 playwright-report/
 playwright/.cache/
