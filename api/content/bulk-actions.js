@@ -1110,12 +1110,12 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
           if (!fr.ok) throw new Error(`media fetch ${url} → ${fr.status}`)
           const ab = await fr.arrayBuffer()
           // TikTok photo mode rejects PNG + oversized images. Normalize to a
-          // JPEG within 1440x1920 for TikTok; other platforms take originals.
+          // JPEG within 1080x1920 for TikTok (their real photo cap); other platforms take originals.
           if (hasTikTok) {
             try {
               const jpeg = await sharp(Buffer.from(ab))
                 .rotate()
-                .resize({ width: 1440, height: 1920, fit: 'inside', withoutEnlargement: true })
+                .resize({ width: 1080, height: 1920, fit: 'inside', withoutEnlargement: true })
                 .jpeg({ quality: 90 })
                 .toBuffer()
               fd.append('photos[]', new Blob([jpeg], { type: 'image/jpeg' }), `image_${i + 1}.jpg`)

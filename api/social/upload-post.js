@@ -39,7 +39,7 @@ async function fetchToBlob(url) {
 
 // TikTok photo mode only accepts JPG/JPEG/WEBP (PNG is silently rejected at
 // validation) and rejects oversized images. Normalize any image to a JPEG
-// that fits within 1440x1920 (covers 3:4 / 9:16 / 1:1) so carousels post
+// that fits within 1080x1920 (TikTok photo cap, verified empirically: 1438px wide fails validation, 1080px passes) so carousels post
 // cleanly. Used only when TikTok is a target; other platforms take the
 // original bytes. Falls back to the raw blob if sharp can't decode it.
 async function fetchTikTokSafeJpeg(url) {
@@ -53,7 +53,7 @@ async function fetchTikTokSafeJpeg(url) {
   // shipping known-bad bytes.
   const out = await sharp(buf, { failOn: 'none' })
     .rotate() // honor EXIF orientation before we strip metadata
-    .resize({ width: 1440, height: 1920, fit: 'inside', withoutEnlargement: true })
+    .resize({ width: 1080, height: 1920, fit: 'inside', withoutEnlargement: true })
     .jpeg({ quality: 90 })
     .toBuffer()
   return new Blob([out], { type: 'image/jpeg' })
