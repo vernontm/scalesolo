@@ -1723,6 +1723,9 @@ function PostingScheduleEditor({ timezone, onTimezoneChange, synced, onSyncedCha
     else if (kind === 'daily') onScheduleChange({ days: [0,1,2,3,4,5,6], times: times.length ? times : ['09:00'] })
     else if (kind === 'weekly') onScheduleChange({ days: [3], times: times.length ? times : ['10:00'] })
     else if (kind === '3x') onScheduleChange({ days: [1,3,5], times: times.length ? times : ['09:00'] })
+    // Daily 5 PM (POV): keep the local-event POV slot as an everyday beat.
+    // Adds the 17:00 slot to every day without clobbering existing times.
+    else if (kind === 'daily5pm') onScheduleChange({ days: [0,1,2,3,4,5,6], times: times.includes('17:00') ? times : [...times, '17:00'] })
   }
 
   return (
@@ -1745,6 +1748,7 @@ function PostingScheduleEditor({ timezone, onTimezoneChange, synced, onSyncedCha
             ['weekly',   'Once a week'],
             ['3x',       '3× per week'],
             ['daily',    'Every day'],
+            ['daily5pm', 'Daily 5 PM (POV)'],
           ].map(([k, label]) => (
             <button key={k} type="button" className="btn-ghost" style={{ fontSize: 11.5 }} onClick={() => applyPreset(k)}>{label}</button>
           ))}

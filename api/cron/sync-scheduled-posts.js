@@ -92,6 +92,26 @@ const nextInboxRetryIso = (count) => new Date(
   Date.now() + (TIKTOK_INBOX_BACKOFF_MS[Math.min(count, TIKTOK_INBOX_BACKOFF_MS.length - 1)])
 ).toISOString()
 
+// ── Post-once guard: TikTok photo carousels ────────────────────────────
+// TikTok PHOTO/carousel posts must NEVER auto-retry. Per the product's
+// "post-once" rule a failed carousel is marked failed exactly once and is
+// never re-fired. The old behavior auto-retried them for days — a single
+// "5 AI Automations" carousel re-fired 8 times across Aug 2-6 — which both
+// violates post-once and stacks duplicate inbox/feed drafts. Videos and
+// every other platform/content type keep their normal retry behavior.
+//
+// Authoritative signal (set in api/social/upload-post.js persist step):
+// the row targets TikTok and its media is a photo post — media_type='image'
+// / post_type='post' (videos are 'video', text is 'text').
+function isTikTokPhotoPost(row) {
+  const platforms = Array.isArray(row?.platforms) ? row.platforms : []
+  const targetsTikTok = platforms.some((p) => String(p || '').toLowerCase() === 'tiktok')
+  if (!targetsTikTok) return false
+  const mediaType = String(row?.media_type || '').toLowerCase()
+  const postType = String(row?.post_type || '').toLowerCase()
+  return mediaType === 'image' || postType === 'post'
+}
+
 // True when the tiktok result "succeeded" into the Inbox instead of
 // the feed. A real feed delivery has an http(s) post_url.
 function tiktokInboxResult(resultsArr) {
@@ -292,7 +312,7 @@ export default async function handler(req, res) {
     // with no last_error captured — back-fills per-platform error
     // reasons on legacy failures so Ray (and end users) can see
     // why a post died instead of staring at an empty error column.
-    const RETRY_COLS = 'id,profile_id,status,uploadpost_request_id,scheduled_datetime,publish_retry_count,publish_next_retry_at,tiktok_retry_request_id,media_type,media_urls,media_url_with_cover,embed_cover_intro,title,caption,hashtags'
+    const RETRY_COLS = 'id,profile_id,status,uploadpost_request_id,scheduled_datetime,publish_retry_count,publish_next_retry_at,tiktok_retry_request_id,media_type,post_type,platforms,media_urls,media_url_with_cover,embed_cover_intro,title,caption,hashtags'
 
     // Per-profile tiktok_force_direct_post flag + upload-post username,
     // cached per cron run so N rows on the same brand cost one lookup.
@@ -412,6 +432,14 @@ export default async function handler(req, res) {
     ).catch(() => [])
     for (const row of (dueRetries || [])) {
       try {
+        // Post-once: TikTok photo carousels never auto-retry — disarm any
+        // stray backoff and leave the row alone.
+        if (isTikTokPhotoPost(row)) {
+          await supaFetch(`content_scripts?id=eq.${row.id}`, {
+            method: 'PATCH', body: { publish_next_retry_at: null }, prefer: 'return=minimal',
+          })
+          continue
+        }
         const { ok, body } = await fetchStatus(row.uploadpost_request_id)
         const { failedPlatforms } = ok ? classify(body) : { failedPlatforms: [] }
         const count = row.publish_retry_count || 0
@@ -464,6 +492,17 @@ export default async function handler(req, res) {
     ).catch(() => [])
     for (const row of (dueInboxChains || [])) {
       try {
+        // Post-once: TikTok photo carousels are never eligible for the
+        // forced-direct-post chain (resubmitTikTokOnly only re-sends video).
+        // Guard defensively so a mislabeled row can't spin the chain.
+        if (isTikTokPhotoPost(row)) {
+          await supaFetch(`content_scripts?id=eq.${row.id}`, {
+            method: 'PATCH',
+            body: { tiktok_retry_request_id: null, publish_next_retry_at: null },
+            prefer: 'return=minimal',
+          })
+          continue
+        }
         const { ok, body } = await fetchStatus(row.tiktok_retry_request_id)
         const tk = ok ? tiktokInboxResult(body?.results) : null
         const count = row.publish_retry_count || 0
@@ -615,6 +654,10 @@ export default async function handler(req, res) {
         if (!ok) { results.errors += 1; continue }
         const { verdict, summary, failedPlatforms = [] } = classify(body)
         const retryCount = row.publish_retry_count || 0
+        // Post-once: TikTok photo carousels are excluded from every
+        // auto-retry path. A failed carousel is marked failed once and
+        // never re-fired (see isTikTokPhotoPost for the why).
+        const isTtPhoto = isTikTokPhotoPost(row)
 
         if (verdict === 'posted') {
           // Partially delivered? Fire the first retry for the failed
@@ -622,7 +665,7 @@ export default async function handler(req, res) {
           // follow-ups. Upload-Post's retry endpoint only touches the
           // platforms that failed, so the delivered ones are safe.
           const patch = { status: 'posted', last_error: null }
-          if (failedPlatforms.length && retryCount < MAX_PUBLISH_RETRIES) {
+          if (!isTtPhoto && failedPlatforms.length && retryCount < MAX_PUBLISH_RETRIES) {
             const retry = await requestRetry(row.uploadpost_request_id).catch(() => null)
             if (retry && !retry.nothingToRetry) {
               patch.publish_retry_count = retryCount + 1
@@ -683,8 +726,10 @@ export default async function handler(req, res) {
           // — original media is reused server-side — and keep the row
           // as 'scheduled' so this sweep re-checks the outcome. Backoff
           // gates how often we fire; MAX_PUBLISH_RETRIES caps the total.
+          // TikTok photo carousels skip the ladder entirely (post-once) and
+          // fall through to the terminal-failure PATCH below on first failure.
           const retryDueMs = row.publish_next_retry_at ? Date.parse(row.publish_next_retry_at) : 0
-          if (retryCount < MAX_PUBLISH_RETRIES) {
+          if (!isTtPhoto && retryCount < MAX_PUBLISH_RETRIES) {
             if (retryDueMs > Date.now()) {
               // Backoff not elapsed yet — leave as scheduled, check next tick.
               results.indeterminate += 1
