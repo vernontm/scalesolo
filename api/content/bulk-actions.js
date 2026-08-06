@@ -1033,7 +1033,8 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
         // just the title.
         if (hasTikTok && desc) form.append('tiktok_title', desc.slice(0, 2200))
         // Draft mode → send to TikTok inbox/drafts instead of the feed.
-        if (hasTikTok && tiktokDraftMode) form.append('post_mode', 'MEDIA_UPLOAD')
+        // Per-post override (r.tiktok_direct_override) beats the brand flag.
+        if (hasTikTok && (r.tiktok_direct_override === false || (tiktokDraftMode && r.tiktok_direct_override !== true))) form.append('post_mode', 'MEDIA_UPLOAD')
         if (platforms.includes('instagram')) {
           if (desc) form.append('instagram_title', desc.slice(0, 2200))
           // Generated Instagram Reel cover (Schedule page → Generate cover).
@@ -1091,7 +1092,8 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
           fd.append('tiktok_title', src.length <= 90 ? src : src.slice(0, 90).replace(/\s+\S*$/, ''))
         }
         // Draft mode → send to TikTok inbox/drafts instead of the feed.
-        if (hasTikTok && tiktokDraftMode) fd.append('post_mode', 'MEDIA_UPLOAD')
+        // Per-post override (r.tiktok_direct_override) beats the brand flag.
+        if (hasTikTok && (r.tiktok_direct_override === false || (tiktokDraftMode && r.tiktok_direct_override !== true))) fd.append('post_mode', 'MEDIA_UPLOAD')
         if (platforms.includes('instagram') && desc) fd.append('instagram_title', desc.slice(0, 2200))
         if (platforms.includes('facebook')) {
           const fbSrc = (desc || cleanTitle).replace(/\s*\n+\s*/g, ' ').trim()

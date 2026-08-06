@@ -387,6 +387,31 @@ function ItemDetail({ item, onClose, onUpdate }) {
               />
             </div>
 
+            {(item.platforms || []).includes('tiktok') && (
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 6 }}>
+                  TikTok posting
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {[
+                    { v: null, label: 'Brand default' },
+                    { v: true, label: 'Direct to feed' },
+                    { v: false, label: 'Draft (inbox)' },
+                  ].map((o) => (
+                    <button key={String(o.v)} type="button" onClick={() => setTtOverride(o.v)} style={{
+                      padding: '6px 12px', borderRadius: 999, cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                      border: `1px solid ${ttOverride === o.v ? 'var(--red)' : 'var(--border)'}`,
+                      background: ttOverride === o.v ? 'rgba(239,68,68,0.12)' : 'var(--surface-2)',
+                      color: ttOverride === o.v ? 'var(--red)' : 'var(--text)',
+                    }}>{o.label}</button>
+                  ))}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 5 }}>
+                  Overrides the brand setting for this post only. Hit Save, then it applies when the post is scheduled or rescheduled.
+                </div>
+              </div>
+            )}
+
             <div style={{ marginTop: 4, padding: 14, background: 'var(--surface-2)', borderRadius: 10, border: '1px solid var(--border)' }}>
               <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>Schedule</div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

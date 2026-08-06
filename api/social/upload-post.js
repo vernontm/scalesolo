@@ -170,6 +170,11 @@ export default async function handler(req, res) {
       profile_social_tags = rows?.[0]?.social_platform_tags || {}
       tiktokDraftMode = !!rows?.[0]?.tiktok_draft_mode
     } catch { /* default to empty map */ }
+    // Per-post override beats the brand default when set: true forces a
+    // direct feed post, false forces an inbox draft.
+    const ttOverride = req.body?.tiktok_direct_override
+    if (ttOverride === true) tiktokDraftMode = false
+    else if (ttOverride === false) tiktokDraftMode = true
 
     const effectiveUser = upload_post_user || await resolveUploadpostUser(profile_id)
     if (!upload_post_user) {

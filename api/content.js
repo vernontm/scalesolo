@@ -137,6 +137,9 @@ async function rescheduleUploadPostJob({ row, newScheduledIso, authToken, req })
     cover_image_url: row.cover_image_url || undefined,
     scheduling_mode: 'fixed',
     scheduled_iso: newScheduledIso,
+    // Per-post TikTok mode override rides along so a reschedule keeps it.
+    tiktok_direct_override: (row.tiktok_direct_override === true || row.tiktok_direct_override === false)
+      ? row.tiktok_direct_override : undefined,
     // Force the upload-post endpoint to PATCH this row, not insert a
     // new one. Edits-on-scheduled-row often happen long after the
     // 5-min dedup window, which without script_id duplicates the row.
@@ -165,6 +168,7 @@ const ALLOWED = new Set([
   'tags','media_urls','media_type','scheduled_datetime','status','sort_order',
   'post_type','location','platforms','cover_timestamp',
   'needs_approval','approval_status','rejected_reason','recycle_period_days',
+  'tiktok_direct_override',
   'generated_by','generation_prompt','performance',
   // uploadpost_request_id is server-managed (set when the original
   // submission lands + rotated when we reschedule), but it lives in
