@@ -16,6 +16,15 @@ Vite SPA in `src/`, serverless endpoints in `api/`, Supabase backend (`supabase/
 
 `npm run lint` and `npm run build` must both pass before shipping. Playwright e2e is optional in automated runs. Do not ship red.
 
+## How sessions must finish
+
+Any session that changes code in this repo finishes the job itself before ending:
+1. Commit all work on a `claude/*` branch.
+2. Push the branch explicitly (`git push -u origin claude/<slug>`).
+3. Create the PR yourself with `gh pr create` and put the PR URL in your final reply.
+
+Never end by pointing at a GitHub compare page or telling Ray to click a Create PR button. If you made no changes, say "no changes, nothing to ship" explicitly instead of offering a PR.
+
 ## Known context
 
 - Posting gotchas are recorded in project memory (TikTok DIRECT_POST behavior, Facebook 255-char caption cap, and the post-once rule: never auto-retry a failed post, a retry loop double-posts or spams failures).
