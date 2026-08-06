@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ScaleSolo Brand Intake</title>
+<style>
+  :root {
+    --accent: #e5484d;
+    --accent-dark: #c2373b;
+    --accent-soft: #fdecec;
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --ink: #17181c;
+    --muted: #6b7280;
+    --line: #e7e9ee;
+    --good: #16a34a;
+    --radius: 16px;
+    --shadow: 0 1px 2px rgba(16,18,24,.04), 0 8px 24px rgba(16,18,24,.06);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 24px 18px 120px; }
+
+  header.top {
+    position: sticky; top: 0; z-index: 40;
+    background: rgba(246,247,249,.86);
+    backdrop-filter: saturate(180%) blur(10px);
+    border-bottom: 1px solid var(--line);
+    padding: 12px 18px;
+  }
+  .top-inner { max-width: 760px; margin: 0 auto; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; }
+  .logo-dot {
+    width: 26px; height: 26px; border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+    display: inline-flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 14px; font-weight: 800;
+  }
+  .top-spacer { flex: 1; }
+  .tts-toggle {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 13px; color: var(--muted); cursor: pointer; user-select: none;
+    border: 1px solid var(--line); background: var(--card);
+    padding: 6px 10px; border-radius: 999px;
+  }
+  .tts-toggle input { accent-color: var(--accent); }
+
+  .progress-shell { height: 6px; background: var(--line); border-radius: 999px; margin-top: 10px; overflow: hidden; }
+  .progress-bar { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--accent-dark)); transition: width .35s ease; }
+  .progress-label { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+  .hero { padding: 26px 4px 8px; }
+  .hero h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -.4px; }
+  .hero p { margin: 0; color: var(--muted); font-size: 15px; }
+
+  .voice-note {
+    display: none;
+    margin: 14px 0 0; padding: 10px 12px;
+    background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412;
+    border-radius: 12px; font-size: 13px;
+  }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 18px 18px 16px;
+    margin-top: 16px;
+    box-shadow: var(--shadow);
+  }
+  .q-head { display: flex; align-items: flex-start; gap: 12px; }
+  .q-num {
+    flex: 0 0 auto;
+    width: 28px; height: 28px; border-radius: 9px;
+    background: var(--accent-soft); color: var(--accent-dark);
+    font-weight: 700; font-size: 14px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .q-body { flex: 1; min-width: 0; }
+  .q-title { font-size: 16.5px; font-weight: 650; margin: 2px 0 2px; }
+  .q-why { font-size: 13px; color: var(--muted); margin: 0 0 10px; }
+  .q-why b { color: #374151; font-weight: 600; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+  .chip {
+    border: 1px solid var(--line); background: #fbfbfc;
+    padding: 6px 12px; border-radius: 999px; font-size: 13px;
+    cursor: pointer; user-select: none; transition: all .12s ease;
+  }
+  .chip:hover { border-color: #c9ccd3; }
+  .chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-dark); font-weight: 600; }
+
+  .rank-list { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .rank-item {
+    display: flex; align-items: center; gap: 10px;
+    border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: #fbfbfc;
+  }
+  .rank-item.on { background: var(--accent-soft); border-color: var(--accent); }
+  .rank-badge {
+    width: 22px; height: 22px; border-radius: 6px; flex: 0 0 auto;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; background: #fff; border: 1px solid var(--line); color: var(--muted);
+  }
+  .rank-item.on .rank-badge { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .rank-label { flex: 1; font-size: 14px; }
+  .rank-arrows { display: flex; gap: 4px; }
+  .rank-arrows button {
+    border: 1px solid var(--line); background: #fff; border-radius: 6px;
+    width: 26px; height: 26px; cursor: pointer; font-size: 13px; color: var(--muted);
+  }
+  .rank-arrows button:hover { color: var(--ink); border-color: #c9ccd3; }
+
+  .answer-row { position: relative; }
+  textarea.answer {
+    width: 100%; min-height: 84px; resize: vertical;
+    border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px 46px 12px 12px; font: inherit; font-size: 14.5px;
+    background: #fff; color: var(--ink); outline: none;
+    transition: border-color .12s ease, box-shadow .12s ease;
+  }
+  textarea.answer:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  textarea.answer.listening { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+  .mic-btn {
+    position: absolute; right: 8px; top: 8px;
+    width: 34px; height: 34px; border-radius: 10px;
+    border: 1px solid var(--line); background: #fff; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--muted); transition: all .12s ease;
+  }
+  .mic-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .mic-btn.rec {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+    animation: pulse 1.3s infinite;
+  }
+  .mic-btn svg { width: 17px; height: 17px; }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(229,72,77,.45); }
+    70% { box-shadow: 0 0 0 8px rgba(229,72,77,0); }
+    100% { box-shadow: 0 0 0 0 rgba(229,72,77,0); }
+  }
+
+  .followup { margin-top: 8px; font-size: 12.5px; color: var(--muted); font-style: italic; }
+  .q-status { font-size: 12px; color: var(--muted); margin-top: 6px; min-height: 15px; }
+  .interim { color: var(--accent); }
+
+  .field-map { font-size: 11.5px; color: #9aa0aa; margin-top: 8px; }
+  .field-map code { background: #f1f2f4; padding: 1px 5px; border-radius: 5px; font-size: 11px; color: #555; }
+
+  .review {
+    background: linear-gradient(180deg, #fff, #fbfbfc);
+    border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 20px 18px; margin-top: 28px; box-shadow: var(--shadow);
+  }
+  .review h2 { margin: 0 0 4px; font-size: 20px; }
+  .review .sub { color: var(--muted); font-size: 14px; margin: 0 0 14px; }
+  .summary {
+    background: #0f1115; color: #e6e8ec; border-radius: 12px;
+    padding: 14px 16px; font-size: 13px; line-height: 1.6;
+    white-space: pre-wrap; word-break: break-word;
+    max-height: 340px; overflow: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .btn-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+  .btn {
+    border: 1px solid var(--line); background: #fff; color: var(--ink);
+    padding: 10px 16px; border-radius: 10px; font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: all .12s ease;
+  }
+  .btn:hover { border-color: #c9ccd3; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { background: var(--accent-dark); }
+  .btn.ghost { background: transparent; }
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px);
+    background: #17181c; color: #fff; padding: 10px 18px; border-radius: 999px;
+    font-size: 13px; opacity: 0; pointer-events: none; transition: all .25s ease; z-index: 90;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  footer.foot { text-align: center; color: #9aa0aa; font-size: 12px; margin-top: 30px; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="top-inner">
+    <div class="brand"><span class="logo-dot">S</span> ScaleSolo Brand Intake</div>
+    <div class="top-spacer"></div>
+    <label class="tts-toggle" title="Read each question aloud when it scrolls into view or when you tap the speaker">
+      <input type="checkbox" id="ttsToggle" /> Read questions aloud
+    </label>
+  </div>
+  <div class="top-inner" style="margin-top:8px; display:block;">
+    <div class="progress-shell"><div class="progress-bar" id="progressBar"></div></div>
+    <div class="progress-label" id="progressLabel">0 of 13 answered</div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="hero">
+    <h1>Tell us about your brand</h1>
+    <p>Answer by voice (tap the mic) or by typing. There are no wrong answers. This takes about 10 minutes and helps the ScaleSolo team build your content strategy. Your progress saves automatically.</p>
+    <div class="voice-note" id="voiceNote">
+      Heads up: voice input needs Chrome or Edge on desktop or Android. It is not available in this browser (Firefox and iOS Safari do not support it yet), so please type your answers. Everything else works normally.
+    </div>
+  </div>
+
+  <div id="questions"></div>
+
+  <section class="review" id="review">
+    <h2>Review and export</h2>
+    <p class="sub">Here is your intake compiled into a clean summary. Copy it, or download it to send back to the ScaleSolo team.</p>
+    <div class="summary" id="summaryOut">Start answering above and your summary builds here.</div>
+    <div class="btn-row">
+      <button class="btn primary" id="copyBtn">Copy to clipboard</button>
+      <button class="btn" id="mdBtn">Download .md</button>
+      <button class="btn" id="jsonBtn">Download .json</button>
+      <button class="btn ghost" id="clearBtn">Clear all</button>
+    </div>
+  </section>
+
+  <footer class="foot">Prototype. ScaleSolo internal strategy intake. Answers stay in this browser until you export them.</footer>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---- Question set. Grounded in ScaleSolo's profiles table + onboarding survey.
+  // field = the real column(s) in supabase profiles / user_profiles these could feed.
+  var QUESTIONS = [
+    {
+      id: "brand_name",
+      title: "What is your brand or creator name, and in one line, what do you do?",
+      why: "This becomes your brand identity everywhere we post. The one-liner anchors every caption and hook.",
+      followup: "Example: \"Emanuel Motors, a used-car dealership that makes buying feel human.\"",
+      field: "profiles.business_name, profiles.owner_name, profiles.brand_bible",
+      placeholder: "Name, then one sentence on what you do..."
+    },
+    {
+      id: "audience",
+      title: "Who is your ideal audience? Be as specific as you can.",
+      why: "Everything from tone to platform choice bends around who we are trying to reach.",
+      followup: "Think age, location, what they want, what keeps them up at night. Vague (\"everyone\") hurts reach.",
+      field: "profiles.target_audience",
+      placeholder: "Who are we talking to..."
+    },
+    {
+      id: "goal_90",
+      title: "What is your number one goal for the next 90 days?",
+      why: "We reverse-engineer the content calendar from this single priority.",
+      followup: "Pick the closest, then add detail in your own words.",
+      field: "user_profiles.onboarding_data (primary goal)",
+      chips: ["Sales / revenue", "Followers / reach", "Attract sponsors", "Brand awareness", "Launch a product"],
+      placeholder: "Your main 90-day goal, and what winning looks like..."
+    },
+    {
+      id: "goal_secondary",
+      title: "Any commercial or secondary goal behind the content?",
+      why: "Content often doubles as a resume. If you want sponsors or partners, we shape posts to look the part.",
+      followup: "Example: \"Look big enough that regional brands want to sponsor me.\"",
+      field: "user_profiles.onboarding_data (secondary goal)",
+      placeholder: "Secondary goal, or type none..."
+    },
+    {
+      id: "voice",
+      title: "What is your brand voice and personality?",
+      why: "This trains how our writers sound as you. Tap the traits that fit, then add nuance.",
+      followup: "How should a stranger feel after reading one of your posts?",
+      field: "profiles.preferred_tone, brand voice training",
+      chips: ["Bold", "Premium", "Technical", "Funny", "Warm", "Direct", "Playful", "Authoritative", "Inspirational", "Down to earth"],
+      placeholder: "Describe your voice in your own words..."
+    },
+    {
+      id: "differentiator",
+      title: "What makes you different, and who are your competitors?",
+      why: "We lean into your edge and avoid sounding like everyone else in your lane.",
+      followup: "Name 1 to 3 competitors and the one thing you do better or differently.",
+      field: "profiles.brand_bible",
+      placeholder: "Your edge, plus a few competitors..."
+    },
+    {
+      id: "pillars",
+      title: "What are your content pillars, the topics you can talk about endlessly?",
+      why: "Pillars keep the calendar consistent and on-brand instead of random.",
+      followup: "List 3 to 5 themes. Example: behind the scenes, customer wins, myth-busting, quick tips.",
+      field: "profiles.brand_bible, content pillars",
+      placeholder: "3 to 5 topics you never run out of..."
+    },
+    {
+      id: "capacity",
+      title: "What content can you realistically create, who creates it, and at what cadence?",
+      why: "A plan you can actually sustain beats an ambitious one you abandon in week two.",
+      followup: "Can you film video? Photos only? Voice notes? Who does it, and how many days a week is realistic?",
+      field: "profiles.default_formats, cadence",
+      placeholder: "What you can make, who makes it, how often..."
+    },
+    {
+      id: "platforms",
+      title: "Rank your priority platforms.",
+      why: "We focus effort where your audience actually is instead of spreading thin.",
+      followup: "Drag the top ones up. Leave the rest lower.",
+      field: "profiles.default_platforms, profiles.uploadpost_platforms",
+      rank: ["Instagram", "TikTok", "YouTube", "Facebook", "X", "LinkedIn"],
+      placeholder: "Anything to add about your platform choices..."
+    },
+    {
+      id: "no_go",
+      title: "What is on your no-go list?",
+      why: "We hard-code these so nothing off-brand or risky ever goes out under your name.",
+      followup: "Words, topics, claims, politics, competitors, promises you legally cannot make.",
+      field: "profiles.do_not_say, profiles.visual_avoid",
+      placeholder: "Words, topics, or claims to avoid..."
+    },
+    {
+      id: "offers",
+      title: "What offers, products, or links do you want to drive traffic to?",
+      why: "These become the calls to action we rotate through your content.",
+      followup: "Product pages, a lead magnet, a booking link, a promo code.",
+      field: "profiles.website_url, always_include",
+      placeholder: "What are we sending people to..."
+    },
+    {
+      id: "proof",
+      title: "What proof or credibility can we use? Results, numbers, testimonials.",
+      why: "Specific proof outperforms adjectives. Real numbers and quotes build trust fast.",
+      followup: "Sales figures, years in business, awards, follower milestones, client quotes.",
+      field: "profiles.brand_bible (credibility), always_include",
+      placeholder: "Numbers, wins, and testimonials we can cite..."
+    },
+    {
+      id: "anything_else",
+      title: "Anything else we should know?",
+      why: "Your chance to flag anything the questions above missed.",
+      followup: "Seasonality, a big launch coming, sensitivities, brand assets you have.",
+      field: "profiles.brand_bible",
+      placeholder: "Anything else..."
+    }
+  ];
+
+  var STORE_KEY = "scalesolo_brand_intake_v1";
+  var state = load();
+
+  // ---- Feature detect voice
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var voiceSupported = !!SR;
+  var synth = window.speechSynthesis || null;
+  var ttsSupported = !!synth;
+
+  var micIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>';
+  var speakerIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>';
+
+  var container = document.getElementById("questions");
+  var activeRec = null;      // current SpeechRecognition instance
+  var activeQid = null;      // which question is recording
+
+  // ---- Build UI
+  QUESTIONS.forEach(function (q, i) {
+    var card = document.createElement("div");
+    card.className = "card";
+    card.id = "card-" + q.id;
+
+    var head = document.createElement("div");
+    head.className = "q-head";
+
+    var num = document.createElement("div");
+    num.className = "q-num";
+    num.textContent = String(i + 1);
+    head.appendChild(num);
+
+    var bodyWrap = document.createElement("div");
+    bodyWrap.className = "q-body";
+
+    var titleRow = document.createElement("div");
+    titleRow.style.display = "flex";
+    titleRow.style.alignItems = "flex-start";
+    titleRow.style.gap = "8px";
+
+    var title = document.createElement("div");
+    title.className = "q-title";
+    title.textContent = q.title;
+    titleRow.appendChild(title);
+
+    if (ttsSupported) {
+      var spk = document.createElement("button");
+      spk.className = "mic-btn";
+      spk.style.position = "static";
+      spk.style.flex = "0 0 auto";
+      spk.title = "Read this question aloud";
+      spk.innerHTML = speakerIcon;
+      spk.addEventListener("click", function () { speak(q.title + ". " + q.why); });
+      titleRow.appendChild(spk);
+    }
+    bodyWrap.appendChild(titleRow);
+
+    var why = document.createElement("p");
+    why.className = "q-why";
+    why.innerHTML = "<b>Why we ask:</b> " + esc(q.why);
+    bodyWrap.appendChild(why);
+
+    // chips
+    if (q.chips) {
+      var chipWrap = document.createElement("div");
+      chipWrap.className = "chips";
+      q.chips.forEach(function (c) {
+        var chip = document.createElement("span");
+        chip.className = "chip";
+        chip.textContent = c;
+        if ((state.chips[q.id] || []).indexOf(c) !== -1) chip.classList.add("on");
+        chip.addEventListener("click", function () {
+          toggleChip(q.id, c, chip);
+        });
+        chipWrap.appendChild(chip);
+      });
+      bodyWrap.appendChild(chipWrap);
+    }
+
+    // rank list
+    if (q.rank) {
+      if (!state.rank[q.id]) state.rank[q.id] = q.rank.slice();
+      var ul = document.createElement("ul");
+      ul.className = "rank-list";
+      ul.id = "rank-" + q.id;
+      bodyWrap.appendChild(ul);
+      renderRank(q.id, ul);
+    }
+
+    // answer + mic
+    var answerRow = document.createElement("div");
+    answerRow.className = "answer-row";
+    var ta = document.createElement("textarea");
+    ta.className = "answer";
+    ta.id = "ta-" + q.id;
+    ta.placeholder = q.placeholder || "Your answer...";
+    ta.value = state.answers[q.id] || "";
+    ta.addEventListener("input", function () {
+      state.answers[q.id] = ta.value;
+      save(); refreshProgress(); renderSummary();
+    });
+    answerRow.appendChild(ta);
+
+    if (voiceSupported) {
+      var mic = document.createElement("button");
+      mic.className = "mic-btn";
+      mic.id = "mic-" + q.id;
+      mic.title = "Tap to speak. Tap again to stop.";
+      mic.innerHTML = micIcon;
+      mic.addEventListener("click", function () { toggleMic(q.id); });
+      answerRow.appendChild(mic);
+    }
+    bodyWrap.appendChild(answerRow);
+
+    var status = document.createElement("div");
+    status.className = "q-status";
+    status.id = "status-" + q.id;
+    bodyWrap.appendChild(status);
+
+    if (q.followup) {
+      var fu = document.createElement("div");
+      fu.className = "followup";
+      fu.textContent = "Follow-up: " + q.followup;
+      bodyWrap.appendChild(fu);
+    }
+
+    var fm = document.createElement("div");
+    fm.className = "field-map";
+    fm.innerHTML = "Feeds: <code>" + esc(q.field) + "</code>";
+    bodyWrap.appendChild(fm);
+
+    head.appendChild(bodyWrap);
+    card.appendChild(head);
+    container.appendChild(card);
+  });
+
+  if (!voiceSupported) {
+    document.getElementById("voiceNote").style.display = "block";
+  }
+  if (!ttsSupported) {
+    document.getElementById("ttsToggle").parentElement.style.display = "none";
+  }
+
+  // ---- Chips
+  function toggleChip(qid, value, el) {
+    if (!state.chips[qid]) state.chips[qid] = [];
+    var arr = state.chips[qid];
+    var idx = arr.indexOf(value);
+    if (idx === -1) { arr.push(value); el.classList.add("on"); }
+    else { arr.splice(idx, 1); el.classList.remove("on"); }
+    save(); renderSummary(); refreshProgress();
+  }
+
+  // ---- Rank
+  function renderRank(qid, ul) {
+    ul.innerHTML = "";
+    var order = state.rank[qid];
+    order.forEach(function (label, pos) {
+      var li = document.createElement("li");
+      li.className = "rank-item" + (pos < 3 ? " on" : "");
+      var badge = document.createElement("span");
+      badge.className = "rank-badge";
+      badge.textContent = String(pos + 1);
+      var lab = document.createElement("span");
+      lab.className = "rank-label";
+      lab.textContent = label;
+      var arrows = document.createElement("span");
+      arrows.className = "rank-arrows";
+      var up = document.createElement("button");
+      up.textContent = "↑"; up.title = "Move up";
+      up.addEventListener("click", function () { moveRank(qid, pos, -1, ul); });
+      var down = document.createElement("button");
+      down.textContent = "↓"; down.title = "Move down";
+      down.addEventListener("click", function () { moveRank(qid, pos, 1, ul); });
+      arrows.appendChild(up); arrows.appendChild(down);
+      li.appendChild(badge); li.appendChild(lab); li.appendChild(arrows);
+      ul.appendChild(li);
+    });
+  }
+  function moveRank(qid, pos, dir, ul) {
+    var order = state.rank[qid];
+    var np = pos + dir;
+    if (np < 0 || np >= order.length) return;
+    var tmp = order[pos]; order[pos] = order[np]; order[np] = tmp;
+    save(); renderRank(qid, ul); renderSummary();
+  }
+
+  // ---- Voice input
+  function toggleMic(qid) {
+    if (activeQid === qid && activeRec) { stopMic(); return; }
+    if (activeRec) stopMic();
+    startMic(qid);
+  }
+
+  function startMic(qid) {
+    var rec;
+    try { rec = new SR(); } catch (e) { setStatus(qid, "Could not start the microphone."); return; }
+    rec.lang = "en-US";
+    rec.continuous = true;
+    rec.interimResults = true;
+
+    var ta = document.getElementById("ta-" + qid);
+    var baseText = ta.value ? ta.value.replace(/\s+$/, "") + " " : "";
+    var committed = "";
+
+    rec.onresult = function (ev) {
+      var interim = "";
+      committed = "";
+      for (var k = 0; k < ev.results.length; k++) {
+        var res = ev.results[k];
+        if (res.isFinal) committed += res[0].transcript + " ";
+        else interim += res[0].transcript;
+      }
+      ta.value = baseText + committed + interim;
+      state.answers[qid] = baseText + committed;
+      setStatusHTML(qid, interim ? '<span class="interim">Hearing: ' + esc(interim) + '</span>' : 'Listening...');
+      save(); refreshProgress(); renderSummary();
+    };
+    rec.onerror = function (ev) {
+      if (ev.error === "not-allowed" || ev.error === "service-not-allowed") {
+        setStatus(qid, "Microphone permission was blocked. Allow mic access and try again.");
+      } else if (ev.error === "no-speech") {
+        setStatus(qid, "Did not catch that. Tap the mic and try again.");
+      } else {
+        setStatus(qid, "Voice stopped (" + ev.error + "). You can keep typing.");
+      }
+    };
+    rec.onend = function () {
+      // Commit whatever we have, trim interim tail.
+      ta.value = (baseText + committed).replace(/\s+$/, "");
+      state.answers[qid] = ta.value;
+      save(); renderSummary(); refreshProgress();
+      if (activeQid === qid) {
+        var micEl = document.getElementById("mic-" + qid);
+        if (micEl) micEl.classList.remove("rec");
+        ta.classList.remove("listening");
+        setStatus(qid, "");
+        activeRec = null; activeQid = null;
+      }
+    };
+
+    activeRec = rec; activeQid = qid;
+    var mic = document.getElementById("mic-" + qid);
+    if (mic) mic.classList.add("rec");
+    ta.classList.add("listening");
+    setStatus(qid, "Listening... tap the mic again to stop.");
+    try { rec.start(); } catch (e) { /* start called too fast */ }
+  }
+
+  function stopMic() {
+    if (!activeRec) return;
+    try { activeRec.stop(); } catch (e) {}
+  }
+
+  function setStatus(qid, txt) {
+    var el = document.getElementById("status-" + qid);
+    if (el) el.textContent = txt;
+  }
+  function setStatusHTML(qid, html) {
+    var el = document.getElementById("status-" + qid);
+    if (el) el.innerHTML = html;
+  }
+
+  // ---- TTS
+  var ttsToggle = document.getElementById("ttsToggle");
+  ttsToggle.checked = !!state.tts;
+  ttsToggle.addEventListener("change", function () {
+    state.tts = ttsToggle.checked;
+    save();
+    if (!state.tts && synth) synth.cancel();
+  });
+  function speak(text) {
+    if (!ttsSupported) return;
+    synth.cancel();
+    var u = new SpeechSynthesisUtterance(text);
+    u.rate = 1.0; u.pitch = 1.0;
+    synth.speak(u);
+  }
+  // Auto-read a question when it scrolls into view, if toggle is on.
+  if (ttsSupported && "IntersectionObserver" in window) {
+    var spoken = {};
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (!state.tts) return;
+        if (en.isIntersecting && en.intersectionRatio > 0.6) {
+          var id = en.target.id.replace("card-", "");
+          if (spoken[id]) return;
+          spoken[id] = true;
+          var q = QUESTIONS.filter(function (x) { return x.id === id; })[0];
+          if (q) speak(q.title);
+        }
+      });
+    }, { threshold: [0.6] });
+    QUESTIONS.forEach(function (q) {
+      var el = document.getElementById("card-" + q.id);
+      if (el) io.observe(el);
+    });
+  }
+
+  // ---- Progress
+  function isAnswered(q) {
+    if (state.answers[q.id] && state.answers[q.id].trim()) return true;
+    if (q.chips && (state.chips[q.id] || []).length) return true;
+    return false;
+  }
+  function refreshProgress() {
+    var done = QUESTIONS.filter(isAnswered).length;
+    var pct = Math.round((done / QUESTIONS.length) * 100);
+    document.getElementById("progressBar").style.width = pct + "%";
+    document.getElementById("progressLabel").textContent = done + " of " + QUESTIONS.length + " answered";
+  }
+
+  // ---- Summary
+  function compile() {
+    var lines = [];
+    lines.push("# ScaleSolo Brand Intake");
+    lines.push("");
+    lines.push("Generated " + new Date().toLocaleString());
+    lines.push("");
+    QUESTIONS.forEach(function (q, i) {
+      lines.push("## " + (i + 1) + ". " + q.title);
+      var parts = [];
+      if (q.chips) {
+        var picks = state.chips[q.id] || [];
+        if (picks.length) parts.push("Selected: " + picks.join(", "));
+      }
+      if (q.rank) {
+        parts.push("Priority order: " + state.rank[q.id].map(function (x, n) { return (n + 1) + ") " + x; }).join("  "));
+      }
+      var ans = (state.answers[q.id] || "").trim();
+      if (ans) parts.push(ans);
+      lines.push(parts.length ? parts.join("\n") : "_No answer yet_");
+      lines.push("");
+    });
+    return lines.join("\n");
+  }
+  function compileJSON() {
+    var out = { generated_at: new Date().toISOString(), responses: [] };
+    QUESTIONS.forEach(function (q) {
+      out.responses.push({
+        id: q.id,
+        question: q.title,
+        maps_to: q.field,
+        selected: q.chips ? (state.chips[q.id] || []) : undefined,
+        priority: q.rank ? state.rank[q.id] : undefined,
+        answer: (state.answers[q.id] || "").trim()
+      });
+    });
+    return JSON.stringify(out, null, 2);
+  }
+  function renderSummary() {
+    document.getElementById("summaryOut").textContent = compile();
+  }
+
+  // ---- Export
+  document.getElementById("copyBtn").addEventListener("click", function () {
+    var text = compile();
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { toast("Copied to clipboard"); },
+        function () { fallbackCopy(text); });
+    } else { fallbackCopy(text); }
+  });
+  function fallbackCopy(text) {
+    var t = document.createElement("textarea");
+    t.value = text; document.body.appendChild(t); t.select();
+    try { document.execCommand("copy"); toast("Copied to clipboard"); }
+    catch (e) { toast("Copy failed, select the text manually"); }
+    document.body.removeChild(t);
+  }
+  document.getElementById("mdBtn").addEventListener("click", function () {
+    download("brand-intake.md", compile(), "text/markdown");
+  });
+  document.getElementById("jsonBtn").addEventListener("click", function () {
+    download("brand-intake.json", compileJSON(), "application/json");
+  });
+  function download(name, content, mime) {
+    var blob = new Blob([content], { type: mime });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url; a.download = name; document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+    toast("Downloaded " + name);
+  }
+  document.getElementById("clearBtn").addEventListener("click", function () {
+    if (!confirm("Clear all answers on this device? This cannot be undone.")) return;
+    localStorage.removeItem(STORE_KEY);
+    location.reload();
+  });
+
+  // ---- Storage
+  function load() {
+    var base = { answers: {}, chips: {}, rank: {}, tts: false };
+    try {
+      var raw = localStorage.getItem(STORE_KEY);
+      if (!raw) return base;
+      var parsed = JSON.parse(raw);
+      return {
+        answers: parsed.answers || {},
+        chips: parsed.chips || {},
+        rank: parsed.rank || {},
+        tts: !!parsed.tts
+      };
+    } catch (e) { return base; }
+  }
+  function save() {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {}
+  }
+
+  // ---- Toast
+  var toastEl = document.getElementById("toast");
+  var toastTimer = null;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.classList.remove("show"); }, 2000);
+  }
+
+  // ---- Utils
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
+
+  // Init
+  refreshProgress();
+  renderSummary();
+})();
+</script>
+</body>
+</html>
