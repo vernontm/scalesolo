@@ -209,14 +209,22 @@ function ItemDetail({ item, onClose, onUpdate }) {
   const [captionDraft, setCaptionDraft] = useState(item.caption || '')
   const [hashtagsDraft, setHashtagsDraft] = useState(item.hashtags || '')
   const [savingCaption, setSavingCaption] = useState(false)
-  const captionDirty = captionDraft !== (item.caption || '') || hashtagsDraft !== (item.hashtags || '')
+  // Per-post TikTok mode: null = brand default, true = direct post,
+  // false = draft (inbox). Applies when the post is (re)submitted.
+  const [ttOverride, setTtOverride] = useState(
+    item.tiktok_direct_override === true || item.tiktok_direct_override === false
+      ? item.tiktok_direct_override : null
+  )
+  const ttSaved = item.tiktok_direct_override === true || item.tiktok_direct_override === false
+    ? item.tiktok_direct_override : null
+  const captionDirty = captionDraft !== (item.caption || '') || hashtagsDraft !== (item.hashtags || '') || ttOverride !== ttSaved
   const saveCaption = async () => {
     setSavingCaption(true); setError(null); setSuccess(null)
     try {
       const r = await fetch(`/api/content?id=${item.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ caption: captionDraft, hashtags: limitHashtags(hashtagsDraft, 5) }),
+        body: JSON.stringify({ caption: captionDraft, hashtags: limitHashtags(hashtagsDraft, 5), tiktok_direct_override: ttOverride }),
       })
       const b = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(b?.error || 'Could not save the caption')
