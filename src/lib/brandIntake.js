@@ -13,6 +13,7 @@ import {
   isAnswered,
   answeredCount,
   compileIntakeSummary,
+  MAX_ANSWER_CHARS,
   asText,
   asArr,
 } from '../../api/_lib/brandIntake.js'
@@ -24,6 +25,7 @@ export {
   isAnswered,
   answeredCount,
   compileIntakeSummary,
+  MAX_ANSWER_CHARS,
 }
 
 // Split a free-text answer into a clean array of items. Handles commas and

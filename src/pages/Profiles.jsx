@@ -1959,6 +1959,22 @@ export default function Profiles() {
     }
   }
 
+  // Best-effort status update for one intake submission (single attempt,
+  // no retry). Returns true on success. Used by the modal's review/archive
+  // actions and by Prefill's mark-as-reviewed follow-up.
+  const markIntakeStatus = async (profileId, submissionId, status) => {
+    try {
+      const r = await fetch('/api/intake/submissions', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ profile_id: profileId, id: submissionId, status }),
+      })
+      return r.ok
+    } catch {
+      return false
+    }
+  }
+
   // Prefill the editor from a submission. Fetches the submission detail
   // first (the list endpoint deliberately omits the answers blob), maps the
   // answers into editor fields, and merges them FILL-ONLY: a field that
@@ -2019,6 +2035,14 @@ export default function Profiles() {
       toast({ message: `${parts.join('; ')}. Review, then save.`, ttl: 9000 })
     } else {
       toast('This submission had nothing to prefill.')
+    }
+
+    // A successful prefill counts as a review: mark the row 'reviewed' so
+    // it frees the per-brand pending cap. Best-effort and non-blocking; if
+    // it fails the prefill above still stands, just note it softly.
+    const marked = await markIntakeStatus(profile.id, submission.id, 'reviewed')
+    if (!marked) {
+      toast('Prefilled, but could not mark the submission as reviewed. You can mark it from Intake responses.')
     }
   }
 
@@ -2170,6 +2194,7 @@ export default function Profiles() {
           token={session.access_token}
           onClose={() => setIntakeFor(null)}
           onPrefill={(submission) => prefillFromSubmission(intakeFor, submission)}
+          onSetStatus={(submissionId, status) => markIntakeStatus(intakeFor.id, submissionId, status)}
         />
       )}
     </div>
@@ -2178,20 +2203,27 @@ export default function Profiles() {
 
 // ─── Intake responses modal ────────────────────────────────────────────────
 // Lists this brand's Brand Intake submissions (newest first, capped at 50
-// server-side, summaries only). The displayed summary_md is compiled
-// SERVER-SIDE from the stored answers, so what the operator reviews here is
-// derived from the same data Prefill applies. "Prefill into editor" fetches
-// the submission detail (with answers) and fill-only-merges it into the
-// profile editor form. Nothing is written to the profile from here.
-function IntakeResponsesModal({ profile, token, onClose, onPrefill }) {
+// server-side, summaries only; archived rows hidden unless toggled on). The
+// displayed summary_md is compiled SERVER-SIDE from the stored answers at
+// read time, so what the operator reviews here is always derived from the
+// same data Prefill applies, for old and new rows alike. "Prefill into
+// editor" fetches the submission detail (with answers) and fill-only-merges
+// it into the profile editor form. "Mark reviewed" / "Archive" move a row
+// out of 'pending', which frees the per-brand pending cap on the public
+// intake endpoint. Nothing is written to the profile from here.
+function IntakeResponsesModal({ profile, token, onClose, onPrefill, onSetStatus }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [rows, setRows] = useState([])
   const [prefillBusy, setPrefillBusy] = useState(null)  // submission id being fetched
+  const [statusBusy, setStatusBusy] = useState(null)    // submission id being updated
+  const [showArchived, setShowArchived] = useState(false)
 
   useEffect(() => {
     let cancelled = false
-    fetch(`/api/intake/submissions?profile_id=${profile.id}`, {
+    setLoading(true)
+    setError(null)
+    fetch(`/api/intake/submissions?profile_id=${profile.id}${showArchived ? '&include_archived=1' : ''}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => r.json().then((body) => ({ ok: r.ok, body })))
@@ -2203,7 +2235,26 @@ function IntakeResponsesModal({ profile, token, onClose, onPrefill }) {
       .catch((e) => { if (!cancelled) setError(e.message) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [profile.id, token])
+  }, [profile.id, token, showArchived])
+
+  // Single attempt, no auto-retry: on success update the row in place (and
+  // drop a freshly archived row when archived rows are hidden).
+  const setStatus = async (sub, status) => {
+    if (statusBusy) return
+    setStatusBusy(sub.id)
+    try {
+      const ok = await onSetStatus(sub.id, status)
+      if (!ok) {
+        toast({ message: 'Could not update this submission. Try again in a moment.', kind: 'error' })
+        return
+      }
+      setRows((prev) => (status === 'archived' && !showArchived)
+        ? prev.filter((r) => r.id !== sub.id)
+        : prev.map((r) => (r.id === sub.id ? { ...r, status } : r)))
+    } finally {
+      setStatusBusy(null)
+    }
+  }
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -2223,43 +2274,82 @@ function IntakeResponsesModal({ profile, token, onClose, onPrefill }) {
         ) : rows.length === 0 ? (
           <div style={{ padding: 32, textAlign: 'center', color: 'var(--muted)', fontSize: 13.5, background: 'var(--surface-2)', borderRadius: 10, border: '1px dashed var(--border)' }}>
             <Inbox size={22} style={{ marginBottom: 8, opacity: 0.5 }} />
-            <div>No responses yet. Use "Get intake link" to send the questionnaire to this client.</div>
+            <div>
+              {showArchived
+                ? 'No responses yet. Use "Get intake link" to send the questionnaire to this client.'
+                : 'No active responses. Use "Get intake link" to send the questionnaire, or show archived below.'}
+            </div>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 440, overflowY: 'auto' }}>
-            {rows.map((sub) => (
-              <div key={sub.id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 12, background: 'var(--surface-2)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>
-                    {sub.created_at ? new Date(sub.created_at).toLocaleString() : ''}
-                  </span>
-                  <span className="pill pill-muted" style={{ fontSize: 10.5 }}>{sub.status || 'pending'}</span>
-                  <div style={{ flex: 1 }} />
-                  <button
-                    className="btn-primary"
-                    style={{ padding: '6px 10px', fontSize: 12 }}
-                    disabled={!!prefillBusy}
-                    onClick={async () => {
-                      if (prefillBusy) return
-                      setPrefillBusy(sub.id)
-                      try { await onPrefill(sub) } finally { setPrefillBusy(null) }
-                    }}
-                    title="Map these answers into the profile editor for review"
-                  >
-                    {prefillBusy === sub.id ? <Loader2 size={12} className="spin" /> : <Wand size={12} />} Prefill into editor
-                  </button>
+            {rows.map((sub) => {
+              const archived = sub.status === 'archived'
+              return (
+                <div key={sub.id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 12, background: 'var(--surface-2)', opacity: archived ? 0.6 : 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                      {sub.created_at ? new Date(sub.created_at).toLocaleString() : ''}
+                    </span>
+                    <span className="pill pill-muted" style={{ fontSize: 10.5 }}>{sub.status || 'pending'}</span>
+                    <div style={{ flex: 1 }} />
+                    {sub.status === 'pending' && (
+                      <button
+                        className="btn-ghost"
+                        style={{ padding: '6px 10px', fontSize: 12 }}
+                        disabled={!!statusBusy || !!prefillBusy}
+                        onClick={() => setStatus(sub, 'reviewed')}
+                        title="Mark this submission as reviewed (frees up the intake link's pending queue)"
+                      >
+                        {statusBusy === sub.id ? <Loader2 size={12} className="spin" /> : <Check size={12} />} Mark reviewed
+                      </button>
+                    )}
+                    {!archived && (
+                      <button
+                        className="btn-ghost"
+                        style={{ padding: '6px 10px', fontSize: 12 }}
+                        disabled={!!statusBusy || !!prefillBusy}
+                        onClick={() => setStatus(sub, 'archived')}
+                        title="Archive this submission (hidden from this list by default)"
+                      >
+                        {statusBusy === sub.id ? <Loader2 size={12} className="spin" /> : <Trash2 size={12} />} Archive
+                      </button>
+                    )}
+                    <button
+                      className="btn-primary"
+                      style={{ padding: '6px 10px', fontSize: 12 }}
+                      disabled={!!prefillBusy || !!statusBusy}
+                      onClick={async () => {
+                        if (prefillBusy) return
+                        setPrefillBusy(sub.id)
+                        try { await onPrefill(sub) } finally { setPrefillBusy(null) }
+                      }}
+                      title="Map these answers into the profile editor for review"
+                    >
+                      {prefillBusy === sub.id ? <Loader2 size={12} className="spin" /> : <Wand size={12} />} Prefill into editor
+                    </button>
+                  </div>
+                  <pre style={{
+                    margin: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8,
+                    padding: 12, fontSize: 11.5, lineHeight: 1.55, color: 'var(--text-soft)',
+                    whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 200, overflow: 'auto',
+                  }}>{sub.summary_md || '(no summary)'}</pre>
                 </div>
-                <pre style={{
-                  margin: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8,
-                  padding: 12, fontSize: 11.5, lineHeight: 1.55, color: 'var(--text-soft)',
-                  whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 200, overflow: 'auto',
-                }}>{sub.summary_md || '(no summary)'}</pre>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
-        <div style={{ marginTop: 14, fontSize: 11.5, color: 'var(--muted)' }}>
-          Prefill only fills empty fields (an existing brand bible gets the intake draft appended for review). Review and save to apply changes to the brand profile.
+        <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 11.5, color: 'var(--muted)', flex: 1, minWidth: 220 }}>
+            Prefill only fills empty fields (an existing brand bible gets the intake draft appended for review). Review and save to apply changes to the brand profile.
+          </div>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--muted)', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={(e) => setShowArchived(e.target.checked)}
+            />
+            Show archived
+          </label>
         </div>
       </div>
     </div>

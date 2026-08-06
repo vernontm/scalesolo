@@ -16,13 +16,21 @@
 --   1. Apply this migration.
 --   2. Deploy the code that reads/writes brand_intake_tokens promptly
 --      (api/intake.js, api/intake/token.js).
--- Between the two steps the OLD deployed code still queries the dropped
+--   3. ROTATE every intake link that existed before this migration:
+--      for each brand that already had a token, click "Get intake link"
+--      again (that upserts a fresh uuid over the old row) and re-send the
+--      new link to the client. Tokens minted under 0066 lived on the
+--      profiles row and were readable by every viewer+ collaborator, so
+--      they must be treated as potentially exposed even after the column
+--      is dropped; the copy below only keeps the old links working so
+--      nothing breaks before the operator gets to the rotation.
+-- Between steps 1 and 2 the OLD deployed code still queries the dropped
 -- profiles.intake_token column, so the intake feature errors temporarily:
 -- the operator's "Get intake link" button fails and already-sent client
 -- links show "link not valid" until step 2 finishes. No data is lost:
 -- existing tokens are copied into brand_intake_tokens below, so every
 -- previously sent client link works again as soon as the new code is
--- live, with nothing to re-send. Keep the gap between the two steps short.
+-- live. Keep the gap between the two steps short.
 
 -- 1. Service-role-only token table. One row per brand; rotating a link
 --    upserts a fresh uuid over the old one.
@@ -47,12 +55,28 @@ ALTER TABLE public.brand_intake_tokens ENABLE ROW LEVEL SECURITY;
 
 -- 2. Preserve existing tokens. The operator may have already generated
 --    and sent intake links (e.g. the Emanthewheelman brand); those links
---    must keep working after the column moves.
-INSERT INTO public.brand_intake_tokens (profile_id, token)
-SELECT id, intake_token
-FROM public.profiles
-WHERE intake_token IS NOT NULL
-ON CONFLICT DO NOTHING;
+--    must keep working after the column moves (until the post-deploy
+--    rotation in sequencing step 3 above). Guarded on the column's
+--    existence: after step 3 below drops profiles.intake_token, a re-run
+--    of this file skips the copy cleanly instead of failing on the
+--    missing column. PL/pgSQL only plans the INSERT when the branch is
+--    actually taken, so the dropped column reference is safe here.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'profiles'
+      AND column_name = 'intake_token'
+  ) THEN
+    INSERT INTO public.brand_intake_tokens (profile_id, token)
+    SELECT id, intake_token
+    FROM public.profiles
+    WHERE intake_token IS NOT NULL
+    ON CONFLICT DO NOTHING;
+  END IF;
+END
+$$;
 
 -- 3. Drop the leaking column. This closes the direct PostgREST read path
 --    (profiles_select lets any viewer+ collaborator read the full row) and
@@ -61,8 +85,11 @@ ALTER TABLE public.profiles DROP COLUMN IF EXISTS intake_token;
 
 -- 4. Enforce the status enum 0066 documented (pending / reviewed /
 --    archived) but shipped without a CHECK. 0066 is already applied, so
---    this lands as an ALTER; the DROP first keeps a re-run idempotent.
---    Mirrors the 0060_campaigns.sql precedent for text status columns.
+--    this lands as an ALTER; the DROP first lets this pair re-run
+--    cleanly. With the column-existence guard on step 2, every statement
+--    in this file is now guarded, so a full re-run of the file is a
+--    no-op. Mirrors the 0060_campaigns.sql precedent for text status
+--    columns.
 ALTER TABLE public.brand_intake_submissions
   DROP CONSTRAINT IF EXISTS brand_intake_submissions_status_check;
 ALTER TABLE public.brand_intake_submissions

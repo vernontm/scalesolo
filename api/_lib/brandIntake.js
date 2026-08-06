@@ -211,7 +211,10 @@ export function compileIntakeSummary(state) {
 
 const MAX_STATE_KEYS = 100        // keys per top-level object (answers / chips / rank)
 const MAX_KEY_CHARS = 100         // question ids are short slugs
-const MAX_ANSWER_CHARS = 10000    // per free-text answer
+// Per free-text answer. Exported so the questionnaire page can enforce the
+// same cap client-side (textarea maxLength + remaining-characters hint)
+// instead of letting a long dictation bounce off the server with a 400.
+export const MAX_ANSWER_CHARS = 10000
 const MAX_LIST_ITEMS = 50         // per chips / rank array
 const MAX_LIST_ITEM_CHARS = 500   // per chips / rank entry
 const MAX_META_BYTES = 2000       // small optional metadata blob

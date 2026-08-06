@@ -19,6 +19,7 @@ import {
   isAnswered,
   answeredCount,
   compileIntakeSummary,
+  MAX_ANSWER_CHARS,
 } from '../lib/brandIntake.js'
 
 // Feature detection. Kept at module scope so it runs once. Accessed via
@@ -59,10 +60,18 @@ export default function Intake() {
     if (!token) { setLoading(false); setLoadError('Missing link.'); return }
     let cancelled = false
     fetch(`/api/intake?token=${encodeURIComponent(token)}`)
-      .then((r) => r.json().then((body) => ({ ok: r.ok, body })))
-      .then(({ ok, body }) => {
+      .then((r) => r.json().then((body) => ({ status: r.status, ok: r.ok, body })))
+      .then(({ status, ok, body }) => {
         if (cancelled) return
-        if (!ok) throw new Error(body?.error || 'This intake link is not valid.')
+        if (!ok) {
+          // Only a 404 carries a deliberate, human-written message. Any
+          // other failure (e.g. a transient server error) must show a
+          // generic line: this is a public page, so raw backend error text
+          // never gets rendered to anonymous visitors.
+          throw new Error(status === 404
+            ? (body?.error || 'This intake link is not valid.')
+            : 'Could not load this questionnaire right now. Please try again in a few minutes.')
+        }
         setBrand(body.brand)
       })
       .catch((e) => { if (!cancelled) setLoadError(e.message) })
@@ -134,9 +143,9 @@ export default function Intake() {
   const startMic = (qid) => {
     if (!SR) return
     // If another question is recording, stop it first and clear its status
-    // synchronously. The old recognition's async onend skips status cleanup
-    // (its activeQidRef guard fails once we reassign below), so without this
-    // the old question would show "Listening..." forever.
+    // synchronously. The old recognition's async onend skips shared-state
+    // cleanup (its recRef identity guard fails once we reassign below), so
+    // without this the old question would show "Listening..." forever.
     if (recRef.current) {
       const oldQid = activeQidRef.current
       stopMic()
@@ -193,7 +202,12 @@ export default function Intake() {
       // the user started typing mid-recording: their typed text owns the
       // answer and must not be clobbered by this closure's stale copy.
       if (!rec.__typed) setAnswer(qid, (baseText + committed).replace(/\s+$/, ''))
-      if (activeQidRef.current === qid) {
+      // Only the recognition that is STILL current cleans up the shared
+      // refs. Guarding on instance identity (not qid equality) means a
+      // stale onend from a rapid mic-tap sequence (Q1, Q2, Q1 before the
+      // first onend fires) can never null out a newer live recording's
+      // refs and leave it orphaned.
+      if (recRef.current === rec) {
         recRef.current = null
         activeQidRef.current = null
         setActiveMic(null)
@@ -230,6 +244,23 @@ export default function Intake() {
   // ── Submit ────────────────────────────────────────────────────────────
   const summaryPreview = useMemo(() => compileIntakeSummary(state), [state])
 
+  // Turn a server rejection into one friendly line. 400s come from the
+  // strict payload validator, whose raw messages (e.g. "answers.answers.
+  // anything_else is too long") are developer-facing; 404/429 already carry
+  // human-written copy that passes through unchanged.
+  const friendlySubmitError = (status, raw) => {
+    if (status === 400) {
+      if (/too long|too large|oversized|too many/i.test(raw || '')) {
+        return `One of your answers is too long to send. Each answer can be up to ${MAX_ANSWER_CHARS.toLocaleString()} characters; please shorten the longest one and try again. Your answers are saved on this device.`
+      }
+      return 'Something in your answers could not be accepted. Please refresh this page and try again; your answers are saved on this device.'
+    }
+    if (status === 404 || status === 429) return raw || 'Could not submit. Please try again.'
+    // 5xx and anything unexpected: generic copy only; raw backend error
+    // text never renders on this public page.
+    return 'Could not submit right now. Please try again in a few minutes; your answers are saved on this device.'
+  }
+
   const submit = async () => {
     if (submitting || submitted) return   // post-once: no double submit, no retry loop
     stopMic()
@@ -245,7 +276,7 @@ export default function Intake() {
         body: JSON.stringify({ token, answers: state, hp }),
       })
       const body = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(body?.error || 'Could not submit. Please try again.')
+      if (!r.ok) throw new Error(friendlySubmitError(r.status, body?.error))
       setSubmitted(true)
       try { localStorage.removeItem(storageKey) } catch { /* noop */ }
     } catch (e) {
@@ -423,9 +454,15 @@ export default function Intake() {
   )
 }
 
+// Show the remaining-characters hint once an answer is within this many
+// characters of the server-side per-answer cap.
+const CHARS_LEFT_HINT_AT = 500
+
 function QuestionCard({ index, q, state, answered, recording, status, onText, onToggleChip, onMoveRank, onMic, onSpeak }) {
   const chips = state.chips[q.id] || []
   const rankOrder = Array.isArray(state.rank[q.id]) ? state.rank[q.id] : (q.rank || [])
+  const answerLen = (state.answers[q.id] || '').length
+  const charsLeft = MAX_ANSWER_CHARS - answerLen
 
   return (
     <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: '18px 18px 16px', marginTop: 16 }}>
@@ -509,6 +546,7 @@ function QuestionCard({ index, q, state, answered, recording, status, onText, on
               value={state.answers[q.id] || ''}
               onChange={(e) => onText(e.target.value)}
               placeholder={q.placeholder}
+              maxLength={MAX_ANSWER_CHARS}
               style={{
                 width: '100%', minHeight: 84, resize: 'vertical',
                 paddingRight: VOICE_SUPPORTED ? 46 : 12,
@@ -533,6 +571,18 @@ function QuestionCard({ index, q, state, answered, recording, status, onText, on
           </div>
 
           {status && <div style={{ fontSize: 12, color: recording ? 'var(--red)' : 'var(--muted)', marginTop: 6, minHeight: 15 }}>{status}</div>}
+          {charsLeft <= CHARS_LEFT_HINT_AT && (
+            <div style={{ fontSize: 11.5, color: charsLeft <= 0 ? 'var(--red)' : 'var(--muted)', marginTop: 4 }}>
+              {charsLeft < 0
+                // Typing is capped by maxLength, but voice dictation appends
+                // programmatically and can overshoot; ask for a trim so the
+                // server does not bounce the whole submission.
+                ? `This answer is ${Math.abs(charsLeft).toLocaleString()} characters over the ${MAX_ANSWER_CHARS.toLocaleString()}-character limit. Please trim it before sending.`
+                : charsLeft === 0
+                  ? 'This answer is at the maximum length. Please trim it before sending.'
+                  : `${charsLeft.toLocaleString()} characters left for this answer.`}
+            </div>
+          )}
           {q.followup && <div style={{ marginTop: 8, fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>Follow-up: {q.followup}</div>}
         </div>
       </div>

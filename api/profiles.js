@@ -140,7 +140,8 @@ export default async function handler(req, res) {
         // default_platforms is deliberately NOT whitelisted: it silently
         // drives live posting targets (Content.jsx, BulkUploadView.jsx) and
         // the profile editor has no UI for it, so no client write path may
-        // set it. It stays managed server-side from connected accounts.
+        // set it. No code writes it at all today; when a brand needs it,
+        // it is set manually in the DB.
         'do_not_say','always_include','default_formats',
         'brand_colors','brand_fonts','logo_url',
         'timezone','synced_platforms','posting_schedule',

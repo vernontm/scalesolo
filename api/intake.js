@@ -144,6 +144,31 @@ export default async function handler(req, res) {
         },
       })
       const row = Array.isArray(inserted) ? inserted[0] : inserted
+
+      // Cap-race cleanup: the pre-insert count above is check-then-insert
+      // with no DB-side atomicity, so N concurrent requests can all pass the
+      // check and overshoot the cap. Re-count after the insert; if this
+      // request pushed the brand over the cap, delete OUR row by id and
+      // 429. Single attempt, no loop: a failure here leaves at worst a
+      // bounded overshoot of the concurrent burst size, which the pre-insert
+      // check then caps permanently.
+      if (row?.id) {
+        try {
+          const recount = await supaFetch(
+            `brand_intake_submissions?profile_id=eq.${brand.id}&status=eq.pending&select=id&limit=${MAX_PENDING_PER_BRAND + 1}`
+          )
+          if (Array.isArray(recount) && recount.length > MAX_PENDING_PER_BRAND) {
+            await supaFetch(`brand_intake_submissions?id=eq.${row.id}`, {
+              method: 'DELETE',
+              prefer: 'return=minimal',
+            })
+            return res.status(429).json({
+              error: 'This brand already has the maximum number of submissions waiting for review. Please reach out to the ScaleSolo team directly.',
+            })
+          }
+        } catch { /* best-effort guard; the insert stands if the recheck fails */ }
+      }
+
       return res.status(200).json({ ok: true, submission_id: row?.id })
     }
 
