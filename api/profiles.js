@@ -83,7 +83,7 @@ export default async function handler(req, res) {
         'brand_bible','brand_bible_summary','brand_cta',
         'brand_primary_color','brand_secondary_color','logo_url',
         'preferred_tone','target_audience','core_hashtags',
-        'do_not_say','always_include','default_formats','default_platforms',
+        'do_not_say','always_include','default_formats',
         'timezone','synced_platforms','posting_schedule',
         'instagram_handle','tiktok_handle','facebook_handle','threads_handle',
         'youtube_handle','linkedin_handle','x_handle',
@@ -137,7 +137,12 @@ export default async function handler(req, res) {
       const ALLOWED = new Set([
         'business_name','owner_name','industry','business_type','website_url',
         'brand_bible','brand_bible_summary','brand_cta','brand_primary_color','brand_secondary_color',
-        'do_not_say','always_include','default_formats','default_platforms',
+        // default_platforms is deliberately NOT whitelisted: it silently
+        // drives live posting targets (Content.jsx, BulkUploadView.jsx) and
+        // the profile editor has no UI for it, so no client write path may
+        // set it. No code writes it at all today; when a brand needs it,
+        // it is set manually in the DB.
+        'do_not_say','always_include','default_formats',
         'brand_colors','brand_fonts','logo_url',
         'timezone','synced_platforms','posting_schedule',
         'preferred_tone','target_audience','core_hashtags','location','timezone',
