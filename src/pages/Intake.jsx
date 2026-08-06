@@ -49,6 +49,7 @@ export default function Intake() {
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [submitError, setSubmitError] = useState(null)
+  const [hp, setHp] = useState('')   // honeypot; humans never see or fill it
 
   const recRef = useRef(null)       // active SpeechRecognition instance
   const activeQidRef = useRef(null)
@@ -132,8 +133,17 @@ export default function Intake() {
 
   const startMic = (qid) => {
     if (!SR) return
-    // If another question is recording, stop it first.
-    if (recRef.current) stopMic()
+    // If another question is recording, stop it first and clear its status
+    // synchronously. The old recognition's async onend skips status cleanup
+    // (its activeQidRef guard fails once we reassign below), so without this
+    // the old question would show "Listening..." forever.
+    if (recRef.current) {
+      const oldQid = activeQidRef.current
+      stopMic()
+      if (oldQid && oldQid !== qid) {
+        setMicStatus((m) => ({ ...m, [oldQid]: '' }))
+      }
+    }
 
     let rec
     try { rec = new SR() } catch {
@@ -148,8 +158,13 @@ export default function Intake() {
     const existing = (state.answers[qid] || '').replace(/\s+$/, '')
     const baseText = existing ? existing + ' ' : ''
     let committed = ''
+    // Set by onerror so onend keeps the error message on screen instead of
+    // wiping it a frame later (the browser fires 'error' then 'end').
+    let errored = false
 
     rec.onresult = (ev) => {
+      // The user took over by typing; stop rewriting from this closure.
+      if (rec.__typed) return
       let interim = ''
       committed = ''
       for (let k = 0; k < ev.results.length; k++) {
@@ -161,6 +176,8 @@ export default function Intake() {
       setMicStatus((m) => ({ ...m, [qid]: interim ? `Hearing: ${interim}` : 'Listening...' }))
     }
     rec.onerror = (ev) => {
+      if (rec.__typed) return
+      errored = true
       let msg
       if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
         msg = 'Microphone permission was blocked. Allow mic access and try again.'
@@ -172,13 +189,17 @@ export default function Intake() {
       setMicStatus((m) => ({ ...m, [qid]: msg }))
     }
     rec.onend = () => {
-      // Commit whatever we captured, trim the interim tail.
-      setAnswer(qid, (baseText + committed).replace(/\s+$/, ''))
+      // Commit whatever we captured, trim the interim tail. Skipped when
+      // the user started typing mid-recording: their typed text owns the
+      // answer and must not be clobbered by this closure's stale copy.
+      if (!rec.__typed) setAnswer(qid, (baseText + committed).replace(/\s+$/, ''))
       if (activeQidRef.current === qid) {
         recRef.current = null
         activeQidRef.current = null
         setActiveMic(null)
-        setMicStatus((m) => ({ ...m, [qid]: '' }))
+        // Keep an error message visible so the user gets the recovery hint;
+        // only clear the transient listening status.
+        if (!errored) setMicStatus((m) => ({ ...m, [qid]: '' }))
       }
     }
 
@@ -194,6 +215,18 @@ export default function Intake() {
     startMic(qid)
   }
 
+  // Manual edits while that question is recording take over the answer:
+  // flag the recognition so its onresult/onend callbacks stop rewriting the
+  // textarea from their stale closure, abort it, and apply the typed value.
+  const handleTyped = (qid, v) => {
+    const rec = recRef.current
+    if (rec && activeQidRef.current === qid) {
+      rec.__typed = true
+      try { rec.abort() } catch { /* noop */ }
+    }
+    setAnswer(qid, v)
+  }
+
   // ── Submit ────────────────────────────────────────────────────────────
   const summaryPreview = useMemo(() => compileIntakeSummary(state), [state])
 
@@ -203,11 +236,13 @@ export default function Intake() {
     setSubmitting(true)
     setSubmitError(null)
     try {
-      const summary_md = compileIntakeSummary(state)
+      // The summary shown above is a local preview only. The server compiles
+      // and stores its own summary from the validated answers, so a client
+      // cannot send a digest that differs from what it actually submitted.
       const r = await fetch('/api/intake', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, answers: state, summary_md }),
+        body: JSON.stringify({ token, answers: state, hp }),
       })
       const body = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(body?.error || 'Could not submit. Please try again.')
@@ -330,7 +365,7 @@ export default function Intake() {
             answered={isAnswered(state, q)}
             recording={activeMic === q.id}
             status={micStatus[q.id]}
-            onText={(v) => setAnswer(q.id, v)}
+            onText={(v) => handleTyped(q.id, v)}
             onToggleChip={(c) => toggleChip(q.id, c)}
             onMoveRank={(pos, dir) => moveRank(q.id, pos, dir, q.rank || [])}
             onMic={() => toggleMic(q.id)}
@@ -355,6 +390,20 @@ export default function Intake() {
               {submitError}
             </div>
           )}
+
+          {/* Honeypot (mirrors the forms endpoint). Hidden from humans;
+              a bot that auto-fills inputs trips it and the server drops
+              the submission silently. */}
+          <input
+            type="text"
+            name="hp"
+            value={hp}
+            onChange={(e) => setHp(e.target.value)}
+            tabIndex={-1}
+            autoComplete="off"
+            aria-hidden="true"
+            style={{ position: 'absolute', left: -9999, top: 0, width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
+          />
 
           <button
             type="button"

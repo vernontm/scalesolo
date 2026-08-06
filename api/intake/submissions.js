@@ -1,12 +1,21 @@
-// OPERATOR (authenticated). List Brand Intake submissions for a brand.
+// OPERATOR (authenticated). List / read Brand Intake submissions.
 //
 // GET /api/intake/submissions?profile_id=<uuid>
-//   Returns the brand's submissions (newest first) for a brand the caller
-//   owns. Owner / admin only, mirroring api/profiles.js access checks. Reads
-//   via the service role after the ownership check (the table has RLS on and
-//   no anon policy, so this is the only read path).
+//   Newest-first list for a brand the caller owns, capped at 50 rows and
+//   WITHOUT the answers blob, so a flooded table cannot turn the review
+//   modal fetch into a multi-megabyte response.
+//
+// GET /api/intake/submissions?profile_id=<uuid>&id=<uuid>
+//   Detail mode: one submission including its full answers. Used by the
+//   Prefill flow right before mapping answers into the editor.
+//
+// Owner / admin only, mirroring api/profiles.js access checks. Reads via
+// the service role after the ownership check (the table has RLS on and no
+// anon policy, so this is the only read path).
 
-import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { setCors, requireUser, supaFetch, assertProfileAccess, isUuid } from '../_lib/supabase.js'
+
+const LIST_LIMIT = 50
 
 export default async function handler(req, res) {
   setCors(req, res)
@@ -25,8 +34,21 @@ export default async function handler(req, res) {
     const role = await assertProfileAccess(userId, profileId)
     if (!['owner', 'admin'].includes(role)) return res.status(403).json({ error: 'Forbidden' })
 
+    // Detail mode: one row, answers included.
+    const submissionId = req.query.id
+    if (submissionId) {
+      if (!isUuid(submissionId)) return res.status(400).json({ error: 'Invalid id format' })
+      const rows = await supaFetch(
+        `brand_intake_submissions?profile_id=eq.${profileId}&id=eq.${submissionId}&select=id,answers,summary_md,status,created_at&limit=1`
+      )
+      const submission = rows?.[0]
+      if (!submission) return res.status(404).json({ error: 'Submission not found' })
+      return res.status(200).json({ submission })
+    }
+
+    // List mode: summaries only, newest first, hard limit.
     const rows = await supaFetch(
-      `brand_intake_submissions?profile_id=eq.${profileId}&order=created_at.desc&select=id,answers,summary_md,status,created_at`
+      `brand_intake_submissions?profile_id=eq.${profileId}&order=created_at.desc&select=id,summary_md,status,created_at&limit=${LIST_LIMIT}`
     )
     return res.status(200).json({ submissions: Array.isArray(rows) ? rows : [] })
   } catch (err) {

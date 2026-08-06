@@ -1,10 +1,16 @@
 // OPERATOR (authenticated). Generate or rotate the Brand Intake token.
 //
 // POST /api/intake/token   body: { profile_id }
-//   Sets profiles.intake_token to a fresh uuid for a brand the caller owns
-//   and returns { token, url } where url is the full public intake link.
-//   Rotating (calling again) issues a new token and invalidates the old
-//   link. Owner or admin only, mirroring api/profiles.js access checks.
+//   Upserts a fresh uuid into brand_intake_tokens (one row per brand) and
+//   returns { token, url } where url is the full public intake link.
+//   Rotating (calling again) replaces the token in place and invalidates
+//   the old link. Owner or admin only, mirroring api/profiles.js checks.
+//
+//   Tokens live in the service-role-only brand_intake_tokens table
+//   (migration 0067), NOT on the profiles row: profiles is readable by
+//   every collaborator role via GET /api/profiles and the profiles_select
+//   RLS policy, and the intake token is a bearer secret that only owners
+//   and admins may handle.
 
 import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
 
@@ -40,10 +46,12 @@ export default async function handler(req, res) {
     if (!['owner', 'admin'].includes(role)) return res.status(403).json({ error: 'Forbidden' })
 
     const token = crypto.randomUUID()
-    await supaFetch(`profiles?id=eq.${profileId}`, {
-      method: 'PATCH',
-      body: { intake_token: token },
-      prefer: 'return=minimal',
+    // Upsert keyed on profile_id: first call creates the row, later calls
+    // rotate the token in place.
+    await supaFetch('brand_intake_tokens?on_conflict=profile_id', {
+      method: 'POST',
+      body: { profile_id: profileId, token },
+      prefer: 'resolution=merge-duplicates,return=minimal',
     })
 
     const url = `${intakeOrigin(req)}/intake/${token}`
