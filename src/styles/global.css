@@ -1639,3 +1639,8 @@ a:focus-visible {
   stroke-dasharray: none !important;
   animation: none !important;
 }
+/* elementsSelectable=false lets ReactFlow set pointer-events:none on the
+   whole edge — which kills our transparent scissors hit path. Force the
+   edge group interactive so click/hover on the line still fires; the
+   individual sub-paths opt out via their own pointerEvents. */
+.react-flow__edge { pointer-events: auto; }

@@ -105,12 +105,19 @@ function prettyPlatforms(arr) {
 // of the edge area (we render an invisible thicker hit zone for stable hover).
 function ScissorEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, style }) {
   const [hover, setHover] = useState(false)
+  const [pinned, setPinned] = useState(false)   // tap-to-keep-open (mobile + click)
   const [edgePath, labelX, labelY] = getSmoothStepPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition })
+  const show = hover || pinned
+  const disconnect = (e) => {
+    e.stopPropagation()
+    setPinned(false); setHover(false)
+    window.__spaceDisconnectEdge?.(id)
+  }
   return (
     <>
       {/* Solid connector + a pulsing glow that travels along the line
           (replaces the old animated dashes). */}
-      <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={{ stroke: 'var(--red)', strokeWidth: 1.75, opacity: 0.85, ...style, strokeDasharray: 'none', animation: 'none' }} />
+      <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={{ stroke: 'var(--red)', strokeWidth: show ? 2.4 : 1.75, opacity: 0.9, ...style, strokeDasharray: 'none', animation: 'none' }} />
       <path
         d={edgePath}
         fill="none"
@@ -125,27 +132,26 @@ function ScissorEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, t
           opacity: 0.9,
         }}
       />
-      {/* Wider invisible hit area for stable hover */}
+      {/* Wide invisible hit area. pointerEvents:'stroke' is REQUIRED — a
+          transparent stroke gets no events under the default
+          visiblePainted, which is why hover/click silently stopped
+          working. Click (or tap) toggles the scissors open. */}
       <path
         d={edgePath}
         fill="none"
         stroke="transparent"
-        strokeWidth={20}
+        strokeWidth={26}
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
-        style={{ cursor: 'pointer' }}
+        onClick={(e) => { e.stopPropagation(); setPinned((v) => !v) }}
+        style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
       />
-      {hover && (
+      {show && (
         <EdgeLabelRenderer>
           <div
             onMouseEnter={() => setHover(true)}
             onMouseLeave={() => setHover(false)}
-            onClick={(e) => {
-              e.stopPropagation()
-              if (typeof window !== 'undefined' && window.__spaceDisconnectEdge) {
-                window.__spaceDisconnectEdge(id)
-              }
-            }}
+            onClick={disconnect}
             style={{
               position: 'absolute',
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
@@ -154,14 +160,14 @@ function ScissorEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, t
               background: 'var(--red)',
               color: '#fff',
               borderRadius: 999,
-              width: 24, height: 24,
+              width: 30, height: 30,
               display: 'grid', placeItems: 'center',
               boxShadow: '0 4px 10px rgba(0,0,0,0.4)',
               border: '2px solid var(--surface)',
             }}
             title="Disconnect"
           >
-            <Scissors size={12} />
+            <Scissors size={14} />
           </div>
         </EdgeLabelRenderer>
       )}
@@ -1981,6 +1987,26 @@ function SpaceBuilder({ space, onSave, onClose }) {
   // Ref mirrors of nodes/edges so global helpers don't read stale closures.
   const nodesRef = useRef(nodes)
   const edgesRef = useRef(edges)
+  // ReactFlow instance (captured via onInit) so we can translate screen
+  // coordinates to flow coordinates for placing new nodes in view.
+  const rfRef = useRef(null)
+  // Flow position for a new node: the center of the current viewport (or an
+  // explicit screen point). Falls back to a cascade if the instance isn't
+  // ready yet. Small deterministic jitter so stacking adds don't overlap.
+  const flowSpawnPos = (screenPt) => {
+    const inst = rfRef.current
+    if (inst?.screenToFlowPosition) {
+      const wrap = document.querySelector('.react-flow')?.getBoundingClientRect()
+      const pt = screenPt || (wrap
+        ? { x: wrap.left + wrap.width / 2, y: wrap.top + wrap.height / 2 }
+        : { x: window.innerWidth / 2, y: window.innerHeight / 2 })
+      const p = inst.screenToFlowPosition(pt)
+      const j = (nodesRef.current?.length || 0) % 5
+      return { x: p.x - 140 + j * 24, y: p.y - 90 + j * 20 }
+    }
+    const n = nodesRef.current?.length || 0
+    return { x: 120 + n * 40, y: 80 + n * 60 }
+  }
   useEffect(() => { nodesRef.current = nodes }, [nodes])
   useEffect(() => { edgesRef.current = edges }, [edges])
   const [aiSuggestion, setAiSuggestion] = useState(null)
@@ -2277,7 +2303,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
       {
         id,
         type: 'space',
-        position: position || { x: 120 + arr.length * 40, y: 80 + arr.length * 60 },
+        position: position || flowSpawnPos(),
         data: { type, props: seededProps, status: 'idle', output: null, error: null },
       },
     ])
@@ -2548,11 +2574,17 @@ function SpaceBuilder({ space, onSave, onClose }) {
   }
   const onDrop = (e) => {
     e.preventDefault()
-    // ReactFlow positions are relative to the flow viewport; we approximate
-    // here with the screen offset minus the wrapper. For MVP this is fine —
-    // user can reposition by dragging the node afterward.
-    const rect = e.currentTarget.getBoundingClientRect()
-    const basePos = { x: e.clientX - rect.left - 100, y: e.clientY - rect.top - 50 }
+    // Translate the drop point to true flow coordinates (accounts for the
+    // current pan + zoom), so media lands exactly under the cursor instead
+    // of drifting off-screen when the canvas has been panned/zoomed.
+    let basePos
+    if (rfRef.current?.screenToFlowPosition) {
+      const p = rfRef.current.screenToFlowPosition({ x: e.clientX, y: e.clientY })
+      basePos = { x: p.x - 140, y: p.y - 90 }
+    } else {
+      const rect = e.currentTarget.getBoundingClientRect()
+      basePos = { x: e.clientX - rect.left - 100, y: e.clientY - rect.top - 50 }
+    }
     const files = Array.from(e.dataTransfer.files || []).filter((f) =>
       (f.type || '').startsWith('image/') || (f.type || '').startsWith('video/') || /\.(mp4|mov|webm|m4v)$/i.test(f.name || ''))
     if (files.length) { dropMediaFiles(files, basePos); return }
@@ -4296,6 +4328,7 @@ function SpaceBuilder({ space, onSave, onClose }) {
         <ReactFlow
           nodes={renderNodes}
           edges={edges}
+          onInit={(inst) => { rfRef.current = inst }}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
