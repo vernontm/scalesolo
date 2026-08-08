@@ -13,6 +13,19 @@ import { useProfile } from '../context/ProfileContext.jsx'
 import { useCredits } from '../context/CreditsContext.jsx'
 import TrialGate from '../components/TrialGate.jsx'
 
+// Reactive "is this a phone-width viewport" flag. Drives the calendar's
+// switch from the desktop month grid to a tap-friendly agenda list.
+function useIsMobile(maxWidth = 760) {
+  const [is, setIs] = useState(() => typeof window !== 'undefined' && window.matchMedia(`(max-width:${maxWidth}px)`).matches)
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width:${maxWidth}px)`)
+    const on = () => setIs(mq.matches)
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [maxWidth])
+  return is
+}
+
 // Format a UTC ISO timestamp as a "YYYY-MM-DDTHH:mm" string in the browser's
 // local timezone — the format <input type="datetime-local"> expects. Pre-filling
 // with toISOString() puts UTC into a local-time input and silently shifts the
@@ -35,9 +48,14 @@ const tabBar = {
   borderRadius: 12,
   marginBottom: 18,
   width: 'fit-content',
+  maxWidth: '100%',
+  // Scroll the tabs horizontally on narrow screens instead of wrapping /
+  // overflowing the viewport.
+  overflowX: 'auto',
+  WebkitOverflowScrolling: 'touch',
 }
 const tabBtn = (active) => ({
-  display: 'inline-flex', alignItems: 'center', gap: 6,
+  display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', flexShrink: 0,
   padding: '8px 14px', borderRadius: 8,
   background: active ? 'linear-gradient(135deg, var(--red), var(--red-dark))' : 'transparent',
   color: active ? '#fff' : 'var(--text-soft)',
@@ -989,6 +1007,7 @@ function ItemList({ items, emptyHint, onOpen }) {
 //     PATCH'd via the existing /api/content endpoint (which auto-
 //     resyncs the Upload-Post job behind the scenes).
 function CalendarView({ items, onOpen, token, onChange, profileId }) {
+  const isMobile = useIsMobile(760)
   // Monthly-generation modal. Lives here (not on the parent) so a
   // toolbar button on the calendar header can open it; the modal
   // handles its own multi-step flow + chunked /generate-month calls.
@@ -1071,6 +1090,26 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
 
   const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   const todayKey = dayKey(new Date())
+
+  // Mobile agenda: every scheduled/posted item from today forward, grouped
+  // by day, chronological. A phone can't use a 7-column month grid, so this
+  // is the primary schedule view there (tap a row to open + manage it).
+  const agenda = useMemo(() => {
+    const start = new Date(); start.setHours(0, 0, 0, 0)
+    const byId = new Map()
+    for (const it of items) byId.set(it.id, it)
+    for (const it of localItems) byId.set(it.id, it)
+    const rows = [...byId.values()].filter((it) => it.scheduled_datetime && new Date(it.scheduled_datetime) >= start)
+    rows.sort((a, b) => new Date(a.scheduled_datetime) - new Date(b.scheduled_datetime))
+    const groups = []
+    let cur = null
+    for (const it of rows) {
+      const k = dayKey(new Date(it.scheduled_datetime))
+      if (!cur || cur.key !== k) { cur = { key: k, date: new Date(it.scheduled_datetime), items: [] }; groups.push(cur) }
+      cur.items.push(it)
+    }
+    return groups
+  }, [items, localItems])
 
   // Drag state — we hold the dragging item id while it's in flight so
   // hover styling on drop targets shows up. dragKind distinguishes a
@@ -1295,29 +1334,28 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
     <div>
       {/* Month / year header + pagination. Prev / next step viewMonth
           ±1 calendar month; Today resets to the current month. */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 10,
+      <div className="cal-header" style={{
+        display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
         marginBottom: 14, padding: '10px 14px',
         background: 'var(--surface)', border: '1px solid var(--border)',
         borderRadius: 10,
       }}>
-        <div style={{
+        <div className="cal-header-title" style={{
           fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700,
-          color: 'var(--text)', flex: 1, letterSpacing: '0.02em',
+          color: 'var(--text)', flex: 1, minWidth: 140, letterSpacing: '0.02em',
         }}>
-          {viewMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
+          {isMobile ? 'Schedule' : viewMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
         </div>
         <button
-          className="btn-primary"
+          className="btn-primary cal-header-gen"
           onClick={() => setShowGenerate(true)}
           style={{
             padding: '6px 14px', fontSize: 12, fontWeight: 700,
             display: 'inline-flex', alignItems: 'center', gap: 6,
-            marginRight: 6,
           }}
           title="Plan a full month of posts in one shot — review each in the swipe queue before publish"
         >
-          <Sparkles size={13} /> Generate content for the month
+          <Sparkles size={13} /> <span className="cal-header-gen-label">Generate content for the month</span>
         </button>
         <a
           href="/schedule/queue"
@@ -1325,32 +1363,20 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
           style={{
             padding: '6px 12px', fontSize: 12, fontWeight: 600,
             display: 'inline-flex', alignItems: 'center', gap: 5,
-            marginRight: 6, textDecoration: 'none',
+            textDecoration: 'none',
           }}
           title="Review pending drafts in the swipe queue"
         >
-          <ClipboardCheck size={13} /> Review queue
+          <ClipboardCheck size={13} /> <span className="cal-header-queue-label">Review queue</span>
         </a>
-        <button
-          className="btn-ghost"
-          onClick={goToday}
-          style={{ padding: '5px 12px', fontSize: 12 }}
-          title="Jump to the current month"
-        >Today</button>
-        <button
-          className="btn-ghost"
-          onClick={() => stepMonth(-1)}
-          aria-label="Previous month"
-          style={{ padding: '5px 10px', fontSize: 12 }}
-          title="Previous month"
-        >‹</button>
-        <button
-          className="btn-ghost"
-          onClick={() => stepMonth(1)}
-          aria-label="Next month"
-          style={{ padding: '5px 10px', fontSize: 12 }}
-          title="Next month"
-        >›</button>
+        {/* Month stepper is only meaningful in the grid view. */}
+        {!isMobile && (
+          <>
+            <button className="btn-ghost" onClick={goToday} style={{ padding: '5px 12px', fontSize: 12 }} title="Jump to the current month">Today</button>
+            <button className="btn-ghost" onClick={() => stepMonth(-1)} aria-label="Previous month" style={{ padding: '5px 10px', fontSize: 12 }} title="Previous month">‹</button>
+            <button className="btn-ghost" onClick={() => stepMonth(1)} aria-label="Next month" style={{ padding: '5px 10px', fontSize: 12 }} title="Next month">›</button>
+          </>
+        )}
       </div>
 
       {showGenerate && (
@@ -1367,9 +1393,105 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
         />
       )}
 
+      {/* ── MOBILE: tap-friendly agenda (no 7-column grid, no drag) ─────── */}
+      {isMobile && (
+        <div>
+          {/* Backlog: ready-but-unscheduled posts. Tap one to open it and
+              set a time in the drawer (drag-drop isn't usable on touch). */}
+          {backlog.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 8 }}>
+                Waiting to schedule · {backlog.length}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {backlog.map((it) => {
+                  const thumb = it.cover_image_url || (Array.isArray(it.media_urls) && it.media_urls[0])
+                  const isVid = it.media_type === 'video' && !it.cover_image_url
+                  return (
+                    <button key={it.id} onClick={() => onOpen && onOpen(it)}
+                      style={{
+                        display: 'flex', gap: 12, alignItems: 'center', width: '100%', textAlign: 'left',
+                        padding: 12, background: 'var(--surface)', cursor: 'pointer',
+                        border: '1px solid var(--border)',
+                        borderLeft: `3px solid ${it.media_type === 'video' ? '#0ea5e9' : it.media_type === 'text' ? '#f59e0b' : '#a855f7'}`,
+                        borderRadius: 10,
+                      }}>
+                      {thumb ? (
+                        isVid
+                          ? <video src={thumb} muted playsInline preload="metadata" style={{ width: 46, height: 46, borderRadius: 6, objectFit: 'cover', background: '#000', flexShrink: 0 }} />
+                          : <img src={thumb} alt="" style={{ width: 46, height: 46, borderRadius: 6, objectFit: 'cover', background: 'var(--surface-2)', flexShrink: 0 }} />
+                      ) : (
+                        <div style={{ width: 46, height: 46, borderRadius: 6, background: 'var(--surface-2)', border: '1px solid var(--border)', display: 'grid', placeItems: 'center', color: 'var(--muted)', fontWeight: 700, flexShrink: 0 }}>{it.media_type === 'text' ? '“”' : '?'}</div>
+                      )}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{it.title || 'Untitled'}</div>
+                        <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3 }}>Tap to schedule</div>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Upcoming agenda, grouped by day. */}
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 8 }}>Upcoming</div>
+          {agenda.length === 0 ? (
+            <div style={{ fontSize: 13, color: 'var(--muted)', padding: '28px 10px', textAlign: 'center', border: '1px dashed var(--border)', borderRadius: 10 }}>
+              Nothing scheduled yet. Generate content or drop a backlog post into a slot on desktop.
+            </div>
+          ) : agenda.map((g) => (
+            <div key={g.key} style={{ marginBottom: 16 }}>
+              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13.5, color: g.key === todayKey ? 'var(--red)' : 'var(--text)', marginBottom: 8 }}>
+                {g.key === todayKey ? 'Today · ' : ''}{g.date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {g.items.map((item) => {
+                  const hasCover = !!item.cover_image_url
+                  const thumb = hasCover ? item.cover_image_url : (Array.isArray(item.media_urls) && item.media_urls[0])
+                  const thumbIsVideo = item.media_type === 'video' && !hasCover
+                  const isPosted = item.status === 'posted'
+                  const isPending = item.status === 'draft' && item.approval_status === 'pending'
+                  const kindBorder = isPosted ? '#2ecc71' : isPending ? '#f59e0b' : item.media_type === 'video' ? '#0ea5e9' : item.media_type === 'text' ? '#f59e0b' : '#a855f7'
+                  const time = new Date(item.scheduled_datetime).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+                  return (
+                    <button key={item.id} onClick={() => onOpen(item)}
+                      style={{
+                        display: 'flex', gap: 12, alignItems: 'center', width: '100%', textAlign: 'left',
+                        padding: 12, cursor: 'pointer', borderRadius: 10,
+                        background: isPosted ? 'rgba(46,204,113,0.06)' : 'var(--surface)',
+                        border: '1px solid var(--border)', borderLeft: `3px solid ${kindBorder}`,
+                      }}>
+                      <div style={{ width: 52, textAlign: 'center', flexShrink: 0 }}>
+                        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13, color: 'var(--text)' }}>{time.replace(/\s/, '')}</div>
+                      </div>
+                      {thumb ? (
+                        thumbIsVideo
+                          ? <video src={thumb} muted playsInline preload="metadata" style={{ width: 46, height: 46, borderRadius: 6, objectFit: 'cover', background: '#000', flexShrink: 0 }} />
+                          : <img src={thumb} alt="" style={{ width: 46, height: 46, borderRadius: 6, objectFit: 'cover', background: 'var(--surface-2)', flexShrink: 0 }} />
+                      ) : (
+                        <div style={{ width: 46, height: 46, borderRadius: 6, background: 'var(--surface-2)', border: '1px solid var(--border)', display: 'grid', placeItems: 'center', color: 'var(--muted)', fontWeight: 700, flexShrink: 0 }}>{item.media_type === 'text' ? '“”' : '?'}</div>
+                      )}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{item.title || 'Untitled'}</div>
+                        <div style={{ fontSize: 11.5, marginTop: 3, color: isPosted ? '#2ecc71' : isPending ? '#f59e0b' : 'var(--muted)', fontWeight: isPosted || isPending ? 700 : 400 }}>
+                          {isPosted ? 'Posted' : isPending ? 'Needs approval' : 'Scheduled'}
+                          {Array.isArray(item.platforms) && item.platforms.length ? ` · ${item.platforms.join(', ')}` : ''}
+                        </div>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Backlog (left) + calendar (right). The backlog holds posts that
           are ready but have no time yet; drag one onto an open slot on a
-          day to schedule it. */}
+          day to schedule it. Desktop only — mobile uses the agenda above. */}
+      {!isMobile && (
       <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
         <div style={{
           width: 250, flexShrink: 0, background: 'var(--surface)',
@@ -1668,6 +1790,7 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
       </div>
         </div>
       </div>
+      )}
     </div>
   )
 }

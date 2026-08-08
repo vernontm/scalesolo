@@ -613,9 +613,20 @@ a:focus-visible {
   /* Tighten the sticky top header on mobile so it doesn't eat ~22%
      of a phone viewport. Single row, small gaps, slimmer padding. */
   .app-header { padding: 10px 14px !important; gap: 8px !important; }
+  /* The 40px page gutter wastes ~20% of a phone's width. Pull it in and
+     leave room at the bottom for any sticky action bar. */
+  .app-main { padding: 18px 14px 72px !important; }
 }
 @media (max-width: 700px) {
   .app-header { padding: 10px 10px !important; gap: 6px !important; }
+  .app-main { padding: 14px 12px 72px !important; }
+}
+
+/* Schedule calendar header: on phones the long "Generate content for the
+   month" label wraps ugly — collapse it to just the sparkle icon. */
+@media (max-width: 760px) {
+  .cal-header-gen-label { display: none; }
+  .cal-header-gen { padding: 8px 12px !important; }
 }
 
 /* Dashboard hero (red "Good afternoon, ray") + shipped card (big-number
