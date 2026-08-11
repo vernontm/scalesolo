@@ -2960,6 +2960,15 @@ function ImageUploadBody({ data, onPatch }) {
                 onClick={(e) => { e.stopPropagation(); setLibraryOpen(true) }}>
                 <LibraryIcon size={14} />
               </button>
+              <button type="button" style={glassIcon} title={`Download ${it.kind === 'video' ? 'video' : 'image'}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  const base = (it.name || data.name || (it.kind === 'video' ? 'video' : 'image'))
+                    .toString().replace(/\W+/g, '-').toLowerCase().slice(0, 60) || 'image'
+                  downloadUrl(it.url, `${base}.${it.kind === 'video' ? 'mp4' : 'png'}`)
+                }}>
+                <Download size={14} />
+              </button>
               {unhookedTargets.length > 0 && (
                 <button type="button" style={glassIcon}
                   title={`Connect to ${unhookedTargets.length} generator${unhookedTargets.length === 1 ? '' : 's'} on the canvas`}
