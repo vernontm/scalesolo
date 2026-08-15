@@ -1012,6 +1012,34 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
   // toolbar button on the calendar header can open it; the modal
   // handles its own multi-step flow + chunked /generate-month calls.
   const [showGenerate, setShowGenerate] = useState(false)
+  // "Sync from Upload-Post" — back-fills the calendar with any scheduled
+  // jobs that live at Upload-Post but never got a local row (the "it went
+  // away" case). Insert-only + idempotent on the server, so tapping it
+  // repeatedly is safe.
+  const [syncing, setSyncing] = useState(false)
+  const syncFromUploadPost = async () => {
+    if (syncing || !profileId) return
+    setSyncing(true)
+    try {
+      const r = await fetch('/api/social/reconcile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ profile_id: profileId }),
+      })
+      const b = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(b?.error || `Sync failed (${r.status})`)
+      if (b.mirrored > 0) {
+        toast({ kind: 'success', message: `Synced ${b.mirrored} scheduled post${b.mirrored === 1 ? '' : 's'} from Upload-Post` })
+        onChange?.()
+      } else {
+        toast({ kind: 'success', message: 'Calendar is already up to date' })
+      }
+    } catch (e) {
+      toast({ kind: 'error', message: e.message || 'Could not sync from Upload-Post' })
+    } finally {
+      setSyncing(false)
+    }
+  }
   // viewMonth = first day of the month the calendar is currently
   // showing. Start at today's month; prev / next buttons step it ±1.
   const [viewMonth, setViewMonth] = useState(() => {
@@ -1369,6 +1397,19 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
         >
           <ClipboardCheck size={13} /> <span className="cal-header-queue-label">Review queue</span>
         </a>
+        <button
+          className="btn-ghost"
+          onClick={syncFromUploadPost}
+          disabled={syncing}
+          style={{
+            padding: '6px 12px', fontSize: 12, fontWeight: 600,
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+          }}
+          title="Pull any scheduled posts that live at Upload-Post but aren't on this calendar yet"
+        >
+          {syncing ? <Loader2 size={13} className="spin" /> : <RotateCcw size={13} />}
+          <span className="cal-header-queue-label">Sync</span>
+        </button>
         {/* Month stepper is only meaningful in the grid view. */}
         {!isMobile && (
           <>
