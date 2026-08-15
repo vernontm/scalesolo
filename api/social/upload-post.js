@@ -421,6 +421,47 @@ export default async function handler(req, res) {
       }
     }
 
+    // ── Idempotency guard: never fire the same post twice ────────────────
+    // The same brand + the same media + the same target slot, submitted
+    // again inside a short window, is almost always a double-click or a
+    // blind retry (the UI cleared the prior attempt so the user assumed it
+    // failed). Firing again puts a duplicate on a real audience's feed —
+    // the exact "post once" failure we must prevent. Return the prior
+    // submission instead. Media posts only (text posts are legitimately
+    // repeatable). Fail-open: any error here must NOT block a real post.
+    if (!isText && !req.body?.allow_duplicate) {
+      try {
+        const dupMediaUrl = isVideo ? video_url : photos[0]
+        if (dupMediaUrl) {
+          const windowStart = new Date(Date.now() - 3 * 60_000).toISOString()
+          const dupes = await supaFetch(
+            `content_scripts?profile_id=eq.${profile_id}` +
+            `&media_urls=cs.{${encodeURIComponent('"' + dupMediaUrl + '"')}}` +
+            `&uploadpost_request_id=not.is.null` +
+            `&created_at=gte.${encodeURIComponent(windowStart)}` +
+            `&order=created_at.desc&limit=1` +
+            `&select=id,uploadpost_request_id,uploadpost_job_id,scheduled_datetime`
+          ).catch(() => [])
+          const prior = Array.isArray(dupes) ? dupes[0] : null
+          // Same target = both immediate, or the same scheduled slot.
+          const sameTarget = prior && (
+            (resolvedScheduledIso && prior.scheduled_datetime === resolvedScheduledIso) ||
+            (!resolvedScheduledIso && !prior.scheduled_datetime)
+          )
+          if (prior && sameTarget) {
+            console.warn('[upload-post] deduped identical submission', { profile_id, script_id: prior.id, scheduled: resolvedScheduledIso || 'now' })
+            return res.status(200).json({
+              request_id: prior.uploadpost_request_id,
+              job_id: prior.uploadpost_job_id || null,
+              script_id: prior.id,
+              deduped: true,
+              message: 'This exact post was already submitted moments ago. Returning the existing job instead of posting a duplicate.',
+            })
+          }
+        }
+      } catch { /* fail-open — a guard error must never block a real post */ }
+    }
+
     const endpoint = `https://api.upload-post.com/api/${isText ? 'upload_text' : isVideo ? 'upload' : 'upload_photos'}`
     const r = await fetch(endpoint, {
       method: 'POST',
@@ -459,6 +500,11 @@ export default async function handler(req, res) {
     // re-renders of the same content separated by hours still create
     // their own rows.
     let savedItem = null
+    // Set when the Upload-Post submit succeeded but saving the calendar row
+    // did NOT. Surfaced in the response so the caller can warn the user the
+    // post went out but won't appear on the Schedule page (instead of the
+    // old behavior: silent, so the user assumes it failed and re-submits).
+    let rowSaveError = null
     // Hoisted so the post-try backfill block at line ~469 can see them.
     // Without this, "const" inside the try block was block-scoped and the
     // backfill threw `uploadpostRequestId is not defined` on every run.
@@ -582,7 +628,17 @@ export default async function handler(req, res) {
         savedItem = Array.isArray(inserted) ? inserted[0] : inserted
       }
     } catch (e) {
-      console.warn('schedule_post → content_scripts persist failed:', e.message)
+      // The post already went to Upload-Post above; failing to save the
+      // calendar row here is the "it went away" bug (post is live/queued
+      // but invisible in ScaleSolo, so the user re-submits and duplicates).
+      // Make it loud instead of swallowing it: log at error level, ping
+      // Sentry, and flag it in the response so the UI can tell the user.
+      rowSaveError = e?.message || String(e)
+      console.error('upload-post: submit SUCCEEDED but content_scripts persist FAILED (post is live/queued but not on the calendar):', rowSaveError, { profile_id, request_id: uploadpostRequestId })
+      try {
+        const { captureApiError } = await import('../_lib/sentry.js')
+        captureApiError(e, { route: 'upload-post:persist', profileId: profile_id, extra: { request_id: uploadpostRequestId, kind: 'orphaned_post_no_row' } })
+      } catch {}
     }
 
     // Backfill uploadpost_job_id from the Upload-Post schedule list.
@@ -681,6 +737,13 @@ export default async function handler(req, res) {
       submitted: true,
       scheduled_iso: resolvedScheduledIso || null,
       content_id: savedItem?.id || null,
+      // Tell the caller whether the post also made it onto the calendar.
+      // When false, the post is live/queued at Upload-Post but has no row —
+      // the UI should surface `warning` rather than treat it as a no-op.
+      row_saved: !!savedItem?.id,
+      warning: (!savedItem?.id && rowSaveError)
+        ? 'Your post was submitted, but it could not be saved to the calendar. Do not re-submit; check the Schedule page or Upload-Post before trying again.'
+        : undefined,
       raw: body,
     })
   } catch (err) {
