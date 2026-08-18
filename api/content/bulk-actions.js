@@ -173,6 +173,14 @@ async function generateCaptions({ res, profile_id, script_ids, user_id }) {
   // so the four prompt variants can't drift apart on length rules.
   const CAPTION_LENGTH_RULE = 'The caption MUST be 250-450 characters TOTAL (hard cap 450 — count characters, not words). Structure: one CTA or hook line, then 1-2 short beats, then a one-line closer. Blank line between each. No stacked story paragraphs, no repeating what the video already says.'
 
+  // Truth guardrail applied to every prompt variant. Root-caused from a
+  // real incident (2026-08): a POV skit where a celebrity "walks in" to a
+  // restaurant got captioned as if the star had actually visited. The
+  // model treats an on-screen premise as literal, so we spell it out —
+  // dramatizations are fiction, and we never assert unverifiable real-
+  // world facts about real people.
+  const TRUTH_RULE = 'TRUTH: Do NOT state anything as real fact that you cannot verify from the brand context. Skits, POV setups, jokes, look-alikes, and dramatizations are creative premises, not real events: write around the concept, the feeling, or the viewer, not as something that happened. NEVER claim a real or famous person actually visited, endorsed, ate at, or said anything about the brand, and never put words in a real person\'s mouth. If a frame or on-screen line implies a celebrity or an event that did not verifiably happen, treat it as the setup (address the viewer, play up the vibe), not as fact. When unsure whether a detail is real, describe the experience, not the claim.'
+
   // Per-media-type prompt builders. The user message carries the actual
   // image (image rows only) so Claude Vision can read it; for video
   // rows with a transcript we bake the transcript into the system
@@ -202,6 +210,7 @@ RULES:
 - Match the brand voice and tone from the brand bible
 - Make the caption punchy and engaging
 - The title should be curiosity-driven, not generic
+- ${TRUTH_RULE}
 
 Return ONLY valid JSON:
 {"title": "...", "hook": "...", "full_script": "...", "caption": "...", "hashtags": "...", "first_comment": "..."}`
@@ -244,6 +253,7 @@ RULES:
 - Match the brand voice from the brand bible.
 - Reference things you actually see in the frames, not generic stock phrasing.
 - Make the title curiosity-driven, not generic.
+- ${TRUTH_RULE}
 
 Return ONLY valid JSON:
 {"title": "...", "hook": "...", "full_script": "...", "caption": "...", "hashtags": "...", "first_comment": "..."}`
@@ -270,6 +280,7 @@ RULES:
 - Match the brand voice and tone from the brand bible.
 - Only reference things visible in the frames. Do not invent dialogue.
 - The title should be curiosity-driven, not generic.
+- ${TRUTH_RULE}
 
 Return ONLY valid JSON:
 {"title": "...", "hook": "...", "full_script": "...", "caption": "...", "hashtags": "...", "first_comment": "..."}`
@@ -292,6 +303,7 @@ RULES:
 - Match the brand voice and tone from the brand bible
 - Reference what's actually visible in the image
 - Caption should drive engagement (question, story, or CTA)
+- ${TRUTH_RULE}
 
 Return ONLY valid JSON:
 {"title": "...", "caption": "...", "hashtags": "...", "first_comment": "..."}`
