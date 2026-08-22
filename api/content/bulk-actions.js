@@ -432,7 +432,7 @@ Return ONLY valid JSON:
         return { ...parsed, _caption_source: captionSource }
       } catch (e) {
         console.warn(`[generate-captions] video Claude failed for ${s.id} (${captionSource}):`, e?.message)
-        return null
+        return { _error: e?.data?.error?.message || e?.message || 'AI request failed', _status: e?.status || null }
       }
     }
     if (isImage) {
@@ -451,7 +451,7 @@ Return ONLY valid JSON:
         return parseJsonObject(ai?.content?.[0]?.text)
       } catch (e) {
         console.warn(`[generate-captions] image Claude failed for ${s.id}:`, e?.message)
-        return null
+        return { _error: e?.data?.error?.message || e?.message || 'AI request failed', _status: e?.status || null }
       }
     }
     // No media, no transcript — generic placeholder.
@@ -479,9 +479,16 @@ Return ONLY valid JSON:
   // job firing with the stale text and forcing the user to manually
   // re-schedule.
   const needsUploadPostResync = []
+  // AI-call failures (e.g. a 401 from an invalid ANTHROPIC_API_KEY). Collected
+  // so we can surface them loudly instead of returning a misleading updated:0.
+  const aiErrors = []
   const results = await Promise.allSettled(captionResults.map((r, i) => {
     const script = scripts[i]
     if (!script || !r) return Promise.resolve({ ok: false })
+    if (r._error) {
+      aiErrors.push({ id: script.id, error: r._error, status: r._status || null })
+      return Promise.resolve({ ok: false, error: r._error })
+    }
     if (r._no_transcript) {
       transcriptFailures.push({ id: script.id, reason: 'no_speech_detected' })
       return Promise.resolve({ ok: false, skipped: 'no_transcript' })
@@ -507,6 +514,25 @@ Return ONLY valid JSON:
       .catch((e) => { console.warn('caption patch failed for', script.id, e.message); return { ok: false } })
   }))
   const updated = results.filter((r) => r.status === 'fulfilled' && r.value?.ok).length
+
+  // Nothing captioned AND the failures were AI-call errors (not missing
+  // transcripts): surface it loudly. Before this, a 401 from an invalid
+  // ANTHROPIC_API_KEY was swallowed to null and the UI just showed
+  // "nothing happened" with no way to tell why. No credits are consumed
+  // on this path (the consume below is gated on updated > 0).
+  if (updated === 0 && aiErrors.length > 0) {
+    const first = aiErrors[0]
+    const isAuth = first.status === 401 || /x-api-key|authentication/i.test(String(first.error || ''))
+    return res.status(502).json({
+      error: isAuth
+        ? 'Caption generation failed: the AI service rejected the request (authentication). The ANTHROPIC_API_KEY is likely invalid or expired.'
+        : `Caption generation failed: ${first.error}`,
+      code: isAuth ? 'ai_auth_error' : 'ai_error',
+      ai_status: first.status || null,
+      updated: 0,
+      total: scripts.length,
+    })
+  }
 
   // Push the new caption to Upload-Post for every scheduled row we
   // just refreshed. Reuses the existing resync flow which cancels the
