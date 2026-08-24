@@ -136,6 +136,13 @@ async function generateCaptions({ res, profile_id, script_ids, user_id }) {
   const aiArr  = Array.isArray(profile.always_include) ? profile.always_include.filter(Boolean) : []
   const ctaStr = (profile.brand_cta || '').trim()
   const ruleLines = []
+  // Topic-match override (read first). A brand whose usual subject is X (e.g. an
+  // AI-automation brand) also posts off-topic videos: food reviews, testimonials,
+  // venue clips, plain page/event promos. Those must NOT inherit the brand's
+  // product, signature "comment KEYWORD" hooks, or product hashtags. This one
+  // rule scopes the CTA menu, core hashtags, and always-include rules below so a
+  // food review never closes with "Comment AI" or gets #chatgpt.
+  ruleLines.push('- TOPIC MATCH (read first): decide what THIS video is actually about from its transcript/frames. If its real subject does not fit the brand\'s usual topic (for example a food review, a customer testimonial, a venue or location clip, or a plain page or event promo), then the title, caption, hashtags, first comment, and CTA must be about THAT subject only. Do NOT insert the brand\'s product, offers, signature keywords, "comment KEYWORD" hooks, or product hashtags in that case, even if they are listed below. The brand rules below apply only when the video genuinely fits the brand\'s usual topic.')
   if (dnsArr.length) ruleLines.push(`- NEVER use these words/phrases: ${dnsArr.map((s) => `"${s}"`).join(', ')}`)
   if (aiArr.length)  ruleLines.push(`- ALWAYS include at least one of: ${aiArr.map((s) => `"${s}"`).join(', ')}`)
   // CTA selection. brand_ctas (jsonb array of {label, url, when}) is the
@@ -148,13 +155,13 @@ async function generateCaptions({ res, profile_id, script_ids, user_id }) {
   if (ctaMenu.length) {
     const menuLines = ctaMenu.map((c, i) =>
       `  ${i + 1}. "${c.label}"${c.url ? ` → ${c.url}` : ''} — best fit: ${c.when || 'any post'}`)
-    ruleLines.push(`- CTA MENU — pick exactly ONE that best matches this post's content (do not default to the first; vary across posts):\n${menuLines.join('\n')}`)
+    ruleLines.push(`- CTA MENU: pick the ONE whose "best fit" matches what this video is actually about (do not default to the first; vary across posts). If NONE fit the video's real topic, per the topic-match rule use NO brand CTA at all and write a short natural CTA or question about what is on screen:\n${menuLines.join('\n')}`)
   } else if (ctaStr) {
     ruleLines.push(`- Brand CTA (use when natural): "${ctaStr}"`)
   }
   const badPatternsBlock = renderBrandContextMarkdown(ctx, { include: ['bad_patterns'] })
   const coreHashtagsLine = profile.core_hashtags
-    ? `Core brand hashtags (lead with these in the hashtags field): ${profile.core_hashtags}`
+    ? `Core brand hashtags (lead with these ONLY when the video fits the brand's usual topic; for off-topic videos like food reviews or promos, use hashtags that match what is actually shown instead): ${profile.core_hashtags}`
     : ''
   const brandContext = [
     profile.business_name ? `Brand: ${profile.business_name}` : null,
