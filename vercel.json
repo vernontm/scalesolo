@@ -83,8 +83,7 @@
       "maxDuration": 60
     },
     "api/payouts.js": {
-      "maxDuration": 60,
-      "includeFiles": "{node_modules/@babel/**,node_modules/@noble/**,node_modules/@solana/**,node_modules/@swc/**,node_modules/agentkeepalive/**,node_modules/ansi-styles/**,node_modules/base-x/**,node_modules/base64-js/**,node_modules/bigint-buffer/**,node_modules/bignumber.js/**,node_modules/bindings/**,node_modules/bn.js/**,node_modules/borsh/**,node_modules/bs58/**,node_modules/buffer/**,node_modules/chalk/**,node_modules/color-convert/**,node_modules/color-name/**,node_modules/commander/**,node_modules/delay/**,node_modules/es6-promise/**,node_modules/es6-promisify/**,node_modules/eventemitter3/**,node_modules/eyes/**,node_modules/fast-stable-stringify/**,node_modules/file-uri-to-path/**,node_modules/has-flag/**,node_modules/humanize-ms/**,node_modules/ieee754/**,node_modules/isomorphic-ws/**,node_modules/jayson/**,node_modules/json-stringify-safe/**,node_modules/ms/**,node_modules/node-fetch/**,node_modules/rpc-websockets/**,node_modules/stream-chain/**,node_modules/stream-json/**,node_modules/superstruct/**,node_modules/supports-color/**,node_modules/text-encoding-utf-8/**,node_modules/tr46/**,node_modules/tslib/**,node_modules/undici-types/**,node_modules/uuid/**,node_modules/webidl-conversions/**,node_modules/whatwg-url/**,node_modules/ws/**}"
+      "maxDuration": 60
     }
   }
 }
