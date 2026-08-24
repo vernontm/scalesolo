@@ -48,6 +48,7 @@ const navGroups = [
       { to: '/create', label: 'Create', icon: Wand2 },
       { to: '/spaces',  label: 'Spaces',   icon: Boxes },
       { to: '/schedule', label: 'Schedule', icon: Sparkles },
+      { to: '/board',   label: 'Board',    icon: LayoutGrid, beta: true },
       { to: '/avatars', label: 'Avatars',  icon: UserCircle2 },
       { to: '/library', label: 'Library',  icon: LibraryIcon },
       { to: '/email',   label: 'Email',    icon: Mail, beta: true },
