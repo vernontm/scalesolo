@@ -5,7 +5,7 @@
 // editor who clicked their magic link actually gets access.
 import { setCors, requireUser, supaFetch, fmtErr } from '../_lib/supabase.js'
 
-const ALLOWED_PAGES = ['board']
+const ALLOWED_PAGES = ['board', 'payouts']
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
 

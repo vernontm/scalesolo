@@ -60,7 +60,7 @@ export default async function handler(req, res) {
       if (!id) return res.status(400).json({ error: 'id required' })
       const body = req.body || {}
       if (!body.stage || !STAGES.includes(body.stage)) return res.status(400).json({ error: 'valid stage required' })
-      const rows = await supaFetch(`board_cards?id=eq.${id}&select=profile_id,assigned_editor`)
+      const rows = await supaFetch(`board_cards?id=eq.${id}&select=profile_id,assigned_editor,stage,approved_at`)
       const profileId = rows?.[0]?.profile_id
       if (!profileId) return res.status(404).json({ error: 'Not found' })
       const role = await assertProfileAccess(auth.user.id, profileId)
@@ -69,7 +69,13 @@ export default async function handler(req, res) {
       }
       const updated = await supaFetch(`board_cards?id=eq.${id}`, {
         method: 'PATCH',
-        body: { stage: body.stage, position: body.position ?? 0, updated_at: new Date().toISOString() },
+        body: {
+          stage: body.stage,
+          position: body.position ?? 0,
+          updated_at: new Date().toISOString(),
+          // Payable-on-approve: stamp once, the first time it lands in approved.
+          ...(body.stage === 'approved' && !rows[0].approved_at ? { approved_at: new Date().toISOString() } : {}),
+        },
       })
       return res.status(200).json({ card: Array.isArray(updated) ? updated[0] : updated })
     }
@@ -178,7 +184,7 @@ export default async function handler(req, res) {
     if (req.method === 'PATCH' || req.method === 'PUT') {
       const id = req.query.id
       if (!id) return res.status(400).json({ error: 'id required' })
-      const rows = await supaFetch(`board_cards?id=eq.${id}&select=profile_id,assigned_editor`)
+      const rows = await supaFetch(`board_cards?id=eq.${id}&select=profile_id,assigned_editor,stage,approved_at`)
       const currentProfile = rows?.[0]?.profile_id
       if (!currentProfile) return res.status(404).json({ error: 'Not found' })
       const role = await assertProfileAccess(auth.user.id, currentProfile)
@@ -195,6 +201,8 @@ export default async function handler(req, res) {
       for (const k of allowed) if (k in (req.body || {})) updates[k] = req.body[k]
       // Clearing the assignee clears its denormalized name/email too.
       if ('assigned_editor' in updates && !updates.assigned_editor) { updates.assigned_editor_email = null; updates.assigned_editor_name = null }
+      // Payable-on-approve: stamp approved_at once, the first time it's approved.
+      if (updates.stage === 'approved' && !rows[0].approved_at) updates.approved_at = new Date().toISOString()
       if (updates.stage && !STAGES.includes(updates.stage)) return res.status(400).json({ error: 'invalid stage' })
       // Reassigning a card to a different brand: authorize the target and
       // cascade the denormalized profile_id onto its versions + comments so

@@ -31,6 +31,7 @@ const Billing       = lazy(() => import('./pages/Billing.jsx'))
 const Agent         = lazy(() => import('./pages/Agent.jsx'))
 const Pipeline      = lazy(() => import('./pages/Pipeline.jsx'))
 const Board         = lazy(() => import('./pages/Board.jsx'))
+const Payouts       = lazy(() => import('./pages/Payouts.jsx'))
 const Forms         = lazy(() => import('./pages/Forms.jsx'))
 const Contacts      = lazy(() => import('./pages/Contacts.jsx'))
 const Profiles      = lazy(() => import('./pages/Profiles.jsx'))
@@ -224,6 +225,7 @@ function AppShell() {
             <Route path="/contacts"  element={<Contacts />} />
             <Route path="/pipeline"  element={<Pipeline />} />
             <Route path="/board"     element={<Board />} />
+            <Route path="/payouts"   element={<Payouts />} />
             <Route path="/landing"   element={<LandingPages />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/agent"     element={<Agent />} />

@@ -17,7 +17,7 @@ import { brandedEmail, ctaButton, sendEmail } from '../_lib/email.js'
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
 const APP_URL = (process.env.APP_URL || 'https://www.scalesolo.ai').replace(/\/$/, '')
-const ALLOWED_PAGES = ['board']
+const ALLOWED_PAGES = ['board', 'payouts']
 
 async function authAdmin(path, init = {}) {
   const r = await fetch(`${SUPABASE_URL}/auth/v1/admin/${path}`, {

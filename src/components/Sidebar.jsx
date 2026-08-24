@@ -21,6 +21,7 @@ import {
   LayoutGrid,
   Gift,
   Wand2,
+  DollarSign,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
@@ -50,6 +51,7 @@ const navGroups = [
       { to: '/spaces',  label: 'Spaces',   icon: Boxes },
       { to: '/schedule', label: 'Schedule', icon: Sparkles },
       { to: '/board',   label: 'Board',    icon: LayoutGrid, beta: true },
+      { to: '/payouts', label: 'Payouts',  icon: DollarSign, beta: true },
       { to: '/avatars', label: 'Avatars',  icon: UserCircle2 },
       { to: '/library', label: 'Library',  icon: LibraryIcon },
       { to: '/email',   label: 'Email',    icon: Mail, beta: true },
