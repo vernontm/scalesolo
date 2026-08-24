@@ -35,6 +35,9 @@ const STAGES = [
 ]
 const STAGE_KEYS = new Set(STAGES.map((s) => s.key))
 const STAGE_LABEL = Object.fromEntries(STAGES.map((s) => [s.key, s.label]))
+const STAGE_META = Object.fromEntries(STAGES.map((s) => [s.key, s]))
+// Small colored pill for a card's current stage (matches the column color).
+const catPill = (color) => ({ display: 'inline-flex', alignItems: 'center', fontSize: 10, fontWeight: 800, letterSpacing: 0.2, textTransform: 'uppercase', color, background: `${color}22`, borderRadius: 999, padding: '1px 8px' })
 // Legacy 'raw' cards fold into the first column.
 const foldStage = (s) => (STAGE_KEYS.has(s) ? s : 'editing')
 
@@ -105,10 +108,12 @@ function CardBody({ card }) {
   const versions = card.versions || []
   const comments = card.comments?.[0]?.count ?? 0
   const brandName = card.brand?.business_name
+  const st = STAGE_META[foldStage(card.stage)]
   return (
     <>
       <div style={cardTitle}>{card.title || 'Untitled'}</div>
       <div style={cardRow}>
+        {st && <span style={catPill(st.color)}>{st.label}</span>}
         {brandName && <span style={brandPill}><Building2 size={10} /> {brandName}</span>}
         <span><Film size={11} style={{ verticalAlign: '-1px' }} /> {versions.length ? `v${versions.length}` : 'no video'}</span>
         {comments > 0 && <span><MessageSquare size={11} style={{ verticalAlign: '-1px' }} /> {comments}</span>}
@@ -237,13 +242,13 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
 
   const versionNo = useCallback((vid) => versions.find((v) => v.id === vid)?.version_no, [versions])
 
-  // Unified chronological activity: versions + comments, oldest first.
+  // Unified chronological activity: versions + comments, newest first (top).
   const activity = useMemo(() => {
     const items = [
       ...versions.map((v) => ({ type: 'version', key: `v${v.id}`, at: v.created_at, data: v })),
       ...comments.map((c) => ({ type: 'comment', key: `c${c.id}`, at: c.created_at, data: c })),
     ]
-    items.sort((a, b) => new Date(a.at) - new Date(b.at))
+    items.sort((a, b) => new Date(b.at) - new Date(a.at))
     return items
   }, [versions, comments])
 
@@ -295,6 +300,17 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
     setBusy(true); setErr(null)
     try { await patchCard({ stage }); if (msg) toast({ message: msg, kind: 'success' }); onChanged(); onClose() }
     catch (e) { setErr(e.message); setBusy(false) }
+  }
+
+  const submitForReview = async () => {
+    if (!latestVersionId) { toast({ message: 'Upload a video before submitting.', kind: 'warn' }); return }
+    setBusy(true); setErr(null)
+    try {
+      // Record the version being submitted so we can block a re-submit until a
+      // newer version is uploaded.
+      await patchCard({ stage: 'in_review', submitted_version_id: latestVersionId })
+      toast({ message: 'Submitted for review', kind: 'success' }); onChanged(); onClose()
+    } catch (e) { setErr(e.message); setBusy(false) }
   }
 
   const approve = async () => {
@@ -349,6 +365,9 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
   }
 
   const stage = foldStage(card.stage)
+  // Block "Submit for review" until a version newer than the last-submitted one
+  // is uploaded (nothing new = no point re-reviewing the same cut).
+  const nothingNewToReview = !latestVersionId || latestVersionId === card.submitted_version_id
   const replyBtn = (onClick) => (
     <button onClick={onClick} title="Reply" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--muted)', fontWeight: 600 }}>
       <CornerUpLeft size={12} /> Reply
@@ -448,7 +467,10 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
         {/* Actions */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 20, alignItems: 'center' }}>
           {canWork && ['editing', 'needs_revisions'].includes(stage) && (
-            <button className="btn-primary" onClick={() => moveStage('in_review', 'Submitted for review')} disabled={busy || uploading || !versions.length}><Send size={14} /> Submit for review</button>
+            <button className="btn-primary" onClick={submitForReview} disabled={busy || uploading || nothingNewToReview}
+              title={nothingNewToReview ? 'Upload a new version before submitting for review' : ''}>
+              <Send size={14} /> Submit for review
+            </button>
           )}
           {isManager && !['approved', 'scheduled'].includes(stage) && (
             <button className="btn-primary" onClick={approve} disabled={busy || uploading || !versions.length}><Check size={14} /> Approve</button>
