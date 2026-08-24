@@ -29,7 +29,7 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       const profileId = req.query.profile_id
       const select = '*,brand:profiles(id,business_name),' +
-        'versions:board_card_versions!board_card_versions_card_id_fkey(id,version_no,video_url,thumbnail_url,kind,note,uploaded_by,created_at),' +
+        'versions:board_card_versions!board_card_versions_card_id_fkey(id,version_no,video_url,thumbnail_url,kind,note,uploaded_by,author_name,author_avatar,created_at),' +
         'comments:board_card_comments(count)'
       let filter
       if (profileId) {

@@ -4,6 +4,17 @@
 //   DELETE ?id=...
 import { setCors, requireUser, supaFetch, assertProfileAccess, fmtErr } from '../_lib/supabase.js'
 
+// Display identity for the activity thread, pulled from the signed-in user's
+// metadata (Google/OAuth fills full_name + avatar_url). Denormalized onto the
+// row so the feed renders without joining to auth.users.
+function authorFrom(user) {
+  const m = user?.user_metadata || {}
+  return {
+    author_name: m.full_name || m.name || user?.email || 'User',
+    author_avatar: m.avatar_url || m.picture || null,
+  }
+}
+
 export default async function handler(req, res) {
   setCors(req, res)
   if (req.method === 'OPTIONS') return res.status(204).end()
@@ -39,6 +50,9 @@ export default async function handler(req, res) {
           profile_id: profileId,
           author_id: auth.user.id,
           body: String(body.body).trim().slice(0, 4000),
+          target_version_id: body.target_version_id || null,
+          parent_comment_id: body.parent_comment_id || null,
+          ...authorFrom(auth.user),
         },
       })
       return res.status(201).json({ comment: Array.isArray(created) ? created[0] : created })
