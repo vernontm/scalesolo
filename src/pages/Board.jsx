@@ -24,6 +24,7 @@ import {
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { toast, confirmDialog } from '../components/Toast.jsx'
+import { supabase } from '../lib/supabase.js'
 
 // ── stages ───────────────────────────────────────────────────────────────
 const STAGES = [
@@ -118,6 +119,11 @@ function CardBody({ card }) {
         <span><Film size={11} style={{ verticalAlign: '-1px' }} /> {versions.length ? `v${versions.length}` : 'no video'}</span>
         {comments > 0 && <span><MessageSquare size={11} style={{ verticalAlign: '-1px' }} /> {comments}</span>}
         {card.content_script_id && <span style={{ color: 'var(--red)' }}>· draft</span>}
+        {(card.assigned_editor_name || card.assigned_editor_email) && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }} title={`Assigned to ${card.assigned_editor_name || card.assigned_editor_email}`}>
+            <Avatar name={card.assigned_editor_name || card.assigned_editor_email} size={16} /> {card.assigned_editor_name || card.assigned_editor_email.split('@')[0]}
+          </span>
+        )}
       </div>
     </>
   )
@@ -305,8 +311,9 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
   }
 
   const assignEditor = async (uid) => {
+    const ed = brandEditors.find((e) => e.user_id === uid)
     setBusy(true); setErr(null)
-    try { await patchCard({ assigned_editor: uid || null }); onChanged() }
+    try { await patchCard({ assigned_editor: uid || null, assigned_editor_email: uid ? (ed?.email || null) : null, assigned_editor_name: uid ? (ed?.name || null) : null }); onChanged() }
     catch (e) { setErr(e.message) } finally { setBusy(false) }
   }
 
@@ -411,7 +418,7 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
             <span style={{ fontSize: 12, color: 'var(--muted)' }}>Editor</span>
             <select className="input" value={card.assigned_editor || ''} disabled={busy} onChange={(e) => assignEditor(e.target.value)} style={{ maxWidth: 260 }}>
               <option value="">Unassigned</option>
-              {brandEditors.map((ed) => <option key={ed.user_id} value={ed.user_id}>{ed.email || ed.user_id.slice(0, 8)}</option>)}
+              {brandEditors.map((ed) => <option key={ed.user_id} value={ed.user_id}>{ed.name || ed.email || ed.user_id.slice(0, 8)}</option>)}
             </select>
           </div>
         )}
@@ -517,7 +524,8 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
 function EditorsModal({ token, onClose }) {
   const [data, setData] = useState({ editors: [], brands: [] })
   const [loading, setLoading] = useState(true)
-  const [emails, setEmails] = useState('')
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
   const [pick, setPick] = useState([]) // profile_ids to grant on invite (default: all)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
@@ -537,14 +545,14 @@ function EditorsModal({ token, onClose }) {
   const post = (path, body) => fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) }).then(async (r) => { const b = await r.json().catch(() => ({})); if (!r.ok) throw new Error(b.error || 'Failed'); return b })
 
   const invite = async () => {
-    const list = emails.split(/[,\s]+/).map((e) => e.trim().toLowerCase()).filter((e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e))
-    if (!list.length) { setErr('Enter at least one valid email.'); return }
+    const em = email.trim().toLowerCase()
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) { setErr('Enter a valid email.'); return }
     if (!pick.length) { setErr('Pick at least one brand to grant.'); return }
     setBusy(true); setErr(null)
     try {
-      for (const em of list) await post('/api/board/invites', { email: em, profile_ids: pick })
-      toast({ message: `Invited ${list.length} editor${list.length > 1 ? 's' : ''}`, kind: 'success' })
-      setEmails(''); load()
+      await post('/api/board/invites', { email: em, name: name.trim() || null, profile_ids: pick })
+      toast({ message: `Magic link sent to ${em}`, kind: 'success' })
+      setName(''); setEmail(''); load()
     } catch (e) { setErr(e.message) } finally { setBusy(false) }
   }
   const toggleBrand = async (ed, brandId, on) => {
@@ -576,8 +584,9 @@ function EditorsModal({ token, onClose }) {
         {/* Invite */}
         <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, marginBottom: 16 }}>
           <div style={{ display: 'flex', gap: 8 }}>
-            <input className="input" value={emails} onChange={(e) => setEmails(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') invite() }} placeholder="Emails, separated by commas" style={{ flex: 1 }} />
-            <button className="btn-primary" onClick={invite} disabled={busy || !emails.trim() || !pick.length}>{busy ? <span className="spinner" /> : 'Invite'}</button>
+            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Editor name" style={{ flex: 1 }} />
+            <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') invite() }} placeholder="editor@email.com" style={{ flex: 1.4 }} />
+            <button className="btn-primary" onClick={invite} disabled={busy || !email.trim() || !pick.length}>{busy ? <span className="spinner" /> : 'Invite'}</button>
           </div>
           <div style={{ fontSize: 12, color: 'var(--muted)', margin: '10px 0 6px' }}>Access to these brands (toggle off any they shouldn't see):</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -592,7 +601,8 @@ function EditorsModal({ token, onClose }) {
               {data.editors.map((ed) => (
                 <div key={ed.email} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                    <strong style={{ fontSize: 13 }}>{ed.email}</strong>
+                    <strong style={{ fontSize: 13 }}>{ed.name || ed.email}</strong>
+                    {ed.name && <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>{ed.email}</span>}
                     {Object.values(ed.brands).some((s) => s === 'pending') && <span style={{ fontSize: 10.5, color: 'var(--muted)', border: '1px solid var(--border)', borderRadius: 999, padding: '0 7px' }}>pending</span>}
                     <span style={{ flex: 1 }} />
                     <button onClick={() => resend(ed.email)} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 11.5, fontWeight: 600 }}>Resend link</button>
@@ -611,6 +621,37 @@ function EditorsModal({ token, onClose }) {
   )
 }
 
+// ── first-login "create a password" prompt (magic-link editors) ───────────
+function SetPasswordPrompt({ onDone }) {
+  const [pw, setPw] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+  const save = async () => {
+    if (pw.length < 8) { setErr('Use at least 8 characters.'); return }
+    setBusy(true); setErr(null)
+    try {
+      const { error } = await supabase.auth.updateUser({ password: pw, data: { password_set: true } })
+      if (error) throw error
+      toast({ message: 'Password set. You can log in with it next time.', kind: 'success' })
+      onDone(true)
+    } catch (e) { setErr(e.message); setBusy(false) }
+  }
+  return (
+    <div className="modal-overlay">
+      <div className="modal-card modal-card-sm" onClick={(e) => e.stopPropagation()}>
+        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, marginBottom: 8 }}>Create a password</h3>
+        <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 12 }}>Set a password so you can log in anytime, without waiting for the emailed link.</p>
+        <input className="input" type="password" value={pw} onChange={(e) => setPw(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') save() }} placeholder="At least 8 characters" autoComplete="new-password" />
+        {err && <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, marginTop: 10 }}>{err}</div>}
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 14 }}>
+          <button className="btn-secondary" onClick={() => onDone(false)}>Maybe later</button>
+          <button className="btn-primary" onClick={save} disabled={busy || pw.length < 8}>{busy ? <span className="spinner" /> : 'Set password'}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── main page ─────────────────────────────────────────────────────────────
 export default function Board() {
   const { session } = useAuth()
@@ -624,6 +665,7 @@ export default function Board() {
   const [newCardStage, setNewCardStage] = useState(null)
   const [openCardId, setOpenCardId] = useState(null)
   const [showEditors, setShowEditors] = useState(false)
+  const [pwPrompt, setPwPrompt] = useState(false)
   const isAnyManager = (profiles || []).some((p) => ['owner', 'admin'].includes(p._role))
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
@@ -638,6 +680,15 @@ export default function Board() {
   }, [token])
 
   useEffect(() => { setLoading(true); load() }, [load])
+
+  // Offer magic-link editors a password on first login (once per session).
+  useEffect(() => {
+    const u = session?.user
+    if (role !== 'contributor' || !u || u.user_metadata?.password_set) return
+    let skip = false
+    try { skip = sessionStorage.getItem('scalesolo.pwPromptSkipped') === '1' } catch { /* noop */ }
+    if (!skip) setPwPrompt(true)
+  }, [role, session])
 
   const byStage = useMemo(() => {
     const map = new Map(STAGES.map((s) => [s.key, []]))
@@ -734,6 +785,7 @@ export default function Board() {
           onClose={() => setOpenCardId(null)} onChanged={load} />
       )}
       {showEditors && <EditorsModal token={token} onClose={() => setShowEditors(false)} />}
+      {pwPrompt && <SetPasswordPrompt onDone={(set) => { setPwPrompt(false); if (!set) { try { sessionStorage.setItem('scalesolo.pwPromptSkipped', '1') } catch { /* noop */ } } }} />}
     </div>
   )
 }

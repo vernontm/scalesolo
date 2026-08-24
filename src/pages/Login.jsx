@@ -109,8 +109,12 @@ export default function Login() {
     : initialTier ? 'signup'
     : 'signin'
   const [mode, setMode] = useState(initialMode)
-  const [email, setEmail] = useState('')
+  const [email, setEmail] = useState(() => { try { return localStorage.getItem('scalesolo.rememberEmail') || '' } catch { return '' } })
   const [password, setPassword] = useState('')
+  // Remember-me just persists the email for prefill (the Supabase session
+  // already persists across restarts). Default on so returning editors don't
+  // have to retype it.
+  const [remember, setRemember] = useState(true)
   const [tier] = useState(initialTier)
   const [cycle] = useState(initialCycle)
   const [busy, setBusy] = useState(false)
@@ -244,6 +248,7 @@ export default function Login() {
       if (mode === 'signin') {
         const { error: err } = await signIn(email, password)
         if (err) throw err
+        try { if (remember) localStorage.setItem('scalesolo.rememberEmail', email.trim().toLowerCase()); else localStorage.removeItem('scalesolo.rememberEmail') } catch { /* noop */ }
         // sign-in success — if there's a pending tier, the useEffect above will fire after session lands
       } else {
         // Stash the stripe_session_id so AuthCallback can pick it up
@@ -452,6 +457,13 @@ export default function Login() {
               placeholder="••••••••"
             />
           </div>
+
+          {mode === 'signin' && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
+              <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+              Remember me on this device
+            </label>
+          )}
 
           {error && <div style={errorStyle}>{error}</div>}
           {info && <div className="pill pill-success" style={{ alignSelf: 'flex-start' }}>{info}</div>}
