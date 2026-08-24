@@ -28,7 +28,10 @@ export default async function handler(req, res) {
       await assertProfileAccess(auth.user.id, profileId)
       const cards = await supaFetch(
         `board_cards?profile_id=eq.${profileId}&order=position.asc,created_at.asc` +
-        `&select=*,versions:board_card_versions(id,version_no,video_url,thumbnail_url,kind,note,uploaded_by,created_at),comments:board_card_comments(count)`
+        // Name the FK explicitly: board_cards has TWO relationships to
+        // board_card_versions (card_id, and the final_version_id back-ref), so
+        // PostgREST needs disambiguation on the embed.
+        `&select=*,versions:board_card_versions!board_card_versions_card_id_fkey(id,version_no,video_url,thumbnail_url,kind,note,uploaded_by,created_at),comments:board_card_comments(count)`
       )
       return res.status(200).json({ cards: cards || [] })
     }
@@ -55,7 +58,7 @@ export default async function handler(req, res) {
       const id = req.query.id
       if (!id) return res.status(400).json({ error: 'id required' })
       const rows = await supaFetch(
-        `board_cards?id=eq.${id}&select=*,versions:board_card_versions(id,video_url,version_no,created_at)`
+        `board_cards?id=eq.${id}&select=*,versions:board_card_versions!board_card_versions_card_id_fkey(id,video_url,version_no,created_at)`
       )
       const cardRow = rows?.[0]
       if (!cardRow) return res.status(404).json({ error: 'Not found' })
