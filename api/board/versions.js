@@ -8,6 +8,15 @@
 // into in_review (approved/scheduled cards are left alone).
 import { setCors, requireUser, supaFetch, assertProfileAccess, fmtErr } from '../_lib/supabase.js'
 
+// Uploader display identity for the activity thread (see comments.js).
+function authorFrom(user) {
+  const m = user?.user_metadata || {}
+  return {
+    author_name: m.full_name || m.name || user?.email || 'User',
+    author_avatar: m.avatar_url || m.picture || null,
+  }
+}
+
 export default async function handler(req, res) {
   setCors(req, res)
   if (req.method === 'OPTIONS') return res.status(204).end()
@@ -50,6 +59,7 @@ export default async function handler(req, res) {
           kind,
           note: body.note || null,
           uploaded_by: auth.user.id,
+          ...authorFrom(auth.user),
         },
       })
       const version = Array.isArray(created) ? created[0] : created

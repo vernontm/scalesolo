@@ -1,12 +1,13 @@
 // Video Production Board — a native Kanban that replaces the Notion approval
 // flow. ONE unified board across every brand the user can access; each card is
 // tagged with its client and you pick the client per card. Cards move
-// Needs Editing -> Needs Revisions -> Approved -> Scheduled. Videos upload
-// straight to our landing-media Supabase bucket (with a real progress bar);
-// each card keeps a version history + a feedback thread. Approving marks the
-// card Approved; a separate owner/admin "Send to Schedule" spawns a
-// content_scripts draft that flows into the existing Schedule page. (Drag
-// machinery cloned from src/pages/Pipeline.jsx.)
+// Needs Editing -> Ready for Review -> Needs Revisions -> Approved -> Scheduled.
+// Videos upload straight to our landing-media bucket (with a real progress bar);
+// each card has a single chronological ACTIVITY thread that interleaves uploaded
+// versions and comments, with per-item reply (feedback on a specific file or
+// comment). Approving marks the card Approved; a separate owner/admin "Send to
+// Schedule" spawns a content_scripts draft into the existing Schedule page.
+// (Drag machinery cloned from src/pages/Pipeline.jsx.)
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import {
   DndContext, DragOverlay, PointerSensor, useSensor, useSensors,
@@ -18,7 +19,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import {
   Plus, X, Upload, Film, MessageSquare, Check, CalendarPlus, Trash2,
-  Loader2, Download, CircleDot, Building2,
+  Loader2, Download, CircleDot, Building2, Send, CornerUpLeft,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
@@ -26,19 +27,20 @@ import { toast, confirmDialog } from '../components/Toast.jsx'
 
 // ── stages ───────────────────────────────────────────────────────────────
 const STAGES = [
-  { key: 'editing',         label: 'Needs Editing',   color: '#60a5fa' },
-  { key: 'needs_revisions', label: 'Needs Revisions', color: '#f59e0b' },
-  { key: 'approved',        label: 'Approved',        color: '#2ecc71' },
-  { key: 'scheduled',       label: 'Scheduled',       color: '#ef4444' },
+  { key: 'editing',         label: 'Needs Editing',    color: '#60a5fa' },
+  { key: 'in_review',       label: 'Ready for Review', color: '#a78bfa' },
+  { key: 'needs_revisions', label: 'Needs Revisions',  color: '#f59e0b' },
+  { key: 'approved',        label: 'Approved',         color: '#2ecc71' },
+  { key: 'scheduled',       label: 'Scheduled',        color: '#ef4444' },
 ]
 const STAGE_KEYS = new Set(STAGES.map((s) => s.key))
 const STAGE_LABEL = Object.fromEntries(STAGES.map((s) => [s.key, s.label]))
-// Legacy 'raw' / 'in_review' cards fold into the first column.
+// Legacy 'raw' cards fold into the first column.
 const foldStage = (s) => (STAGE_KEYS.has(s) ? s : 'editing')
 
 // ── styles (cloned from Pipeline) ─────────────────────────────────────────
 const board = { display: 'flex', gap: 14, alignItems: 'flex-start', overflowX: 'auto', paddingBottom: 24, minHeight: 'calc(100vh - 220px)' }
-const column = { flex: '0 0 280px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 190px)' }
+const column = { flex: '0 0 270px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 190px)' }
 const columnHead = { display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', borderBottom: '1px solid var(--border)' }
 const stagePill = (color) => ({ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 })
 const stageName = { fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13, flex: 1, color: 'var(--text)' }
@@ -48,14 +50,23 @@ const dropHint = { borderRadius: 10, border: '1px dashed var(--border)', padding
 const cardStyle = (isDragging) => ({ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '11px 12px', cursor: 'grab', opacity: isDragging ? 0.4 : 1, transition: 'border-color 0.12s ease, box-shadow 0.12s ease' })
 const cardTitle = { fontSize: 13.5, fontWeight: 600, color: 'var(--text)', marginBottom: 6, lineHeight: 1.3 }
 const cardRow = { display: 'flex', alignItems: 'center', gap: 12, fontSize: 11.5, color: 'var(--muted)', flexWrap: 'wrap' }
-const brandPill = { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, fontWeight: 700, color: 'var(--text-soft, var(--text))', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 999, padding: '1px 8px' }
+const brandPill = { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, fontWeight: 700, color: 'var(--text)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 999, padding: '1px 8px' }
 const addBtn = { marginTop: 4, width: '100%', padding: '9px 12px', border: '1px dashed var(--border)', borderRadius: 10, background: 'transparent', color: 'var(--muted)', cursor: 'pointer', fontSize: 12.5, fontFamily: 'var(--font-display)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }
 
 const rand6 = () => Math.random().toString(36).slice(2, 8)
 
-// Direct browser upload to landing-media via XHR so we get real progress on
-// large video files. Path <profile_id>/board/<card_id>/... (the profile-UUID
-// first segment satisfies the storage RLS insert policy from migration 0021).
+const timeAgo = (at) => {
+  const d = new Date(at)
+  const s = (Date.now() - d.getTime()) / 1000
+  if (s < 60) return 'just now'
+  if (s < 3600) return `${Math.floor(s / 60)}m`
+  if (s < 86400) return `${Math.floor(s / 3600)}h`
+  if (s < 604800) return `${Math.floor(s / 86400)}d`
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+// Direct browser upload to landing-media via XHR (real progress). Path
+// <profile_id>/board/<card_id>/... satisfies the storage RLS insert policy.
 function uploadBoardVideo(file, profileId, cardId, token, onProgress) {
   return new Promise((resolve, reject) => {
     const ext = (file.name.split('.').pop() || 'mp4').toLowerCase()
@@ -82,6 +93,13 @@ function uploadBoardVideo(file, profileId, cardId, token, onProgress) {
   })
 }
 
+// ── avatar ────────────────────────────────────────────────────────────────
+function Avatar({ name, url, size = 26 }) {
+  const initials = (name || '?').trim().slice(0, 1).toUpperCase()
+  if (url) return <img src={url} alt="" style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+  return <div style={{ width: size, height: size, borderRadius: '50%', background: 'var(--surface-2)', border: '1px solid var(--border)', display: 'grid', placeItems: 'center', fontSize: size * 0.42, fontWeight: 700, color: 'var(--muted)', flexShrink: 0 }}>{initials}</div>
+}
+
 // ── card body (also used by DragOverlay) ──────────────────────────────────
 function CardBody({ card }) {
   const versions = card.versions || []
@@ -102,9 +120,7 @@ function CardBody({ card }) {
 
 // ── sortable card ─────────────────────────────────────────────────────────
 function SortableCard({ card, onClick }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: card.id, data: { type: 'card', card },
-  })
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: card.id, data: { type: 'card', card } })
   const style = isDragging ? { opacity: 0, pointerEvents: 'none' } : { transform: CSS.Transform.toString(transform), transition }
   return (
     <div ref={setNodeRef} style={{ ...cardStyle(false), ...style }} {...attributes} {...listeners}
@@ -157,8 +173,7 @@ function NewCardModal({ stage, profiles, defaultBrandId, token, onClose, onCreat
     setBusy(true); setError(null)
     try {
       const r = await fetch('/api/board', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ profile_id: brandId, title: title.trim(), stage }),
       })
       const body = await r.json()
@@ -201,15 +216,18 @@ function NewCardModal({ stage, profiles, defaultBrandId, token, onClose, onCreat
 // ── card detail drawer ────────────────────────────────────────────────────
 function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
   const isManager = ['owner', 'admin'].includes(role)
+  const canWork = role !== 'viewer'
   const [versions, setVersions] = useState(card.versions || [])
   const [comments, setComments] = useState([])
   const [commentText, setCommentText] = useState('')
+  const [replyTo, setReplyTo] = useState(null) // { kind:'version'|'comment', id, label }
   const [uploading, setUploading] = useState(false)
   const [uploadPct, setUploadPct] = useState(0)
   const [busy, setBusy] = useState(false)
   const [finalId, setFinalId] = useState(card.final_version_id || null)
   const [err, setErr] = useState(null)
   const fileRef = useRef(null)
+  const commentRef = useRef(null)
 
   useEffect(() => {
     fetch(`/api/board/comments?card_id=${card.id}`, { headers: { Authorization: `Bearer ${token}` } })
@@ -217,6 +235,18 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
     fetch(`/api/board/versions?card_id=${card.id}`, { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => r.json()).then((b) => { if (Array.isArray(b.versions)) setVersions(b.versions) }).catch(() => {})
   }, [card.id, token])
+
+  const versionNo = useCallback((vid) => versions.find((v) => v.id === vid)?.version_no, [versions])
+
+  // Unified chronological activity: versions + comments, oldest first.
+  const activity = useMemo(() => {
+    const items = [
+      ...versions.map((v) => ({ type: 'version', key: `v${v.id}`, at: v.created_at, data: v })),
+      ...comments.map((c) => ({ type: 'comment', key: `c${c.id}`, at: c.created_at, data: c })),
+    ]
+    items.sort((a, b) => new Date(a.at) - new Date(b.at))
+    return items
+  }, [versions, comments])
 
   const patchCard = async (updates) => {
     const r = await fetch(`/api/board?id=${card.id}`, {
@@ -242,7 +272,6 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
       })
       const b = await r.json()
       if (!r.ok) throw new Error(b.error || 'Upload failed')
-      // Add the returned version directly (newest first) — no fragile refetch.
       if (b.version) setVersions((prev) => [b.version, ...prev])
       toast({ message: `Version v${b.version?.version_no} uploaded`, kind: 'success' })
       onChanged()
@@ -263,14 +292,20 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
     catch (e) { setErr(e.message) } finally { setBusy(false) }
   }
 
+  const moveStage = async (stage, msg) => {
+    setBusy(true); setErr(null)
+    try { await patchCard({ stage }); if (msg) toast({ message: msg, kind: 'success' }); onChanged(); onClose() }
+    catch (e) { setErr(e.message); setBusy(false) }
+  }
+
   const approve = async () => {
     if (!versions.length) { toast({ message: 'Upload a video before approving.', kind: 'warn' }); return }
     setBusy(true); setErr(null)
     try {
-      const chosen = finalId || versions[0].id // versions are newest-first
+      const chosen = finalId || versions[0].id // newest-first
       await patchCard({ stage: 'approved', final_version_id: chosen })
       setFinalId(chosen); toast({ message: 'Approved', kind: 'success' }); onChanged(); onClose()
-    } catch (e) { setErr(e.message) } finally { setBusy(false) }
+    } catch (e) { setErr(e.message); setBusy(false) }
   }
 
   const sendToSchedule = async () => {
@@ -281,18 +316,23 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
       if (!r.ok) throw new Error(b.error || 'Failed')
       toast({ message: b.already ? 'Already on the Schedule page.' : 'Draft created on the Schedule page. Add captions + a time there.', kind: 'success' })
       onChanged(); onClose()
-    } catch (e) { setErr(e.message); toast({ message: e.message, kind: 'error' }) }
-    finally { setBusy(false) }
+    } catch (e) { setErr(e.message); toast({ message: e.message, kind: 'error' }); setBusy(false) }
   }
+
+  const startReply = (kind, id, label) => { setReplyTo({ kind, id, label }); commentRef.current?.focus() }
 
   const postComment = async () => {
     const body = commentText.trim()
     if (!body) return
     setCommentText('')
+    const payload = { card_id: card.id, body }
+    if (replyTo?.kind === 'version') payload.target_version_id = replyTo.id
+    if (replyTo?.kind === 'comment') payload.parent_comment_id = replyTo.id
+    setReplyTo(null)
     try {
       const r = await fetch('/api/board/comments', {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ card_id: card.id, body }),
+        body: JSON.stringify(payload),
       })
       const b = await r.json()
       if (!r.ok) throw new Error(b.error || 'Failed')
@@ -310,17 +350,22 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
     } catch (e) { toast({ message: e.message, kind: 'error' }) }
   }
 
-  const sectionTitle = { fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13, color: 'var(--text)', margin: '18px 0 8px' }
+  const stage = foldStage(card.stage)
+  const replyBtn = (onClick) => (
+    <button onClick={onClick} title="Reply" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--muted)', fontWeight: 600 }}>
+      <CornerUpLeft size={12} /> Reply
+    </button>
+  )
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 620, width: '100%', maxHeight: '88vh', overflowY: 'auto' }}>
+      <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 640, width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 4 }}>
           <div style={{ flex: 1 }}>
             <input className="input" defaultValue={card.title}
               onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== card.title) patchCard({ title: v }).then(onChanged).catch(() => {}) }}
               style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16, border: 'none', padding: 0, background: 'transparent' }} />
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>{STAGE_LABEL[foldStage(card.stage)]}</div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>{STAGE_LABEL[stage]}</div>
           </div>
           <button aria-label="Close" onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6 }}><X size={18} /></button>
         </div>
@@ -333,63 +378,89 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
 
         {err && <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, marginTop: 8 }}>{err}</div>}
 
-        {/* Versions */}
-        <div style={sectionTitle}>Versions</div>
-        <input ref={fileRef} type="file" accept="video/*" onChange={onPickFile} style={{ display: 'none' }} />
-        <button className="btn-secondary" onClick={() => fileRef.current?.click()} disabled={uploading} style={{ width: '100%', justifyContent: 'center' }}>
-          {uploading ? <><Loader2 size={14} className="spin" /> Uploading… {Math.round(uploadPct * 100)}%</> : <><Upload size={14} /> {versions.length ? 'Upload new version' : 'Upload the video'}</>}
-        </button>
-        {uploading && (
-          <div style={{ height: 6, background: 'var(--surface-2)', borderRadius: 999, overflow: 'hidden', marginTop: 8 }}>
-            <div style={{ height: '100%', width: `${Math.round(uploadPct * 100)}%`, background: 'var(--red)', transition: 'width 0.15s ease' }} />
-          </div>
-        )}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
-          {versions.length === 0 && !uploading && <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>No video yet. Upload the raw cut or the editor's version.</div>}
-          {versions.map((v) => (
-            <div key={v.id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10, background: 'var(--surface-2)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <strong style={{ fontSize: 12.5 }}>v{v.version_no}</strong>
-                <span style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'capitalize' }}>{v.kind}</span>
-                <span style={{ flex: 1 }} />
-                <button onClick={() => setFinal(v.id)} disabled={busy} title={finalId === v.id ? 'Final pick' : 'Mark as final'}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 11.5, color: finalId === v.id ? 'var(--red)' : 'var(--muted)', fontWeight: 600 }}>
-                  {finalId === v.id ? <Check size={13} /> : <CircleDot size={13} />} {finalId === v.id ? 'Final' : 'Set final'}
-                </button>
-                <a href={v.video_url} download style={{ color: 'var(--muted)', display: 'inline-flex' }} title="Download"><Download size={14} /></a>
-              </div>
-              <video src={`${v.video_url}#t=0.1`} controls preload="metadata" style={{ width: '100%', maxHeight: 240, borderRadius: 8, background: '#000' }} />
-              {v.note && <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6 }}>{v.note}</div>}
+        {/* Upload */}
+        <div style={{ marginTop: 16 }}>
+          <input ref={fileRef} type="file" accept="video/*" onChange={onPickFile} style={{ display: 'none' }} />
+          <button className="btn-secondary" onClick={() => fileRef.current?.click()} disabled={uploading || !canWork} style={{ width: '100%', justifyContent: 'center' }}>
+            {uploading ? <><Loader2 size={14} className="spin" /> Uploading… {Math.round(uploadPct * 100)}%</> : <><Upload size={14} /> {versions.length ? 'Upload new version' : 'Upload the video'}</>}
+          </button>
+          {uploading && (
+            <div style={{ height: 6, background: 'var(--surface-2)', borderRadius: 999, overflow: 'hidden', marginTop: 8 }}>
+              <div style={{ height: '100%', width: `${Math.round(uploadPct * 100)}%`, background: 'var(--red)', transition: 'width 0.15s ease' }} />
             </div>
-          ))}
+          )}
         </div>
 
-        {/* Feedback */}
-        <div style={sectionTitle}>Feedback</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {comments.length === 0 && <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>No feedback yet.</div>}
-          {comments.map((c) => (
-            <div key={c.id} style={{ fontSize: 13, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px' }}>
-              <div style={{ whiteSpace: 'pre-wrap' }}>{c.body}</div>
-              <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 4 }}>{new Date(c.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</div>
-            </div>
-          ))}
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input className="input" value={commentText} onChange={(e) => setCommentText(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') postComment() }} placeholder="Leave feedback for the editor…" style={{ flex: 1 }} />
-            <button className="btn-secondary" onClick={postComment} disabled={!commentText.trim()}>Post</button>
-          </div>
+        {/* Activity (versions + comments interleaved, oldest first) */}
+        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13, color: 'var(--text)', margin: '18px 0 10px' }}>Activity</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {activity.length === 0 && <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>Nothing yet. Upload the video or leave a note below.</div>}
+          {activity.map((item) => {
+            const d = item.data
+            const isVersion = item.type === 'version'
+            const refLabel = !isVersion && (d.target_version_id ? `on v${versionNo(d.target_version_id) ?? '?'}` : (d.parent_comment_id ? 'reply' : null))
+            return (
+              <div key={item.key} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                <Avatar name={d.author_name} url={d.author_avatar} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <strong style={{ fontSize: 12.5 }}>{d.author_name || (isVersion ? 'Upload' : 'Comment')}</strong>
+                    <span style={{ fontSize: 11, color: 'var(--muted)' }}>{timeAgo(item.at)}</span>
+                    {isVersion && <span style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'capitalize' }}>· {d.kind} v{d.version_no}</span>}
+                    {refLabel && <span style={{ fontSize: 10.5, color: 'var(--muted)', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 999, padding: '0 7px' }}>{refLabel}</span>}
+                  </div>
+                  {isVersion ? (
+                    <div style={{ marginTop: 6 }}>
+                      <video src={`${d.video_url}#t=0.1`} controls preload="metadata" style={{ width: '100%', maxHeight: 240, borderRadius: 8, background: '#000' }} />
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 6 }}>
+                        <button onClick={() => setFinal(d.id)} disabled={busy} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 11.5, color: finalId === d.id ? 'var(--red)' : 'var(--muted)', fontWeight: 600 }}>
+                          {finalId === d.id ? <Check size={13} /> : <CircleDot size={13} />} {finalId === d.id ? 'Final' : 'Set final'}
+                        </button>
+                        <a href={d.video_url} download style={{ color: 'var(--muted)', display: 'inline-flex' }} title="Download"><Download size={14} /></a>
+                        {canWork && replyBtn(() => startReply('version', d.id, `v${d.version_no}`))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: 3 }}>
+                      <div style={{ fontSize: 13, whiteSpace: 'pre-wrap' }}>{d.body}</div>
+                      {canWork && <div style={{ marginTop: 3 }}>{replyBtn(() => startReply('comment', d.id, d.author_name || 'comment'))}</div>}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })}
         </div>
+
+        {/* Composer */}
+        {canWork && (
+          <div style={{ marginTop: 14 }}>
+            {replyTo && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--muted)', marginBottom: 6 }}>
+                <CornerUpLeft size={12} /> Replying to {replyTo.label}
+                <button onClick={() => setReplyTo(null)} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}><X size={12} /></button>
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input ref={commentRef} className="input" value={commentText} onChange={(e) => setCommentText(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') postComment() }} placeholder={replyTo ? 'Write your reply…' : 'Add a comment…'} style={{ flex: 1 }} />
+              <button className="btn-secondary" onClick={postComment} disabled={!commentText.trim()}><Send size={14} /></button>
+            </div>
+          </div>
+        )}
 
         {/* Actions */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 20, alignItems: 'center' }}>
-          {isManager && card.stage !== 'approved' && card.stage !== 'scheduled' && (
+          {canWork && ['editing', 'needs_revisions'].includes(stage) && (
+            <button className="btn-primary" onClick={() => moveStage('in_review', 'Submitted for review')} disabled={busy || uploading || !versions.length}><Send size={14} /> Submit for review</button>
+          )}
+          {isManager && !['approved', 'scheduled'].includes(stage) && (
             <button className="btn-primary" onClick={approve} disabled={busy || uploading || !versions.length}><Check size={14} /> Approve</button>
           )}
-          {isManager && card.stage !== 'needs_revisions' && card.stage !== 'scheduled' && (
-            <button className="btn-secondary" onClick={() => patchCard({ stage: 'needs_revisions' }).then(() => { toast({ message: 'Sent back for revisions', kind: 'info' }); onChanged(); onClose() }).catch((e) => setErr(e.message))} disabled={busy}>Request revisions</button>
+          {isManager && !['needs_revisions', 'scheduled'].includes(stage) && (
+            <button className="btn-secondary" onClick={() => moveStage('needs_revisions', 'Sent back for revisions')} disabled={busy}>Request revisions</button>
           )}
-          {isManager && card.stage === 'approved' && !card.content_script_id && (
+          {isManager && stage === 'approved' && !card.content_script_id && (
             <button className="btn-primary" onClick={sendToSchedule} disabled={busy}><CalendarPlus size={14} /> Send to Schedule</button>
           )}
           {card.content_script_id && <span style={{ fontSize: 12.5, color: 'var(--red)', fontWeight: 600 }}>On the Schedule page →</span>}
