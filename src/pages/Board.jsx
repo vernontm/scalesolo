@@ -19,7 +19,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import {
   Plus, X, Upload, Film, MessageSquare, Check, CalendarPlus, Trash2,
-  Loader2, Download, CircleDot, Building2, Send, CornerUpLeft,
+  Loader2, Download, Building2, Send, CornerUpLeft,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
@@ -224,7 +224,6 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
   const [uploading, setUploading] = useState(false)
   const [uploadPct, setUploadPct] = useState(0)
   const [busy, setBusy] = useState(false)
-  const [finalId, setFinalId] = useState(card.final_version_id || null)
   const [err, setErr] = useState(null)
   const fileRef = useRef(null)
   const commentRef = useRef(null)
@@ -247,6 +246,12 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
     items.sort((a, b) => new Date(a.at) - new Date(b.at))
     return items
   }, [versions, comments])
+
+  // Approval always uses the most recent upload (highest version_no).
+  const latestVersionId = useMemo(() => {
+    if (!versions.length) return null
+    return versions.reduce((a, b) => ((a.version_no || 0) >= (b.version_no || 0) ? a : b)).id
+  }, [versions])
 
   const patchCard = async (updates) => {
     const r = await fetch(`/api/board?id=${card.id}`, {
@@ -286,12 +291,6 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
     catch (e) { setErr(e.message) } finally { setBusy(false) }
   }
 
-  const setFinal = async (vid) => {
-    setBusy(true); setErr(null)
-    try { await patchCard({ final_version_id: vid }); setFinalId(vid); onChanged() }
-    catch (e) { setErr(e.message) } finally { setBusy(false) }
-  }
-
   const moveStage = async (stage, msg) => {
     setBusy(true); setErr(null)
     try { await patchCard({ stage }); if (msg) toast({ message: msg, kind: 'success' }); onChanged(); onClose() }
@@ -299,12 +298,11 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
   }
 
   const approve = async () => {
-    if (!versions.length) { toast({ message: 'Upload a video before approving.', kind: 'warn' }); return }
+    if (!latestVersionId) { toast({ message: 'Upload a video before approving.', kind: 'warn' }); return }
     setBusy(true); setErr(null)
     try {
-      const chosen = finalId || versions[0].id // newest-first
-      await patchCard({ stage: 'approved', final_version_id: chosen })
-      setFinalId(chosen); toast({ message: 'Approved', kind: 'success' }); onChanged(); onClose()
+      await patchCard({ stage: 'approved', final_version_id: latestVersionId })
+      toast({ message: 'Approved — using the latest upload', kind: 'success' }); onChanged(); onClose()
     } catch (e) { setErr(e.message); setBusy(false) }
   }
 
@@ -407,15 +405,13 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
                     <strong style={{ fontSize: 12.5 }}>{d.author_name || (isVersion ? 'Upload' : 'Comment')}</strong>
                     <span style={{ fontSize: 11, color: 'var(--muted)' }}>{timeAgo(item.at)}</span>
                     {isVersion && <span style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'capitalize' }}>· {d.kind} v{d.version_no}</span>}
+                    {isVersion && d.id === latestVersionId && <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 999, padding: '0 6px', textTransform: 'uppercase', letterSpacing: 0.3 }}>latest</span>}
                     {refLabel && <span style={{ fontSize: 10.5, color: 'var(--muted)', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 999, padding: '0 7px' }}>{refLabel}</span>}
                   </div>
                   {isVersion ? (
                     <div style={{ marginTop: 6 }}>
                       <video src={`${d.video_url}#t=0.1`} controls preload="metadata" style={{ width: '100%', maxHeight: 240, borderRadius: 8, background: '#000' }} />
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 6 }}>
-                        <button onClick={() => setFinal(d.id)} disabled={busy} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 11.5, color: finalId === d.id ? 'var(--red)' : 'var(--muted)', fontWeight: 600 }}>
-                          {finalId === d.id ? <Check size={13} /> : <CircleDot size={13} />} {finalId === d.id ? 'Final' : 'Set final'}
-                        </button>
                         <a href={d.video_url} download style={{ color: 'var(--muted)', display: 'inline-flex' }} title="Download"><Download size={14} /></a>
                         {canWork && replyBtn(() => startReply('version', d.id, `v${d.version_no}`))}
                       </div>
