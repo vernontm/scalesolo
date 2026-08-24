@@ -10,7 +10,7 @@
 //   POST ?action=reject    ?id=...  { reason? }    → approval_status=rejected
 //   POST ?action=schedule  ?id=...  { scheduled_datetime, platforms? }
 
-import { setCors, requireUser, supaFetch, assertProfileAccess } from './_lib/supabase.js'
+import { setCors, requireUser, supaFetch, assertProfileAccess, assertMinRole } from './_lib/supabase.js'
 import { findNextOpenSlot, syncContentStatusInSpaces } from './_lib/scheduling.js'
 import { uploadpostCancelByRequestId, uploadpostCancelScheduled, uploadpostJobIdViaScheduleMatch, uploadpostEditScheduled, uploadpostUnpublish, UNPUBLISH_SUPPORTED_PLATFORMS, uploadpost, resolveUploadpostUser } from './_lib/uploadpost.js'
 import uploadPostHandler from './social/upload-post.js'
@@ -265,7 +265,8 @@ export default async function handler(req, res) {
         const rows = await supaFetch(`content_scripts?id=eq.${id}&select=*`)
         const item = rows?.[0]
         if (!item) return res.status(404).json({ error: 'Not found' })
-        await assertProfileAccess(auth.user.id, item.profile_id)
+        // approve / reject / schedule mutate the posting pipeline — contributors are excluded.
+        await assertMinRole(auth.user.id, item.profile_id, 'editor')
 
         let updates = {}
         let submittedRequestId = null
@@ -420,7 +421,7 @@ export default async function handler(req, res) {
       // ── Plain create ────────────────────────────────────────────────────
       const body = req.body || {}
       if (!body.profile_id) return res.status(400).json({ error: 'profile_id required' })
-      await assertProfileAccess(auth.user.id, body.profile_id)
+      await assertMinRole(auth.user.id, body.profile_id, 'editor')
       const row = pickAllowed(body)
       row.profile_id = body.profile_id
 
@@ -490,7 +491,7 @@ export default async function handler(req, res) {
       const item = rows?.[0]
       const profileId = item?.profile_id
       if (!profileId) return res.status(404).json({ error: 'Not found' })
-      await assertProfileAccess(auth.user.id, profileId)
+      await assertMinRole(auth.user.id, profileId, 'editor')
       const updates = pickAllowed(req.body || {})
 
       // Reschedule-on-Upload-Post when ANY field that gets sent to
@@ -572,7 +573,7 @@ export default async function handler(req, res) {
       const row = rows?.[0]
       const profileId = row?.profile_id
       if (!profileId) return res.status(404).json({ error: 'Not found' })
-      await assertProfileAccess(auth.user.id, profileId)
+      await assertMinRole(auth.user.id, profileId, 'editor')
       // Cascade-cancel the Upload-Post job before dropping the local row.
       // Cancellation strategy (in order of preference):
       //   1. Stored uploadpost_job_id    → direct DELETE

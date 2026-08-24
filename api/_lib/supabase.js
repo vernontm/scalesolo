@@ -268,3 +268,26 @@ export async function assertProfileAccess(userId, profileId) {
   }
   return rows[0].role
 }
+
+// profile_access role hierarchy — higher = more privilege. A board 'contributor'
+// is the lowest rung (below 'viewer'): it can use the board but must never reach
+// posting / scheduling / content / credit-spend endpoints.
+const ROLE_RANK = { contributor: 0, viewer: 1, editor: 2, admin: 3, owner: 4 }
+
+export function roleAtLeast(role, minRole) {
+  return (ROLE_RANK[role] ?? -1) >= (ROLE_RANK[minRole] ?? 0)
+}
+
+// Like assertProfileAccess, but also requires the caller's role to be at least
+// `minRole` (default 'editor'). Throws 403 otherwise. Use on every write / spend
+// / publish handler so a least-privilege role can't reach it with a valid
+// session. Returns the caller's role on success.
+export async function assertMinRole(userId, profileId, minRole = 'editor') {
+  const role = await assertProfileAccess(userId, profileId)
+  if (!roleAtLeast(role, minRole)) {
+    const err = new Error('Forbidden')
+    err.status = 403
+    throw err
+  }
+  return role
+}

@@ -5,7 +5,7 @@
 //   v4 → /v3/videos (Avatar IV)
 //   v5 → /v3/videos with expressiveness=high + motion_prompt (Avatar V)
 
-import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { setCors, requireUser, supaFetch, assertMinRole } from '../_lib/supabase.js'
 import { generateVideoV2, generateVideoV3, MODELS, videoUnitsForModel, listLooksForGroup } from '../_lib/heygen.js'
 import { synthesizeToPublicUrl, looksLikeElevenLabsVoiceId, resolveByoApiKey, sanitizeVoiceSettings, chargeTtsCredits } from '../_lib/elevenlabs.js'
 import { isUserOnTrial, TRIAL_LOCKS } from '../_lib/billing.js'
@@ -64,7 +64,7 @@ export default async function handler(req, res) {
       if (!req.body?.profile_id) {
         return res.status(400).json({ error: 'profile_id required when using a default avatar' })
       }
-      await assertProfileAccess(auth.user.id, req.body.profile_id)
+      await assertMinRole(auth.user.id, req.body.profile_id, 'editor')
       avatar = {
         id: defId,
         profile_id: req.body.profile_id,
@@ -82,7 +82,7 @@ export default async function handler(req, res) {
       const aRows = await supaFetch(`avatars?id=eq.${avatar_id}&select=*`)
       avatar = aRows?.[0]
       if (!avatar) return res.status(404).json({ error: 'Avatar not found' })
-      await assertProfileAccess(auth.user.id, avatar.profile_id)
+      await assertMinRole(auth.user.id, avatar.profile_id, 'editor')
 
       // Refuse early if HeyGen training isn't complete.
       if (avatar.training_status && !['ready', 'completed', 'success'].includes(avatar.training_status)) {
@@ -98,7 +98,7 @@ export default async function handler(req, res) {
       if (!req.body?.profile_id) {
         return res.status(400).json({ error: 'profile_id required when using a public avatar' })
       }
-      await assertProfileAccess(auth.user.id, req.body.profile_id)
+      await assertMinRole(auth.user.id, req.body.profile_id, 'editor')
       avatar = {
         profile_id: req.body.profile_id,
         talking_photo_id: avatar_id.slice(4), // raw HeyGen group/avatar id

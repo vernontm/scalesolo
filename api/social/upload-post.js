@@ -16,7 +16,7 @@
 // because Upload-Post wants the bytes, not a URL.
 
 import sharp from 'sharp'
-import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { setCors, requireUser, supaFetch, assertMinRole } from '../_lib/supabase.js'
 import { isUserOnTrial } from '../_lib/billing.js'
 import { resolveUploadpostUser, uploadpostEnsureUserProfile } from '../_lib/uploadpost.js'
 import { findNextOpenSlot } from '../_lib/scheduling.js'
@@ -151,7 +151,8 @@ export default async function handler(req, res) {
     if (!isVideo && !photos.length && !isText) {
       return res.status(400).json({ error: 'video_url, photo_urls, or is_text_post required' })
     }
-    await assertProfileAccess(auth.user.id, profile_id)
+    // Publishing is owner/admin/editor only — a board contributor can never post.
+    await assertMinRole(auth.user.id, profile_id, 'editor')
 
     const apiKey = process.env.UPLOADPOST_API_KEY
     if (!apiKey) return res.status(500).json({ error: 'UPLOADPOST_API_KEY not configured' })

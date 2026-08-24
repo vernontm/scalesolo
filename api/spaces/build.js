@@ -7,7 +7,7 @@
 // exposing a 'ref' handle for reference media. Every node has ONE output
 // handle (id 'out'). Edges connect 'out' → 'in' (or 'out' → 'ref').
 
-import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { setCors, requireUser, supaFetch, assertMinRole } from '../_lib/supabase.js'
 import { message } from '../_lib/anthropic.js'
 
 const NODE_CATALOG = {
@@ -232,7 +232,7 @@ export default async function handler(req, res) {
   try {
     const { profile_id, instruction, current_nodes, current_edges } = req.body || {}
     if (!profile_id || !instruction) return res.status(400).json({ error: 'profile_id + instruction required' })
-    await assertProfileAccess(auth.user.id, profile_id)
+    await assertMinRole(auth.user.id, profile_id, 'editor')
 
     const cust = await supaFetch(`billing_customers?user_id=eq.${auth.user.id}&select=id`)
     const customerId = cust?.[0]?.id
