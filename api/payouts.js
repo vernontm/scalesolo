@@ -12,9 +12,9 @@
 // clean PRE-broadcast failure; an ambiguous failure holds the cards so a retry
 // can't double-pay. Nothing auto-fires — an owner/admin clicks release.
 import { setCors, requireUser, supaFetch, fmtErr } from './_lib/supabase.js'
-import { preflight, sendUsdt, validateAddress, explorerTxUrl } from './_lib/solana.js'
-
-export const config = { maxDuration: 60 }
+// The Solana helpers (heavy @solana/* deps) are imported lazily inside the
+// write/send paths only, so a GET that renders the Payouts page never loads
+// them. maxDuration + the includeFiles bundle for those deps live in vercel.json.
 
 // Error codes from solana.js that are raised BEFORE anything is broadcast — safe
 // to release a reservation and let the admin retry. Anything else is treated as
@@ -140,6 +140,11 @@ export default async function handler(req, res) {
       ])
       return res.status(200).json({ summary: summarize(comps?.[0] || null, cards || [], payouts || []), payouts: payouts || [] })
     }
+
+    // Everything below writes a wallet, sets a deal, or moves money — load the
+    // Solana helpers now (never during a GET). If their bundle is unavailable
+    // this throws into the outer catch as a clean JSON 500, not a crash page.
+    const { preflight, sendUsdt, validateAddress, explorerTxUrl } = await import('./_lib/solana.js')
 
     // ── editor: set my own wallet address ──
     if (req.method === 'PATCH') {
