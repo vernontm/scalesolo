@@ -31,15 +31,24 @@ export default async function handler(req, res) {
       const select = '*,brand:profiles(id,business_name),' +
         'versions:board_card_versions!board_card_versions_card_id_fkey(id,version_no,video_url,thumbnail_url,kind,note,uploaded_by,author_name,author_avatar,created_at),' +
         'comments:board_card_comments(count)'
+      // A contributor (editor) only ever sees cards ASSIGNED to them; owners /
+      // admins / editors see every card for their brands. Enforced server-side.
       let filter
       if (profileId) {
-        await assertProfileAccess(auth.user.id, profileId)
-        filter = `profile_id=eq.${profileId}`
+        const role = await assertProfileAccess(auth.user.id, profileId)
+        filter = role === 'contributor'
+          ? `profile_id=eq.${profileId}&assigned_editor=eq.${auth.user.id}`
+          : `profile_id=eq.${profileId}`
       } else {
-        const access = await supaFetch(`profile_access?user_id=eq.${auth.user.id}&select=profile_id`)
-        const ids = (access || []).map((a) => a.profile_id).filter(Boolean)
-        if (!ids.length) return res.status(200).json({ cards: [] })
-        filter = `profile_id=in.(${ids.join(',')})`
+        const access = await supaFetch(`profile_access?user_id=eq.${auth.user.id}&select=profile_id,role`)
+        const rows = access || []
+        const managerIds = rows.filter((a) => ['owner', 'admin', 'editor'].includes(a.role)).map((a) => a.profile_id)
+        const contribIds = rows.filter((a) => a.role === 'contributor').map((a) => a.profile_id)
+        if (!managerIds.length && !contribIds.length) return res.status(200).json({ cards: [] })
+        const clauses = []
+        if (managerIds.length) clauses.push(`profile_id.in.(${managerIds.join(',')})`)
+        if (contribIds.length) clauses.push(`and(profile_id.in.(${contribIds.join(',')}),assigned_editor.eq.${auth.user.id})`)
+        filter = `or=(${clauses.join(',')})`
       }
       const cards = await supaFetch(`board_cards?${filter}&order=position.asc,created_at.asc&select=${select}`)
       return res.status(200).json({ cards: cards || [] })
@@ -51,10 +60,13 @@ export default async function handler(req, res) {
       if (!id) return res.status(400).json({ error: 'id required' })
       const body = req.body || {}
       if (!body.stage || !STAGES.includes(body.stage)) return res.status(400).json({ error: 'valid stage required' })
-      const rows = await supaFetch(`board_cards?id=eq.${id}&select=profile_id`)
+      const rows = await supaFetch(`board_cards?id=eq.${id}&select=profile_id,assigned_editor`)
       const profileId = rows?.[0]?.profile_id
       if (!profileId) return res.status(404).json({ error: 'Not found' })
-      await assertProfileAccess(auth.user.id, profileId)
+      const role = await assertProfileAccess(auth.user.id, profileId)
+      if (role === 'contributor' && rows[0].assigned_editor !== auth.user.id) {
+        return res.status(403).json({ error: 'Forbidden' })
+      }
       const updated = await supaFetch(`board_cards?id=eq.${id}`, {
         method: 'PATCH',
         body: { stage: body.stage, position: body.position ?? 0, updated_at: new Date().toISOString() },
@@ -116,8 +128,11 @@ export default async function handler(req, res) {
     if (req.method === 'POST') {
       const body = req.body || {}
       if (!body.profile_id) return res.status(400).json({ error: 'profile_id required' })
-      await assertProfileAccess(auth.user.id, body.profile_id)
-      const stage = STAGES.includes(body.stage) ? body.stage : 'raw'
+      const role = await assertProfileAccess(auth.user.id, body.profile_id)
+      const stage = STAGES.includes(body.stage) ? body.stage : 'editing'
+      // Owners/admins may assign the card to any editor; a contributor's own card
+      // auto-assigns to them.
+      const assignedEditor = ['owner', 'admin'].includes(role) ? (body.assigned_editor || null) : auth.user.id
       const created = await supaFetch('board_cards', {
         method: 'POST',
         body: {
@@ -126,6 +141,7 @@ export default async function handler(req, res) {
           stage,
           position: body.position ?? 0,
           source_note: body.source_note || null,
+          assigned_editor: assignedEditor,
           created_by: auth.user.id,
         },
       })
@@ -156,11 +172,19 @@ export default async function handler(req, res) {
     if (req.method === 'PATCH' || req.method === 'PUT') {
       const id = req.query.id
       if (!id) return res.status(400).json({ error: 'id required' })
-      const rows = await supaFetch(`board_cards?id=eq.${id}&select=profile_id`)
+      const rows = await supaFetch(`board_cards?id=eq.${id}&select=profile_id,assigned_editor`)
       const currentProfile = rows?.[0]?.profile_id
       if (!currentProfile) return res.status(404).json({ error: 'Not found' })
-      await assertProfileAccess(auth.user.id, currentProfile)
-      const allowed = ['title', 'assigned_editor', 'final_version_id', 'submitted_version_id', 'source_note', 'stage', 'position', 'profile_id']
+      const role = await assertProfileAccess(auth.user.id, currentProfile)
+      // A contributor may only edit their OWN assigned card, and only its stage /
+      // position / submitted_version_id (submit-for-review + drag). Managers get
+      // the full field set.
+      if (role === 'contributor' && rows[0].assigned_editor !== auth.user.id) {
+        return res.status(403).json({ error: 'Forbidden' })
+      }
+      const allowed = role === 'contributor'
+        ? ['stage', 'position', 'submitted_version_id']
+        : ['title', 'assigned_editor', 'final_version_id', 'submitted_version_id', 'source_note', 'stage', 'position', 'profile_id']
       const updates = {}
       for (const k of allowed) if (k in (req.body || {})) updates[k] = req.body[k]
       if (updates.stage && !STAGES.includes(updates.stage)) return res.status(400).json({ error: 'invalid stage' })

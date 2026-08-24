@@ -39,10 +39,14 @@ export default async function handler(req, res) {
       if (!body.card_id || !String(body.body || '').trim()) {
         return res.status(400).json({ error: 'card_id + body required' })
       }
-      const cardRows = await supaFetch(`board_cards?id=eq.${body.card_id}&select=profile_id`)
-      const profileId = cardRows?.[0]?.profile_id
+      const cardRows = await supaFetch(`board_cards?id=eq.${body.card_id}&select=profile_id,assigned_editor`)
+      const card = cardRows?.[0]
+      const profileId = card?.profile_id
       if (!profileId) return res.status(404).json({ error: 'Card not found' })
-      await assertProfileAccess(auth.user.id, profileId)
+      const role = await assertProfileAccess(auth.user.id, profileId)
+      if (role === 'contributor' && card.assigned_editor !== auth.user.id) {
+        return res.status(403).json({ error: 'Forbidden' })
+      }
       const created = await supaFetch('board_card_comments', {
         method: 'POST',
         body: {
