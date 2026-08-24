@@ -12,6 +12,27 @@
 import { setCors, requireUser, supaFetch, assertProfileAccess, fmtErr } from './_lib/supabase.js'
 
 const STAGES = ['raw', 'editing', 'in_review', 'needs_revisions', 'approved', 'scheduled']
+// Stages that mean "past approval" — a card here is (or will be) payable.
+const APPROVED_STAGES = new Set(['approved', 'scheduled'])
+
+// Guard a stage change against the payout-replay exploits. Returns an error
+// string to reject with, or null if the move is allowed.
+//   - Only an owner/admin can move a card INTO approved/scheduled, so an editor
+//     can never self-approve their own work to trigger a payout.
+//   - A card that has already been PAID (payout_id set) can't be dragged back
+//     out of approved/scheduled — that's the "move it back and forth to get paid
+//     again" hole. It may still move approved <-> scheduled.
+function stageChangeError(card, targetStage, role) {
+  if (!targetStage || targetStage === card.stage) return null
+  const isManager = ['owner', 'admin'].includes(role)
+  if (APPROVED_STAGES.has(targetStage) && !isManager) {
+    return 'Only an owner or admin can approve or schedule a card.'
+  }
+  if (card.payout_id && !APPROVED_STAGES.has(targetStage)) {
+    return 'This card has already been paid and can no longer be moved back.'
+  }
+  return null
+}
 
 export default async function handler(req, res) {
   setCors(req, res)
@@ -60,13 +81,15 @@ export default async function handler(req, res) {
       if (!id) return res.status(400).json({ error: 'id required' })
       const body = req.body || {}
       if (!body.stage || !STAGES.includes(body.stage)) return res.status(400).json({ error: 'valid stage required' })
-      const rows = await supaFetch(`board_cards?id=eq.${id}&select=profile_id,assigned_editor,stage,approved_at`)
+      const rows = await supaFetch(`board_cards?id=eq.${id}&select=profile_id,assigned_editor,stage,approved_at,payout_id`)
       const profileId = rows?.[0]?.profile_id
       if (!profileId) return res.status(404).json({ error: 'Not found' })
       const role = await assertProfileAccess(auth.user.id, profileId)
       if (role === 'contributor' && rows[0].assigned_editor !== auth.user.id) {
         return res.status(403).json({ error: 'Forbidden' })
       }
+      const moveErr = stageChangeError(rows[0], body.stage, role)
+      if (moveErr) return res.status(403).json({ error: moveErr, code: 'stage_locked' })
       const updated = await supaFetch(`board_cards?id=eq.${id}`, {
         method: 'PATCH',
         body: {
@@ -184,7 +207,7 @@ export default async function handler(req, res) {
     if (req.method === 'PATCH' || req.method === 'PUT') {
       const id = req.query.id
       if (!id) return res.status(400).json({ error: 'id required' })
-      const rows = await supaFetch(`board_cards?id=eq.${id}&select=profile_id,assigned_editor,stage,approved_at`)
+      const rows = await supaFetch(`board_cards?id=eq.${id}&select=profile_id,assigned_editor,stage,approved_at,payout_id`)
       const currentProfile = rows?.[0]?.profile_id
       if (!currentProfile) return res.status(404).json({ error: 'Not found' })
       const role = await assertProfileAccess(auth.user.id, currentProfile)
@@ -201,9 +224,14 @@ export default async function handler(req, res) {
       for (const k of allowed) if (k in (req.body || {})) updates[k] = req.body[k]
       // Clearing the assignee clears its denormalized name/email too.
       if ('assigned_editor' in updates && !updates.assigned_editor) { updates.assigned_editor_email = null; updates.assigned_editor_name = null }
+      if (updates.stage && !STAGES.includes(updates.stage)) return res.status(400).json({ error: 'invalid stage' })
+      // Payout-replay guard: gate who can approve + lock paid cards in place.
+      if (updates.stage) {
+        const stageErr = stageChangeError(rows[0], updates.stage, role)
+        if (stageErr) return res.status(403).json({ error: stageErr, code: 'stage_locked' })
+      }
       // Payable-on-approve: stamp approved_at once, the first time it's approved.
       if (updates.stage === 'approved' && !rows[0].approved_at) updates.approved_at = new Date().toISOString()
-      if (updates.stage && !STAGES.includes(updates.stage)) return res.status(400).json({ error: 'invalid stage' })
       // Reassigning a card to a different brand: authorize the target and
       // cascade the denormalized profile_id onto its versions + comments so
       // their RLS stays consistent with the card.
