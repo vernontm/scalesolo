@@ -82,6 +82,17 @@ export function AuthProvider({ children }) {
           }
         }
       } catch {}
+
+      // Claim any pending board-editor invites for this email (idempotent), then
+      // signal ProfileContext to refetch so a newly-granted brand shows up.
+      try {
+        if (newSession?.access_token) {
+          fetch('/api/invites/claim', { method: 'POST', headers: { Authorization: `Bearer ${newSession.access_token}` } })
+            .then((r) => r.json().catch(() => ({})))
+            .then((b) => { if (b?.claimed > 0) { try { window.dispatchEvent(new Event('scalesolo:access-changed')) } catch { /* noop */ } } })
+            .catch(() => {})
+        }
+      } catch {}
     })
 
     return () => {

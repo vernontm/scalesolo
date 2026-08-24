@@ -39,10 +39,13 @@ export default async function handler(req, res) {
     if (req.method === 'POST') {
       const body = req.body || {}
       if (!body.card_id || !body.video_url) return res.status(400).json({ error: 'card_id + video_url required' })
-      const cardRows = await supaFetch(`board_cards?id=eq.${body.card_id}&select=profile_id,stage`)
+      const cardRows = await supaFetch(`board_cards?id=eq.${body.card_id}&select=profile_id,stage,assigned_editor`)
       const card = cardRows?.[0]
       if (!card) return res.status(404).json({ error: 'Card not found' })
-      await assertProfileAccess(auth.user.id, card.profile_id)
+      const role = await assertProfileAccess(auth.user.id, card.profile_id)
+      if (role === 'contributor' && card.assigned_editor !== auth.user.id) {
+        return res.status(403).json({ error: 'Forbidden' })
+      }
       const existing = await supaFetch(
         `board_card_versions?card_id=eq.${body.card_id}&select=version_no&order=version_no.desc&limit=1`
       )

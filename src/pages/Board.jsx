@@ -19,7 +19,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import {
   Plus, X, Upload, Film, MessageSquare, Check, CalendarPlus, Trash2,
-  Loader2, Download, Building2, Send, CornerUpLeft,
+  Loader2, Download, Building2, Send, CornerUpLeft, Users,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
@@ -230,6 +230,7 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
   const [uploadPct, setUploadPct] = useState(0)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
+  const [brandEditors, setBrandEditors] = useState([])
   const fileRef = useRef(null)
   const commentRef = useRef(null)
 
@@ -239,6 +240,13 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
     fetch(`/api/board/versions?card_id=${card.id}`, { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => r.json()).then((b) => { if (Array.isArray(b.versions)) setVersions(b.versions) }).catch(() => {})
   }, [card.id, token])
+
+  // Editors for this card's brand (managers only) → the assignee picker.
+  useEffect(() => {
+    if (!isManager) return
+    fetch(`/api/board/invites?action=brand_editors&profile_id=${card.profile_id}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.json()).then((b) => setBrandEditors(b.editors || [])).catch(() => {})
+  }, [card.profile_id, isManager, token])
 
   const versionNo = useCallback((vid) => versions.find((v) => v.id === vid)?.version_no, [versions])
 
@@ -293,6 +301,12 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
     if (!newId || newId === card.profile_id) return
     setBusy(true); setErr(null)
     try { await patchCard({ profile_id: newId }); toast({ message: 'Client updated', kind: 'success' }); onChanged() }
+    catch (e) { setErr(e.message) } finally { setBusy(false) }
+  }
+
+  const assignEditor = async (uid) => {
+    setBusy(true); setErr(null)
+    try { await patchCard({ assigned_editor: uid || null }); onChanged() }
     catch (e) { setErr(e.message) } finally { setBusy(false) }
   }
 
@@ -387,11 +401,20 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
           <button aria-label="Close" onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6 }}><X size={18} /></button>
         </div>
 
-        {/* Client */}
+        {/* Client + editor assignment */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
           <span style={{ fontSize: 12, color: 'var(--muted)' }}>Client</span>
           <BrandSelect profiles={profiles} value={card.profile_id} onChange={changeBrand} disabled={busy || !isManager} />
         </div>
+        {isManager && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+            <span style={{ fontSize: 12, color: 'var(--muted)' }}>Editor</span>
+            <select className="input" value={card.assigned_editor || ''} disabled={busy} onChange={(e) => assignEditor(e.target.value)} style={{ maxWidth: 260 }}>
+              <option value="">Unassigned</option>
+              {brandEditors.map((ed) => <option key={ed.user_id} value={ed.user_id}>{ed.email || ed.user_id.slice(0, 8)}</option>)}
+            </select>
+          </div>
+        )}
 
         {err && <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, marginTop: 8 }}>{err}</div>}
 
@@ -490,6 +513,94 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
   )
 }
 
+// ── editors manager ───────────────────────────────────────────────────────
+function EditorsModal({ token, onClose }) {
+  const [data, setData] = useState({ editors: [], brands: [] })
+  const [loading, setLoading] = useState(true)
+  const [email, setEmail] = useState('')
+  const [pick, setPick] = useState([]) // profile_ids to grant on invite
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+
+  const load = useCallback(() => {
+    fetch('/api/board/invites', { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.json())
+      .then((b) => { if (b.error) throw new Error(b.error); setData({ editors: b.editors || [], brands: b.brands || [] }) })
+      .catch((e) => setErr(e.message)).finally(() => setLoading(false))
+  }, [token])
+  useEffect(() => { setLoading(true); load() }, [load])
+
+  const post = (path, body) => fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) }).then(async (r) => { const b = await r.json().catch(() => ({})); if (!r.ok) throw new Error(b.error || 'Failed'); return b })
+
+  const invite = async () => {
+    if (!email.trim() || !pick.length) return
+    setBusy(true); setErr(null)
+    try { await post('/api/board/invites', { email: email.trim(), profile_ids: pick }); toast({ message: `Magic link sent to ${email.trim()}`, kind: 'success' }); setEmail(''); setPick([]); load() }
+    catch (e) { setErr(e.message) } finally { setBusy(false) }
+  }
+  const toggleBrand = async (ed, brandId, on) => {
+    try { await post(`/api/board/invites?action=${on ? 'grant' : 'revoke'}`, { email: ed, profile_id: brandId }); load() }
+    catch (e) { toast({ message: e.message, kind: 'error' }) }
+  }
+  const resend = async (ed) => { try { await post('/api/board/invites?action=resend', { email: ed }); toast({ message: 'Magic link resent', kind: 'success' }) } catch (e) { toast({ message: e.message, kind: 'error' }) } }
+  const remove = async (ed) => {
+    if (!(await confirmDialog({ title: `Remove ${ed}?`, message: 'They lose access to all your boards. You can re-invite them later.', confirmText: 'Remove', destructive: true }))) return
+    try { await fetch(`/api/board/invites?email=${encodeURIComponent(ed)}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }); load() }
+    catch (e) { toast({ message: e.message, kind: 'error' }) }
+  }
+
+  const chip = (on, label, onClick, title) => (
+    <button onClick={onClick} title={title} style={{ fontSize: 11, fontWeight: 700, borderRadius: 999, padding: '3px 10px', cursor: 'pointer', border: `1px solid ${on ? '#2ecc71' : 'var(--border)'}`, background: on ? '#2ecc7122' : 'transparent', color: on ? '#2ecc71' : 'var(--muted)' }}>{label}</button>
+  )
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 640, width: '100%', maxHeight: '88vh', overflowY: 'auto' }}>
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
+          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, flex: 1 }}>Editors</h3>
+          <button aria-label="Close" onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6 }}><X size={18} /></button>
+        </div>
+        <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 14 }}>Invite an editor by email. They get a magic link to log in (no password) and only see the board with the videos assigned to them, for the brands you turn on.</div>
+
+        {err && <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
+
+        {/* Invite */}
+        <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, marginBottom: 16 }}>
+          <label className="label">Invite a new editor</label>
+          <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="editor@email.com" style={{ marginBottom: 8 }} />
+          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>Grant access to:</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+            {data.brands.map((b) => chip(pick.includes(b.id), b.business_name || 'Brand', () => setPick((p) => p.includes(b.id) ? p.filter((x) => x !== b.id) : [...p, b.id])))}
+          </div>
+          <button className="btn-primary" onClick={invite} disabled={busy || !email.trim() || !pick.length}>{busy ? <span className="spinner" /> : <Send size={14} />} Send magic link</button>
+        </div>
+
+        {/* Existing editors */}
+        {loading ? <div style={{ textAlign: 'center', padding: 20 }}><span className="spinner" /></div> : (
+          data.editors.length === 0 ? <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>No editors yet.</div> : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {data.editors.map((ed) => (
+                <div key={ed.email} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <strong style={{ fontSize: 13 }}>{ed.email}</strong>
+                    {Object.values(ed.brands).some((s) => s === 'pending') && <span style={{ fontSize: 10.5, color: 'var(--muted)', border: '1px solid var(--border)', borderRadius: 999, padding: '0 7px' }}>pending</span>}
+                    <span style={{ flex: 1 }} />
+                    <button onClick={() => resend(ed.email)} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 11.5, fontWeight: 600 }}>Resend link</button>
+                    <button onClick={() => remove(ed.email)} title="Remove editor" style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}><Trash2 size={14} /></button>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {data.brands.map((b) => { const on = !!ed.brands[b.id]; return <span key={b.id}>{chip(on, b.business_name || 'Brand', () => toggleBrand(ed.email, b.id, !on), on ? 'Turn off' : 'Turn on')}</span> })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── main page ─────────────────────────────────────────────────────────────
 export default function Board() {
   const { session } = useAuth()
@@ -502,6 +613,8 @@ export default function Board() {
   const [activeDragId, setActiveDragId] = useState(null)
   const [newCardStage, setNewCardStage] = useState(null)
   const [openCardId, setOpenCardId] = useState(null)
+  const [showEditors, setShowEditors] = useState(false)
+  const isAnyManager = (profiles || []).some((p) => ['owner', 'admin'].includes(p._role))
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
 
@@ -581,6 +694,7 @@ export default function Board() {
           <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, margin: 0 }}>Production board</h1>
           <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 2 }}>All clients in one place. Upload raw footage, review editor versions, approve, then send to Schedule.</div>
         </div>
+        {isAnyManager && <button className="btn-secondary" onClick={() => setShowEditors(true)}><Users size={14} /> Editors</button>}
         <button className="btn-primary" onClick={() => setNewCardStage('editing')}><Plus size={14} /> New card</button>
       </div>
       {error && <div style={{ marginBottom: 12, padding: '10px 14px', background: 'var(--red-soft)', color: 'var(--red)', borderRadius: 10, fontSize: 13 }}>{error}</div>}
@@ -609,6 +723,7 @@ export default function Board() {
         <CardDrawer card={openCard} profiles={profiles} token={token} role={role}
           onClose={() => setOpenCardId(null)} onChanged={load} />
       )}
+      {showEditors && <EditorsModal token={token} onClose={() => setShowEditors(false)} />}
     </div>
   )
 }

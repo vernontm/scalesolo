@@ -52,6 +52,14 @@ export function ProfileProvider({ children }) {
 
   useEffect(() => { refresh() }, [refresh])
 
+  // A board-editor who just had a pending invite claimed on login → refetch the
+  // brand list so their newly-granted board access appears without a reload.
+  useEffect(() => {
+    const onChange = () => refresh()
+    window.addEventListener('scalesolo:access-changed', onChange)
+    return () => window.removeEventListener('scalesolo:access-changed', onChange)
+  }, [refresh])
+
   // After the list lands, ensure selectedProfileId points at a real row.
   // Runs once per list change, doesn't refetch.
   useEffect(() => {
