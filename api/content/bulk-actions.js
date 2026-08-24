@@ -12,7 +12,7 @@
 //     Submit each script to upload-post.com via the existing helper.
 //     Returns per-script success/failure summary.
 
-import { setCors, requireUser, supaFetch, assertProfileAccess, fmtErr } from '../_lib/supabase.js'
+import { setCors, requireUser, supaFetch, assertMinRole, fmtErr } from '../_lib/supabase.js'
 import { findNextOpenSlot } from '../_lib/scheduling.js'
 import { message } from '../_lib/anthropic.js'
 import { loadBrandContext, renderBrandContextMarkdown } from '../_lib/brand-context.js'
@@ -52,7 +52,8 @@ export default async function handler(req, res) {
     // throw there (e.g. profile not in the user's allowed set, malformed
     // uuid) bypassed the dispatcher's catch and surfaced as a generic
     // 500 with no useful payload. Moved inside.
-    await assertProfileAccess(auth.user.id, profile_id)
+    // Every action here writes / spends (caption gen, schedule, publish, resync) — editor+.
+    await assertMinRole(auth.user.id, profile_id, 'editor')
     if (action === 'generate-captions') return generateCaptions({ res, profile_id, script_ids, user_id: auth.user.id })
     if (action === 'auto-schedule')     return autoSchedule({ res, profile_id, script_ids, user_id: auth.user.id })
     if (action === 'publish-selected')  return publishSelected({ req, res, profile_id, script_ids, user_id: auth.user.id })

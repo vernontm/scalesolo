@@ -10,7 +10,7 @@
 // every-minute cron safety net.
 
 import { waitUntil } from '@vercel/functions'
-import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { setCors, requireUser, supaFetch, assertMinRole } from '../_lib/supabase.js'
 import { kickCarouselJob } from '../_lib/carousel-kick.js'
 
 export const config = { maxDuration: 30 }
@@ -26,7 +26,7 @@ export default async function handler(req, res) {
   try {
     const { profile_id, topic, slide_count = 6, reference_urls, theme, extra_style, outfit, format, signature, template, background, aspect = '3:4' } = req.body || {}
     if (!profile_id || !topic) return res.status(400).json({ error: 'profile_id + topic required' })
-    await assertProfileAccess(auth.user.id, profile_id)
+    await assertMinRole(auth.user.id, profile_id, 'editor')
 
     const request = {
       topic: String(topic), slide_count, reference_urls, theme, extra_style, outfit, format, signature, template, background, aspect,

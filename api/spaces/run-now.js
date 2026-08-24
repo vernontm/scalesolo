@@ -18,7 +18,7 @@
 // else's profile. The worker call uses an internal-secret bypass to
 // impersonate the caller end-to-end.
 
-import { setCors, requireUser, assertProfileAccess } from '../_lib/supabase.js'
+import { setCors, requireUser, assertMinRole } from '../_lib/supabase.js'
 
 // 60s gives a cold-starting Railway / Fly worker enough time to come up
 // from auto-sleep. Hot workers ack in <1s; cold starts can take 20-40s
@@ -49,7 +49,7 @@ export default async function handler(req, res) {
     if (!WORKER_URL || !INTERNAL_SECRET) {
       return res.status(500).json({ error: 'Worker not configured (WORKER_URL / WORKFLOW_INTERNAL_SECRET)' })
     }
-    await assertProfileAccess(auth.user.id, profile_id)
+    await assertMinRole(auth.user.id, profile_id, 'editor')
 
     // Fire-and-forget intent. The worker writes a space_runs row on
     // its end, so a delayed/dropped response here doesn't leave the

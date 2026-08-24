@@ -8,7 +8,7 @@
 // Response shape: { code, msg, data: { taskId } } / { data: { state, resultJson, ... } }
 // resultJson is a JSON-encoded STRING that needs to be parsed.
 
-import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { setCors, requireUser, supaFetch, assertMinRole } from '../_lib/supabase.js'
 import { message as anthropicMessage } from '../_lib/anthropic.js'
 import { withCreditReservation } from '../_lib/credits.js'
 
@@ -252,7 +252,7 @@ export default async function handler(req, res) {
       enhance_prompt = false,
     } = req.body || {}
     if (!profile_id || !prompt) return res.status(400).json({ error: 'profile_id + prompt required' })
-    await assertProfileAccess(auth.user.id, profile_id)
+    await assertMinRole(auth.user.id, profile_id, 'editor')
 
     // Two-stage rewrite. expandReferenceRoles ALWAYS runs when the prompt
     // mentions any `reference "X"` label; it classifies each ref's role

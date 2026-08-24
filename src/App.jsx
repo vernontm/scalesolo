@@ -154,7 +154,14 @@ function AppShell() {
   // useState resets, every useEffect re-fires with the new profile.
   // Cheap to do because route components were already lazy-loaded
   // chunks so the remount has no JS load cost.
-  const { selectedProfileId } = useProfile()
+  const { selectedProfileId, selectedProfile } = useProfile()
+
+  // Board-only editors (role='contributor', allowed_pages=['board']) are
+  // redirected out of any page they can't access. Owners/admins are ['*'] and
+  // unaffected. This is UX defense-in-depth; the real lock is the server gates.
+  const allowedPages = selectedProfile?._allowed_pages || ['*']
+  const pageKey = (pathname || '/').split('/')[1] || 'dashboard'
+  const pageAllowed = allowedPages.includes('*') || pageKey === 'board' || pageKey === 'auth' || allowedPages.includes(pageKey)
 
   // Sync a body class so CSS rules can target compact mode for the
   // builder overlay + main content margin.
@@ -179,6 +186,7 @@ function AppShell() {
         <Header onOpenSidebar={() => setMobileOpen(true)} onToggleSidebar={toggleSidebar} sidebarCollapsed={compact} />
         <main style={contentStyle}>
           <Suspense fallback={<RouteFallback />}>
+          {!pageAllowed && <Navigate to="/board" replace />}
           {/* Profile-keyed Routes: see the comment near useProfile()
               above. The key change unmounts the previous page tree
               completely so stale per-profile state can't leak across

@@ -21,7 +21,7 @@
 // a future slot, we re-invoke the approve action so it schedules + submits
 // to Upload-Post — finishing the approve -> media -> scheduled loop.
 
-import { setCors, requireUser, supaFetch, assertProfileAccess } from '../_lib/supabase.js'
+import { setCors, requireUser, supaFetch, assertMinRole } from '../_lib/supabase.js'
 import { withCreditReservation, refundConsumeByMetadata } from '../_lib/credits.js'
 import { invokeHandler } from '../_lib/internal-invoke.js'
 import imagesGenerate from '../images/generate.js'
@@ -304,11 +304,11 @@ export default async function handler(req, res) {
       const rows = await supaFetch(`content_scripts?id=eq.${body.content_id}&limit=1`)
       targetRow = rows?.[0]
       if (!targetRow) return res.status(404).json({ error: 'post not found' })
-      await assertProfileAccess(auth.user.id, targetRow.profile_id)
+      await assertMinRole(auth.user.id, targetRow.profile_id, 'editor')
     } else if (body.campaign_id) {
       const camp = await supaFetch(`campaigns?id=eq.${body.campaign_id}&select=profile_id&limit=1`)
       if (!camp?.[0]) return res.status(404).json({ error: 'campaign not found' })
-      await assertProfileAccess(auth.user.id, camp[0].profile_id)
+      await assertMinRole(auth.user.id, camp[0].profile_id, 'editor')
       // Next post needing media: not text, no media yet, not rejected,
       // not already done. Ordered by schedule so it fills in order.
       // Failed posts are deliberately excluded from the batch so a bad

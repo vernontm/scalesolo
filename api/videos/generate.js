@@ -9,7 +9,7 @@
 // bills the (possibly impersonated) user's ScaleSolo ai_tokens and returns 402
 // when the balance is too low.
 
-import { setCors, requireUser, assertProfileAccess } from '../_lib/supabase.js'
+import { setCors, requireUser, assertMinRole } from '../_lib/supabase.js'
 import { withCreditReservation } from '../_lib/credits.js'
 
 const KIE_API_KEY = process.env.KIE_API_KEY
@@ -28,7 +28,7 @@ export default async function handler(req, res) {
   try {
     const { profile_id, prompt, image_urls, aspect = '9:16', duration = 8 } = req.body || {}
     if (!profile_id || !prompt) return res.status(400).json({ error: 'profile_id + prompt required' })
-    await assertProfileAccess(auth.user.id, profile_id)
+    await assertMinRole(auth.user.id, profile_id, 'editor')
     if (!KIE_API_KEY) return res.status(500).json({ error: 'KIE_API_KEY not configured. Add it in Vercel env.' })
 
     const imgs = Array.isArray(image_urls) ? image_urls.filter(Boolean) : []

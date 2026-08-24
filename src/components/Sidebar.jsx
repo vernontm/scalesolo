@@ -23,6 +23,7 @@ import {
   Wand2,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
+import { useProfile } from '../context/ProfileContext.jsx'
 import ProfileSwitcher from './ProfileSwitcher.jsx'
 import CreditsBadge from './CreditsBadge.jsx'
 import ThemeToggle from './ThemeToggle.jsx'
@@ -224,16 +225,28 @@ function linkStyle(isActive) {
 
 export default function Sidebar({ mobile = false, compact = false, onClose }) {
   const { user, signOut, isAdmin } = useAuth()
+  const { selectedProfile } = useProfile()
   const initials = (user?.email || 'U').slice(0, 2).toUpperCase()
   const isCompact = compact && !mobile
   const showBeta = readBetaFlag()
 
-  // Filter out beta-only groups + items unless the flag is on. Empty
-  // groups (all items hidden) get dropped entirely so we don't render
-  // a header with nothing under it.
+  // Per-brand page access. Owners/admins are ['*'] (see everything, subject to
+  // the beta flag). A board-only editor (role='contributor') is ['board'], so
+  // only the Board item survives — and it shows even though it's beta-gated,
+  // because it's explicitly allowed for them.
+  const allowedPages = selectedProfile?._allowed_pages || ['*']
+  const allowAll = allowedPages.includes('*')
+  const pageKey = (to) => (to || '').split('/')[1] || ''
+  const itemVisible = (it) => {
+    if (!allowAll) return allowedPages.includes(pageKey(it.to))
+    return showBeta || !it.beta
+  }
+
+  // Filter out beta-only groups + items unless the flag is on (owners), or keep
+  // only explicitly-allowed items (restricted users). Empty groups get dropped.
   let visibleGroups = navGroups
-    .filter((g) => showBeta || !g.beta)
-    .map((g) => ({ ...g, items: g.items.filter((it) => showBeta || !it.beta) }))
+    .filter((g) => (allowAll ? (showBeta || !g.beta) : true))
+    .map((g) => ({ ...g, items: g.items.filter(itemVisible) }))
     .filter((g) => g.items.length > 0)
 
   // Admin section appears only for admins (is_admin = true on user_profiles).

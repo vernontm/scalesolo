@@ -11,7 +11,7 @@
 //   - the voice_id returned must be used with their key at render time
 //     (the avatar row's voice_owner is set to 'byok' by the caller).
 
-import { setCors, requireUser, assertProfileAccess, supaFetch } from '../_lib/supabase.js'
+import { setCors, requireUser, assertMinRole, supaFetch } from '../_lib/supabase.js'
 import { decryptSecret } from '../_lib/crypto.js'
 
 const MAX_SAMPLES = 5
@@ -28,7 +28,7 @@ export default async function handler(req, res) {
     const { profile_id, name, description, sample_url, sample_urls } = req.body || {}
     if (!profile_id) return res.status(400).json({ error: 'profile_id required' })
     if (!name?.trim()) return res.status(400).json({ error: 'name required' })
-    await assertProfileAccess(auth.user.id, profile_id)
+    await assertMinRole(auth.user.id, profile_id, 'editor')
 
     // Resolve the user's BYOK ElevenLabs key. Refuse cloning if they
     // haven't connected one — we never clone into our shared workspace.
