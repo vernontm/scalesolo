@@ -53,14 +53,11 @@ export default async function handler(req, res) {
         },
       })
       const version = Array.isArray(created) ? created[0] : created
-      // A fresh EDIT on a card that's waiting to be worked moves it into review.
-      if (kind === 'edit' && ['needs_revisions', 'editing', 'raw'].includes(card.stage)) {
-        await supaFetch(`board_cards?id=eq.${body.card_id}`, {
-          method: 'PATCH',
-          body: { stage: 'in_review', updated_at: new Date().toISOString() },
-          prefer: 'return=minimal',
-        })
-      }
+      // Bump the card's updated_at so it sorts as recently touched; the user
+      // drives the columns by dragging (no auto stage move).
+      await supaFetch(`board_cards?id=eq.${body.card_id}`, {
+        method: 'PATCH', body: { updated_at: new Date().toISOString() }, prefer: 'return=minimal',
+      })
       return res.status(201).json({ version })
     }
 

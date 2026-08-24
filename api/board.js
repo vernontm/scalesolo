@@ -21,18 +21,27 @@ export default async function handler(req, res) {
   if (!auth) return
 
   try {
-    // ── GET: all cards for a brand, with versions + comment counts ──
+    // ── GET: cards for one brand, or (no profile_id) the unified board across
+    // every brand the user can access. Each card carries its brand + versions +
+    // comment count. The versions embed names its FK explicitly because
+    // board_cards has TWO relationships to board_card_versions (card_id and the
+    // final_version_id back-ref).
     if (req.method === 'GET') {
       const profileId = req.query.profile_id
-      if (!profileId) return res.status(400).json({ error: 'profile_id required' })
-      await assertProfileAccess(auth.user.id, profileId)
-      const cards = await supaFetch(
-        `board_cards?profile_id=eq.${profileId}&order=position.asc,created_at.asc` +
-        // Name the FK explicitly: board_cards has TWO relationships to
-        // board_card_versions (card_id, and the final_version_id back-ref), so
-        // PostgREST needs disambiguation on the embed.
-        `&select=*,versions:board_card_versions!board_card_versions_card_id_fkey(id,version_no,video_url,thumbnail_url,kind,note,uploaded_by,created_at),comments:board_card_comments(count)`
-      )
+      const select = '*,brand:profiles(id,business_name),' +
+        'versions:board_card_versions!board_card_versions_card_id_fkey(id,version_no,video_url,thumbnail_url,kind,note,uploaded_by,created_at),' +
+        'comments:board_card_comments(count)'
+      let filter
+      if (profileId) {
+        await assertProfileAccess(auth.user.id, profileId)
+        filter = `profile_id=eq.${profileId}`
+      } else {
+        const access = await supaFetch(`profile_access?user_id=eq.${auth.user.id}&select=profile_id`)
+        const ids = (access || []).map((a) => a.profile_id).filter(Boolean)
+        if (!ids.length) return res.status(200).json({ cards: [] })
+        filter = `profile_id=in.(${ids.join(',')})`
+      }
+      const cards = await supaFetch(`board_cards?${filter}&order=position.asc,created_at.asc&select=${select}`)
       return res.status(200).json({ cards: cards || [] })
     }
 
@@ -148,15 +157,25 @@ export default async function handler(req, res) {
       const id = req.query.id
       if (!id) return res.status(400).json({ error: 'id required' })
       const rows = await supaFetch(`board_cards?id=eq.${id}&select=profile_id`)
-      const profileId = rows?.[0]?.profile_id
-      if (!profileId) return res.status(404).json({ error: 'Not found' })
-      await assertProfileAccess(auth.user.id, profileId)
-      const allowed = ['title', 'assigned_editor', 'final_version_id', 'source_note', 'stage', 'position']
+      const currentProfile = rows?.[0]?.profile_id
+      if (!currentProfile) return res.status(404).json({ error: 'Not found' })
+      await assertProfileAccess(auth.user.id, currentProfile)
+      const allowed = ['title', 'assigned_editor', 'final_version_id', 'source_note', 'stage', 'position', 'profile_id']
       const updates = {}
       for (const k of allowed) if (k in (req.body || {})) updates[k] = req.body[k]
       if (updates.stage && !STAGES.includes(updates.stage)) return res.status(400).json({ error: 'invalid stage' })
+      // Reassigning a card to a different brand: authorize the target and
+      // cascade the denormalized profile_id onto its versions + comments so
+      // their RLS stays consistent with the card.
+      const newProfile = updates.profile_id
+      const brandChanged = newProfile && newProfile !== currentProfile
+      if (brandChanged) await assertProfileAccess(auth.user.id, newProfile)
       updates.updated_at = new Date().toISOString()
       const updated = await supaFetch(`board_cards?id=eq.${id}`, { method: 'PATCH', body: updates })
+      if (brandChanged) {
+        await supaFetch(`board_card_versions?card_id=eq.${id}`, { method: 'PATCH', body: { profile_id: newProfile }, prefer: 'return=minimal' })
+        await supaFetch(`board_card_comments?card_id=eq.${id}`, { method: 'PATCH', body: { profile_id: newProfile }, prefer: 'return=minimal' })
+      }
       return res.status(200).json({ card: Array.isArray(updated) ? updated[0] : updated })
     }
 
