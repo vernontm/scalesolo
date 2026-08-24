@@ -21,6 +21,8 @@ export default [
       'playwright-report/**',
       'test-results/**',
       'public/**',
+      // Generated, self-contained esbuild bundle of the Solana payout deps.
+      'api/_lib/solana.bundle.mjs',
       // HyperFrames marketing project trees use their own scripts +
       // CDN-loaded GSAP — lint will hit false positives on the
       // GSAP / hf-seek globals. Skip the whole subtree.

@@ -144,7 +144,7 @@ export default async function handler(req, res) {
     // Everything below writes a wallet, sets a deal, or moves money — load the
     // Solana helpers now (never during a GET). If their bundle is unavailable
     // this throws into the outer catch as a clean JSON 500, not a crash page.
-    const { preflight, sendUsdt, validateAddress, explorerTxUrl } = await import('./_lib/solana.js')
+    const { preflight, sendUsdt, validateAddress, explorerTxUrl } = await import('./_lib/solana.bundle.mjs')
 
     // ── editor: set my own wallet address ──
     if (req.method === 'PATCH') {
