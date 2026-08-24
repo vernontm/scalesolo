@@ -133,10 +133,19 @@ async function generateCaptions({ res, profile_id, script_ids, user_id }) {
   const toneLine = profile.preferred_tone ? `Voice / tone: ${profile.preferred_tone.trim()}` : ''
   const dnsArr = Array.isArray(profile.do_not_say) ? profile.do_not_say.filter(Boolean) : []
   const aiArr  = Array.isArray(profile.always_include) ? profile.always_include.filter(Boolean) : []
+  // A credit / attribution line (e.g. "📷: @rayvaughnceo") is not a phrase to
+  // weave into a sentence — it must land verbatim as the caption's final line.
+  // Partition those out of always_include so they're (a) NOT fed to the model
+  // as "include one of these" (which would let it paraphrase or misplace them)
+  // and (b) appended deterministically after generation. Everything else stays
+  // a normal always-include phrase.
+  const isCreditLine = (s) => /^\s*(📷|📸|🎥|🎬|🎞|credit\s*:|shot by|filmed by|📷:)/i.test(String(s || ''))
+  const creditEntries  = aiArr.filter(isCreditLine).map((s) => String(s).trim())
+  const includeArr = aiArr.filter((s) => !isCreditLine(s))
   const ctaStr = (profile.brand_cta || '').trim()
   const ruleLines = []
   if (dnsArr.length) ruleLines.push(`- NEVER use these words/phrases: ${dnsArr.map((s) => `"${s}"`).join(', ')}`)
-  if (aiArr.length)  ruleLines.push(`- ALWAYS include at least one of: ${aiArr.map((s) => `"${s}"`).join(', ')}`)
+  if (includeArr.length)  ruleLines.push(`- ALWAYS include at least one of: ${includeArr.map((s) => `"${s}"`).join(', ')}`)
   // CTA selection. brand_ctas (jsonb array of {label, url, when}) is the
   // multi-CTA menu: Claude picks the ONE best-fit CTA per post based on
   // the content, so an AI-group recap gets the event CTA while a tool
@@ -180,6 +189,45 @@ async function generateCaptions({ res, profile_id, script_ids, user_id }) {
   // dramatizations are fiction, and we never assert unverifiable real-
   // world facts about real people.
   const TRUTH_RULE = 'TRUTH: Do NOT state anything as real fact that you cannot verify from the brand context. Skits, POV setups, jokes, look-alikes, and dramatizations are creative premises, not real events: write around the concept, the feeling, or the viewer, not as something that happened. NEVER claim a real or famous person actually visited, endorsed, ate at, or said anything about the brand, and never put words in a real person\'s mouth. If a frame or on-screen line implies a celebrity or an event that did not verifiably happen, treat it as the setup (address the viewer, play up the vibe), not as fact. When unsure whether a detail is real, describe the experience, not the claim.'
+
+  // Distinguish real spoken narration from background-music lyrics. Scribe
+  // transcribes SINGING as if it were speech, so a food B-roll set to a song
+  // comes back with a "transcript" full of lyrics. Those lyrics are not the
+  // subject of the video, and feeding them to the model produces captions
+  // "about the song" instead of the food. When we already have keyframes, we
+  // only keep a transcript that shows a real promo/narration signal (the brand
+  // name, a brand term, or a call-to-action cue); otherwise we drop it and
+  // caption from the frames alone. Conservative on purpose: genuine owner /
+  // creator narration almost always names the place or includes a CTA, so it
+  // survives, while a pure song is dropped.
+  const NARRATION_CUES = ['check out', 'come in', 'come by', 'come see', 'come and', 'stop by', 'pull up', 'visit us', 'visit our', 'swing by', 'link in bio', 'follow us', 'subscribe', 'order', 'on the menu', 'open now', 'now open', 'grab a', 'grab your', 'get yours', 'try our', 'try the', 'try this', 'welcome to', 'happy hour', 'dine in', 'pickup', 'take out', 'takeout', 'delivery', 'book a', 'reserve', 'call us', 'tag a', 'tag your', 'comment below', 'save this', 'drop a', 'new location', 'grand opening', 'this weekend', 'see you', 'make sure']
+  const looksLikeNarration = (transcript) => {
+    const t = String(transcript || '').toLowerCase()
+    if (t.length < 30) return false
+    const name = String(profile.business_name || '').toLowerCase().trim()
+    if (name.length >= 3 && t.includes(name)) return true
+    const terms = []
+    if (Array.isArray(profile.always_include)) terms.push(...profile.always_include)
+    if (profile.core_hashtags) terms.push(...String(profile.core_hashtags).split(/[\s,]+/))
+    for (const raw of terms) {
+      const w = String(raw || '').replace(/^#/, '').toLowerCase().trim()
+      if (w.length >= 4 && t.includes(w)) return true
+    }
+    return NARRATION_CUES.some((c) => t.includes(c))
+  }
+
+  // Append any brand credit / attribution line verbatim as the caption's final
+  // line, below a three-dot spacer (pushes it under Instagram's "more" fold).
+  // Dedup-guarded so re-running Generate Captions can't stack duplicates.
+  const applyCreditLine = (caption) => {
+    if (caption == null) return caption
+    const lines = creditEntries.filter(Boolean)
+    if (!lines.length) return caption
+    const out = String(caption).trimEnd()
+    const missing = lines.filter((l) => !out.includes(l))
+    if (!missing.length) return out
+    return `${out}\n.\n.\n.\n\n${missing.join('\n')}`
+  }
 
   // Per-media-type prompt builders. The user message carries the actual
   // image (image rows only) so Claude Vision can read it; for video
@@ -226,32 +274,37 @@ Return ONLY valid JSON:
   //
   // Output shape matches the transcript-only videoSystemPrompt exactly
   // so the row-patching code downstream stays identical.
-  const videoHybridSystemPrompt = (transcript, frameCount, durationSecs) => `You are a social media content creator. Analyze this video using BOTH of the signals I'm providing:
-  - AUDIO TRANSCRIPT — what was spoken or sung in the audio.
-  - ${frameCount} KEYFRAMES sampled evenly${durationSecs ? ` across the ${Math.round(durationSecs)}-second clip` : ''} — what's shown on screen, INCLUDING any text burned into the video.
+  const videoHybridSystemPrompt = (transcript, frameCount, durationSecs) => `You are a social media content creator writing a caption for a video. The FRAMES are your primary source of truth: caption what is actually shown on screen.
 
-CRITICAL: read any on-screen text in the keyframes. Hooks like "POV:", "Wait for it...", price tags, product labels, and location captions are usually the primary message of the video, separate from (or instead of) the audio. When the on-screen text and the audio disagree, the on-screen text usually wins. Quote on-screen text directly when it would make a strong title or caption hook.
+I am giving you two signals, and they are NOT equal:
+  - ${frameCount} KEYFRAMES sampled evenly${durationSecs ? ` across the ${Math.round(durationSecs)}-second clip` : ''} — what is on screen, INCLUDING any text burned into the video. THIS is what the caption is about.
+  - An AUDIO TRANSCRIPT — a LOW-priority hint only, and often misleading (see below).
+
+HOW TO USE THE AUDIO: the sound on these videos is usually just a background music track, so the transcript is frequently nothing more than the SONG LYRICS. Song lyrics are NOT what the video is about. IGNORE the transcript entirely unless it is clearly a real person narrating about the subject on screen (the food, the product, the place, the offer, the drink). If you are unsure whether it is narration or a song, ignore it and caption from the frames alone. Never describe, quote, or theme the caption around the background music.
+
+READ THE FRAMES: look closely at what is shown (the actual dish, drink, product, or scene) and at any on-screen text ("POV:", "Wait for it...", price tags, dish names, product labels, location captions). On-screen text is usually the real headline. Quote it directly when it makes a strong title or caption hook.
 
 TODAY'S DATE: ${today}
 
 BRAND CONTEXT:
 ${brandContext}
 
-AUDIO TRANSCRIPT (may be empty, music-only, or unrelated to the visual story):
+AUDIO TRANSCRIPT (low priority, likely just background-music lyrics — ignore it unless it is clearly spoken narration about what is on screen):
 ${String(transcript || '').slice(0, 8000) || '(no spoken audio detected)'}
 
 Generate the following:
-1. "title" - A short, click-worthy, engaging title for this video (max 12 words). If the keyframes contain on-screen text, the title almost always reflects or builds on it.
-2. "hook" - The opening 1-2 sentences that hook viewers.
-3. "full_script" - A cleaned-up readable script of the spoken content IF there was usable speech; otherwise a brief description of what unfolds visually across the frames.
-4. "caption" - Engaging social caption. Anchor to BOTH the visuals and any spoken content. ${CAPTION_LENGTH_RULE}
+1. "title" - A short, click-worthy, engaging title for this video (max 12 words). Reflect the frames and any on-screen text, not the song.
+2. "hook" - The opening 1-2 sentences that hook viewers, based on what is shown.
+3. "full_script" - A brief description of what unfolds visually across the frames, in order. Do NOT paste song lyrics here.
+4. "caption" - Engaging social caption anchored ENTIRELY to what is shown in the frames and the brand voice. ${CAPTION_LENGTH_RULE}
 5. "hashtags" - AT MOST 5 total. Core brand hashtags first, then ones specific to what's shown, up to the 5-tag limit.
 6. "first_comment" - Engagement-driving first comment (question or CTA).
 
 RULES:
+- Caption from what you SEE, not what you hear. Never reference or theme the caption around the background song or its lyrics.
+- Name what is actually on screen specifically (the exact dish, drink, or product), not generic "food" or "this."
 - NEVER use em dashes (—). Use commas, periods, or colons.
 - Match the brand voice from the brand bible.
-- Reference things you actually see in the frames, not generic stock phrasing.
 - Make the title curiosity-driven, not generic.
 - ${TRUTH_RULE}
 
@@ -279,6 +332,8 @@ RULES:
 - NEVER use em dashes. Use commas, periods, or colons instead.
 - Match the brand voice and tone from the brand bible.
 - Only reference things visible in the frames. Do not invent dialogue.
+- Name what is actually on screen specifically (the exact dish, drink, or product), not generic "food" or "this."
+- Never reference any background music or song.
 - The title should be curiosity-driven, not generic.
 - ${TRUTH_RULE}
 
@@ -370,6 +425,11 @@ Return ONLY valid JSON:
     if (s.media_type === 'video' || (s.full_script && !isImage)) {
       const transcript = (s.full_script || '').trim()
       const transcriptUsable = transcript.length >= 30
+      // Only trust a transcript that reads like real narration. A song's
+      // lyrics (which Scribe returns for music-backed B-roll) score false
+      // here, so when we also have frames we skip the transcript and caption
+      // visually, exactly how a human would.
+      const transcriptIsNarration = transcriptUsable && looksLikeNarration(transcript)
       const videoUrl = Array.isArray(s.media_urls) ? s.media_urls[0] : null
       const canSampleFrames = videoUrl && /^https?:\/\//.test(videoUrl)
 
@@ -401,20 +461,22 @@ Return ONLY valid JSON:
       let systemPrompt
       let messageContent
       let captionSource
-      if (frames && transcriptUsable) {
+      if (frames && transcriptIsNarration) {
         systemPrompt = videoHybridSystemPrompt(transcript, frames.length, durationSecs)
         messageContent = [
           ...framesToVisionBlocks(frames),
-          { type: 'text', text: 'Read any on-screen text in the keyframes above, combine with the transcript in the system prompt, and generate the JSON now.' },
+          { type: 'text', text: 'The keyframes are the source of truth. Read any on-screen text in them, use the transcript only if it is real spoken narration (not song lyrics), and generate the JSON now.' },
         ]
         captionSource = 'hybrid'
       } else if (frames) {
+        // Frames but no usable narration (silent B-roll, or a music-only
+        // clip whose transcript is just song lyrics we deliberately dropped).
         systemPrompt = videoVisualSystemPrompt(frames.length, durationSecs)
         messageContent = [
           ...framesToVisionBlocks(frames),
           { type: 'text', text: 'Analyze these keyframes as a sequence and generate the JSON now.' },
         ]
-        captionSource = 'visual'
+        captionSource = transcriptUsable ? 'visual_music_gated' : 'visual'
       } else {
         systemPrompt = videoSystemPrompt(transcript)
         messageContent = 'Generate the JSON now.'
@@ -496,7 +558,7 @@ Return ONLY valid JSON:
     const wasScheduled = script.status === 'scheduled'
     const wasPosted = script.status === 'posted'
     const patch = {
-      caption: r.caption || null,
+      caption: applyCreditLine(r.caption || null),
       hashtags: capHashtags(r.hashtags),
       first_comment: r.first_comment || null,
       // Preserve terminal / mid-flight statuses. Only fresh rows
