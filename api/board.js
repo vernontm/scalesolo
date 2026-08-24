@@ -132,7 +132,11 @@ export default async function handler(req, res) {
       const stage = STAGES.includes(body.stage) ? body.stage : 'editing'
       // Owners/admins may assign the card to any editor; a contributor's own card
       // auto-assigns to them.
-      const assignedEditor = ['owner', 'admin'].includes(role) ? (body.assigned_editor || null) : auth.user.id
+      const isMgr = ['owner', 'admin'].includes(role)
+      const meta = auth.user.user_metadata || {}
+      const assignedEditor = isMgr ? (body.assigned_editor || null) : auth.user.id
+      const assignedEmail = isMgr ? (body.assigned_editor_email || null) : (auth.user.email || null)
+      const assignedName = isMgr ? (body.assigned_editor_name || null) : (meta.full_name || meta.name || null)
       const created = await supaFetch('board_cards', {
         method: 'POST',
         body: {
@@ -142,6 +146,8 @@ export default async function handler(req, res) {
           position: body.position ?? 0,
           source_note: body.source_note || null,
           assigned_editor: assignedEditor,
+          assigned_editor_email: assignedEmail,
+          assigned_editor_name: assignedName,
           created_by: auth.user.id,
         },
       })
@@ -184,9 +190,11 @@ export default async function handler(req, res) {
       }
       const allowed = role === 'contributor'
         ? ['stage', 'position', 'submitted_version_id']
-        : ['title', 'assigned_editor', 'final_version_id', 'submitted_version_id', 'source_note', 'stage', 'position', 'profile_id']
+        : ['title', 'assigned_editor', 'assigned_editor_email', 'assigned_editor_name', 'final_version_id', 'submitted_version_id', 'source_note', 'stage', 'position', 'profile_id']
       const updates = {}
       for (const k of allowed) if (k in (req.body || {})) updates[k] = req.body[k]
+      // Clearing the assignee clears its denormalized name/email too.
+      if ('assigned_editor' in updates && !updates.assigned_editor) { updates.assigned_editor_email = null; updates.assigned_editor_name = null }
       if (updates.stage && !STAGES.includes(updates.stage)) return res.status(400).json({ error: 'invalid stage' })
       // Reassigning a card to a different brand: authorize the target and
       // cascade the denormalized profile_id onto its versions + comments so

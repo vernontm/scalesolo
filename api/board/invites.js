@@ -75,21 +75,27 @@ async function manageableBrandIds(userId) {
 }
 
 // Grant one editor access to one brand: profile_access + board_invites record.
-async function grantBrand(email, profileId, invitedBy, existingUserId) {
-  const status = existingUserId ? 'accepted' : 'pending'
-  // Upsert the management record.
+// `existingUser` is the full auth user object (or null). `name` is optional and
+// only overwrites when provided (a toggle-on passes null so it won't wipe it).
+async function grantBrand(email, profileId, invitedBy, existingUser, name) {
+  const status = existingUser ? 'accepted' : 'pending'
   await supaFetch('board_invites', {
     method: 'POST',
     headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-    body: { email, profile_id: profileId, role: 'contributor', invited_by: invitedBy, status, accepted_at: existingUserId ? new Date().toISOString() : null },
+    body: { email, profile_id: profileId, role: 'contributor', invited_by: invitedBy, status, ...(name ? { name } : {}), accepted_at: existingUser ? new Date().toISOString() : null },
   })
-  if (existingUserId) {
+  if (existingUser) {
     // Grant access now (idempotent upsert on the PK (user_id, profile_id)).
     await supaFetch('profile_access', {
       method: 'POST',
       headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-      body: { user_id: existingUserId, profile_id: profileId, role: 'contributor', allowed_pages: ALLOWED_PAGES },
+      body: { user_id: existingUser.id, profile_id: profileId, role: 'contributor', allowed_pages: ALLOWED_PAGES },
     })
+    // Set their display name if they don't have one yet.
+    const hasName = existingUser.user_metadata?.full_name || existingUser.user_metadata?.name
+    if (name && !hasName) {
+      try { await authAdmin(`users/${existingUser.id}`, { method: 'PUT', body: JSON.stringify({ user_metadata: { ...(existingUser.user_metadata || {}), full_name: name } }) }) } catch { /* best-effort */ }
+    }
   }
 }
 
@@ -107,11 +113,19 @@ export default async function handler(req, res) {
       const profileId = req.query.profile_id
       if (!isUuid(profileId)) return res.status(400).json({ error: 'profile_id required' })
       await assertMinRole(auth.user.id, profileId, 'admin')
-      const rows = await supaFetch(`profile_access?profile_id=eq.${profileId}&role=eq.contributor&select=user_id`)
+      const [rows, invRows] = await Promise.all([
+        supaFetch(`profile_access?profile_id=eq.${profileId}&role=eq.contributor&select=user_id`),
+        supaFetch(`board_invites?profile_id=eq.${profileId}&select=email,name`),
+      ])
+      const nameByEmail = new Map((invRows || []).filter((i) => i.name).map((i) => [i.email, i.name]))
       const editors = []
       for (const r of (rows || [])) {
-        try { const u = await authAdmin(`users/${r.user_id}`); editors.push({ user_id: r.user_id, email: u?.email || null }) }
-        catch { editors.push({ user_id: r.user_id, email: null }) }
+        try {
+          const u = await authAdmin(`users/${r.user_id}`)
+          const em = u?.email || null
+          const nm = u?.user_metadata?.full_name || u?.user_metadata?.name || (em ? nameByEmail.get(em) : null) || null
+          editors.push({ user_id: r.user_id, email: em, name: nm })
+        } catch { editors.push({ user_id: r.user_id, email: null, name: null }) }
       }
       return res.status(200).json({ editors })
     }
@@ -121,15 +135,17 @@ export default async function handler(req, res) {
       const brandIds = await manageableBrandIds(auth.user.id)
       if (!brandIds.length) return res.status(200).json({ editors: [], brands: [] })
       const [invites, brands] = await Promise.all([
-        supaFetch(`board_invites?profile_id=in.(${brandIds.join(',')})&order=created_at.asc&select=email,profile_id,status`),
+        supaFetch(`board_invites?profile_id=in.(${brandIds.join(',')})&order=created_at.asc&select=email,name,profile_id,status`),
         supaFetch(`profiles?id=in.(${brandIds.join(',')})&select=id,business_name`),
       ])
-      // Group by email → { email, brands: { [profile_id]: status } }
+      // Group by email → { email, name, brands: { [profile_id]: status } }
       const byEmail = new Map()
       for (const iv of (invites || [])) {
         if (iv.status === 'revoked') continue
-        if (!byEmail.has(iv.email)) byEmail.set(iv.email, { email: iv.email, brands: {} })
-        byEmail.get(iv.email).brands[iv.profile_id] = iv.status
+        if (!byEmail.has(iv.email)) byEmail.set(iv.email, { email: iv.email, name: iv.name || null, brands: {} })
+        const e = byEmail.get(iv.email)
+        if (iv.name && !e.name) e.name = iv.name
+        e.brands[iv.profile_id] = iv.status
       }
       return res.status(200).json({ editors: [...byEmail.values()], brands: brands || [] })
     }
@@ -162,19 +178,20 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true })
       }
       const user = await findUserByEmail(email)
-      await grantBrand(email, profileId, auth.user.id, user?.id || null)
+      await grantBrand(email, profileId, auth.user.id, user, null)
       return res.status(200).json({ ok: true, pending: !user })
     }
 
     // ── POST: invite (grant one or more brands + email a magic link) ──
     if (req.method === 'POST') {
       const email = String(req.body?.email || '').trim().toLowerCase()
+      const name = (req.body?.name || '').trim() || null
       const profileIds = Array.isArray(req.body?.profile_ids) ? req.body.profile_ids.filter(isUuid) : []
       if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'A valid email is required' })
       if (!profileIds.length) return res.status(400).json({ error: 'Pick at least one brand to grant' })
       for (const pid of profileIds) await assertMinRole(auth.user.id, pid, 'admin')
       const user = await findUserByEmail(email)
-      for (const pid of profileIds) await grantBrand(email, pid, auth.user.id, user?.id || null)
+      for (const pid of profileIds) await grantBrand(email, pid, auth.user.id, user, name)
       const link = await loginLink(email, !user)
       if (!link) return res.status(502).json({ error: 'Access granted, but the login link failed to generate. Use Resend.' })
       const brands = await supaFetch(`profiles?id=in.(${profileIds.join(',')})&select=business_name`)
