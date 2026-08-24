@@ -19,7 +19,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import {
   Plus, X, Upload, Film, MessageSquare, Check, CalendarPlus, Trash2,
-  Loader2, Download, Building2, Send, CornerUpLeft, Users,
+  Loader2, Download, Building2, Send, CornerUpLeft, Settings,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
@@ -517,15 +517,19 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
 function EditorsModal({ token, onClose }) {
   const [data, setData] = useState({ editors: [], brands: [] })
   const [loading, setLoading] = useState(true)
-  const [email, setEmail] = useState('')
-  const [pick, setPick] = useState([]) // profile_ids to grant on invite
+  const [emails, setEmails] = useState('')
+  const [pick, setPick] = useState([]) // profile_ids to grant on invite (default: all)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
 
   const load = useCallback(() => {
     fetch('/api/board/invites', { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => r.json())
-      .then((b) => { if (b.error) throw new Error(b.error); setData({ editors: b.editors || [], brands: b.brands || [] }) })
+      .then((b) => {
+        if (b.error) throw new Error(b.error)
+        setData({ editors: b.editors || [], brands: b.brands || [] })
+        setPick((prev) => (prev.length ? prev : (b.brands || []).map((x) => x.id)))
+      })
       .catch((e) => setErr(e.message)).finally(() => setLoading(false))
   }, [token])
   useEffect(() => { setLoading(true); load() }, [load])
@@ -533,10 +537,15 @@ function EditorsModal({ token, onClose }) {
   const post = (path, body) => fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) }).then(async (r) => { const b = await r.json().catch(() => ({})); if (!r.ok) throw new Error(b.error || 'Failed'); return b })
 
   const invite = async () => {
-    if (!email.trim() || !pick.length) return
+    const list = emails.split(/[,\s]+/).map((e) => e.trim().toLowerCase()).filter((e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e))
+    if (!list.length) { setErr('Enter at least one valid email.'); return }
+    if (!pick.length) { setErr('Pick at least one brand to grant.'); return }
     setBusy(true); setErr(null)
-    try { await post('/api/board/invites', { email: email.trim(), profile_ids: pick }); toast({ message: `Magic link sent to ${email.trim()}`, kind: 'success' }); setEmail(''); setPick([]); load() }
-    catch (e) { setErr(e.message) } finally { setBusy(false) }
+    try {
+      for (const em of list) await post('/api/board/invites', { email: em, profile_ids: pick })
+      toast({ message: `Invited ${list.length} editor${list.length > 1 ? 's' : ''}`, kind: 'success' })
+      setEmails(''); load()
+    } catch (e) { setErr(e.message) } finally { setBusy(false) }
   }
   const toggleBrand = async (ed, brandId, on) => {
     try { await post(`/api/board/invites?action=${on ? 'grant' : 'revoke'}`, { email: ed, profile_id: brandId }); load() }
@@ -566,13 +575,14 @@ function EditorsModal({ token, onClose }) {
 
         {/* Invite */}
         <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, marginBottom: 16 }}>
-          <label className="label">Invite a new editor</label>
-          <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="editor@email.com" style={{ marginBottom: 8 }} />
-          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>Grant access to:</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input className="input" value={emails} onChange={(e) => setEmails(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') invite() }} placeholder="Emails, separated by commas" style={{ flex: 1 }} />
+            <button className="btn-primary" onClick={invite} disabled={busy || !emails.trim() || !pick.length}>{busy ? <span className="spinner" /> : 'Invite'}</button>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--muted)', margin: '10px 0 6px' }}>Access to these brands (toggle off any they shouldn't see):</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             {data.brands.map((b) => chip(pick.includes(b.id), b.business_name || 'Brand', () => setPick((p) => p.includes(b.id) ? p.filter((x) => x !== b.id) : [...p, b.id])))}
           </div>
-          <button className="btn-primary" onClick={invite} disabled={busy || !email.trim() || !pick.length}>{busy ? <span className="spinner" /> : <Send size={14} />} Send magic link</button>
         </div>
 
         {/* Existing editors */}
@@ -694,7 +704,7 @@ export default function Board() {
           <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, margin: 0 }}>Production board</h1>
           <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 2 }}>All clients in one place. Upload raw footage, review editor versions, approve, then send to Schedule.</div>
         </div>
-        {isAnyManager && <button className="btn-secondary" onClick={() => setShowEditors(true)}><Users size={14} /> Editors</button>}
+        {isAnyManager && <button className="btn-secondary" onClick={() => setShowEditors(true)}><Settings size={14} /> Settings</button>}
         <button className="btn-primary" onClick={() => setNewCardStage('editing')}><Plus size={14} /> New card</button>
       </div>
       {error && <div style={{ marginBottom: 12, padding: '10px 14px', background: 'var(--red-soft)', color: 'var(--red)', borderRadius: 10, fontSize: 13 }}>{error}</div>}
