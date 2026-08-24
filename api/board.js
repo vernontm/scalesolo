@@ -160,7 +160,7 @@ export default async function handler(req, res) {
       const currentProfile = rows?.[0]?.profile_id
       if (!currentProfile) return res.status(404).json({ error: 'Not found' })
       await assertProfileAccess(auth.user.id, currentProfile)
-      const allowed = ['title', 'assigned_editor', 'final_version_id', 'source_note', 'stage', 'position', 'profile_id']
+      const allowed = ['title', 'assigned_editor', 'final_version_id', 'submitted_version_id', 'source_note', 'stage', 'position', 'profile_id']
       const updates = {}
       for (const k of allowed) if (k in (req.body || {})) updates[k] = req.body[k]
       if (updates.stage && !STAGES.includes(updates.stage)) return res.status(400).json({ error: 'invalid stage' })
