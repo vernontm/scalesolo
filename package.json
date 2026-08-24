@@ -6,8 +6,10 @@
   "description": "ScaleSolo — the AI-native operating system for solopreneurs.",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/bundle-solana.mjs",
     "build": "npm run lint && vite build",
-    "build:no-lint": "vite build",
+    "build:no-lint": "node scripts/bundle-solana.mjs && vite build",
+    "bundle:solana": "node scripts/bundle-solana.mjs",
     "preview": "vite preview --port 5180",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
