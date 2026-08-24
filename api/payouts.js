@@ -38,6 +38,20 @@ async function manageableBrandIds(userId) {
   return (rows || []).filter((r) => ['owner', 'admin'].includes(r.role)).map((r) => r.profile_id)
 }
 
+// Is `email` actually one of this manager's editors (invited to, or assigned on,
+// a brand they own/admin)? Gates comp writes so an owner can't touch an editor
+// that isn't theirs.
+async function managerHasEditor(email, brandIds) {
+  if (!brandIds.length) return false
+  const inBrands = brandIds.join(',')
+  const e = encodeURIComponent(email)
+  const [inv, card] = await Promise.all([
+    supaFetch(`board_invites?profile_id=in.(${inBrands})&email=eq.${e}&status=neq.revoked&select=email&limit=1`),
+    supaFetch(`board_cards?profile_id=in.(${inBrands})&assigned_editor_email=eq.${e}&select=id&limit=1`),
+  ])
+  return (inv?.length || 0) > 0 || (card?.length || 0) > 0
+}
+
 // Derive an editor's numbers from their approved cards + comp + payouts.
 function summarize(comp, cards, payouts) {
   const rate = perVideoRate(comp)
@@ -72,30 +86,47 @@ export default async function handler(req, res) {
   try {
     const action = String(req.query.action || '')
 
-    // ── admin: every editor owed, across the requester's brands ──
+    // ── admin: the editors that belong to the requester's OWN brands ──
+    // The roster is built from this manager's brands only (invited editors +
+    // anyone assigned to their cards), then comp/payout data is fetched scoped
+    // to exactly those editors. This surfaces freshly-invited editors (before
+    // they have an approved video) AND prevents one account owner from seeing
+    // another's editors, emails, rates, or wallets.
     if (req.method === 'GET' && action === 'admin') {
       const brandIds = await manageableBrandIds(auth.user.id)
       if (!brandIds.length) return res.status(200).json({ editors: [] })
+      const inBrands = brandIds.join(',')
+      const [invites, assignedRows] = await Promise.all([
+        supaFetch(`board_invites?profile_id=in.(${inBrands})&status=neq.revoked&select=email,name`),
+        supaFetch(`board_cards?profile_id=in.(${inBrands})&assigned_editor_email=not.is.null&select=assigned_editor_email,assigned_editor_name`),
+      ])
+      const nameByEmail = new Map()
+      const emails = new Set()
+      const noteName = (em, nm) => { if (em && nm && !nameByEmail.has(em)) nameByEmail.set(em, nm) }
+      for (const r of (invites || [])) { if (r.email) { emails.add(r.email); noteName(r.email, r.name) } }
+      for (const r of (assignedRows || [])) { const e = r.assigned_editor_email; if (e) { emails.add(e); noteName(e, r.assigned_editor_name) } }
+      if (!emails.size) return res.status(200).json({ editors: [] })
+      const emailList = [...emails]
+      const emailIn = emailList.map(encodeURIComponent).join(',')
       const [cards, comps, payouts] = await Promise.all([
-        supaFetch(`board_cards?profile_id=in.(${brandIds.join(',')})&approved_at=not.is.null&select=assigned_editor_email,assigned_editor_name,approved_at,payout_id`),
-        supaFetch('editor_comp?select=*'),
-        supaFetch('editor_payouts?select=editor_email,amount_usdt'),
+        supaFetch(`board_cards?profile_id=in.(${inBrands})&approved_at=not.is.null&assigned_editor_email=in.(${emailIn})&select=assigned_editor_email,assigned_editor_name,approved_at,payout_id`),
+        supaFetch(`editor_comp?email=in.(${emailIn})&select=*`),
+        supaFetch(`editor_payouts?editor_email=in.(${emailIn})&select=editor_email,amount_usdt`),
       ])
       const compByEmail = new Map((comps || []).map((c) => [c.email, c]))
       const paidByEmail = new Map()
       for (const p of (payouts || [])) paidByEmail.set(p.editor_email, (paidByEmail.get(p.editor_email) || 0) + Number(p.amount_usdt || 0))
-      const byEmail = new Map()
+      const cardsByEmail = new Map()
       for (const c of (cards || [])) {
         if (!c.assigned_editor_email) continue
-        if (!byEmail.has(c.assigned_editor_email)) byEmail.set(c.assigned_editor_email, [])
-        byEmail.get(c.assigned_editor_email).push(c)
+        if (!cardsByEmail.has(c.assigned_editor_email)) cardsByEmail.set(c.assigned_editor_email, [])
+        cardsByEmail.get(c.assigned_editor_email).push(c)
+        noteName(c.assigned_editor_email, c.assigned_editor_name)
       }
-      for (const c of (comps || [])) if (!byEmail.has(c.email)) byEmail.set(c.email, [])
-      const editors = [...byEmail.entries()].map(([em, cs]) => {
-        const s = summarize(compByEmail.get(em), cs, [])
-        const name = cs.find((c) => c.assigned_editor_name)?.assigned_editor_name || null
-        return { email: em, name, rate: s.rate, monthly_amount: s.monthly_amount, monthly_quota: s.monthly_quota, solana_address: s.solana_address, unpaid_count: s.unpaid_count, outstanding: s.outstanding, total_approved: s.total_approved, this_month: s.this_month, paid: paidByEmail.get(em) || 0 }
-      }).sort((a, b) => b.outstanding - a.outstanding)
+      const editors = emailList.map((em) => {
+        const s = summarize(compByEmail.get(em), cardsByEmail.get(em) || [], [])
+        return { email: em, name: nameByEmail.get(em) || null, rate: s.rate, monthly_amount: s.monthly_amount, monthly_quota: s.monthly_quota, solana_address: s.solana_address, unpaid_count: s.unpaid_count, outstanding: s.outstanding, total_approved: s.total_approved, this_month: s.this_month, paid: paidByEmail.get(em) || 0 }
+      }).sort((a, b) => (b.outstanding - a.outstanding) || a.email.localeCompare(b.email))
       return res.status(200).json({ editors })
     }
 
@@ -132,6 +163,7 @@ export default async function handler(req, res) {
       if (!brandIds.length) return res.status(403).json({ error: 'Forbidden' })
       const em = String(req.body?.email || '').trim().toLowerCase()
       if (!em) return res.status(400).json({ error: 'email required' })
+      if (!(await managerHasEditor(em, brandIds))) return res.status(403).json({ error: 'That editor is not on any of your brands.' })
       const patch = { email: em, updated_by: auth.user.id, updated_at: new Date().toISOString() }
       if ('monthly_amount' in (req.body || {})) {
         const monthly_amount = Number(req.body.monthly_amount)
