@@ -234,8 +234,12 @@ export default async function handler(req, res) {
         : ['title', 'assigned_editor', 'assigned_editor_email', 'assigned_editor_name', 'final_version_id', 'submitted_version_id', 'source_note', 'stage', 'position', 'profile_id']
       const updates = {}
       for (const k of allowed) if (k in (req.body || {})) updates[k] = req.body[k]
-      // Clearing the assignee clears its denormalized name/email too.
-      if ('assigned_editor' in updates && !updates.assigned_editor) { updates.assigned_editor_email = null; updates.assigned_editor_name = null }
+      // Clearing the assignee (no user_id AND no email) clears the denormalized
+      // name/email too. Assigning a not-yet-accepted invite sends an email with
+      // a null user_id, so keep the email/name in that case.
+      if ('assigned_editor' in updates && !updates.assigned_editor && !updates.assigned_editor_email) {
+        updates.assigned_editor_email = null; updates.assigned_editor_name = null
+      }
       if (updates.stage && !STAGES.includes(updates.stage)) return res.status(400).json({ error: 'invalid stage' })
       // Payout-replay guard: gate who can approve + lock paid cards in place.
       if (updates.stage) {
