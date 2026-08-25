@@ -9,7 +9,7 @@ import BulkUploadView from '../components/BulkUploadView.jsx'
 import SocialAccountsPanel from '../components/SocialAccountsPanel.jsx'
 import GenerateMonthModal from '../components/GenerateMonthModal.jsx'
 import MediaLightbox from '../components/MediaLightbox.jsx'
-import { toast } from '../components/Toast.jsx'
+import { toast, confirmDialog } from '../components/Toast.jsx'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { useCredits } from '../context/CreditsContext.jsx'
@@ -957,26 +957,30 @@ function EmbedCoverIntroBlock({ item, onUpdate }) {
 }
 
 // ── Item card ─────────────────────────────────────────────────────────────
-function ItemRow({ item, onOpen }) {
+function ItemRow({ item, onOpen, selectMode = false, isSelected = false, onToggle, onEnter }) {
   const pill = STATUS_PILL[item.status] || STATUS_PILL.draft
   const isMobile = useIsMobile(768)
+  const pressTimer = useRef(null)
 
-  // Mobile: the artboard post card — 56px media chip, title + status badge,
-  // one-line caption preview, scheduled time, trailing chevron. Whole card is
-  // the tap target (opens the detail drawer, same as desktop).
+  // Mobile: the artboard post card. Long-press enters multi-select; in select
+  // mode a tap toggles the card, otherwise it opens the detail drawer.
   if (isMobile) {
     const isVideo = (item.media_type || '').toLowerCase().includes('video')
     const previewText = item.hook || item.full_script || item.caption || ''
     const timeText = item.scheduled_datetime
       ? new Date(item.scheduled_datetime).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
       : 'Not scheduled'
+    const startPress = () => { if (selectMode) return; pressTimer.current = setTimeout(() => { onEnter && onEnter(item.id) }, 480) }
+    const cancelPress = () => { if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null } }
+    const handleClick = () => { if (selectMode) { onToggle && onToggle(item.id) } else { onOpen(item) } }
     return (
       <div
         role="button" tabIndex={0}
-        aria-label={`Open ${item.title || 'content item'}`}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(item) } }}
-        onClick={() => onOpen(item)}
-        style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, borderRadius: 'var(--r-card)', background: 'var(--surface)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-card)', marginBottom: 10, cursor: 'pointer' }}
+        aria-label={selectMode ? `${isSelected ? 'Deselect' : 'Select'} ${item.title || 'content item'}` : `Open ${item.title || 'content item'}`}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleClick() } }}
+        onClick={handleClick}
+        onTouchStart={startPress} onTouchEnd={cancelPress} onTouchMove={cancelPress}
+        style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, borderRadius: 'var(--r-card)', background: isSelected ? 'var(--red-soft)' : 'var(--surface)', border: `1px solid ${isSelected ? 'var(--red)' : 'var(--border)'}`, boxShadow: 'var(--shadow-card)', marginBottom: 10, cursor: 'pointer', WebkitUserSelect: 'none', userSelect: 'none' }}
       >
         <div style={{ width: 56, height: 56, borderRadius: 'var(--r-md)', background: 'var(--surface-2)', border: '1px solid var(--border)', display: 'grid', placeItems: 'center', color: 'var(--muted)', flexShrink: 0 }}>
           {isVideo ? <Film size={20} /> : <ImageIcon size={20} />}
@@ -989,7 +993,13 @@ function ItemRow({ item, onOpen }) {
           <div style={{ fontSize: 12, color: 'var(--muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{previewText || 'No caption yet'}</div>
           <div style={{ fontSize: 11, color: 'var(--muted)' }}>{timeText}</div>
         </div>
-        <ChevronRight size={18} style={{ color: 'var(--muted)', flexShrink: 0 }} />
+        {selectMode ? (
+          <div style={{ width: 24, height: 24, borderRadius: 999, flexShrink: 0, display: 'grid', placeItems: 'center', background: isSelected ? 'linear-gradient(135deg, var(--red), var(--red-dark))' : 'transparent', border: isSelected ? 'none' : '1.5px solid var(--border-strong)', color: '#fff' }}>
+            {isSelected && <Check size={14} />}
+          </div>
+        ) : (
+          <ChevronRight size={18} style={{ color: 'var(--muted)', flexShrink: 0 }} />
+        )}
       </div>
     )
   }
@@ -1024,14 +1034,17 @@ function ItemRow({ item, onOpen }) {
 }
 
 // ── List view (Library / Drafts / Scheduled / Approvals / Posted) ─────────
-function ItemList({ items, emptyHint, onOpen }) {
+function ItemList({ items, emptyHint, onOpen, selectMode, selected, onToggle, onEnter }) {
   if (items.length === 0) {
     return <div className="card-flat" style={{ padding: 50, textAlign: 'center', color: 'var(--muted)' }}>
       <Library size={28} style={{ marginBottom: 10 }} />
       <div style={{ fontSize: 13.5 }}>{emptyHint}</div>
     </div>
   }
-  return <div>{items.map((item) => <ItemRow key={item.id} item={item} onOpen={onOpen} />)}</div>
+  return <div>{items.map((item) => (
+    <ItemRow key={item.id} item={item} onOpen={onOpen}
+      selectMode={selectMode} isSelected={selected?.has(item.id)} onToggle={onToggle} onEnter={onEnter} />
+  ))}</div>
 }
 
 // ── Calendar view ─────────────────────────────────────────────────────────
@@ -1866,6 +1879,12 @@ export default function Content() {
   const [opened, setOpened] = useState(null)
   const [pendingCount, setPendingCount] = useState(0)
   const [accountCount, setAccountCount] = useState(null)
+  // Mobile multi-select (long-press a card to enter). Drives the contextual
+  // action bar. Bulk actions reuse the SAME proven endpoints BulkUploadView
+  // uses in production, so no new posting code lives here.
+  const [selectMode, setSelectMode] = useState(false)
+  const [selected, setSelected] = useState(() => new Set())
+  const [bulkBusy, setBulkBusy] = useState(null)
 
   const refresh = () => {
     if (!session || !selectedProfileId) return
@@ -1940,6 +1959,49 @@ export default function Content() {
     })()
   }, [session, selectedProfileId])
 
+  const toggleSelect = (id) => setSelected((s) => {
+    const n = new Set(s)
+    if (n.has(id)) n.delete(id); else n.add(id)
+    if (n.size === 0) setSelectMode(false)
+    return n
+  })
+  const enterSelect = (id) => { setSelectMode(true); setSelected(new Set([id])) }
+  const exitSelect = () => { setSelectMode(false); setSelected(new Set()) }
+  const selectAll = () => setSelected(new Set(items.map((i) => i.id)))
+
+  const BULK_LABEL = { 'publish-selected': 'Published', 'auto-schedule': 'Scheduled', 'generate-captions': 'Captions generated', delete: 'Deleted' }
+  const bulkAction = async (action) => {
+    const ids = [...selected]
+    if (!ids.length) return
+    if (action === 'publish-selected') {
+      const ok = await confirmDialog({ title: `Publish ${ids.length} post${ids.length === 1 ? '' : 's'} now?`, message: 'They publish to each post’s platforms immediately. This cannot be undone.', confirmText: 'Publish' })
+      if (!ok) return
+    }
+    if (action === 'delete') {
+      const ok = await confirmDialog({ title: `Delete ${ids.length} post${ids.length === 1 ? '' : 's'}?`, message: 'This removes them from the schedule and cannot be undone.', confirmText: 'Delete', destructive: true })
+      if (!ok) return
+    }
+    setBulkBusy(action)
+    try {
+      if (action === 'delete') {
+        for (const id of ids) {
+          await fetch(`/api/content?id=${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${session.access_token}` } })
+        }
+      } else {
+        // Same endpoint + body BulkUploadView uses in production; the server
+        // resolves platforms + fan-out. No posting logic is reimplemented here.
+        const r = await fetch(`/api/content/bulk-actions?action=${action}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ profile_id: selectedProfileId, script_ids: ids }),
+        })
+        const b = await r.json().catch(() => ({}))
+        if (!r.ok) throw new Error(b.error || 'Action failed')
+      }
+      toast({ message: `${BULK_LABEL[action]} (${ids.length})`, kind: 'success' })
+      exitSelect(); refresh(); refreshPending()
+    } catch (e) { toast({ message: e.message, kind: 'error' }) } finally { setBulkBusy(null) }
+  }
+
   if (!selectedProfileId) {
     return <div className="card-flat fade-up" style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>
       Pick a brand profile to manage content.
@@ -1950,20 +2012,29 @@ export default function Content() {
     <TrialGate page="schedule">
     <div className="fade-up">
       {isMobile ? (
-        // Mobile: the monthly account setup lives on Connections now. In its
-        // place, the big title + a one-line "Autopilot on · N accounts" summary
-        // that taps through to Connections. Desktop keeps the full panel below.
-        <div style={{ marginBottom: 16 }}>
-          <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 'var(--t-title)', letterSpacing: '-0.025em', lineHeight: 1.1, margin: 0 }}>Schedule</h1>
-          <button onClick={() => navigate('/schedule/connections')} aria-label="Manage connections"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 4, background: 'transparent', border: 'none', padding: '2px 0', cursor: 'pointer', fontSize: 12.5 }}>
-            <span style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--green)' }} />
-            <span style={{ color: 'var(--text-soft)', fontWeight: 600 }}>Autopilot on</span>
-            <span style={{ color: 'var(--muted)' }}>·</span>
-            <span style={{ color: 'var(--muted)' }}>{accountCount == null ? 'Connections' : `${accountCount} account${accountCount === 1 ? '' : 's'}`}</span>
-            <ChevronRight size={14} style={{ color: 'var(--muted)', marginLeft: 1 }} />
-          </button>
-        </div>
+        selectMode ? (
+          // Selection header replaces the title: Cancel · N selected · Select all
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, minHeight: 44 }}>
+            <button onClick={exitSelect} style={{ background: 'transparent', border: 'none', color: 'var(--red)', fontWeight: 700, fontSize: 14, cursor: 'pointer', padding: '6px 0' }}>Cancel</button>
+            <div style={{ flex: 1, textAlign: 'center', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15 }}>{selected.size} selected</div>
+            <button onClick={selectAll} style={{ background: 'transparent', border: 'none', color: 'var(--red)', fontWeight: 700, fontSize: 14, cursor: 'pointer', padding: '6px 0' }}>Select all</button>
+          </div>
+        ) : (
+          // The monthly account setup lives on Connections now; in its place the
+          // big title + a one-line "Autopilot on · N accounts" summary that taps
+          // through to Connections. Desktop keeps the full panel below.
+          <div style={{ marginBottom: 16 }}>
+            <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 'var(--t-title)', letterSpacing: '-0.025em', lineHeight: 1.1, margin: 0 }}>Schedule</h1>
+            <button onClick={() => navigate('/schedule/connections')} aria-label="Manage connections"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 4, background: 'transparent', border: 'none', padding: '2px 0', cursor: 'pointer', fontSize: 12.5 }}>
+              <span style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--green)' }} />
+              <span style={{ color: 'var(--text-soft)', fontWeight: 600 }}>Autopilot on</span>
+              <span style={{ color: 'var(--muted)' }}>·</span>
+              <span style={{ color: 'var(--muted)' }}>{accountCount == null ? 'Connections' : `${accountCount} account${accountCount === 1 ? '' : 's'}`}</span>
+              <ChevronRight size={14} style={{ color: 'var(--muted)', marginLeft: 1 }} />
+            </button>
+          </div>
+        )
       ) : (
         <SocialAccountsPanel profileId={selectedProfileId} token={session?.access_token} />
       )}
@@ -2002,7 +2073,36 @@ export default function Content() {
       ) : tab === 'calendar' ? (
         <CalendarView items={items} onOpen={setOpened} token={session?.access_token} onChange={refresh} profileId={selectedProfileId} />
       ) : (
-        <ItemList items={items} emptyHint={TABS.find((t) => t.value === tab).empty} onOpen={setOpened} />
+        <ItemList items={items} emptyHint={TABS.find((t) => t.value === tab).empty} onOpen={setOpened}
+          selectMode={selectMode} selected={selected} onToggle={toggleSelect} onEnter={enterSelect} />
+      )}
+
+      {/* Clear the fixed FAB / contextual bar so the last card is reachable. */}
+      {isMobile && tab !== 'calendar' && tab !== 'library' && <div style={{ height: selectMode ? 140 : 88 }} />}
+
+      {/* Mobile FAB → upload (the Library tab hosts bulk upload). Hidden in
+          selection mode so there is one primary action on screen. */}
+      {isMobile && !selectMode && tab !== 'library' && (
+        <button onClick={() => setTab('library')} aria-label="Add media"
+          style={{ position: 'fixed', right: 'var(--sp-4)', bottom: 'calc(24px + var(--safe-b))', zIndex: 45, width: 'var(--fab)', height: 'var(--fab)', borderRadius: 'var(--r-xl)', border: 'none', background: 'linear-gradient(135deg, var(--red), var(--red-dark))', color: '#fff', display: 'grid', placeItems: 'center', boxShadow: '0 8px 26px rgba(239,68,68,0.42)', cursor: 'pointer' }}>
+          <Plus size={26} strokeWidth={2.5} />
+        </button>
+      )}
+
+      {/* Mobile contextual action bar — one primary + supporting actions, all
+          reusing BulkUploadView's proven bulk endpoints. */}
+      {isMobile && selectMode && selected.size > 0 && (
+        <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 50, background: 'var(--surface)', borderTop: '1px solid var(--border-strong)', boxShadow: '0 -20px 60px rgba(0,0,0,0.5)', padding: '12px 16px calc(16px + var(--safe-b))' }}>
+          <button className="btn-primary" disabled={!!bulkBusy} onClick={() => bulkAction('publish-selected')}
+            style={{ width: '100%', justifyContent: 'center', height: 'var(--tap-lg)' }}>
+            {bulkBusy === 'publish-selected' ? <Loader2 size={16} className="spin" /> : <Send size={16} />} Publish {selected.size} post{selected.size === 1 ? '' : 's'}
+          </button>
+          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+            <button className="btn-secondary" disabled={!!bulkBusy} onClick={() => bulkAction('auto-schedule')} style={{ flex: 1, justifyContent: 'center', height: 44 }}>{bulkBusy === 'auto-schedule' ? <Loader2 size={14} className="spin" /> : <Calendar size={14} />} Schedule</button>
+            <button className="btn-secondary" disabled={!!bulkBusy} onClick={() => bulkAction('generate-captions')} style={{ flex: 1, justifyContent: 'center', height: 44 }}>{bulkBusy === 'generate-captions' ? <Loader2 size={14} className="spin" /> : <Wand2 size={14} />} Captions</button>
+            <button className="btn-secondary" disabled={!!bulkBusy} onClick={() => bulkAction('delete')} aria-label="Delete selected" style={{ width: 46, justifyContent: 'center', height: 44 }}>{bulkBusy === 'delete' ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}</button>
+          </div>
+        </div>
       )}
 
       {generating && (
