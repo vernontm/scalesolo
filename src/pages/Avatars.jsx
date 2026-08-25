@@ -1734,19 +1734,21 @@ function VoicePickerModal({ session, profileId, currentVoiceId, onPick, onClose 
             />
           )}
 
-          {/* My voices / Clone new — both gated by BYOK connection.
-              When not connected, render the wizard inline so users can
-              connect without leaving the modal. */}
-          {(tab === 'mine' || tab === 'clone') && byokStatus === null && (
+          {/* My voices — gated by BYOK connection (it lists the brand's own
+              ElevenLabs workspace). When not connected, render the wizard
+              inline so users can connect without leaving the modal. Clone new
+              is NOT gated: without a BYOK key it clones into the shared
+              ScaleSolo account (voice_owner 'shared'). */}
+          {tab === 'mine' && byokStatus === null && (
             <div style={{ padding: 24, textAlign: 'center' }}><Loader2 size={18} className="spin" /></div>
           )}
-          {(tab === 'mine' || tab === 'clone') && byokStatus && !byokStatus.connected && (
+          {tab === 'mine' && byokStatus && !byokStatus.connected && (
             <ConnectByokWizard
               session={session}
               profileId={profileId}
               onConnected={(s) => {
                 setByokStatus({ connected: true, last4: s.last4, connected_at: s.connected_at })
-                if (tab === 'mine') loadByokVoices()
+                loadByokVoices()
               }}
             />
           )}
@@ -1767,15 +1769,19 @@ function VoicePickerModal({ session, profileId, currentVoiceId, onPick, onClose 
                   />
                 </>
           )}
-          {tab === 'clone' && byokStatus?.connected && (
+          {tab === 'clone' && (
             <>
-              <ByokConnectedBanner status={byokStatus} session={session} profileId={profileId} onDisconnected={() => { setByokStatus({ connected: false }); setByokVoices(null) }} />
+              {byokStatus?.connected
+                ? <ByokConnectedBanner status={byokStatus} session={session} profileId={profileId} onDisconnected={() => { setByokStatus({ connected: false }); setByokVoices(null) }} />
+                : <div style={{ fontSize: 12, color: 'var(--muted)', padding: '8px 12px', marginBottom: 8, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 8 }}>
+                    No ElevenLabs key connected, so this voice will be cloned into the shared ScaleSolo account. Connect your own key on the "My voices" tab to keep voices in your account.
+                  </div>}
               <CloneVoiceForm
                 session={session}
                 profileId={profileId}
-                onCloned={(voiceId) => {
-                  onPick(voiceId, 'byok')
-                  loadByokVoices()
+                onCloned={(voiceId, voiceOwner) => {
+                  onPick(voiceId, voiceOwner || 'shared')
+                  if (voiceOwner === 'byok') loadByokVoices()
                 }}
               />
             </>
@@ -2018,7 +2024,7 @@ function CloneVoiceForm({ session, profileId, onCloned }) {
       const body = await r.json()
       if (!r.ok) throw new Error(body.error || `Failed (${r.status})`)
       toast?.success?.(`Voice "${name.trim()}" cloned.`)
-      onCloned?.(body.voice_id)
+      onCloned?.(body.voice_id, body.voice_owner)
     } catch (err) {
       setError(err.message); setBusy(false)
     }
