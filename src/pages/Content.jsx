@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Sparkles, Library, Calendar, FileEdit, ClipboardCheck, X, Wand2,
   Check, Trash2, Edit3, Send, Eye, AlertCircle, Link2, Plus, ExternalLink,
-  Image as ImageIcon, RotateCcw, Loader2, Copy,
+  Image as ImageIcon, RotateCcw, Loader2, Copy, ChevronRight,
 } from 'lucide-react'
 import BulkUploadView from '../components/BulkUploadView.jsx'
+import SocialAccountsPanel from '../components/SocialAccountsPanel.jsx'
 import GenerateMonthModal from '../components/GenerateMonthModal.jsx'
 import MediaLightbox from '../components/MediaLightbox.jsx'
 import { toast } from '../components/Toast.jsx'
@@ -1803,223 +1805,6 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
 // state; "Connect" pops a JWT-signed URL on app.upload-post.com where the
 // user authorizes TikTok / IG / etc. and the connections appear here once
 // they return and refresh.
-const SOCIAL_PLATFORMS = [
-  { id: 'tiktok',    label: 'TikTok',    color: '#000' },
-  { id: 'instagram', label: 'Instagram', color: '#E1306C' },
-  { id: 'youtube',   label: 'YouTube',   color: '#FF0000' },
-  { id: 'x',         label: 'X',         color: '#000' },
-  { id: 'threads',   label: 'Threads',   color: '#000' },
-  { id: 'linkedin',  label: 'LinkedIn',  color: '#0A66C2' },
-  { id: 'facebook',  label: 'Facebook',  color: '#1877F2' },
-  { id: 'pinterest', label: 'Pinterest', color: '#BD081C' },
-]
-
-function SocialAccountsPanel({ profileId, token }) {
-  const [profile, setProfile] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [err, setErr] = useState(null)
-  const [connecting, setConnecting] = useState(false)
-  // Per-brand posting defaults live on the ScaleSolo profile row (loaded via
-  // ProfileContext with all columns), NOT the upload-post profile above.
-  const { profiles, refresh: refreshProfiles } = useProfile()
-  const ssProfile = (profiles || []).find((p) => p.id === profileId) || null
-  const [defaults, setDefaults] = useState([])
-  const [directPost, setDirectPost] = useState(false)
-  const [dirty, setDirty] = useState(false)
-  const [savingSettings, setSavingSettings] = useState(false)
-  const dpKey = JSON.stringify(ssProfile?.default_platforms || [])
-  useEffect(() => {
-    setDefaults(Array.isArray(ssProfile?.default_platforms) ? ssProfile.default_platforms : [])
-    setDirectPost(!!ssProfile?.tiktok_force_direct_post)
-    setDirty(false)
-  }, [profileId, ssProfile?.id, dpKey, ssProfile?.tiktok_force_direct_post])
-
-  const refresh = () => {
-    if (!profileId || !token) return
-    setLoading(true); setErr(null)
-    fetch(`/api/social/profiles?profile_id=${profileId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((r) => r.json().then((b) => ({ ok: r.ok, body: b })))
-      .then(({ ok, body }) => {
-        if (!ok) throw new Error(body?.error || 'Failed to load social accounts')
-        setProfile(body)
-      })
-      .catch((e) => setErr(e.message))
-      .finally(() => setLoading(false))
-  }
-  useEffect(refresh, [profileId, token])
-
-  const onConnect = async () => {
-    setConnecting(true); setErr(null)
-    try {
-      const r = await fetch('/api/social/profiles?action=jwt', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profile_id: profileId, redirect_url: window.location.href }),
-      })
-      const body = await r.json()
-      if (!r.ok || !body.access_url) throw new Error(body?.error || `Connect failed (${r.status})`)
-      // Open in a new tab so the user keeps their place in ScaleSolo. They
-      // come back to this tab and hit "Refresh" to see the new connection.
-      window.open(body.access_url, '_blank', 'noopener')
-    } catch (e) {
-      setErr(e.message)
-    } finally {
-      setConnecting(false)
-    }
-  }
-
-  const social = profile?.profile?.social_accounts || {}
-  const connectedIds = Object.entries(social)
-    .filter(([, info]) => info && (info === true || info.access_token || info.connected || info.username))
-    .map(([id]) => id)
-
-  // Toggle a platform in the default set. An empty default set means "all
-  // connected" (the scheduler's own fallback), so the first toggle expands to
-  // the full connected list before removing the one clicked.
-  const toggleDefault = (id) => {
-    setDefaults((cur) => {
-      const base = (!cur || cur.length === 0) ? [...connectedIds] : cur
-      return base.includes(id) ? base.filter((x) => x !== id) : [...base, id]
-    })
-    setDirty(true)
-  }
-  const saveSettings = async () => {
-    setSavingSettings(true)
-    try {
-      const r = await fetch(`/api/profiles?id=${profileId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ default_platforms: defaults, tiktok_force_direct_post: directPost }),
-      })
-      const b = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(b.error || 'Failed to save')
-      toast({ message: 'Posting defaults saved', kind: 'success' })
-      setDirty(false); refreshProfiles()
-    } catch (e) { toast({ message: e.message, kind: 'error' }) } finally { setSavingSettings(false) }
-  }
-
-  return (
-    <div style={{
-      background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12,
-      padding: 16, marginBottom: 18,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
-        <div style={{ width: 28, height: 28, borderRadius: 7, background: 'linear-gradient(135deg, #2ecc71, #1abc9c)', color: '#fff', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
-          <Link2 size={14} />
-        </div>
-        <div style={{ flex: 1, minWidth: 150 }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14 }}>Social accounts</div>
-          <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-            Connect the platforms ScaleSolo can publish to for this brand.
-          </div>
-        </div>
-        <button className="btn-secondary" onClick={refresh} disabled={loading} style={{ padding: '6px 10px' }}>
-          {loading ? <span className="spinner" /> : 'Refresh'}
-        </button>
-        <button className="btn-primary" onClick={onConnect} disabled={connecting}>
-          {connecting ? <span className="spinner" /> : <Plus size={13} />}
-          {connectedIds.length ? 'Add / manage' : 'Connect accounts'}
-          <ExternalLink size={11} style={{ opacity: 0.7 }} />
-        </button>
-      </div>
-      {err && (
-        <div style={{ padding: '8px 10px', background: 'var(--red-soft)', color: 'var(--red)', fontSize: 12, borderRadius: 8, marginBottom: 10 }}>
-          <AlertCircle size={12} style={{ verticalAlign: '-2px', marginRight: 6 }} /> {err}
-        </div>
-      )}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-        {SOCIAL_PLATFORMS.map((p) => {
-          const connected = connectedIds.includes(p.id)
-          const info = social[p.id]
-          // Only show a handle in the pill if it looks like an actual
-          // username. Upload-Post returns whatever the platform stores;
-          // for some that's a numeric ID (Instagram graph user_id,
-          // TikTok open_id) or a YouTube channel ID (24 chars,
-          // typically starting with UC). All of those are useless to
-          // the user and look like leaked internals — filter them.
-          const rawHandle = info?.username || info?.display_name || info?.handle || ''
-          const looksLikeRealHandle = (() => {
-            if (typeof rawHandle !== 'string') return false
-            if (!rawHandle.length || rawHandle.length >= 30) return false
-            if (!/^[a-zA-Z][a-zA-Z0-9._-]*$/.test(rawHandle)) return false
-            // YouTube channel id pattern: UC + 22 alphanumeric/-_ chars.
-            if (/^UC[A-Za-z0-9_-]{22}$/.test(rawHandle)) return false
-            // Mostly digits → almost certainly an internal ID.
-            const digits = (rawHandle.match(/\d/g) || []).length
-            if (rawHandle.length >= 10 && digits / rawHandle.length > 0.6) return false
-            return true
-          })()
-          const handle = looksLikeRealHandle ? rawHandle : null
-          return (
-            <div
-              key={p.id}
-              title={connected && handle ? `Connected as @${handle}` : connected ? 'Connected' : 'Not connected'}
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6,
-                padding: '5px 10px', borderRadius: 999,
-                background: connected ? 'rgba(46,204,113,0.14)' : 'var(--surface-2)',
-                border: `1px solid ${connected ? 'rgba(46,204,113,0.45)' : 'var(--border)'}`,
-                color: connected ? '#2ecc71' : 'var(--muted)',
-                fontSize: 11.5, fontFamily: 'var(--font-display)', fontWeight: 700,
-                letterSpacing: '0.02em',
-              }}
-            >
-              <span style={{
-                width: 6, height: 6, borderRadius: 999,
-                background: connected ? '#2ecc71' : 'var(--muted)',
-              }} />
-              {p.label}
-              {connected && handle && <span style={{ color: 'var(--muted)', fontWeight: 500, display: 'inline-block', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>· @{handle}</span>}
-            </div>
-          )
-        })}
-      </div>
-
-      {connectedIds.length > 0 && (
-        <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13, marginBottom: 2 }}>Posting defaults</div>
-          <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 8 }}>
-            Which platforms new posts and board drafts publish to by default.{(!defaults || defaults.length === 0) ? ' Right now: all connected.' : ''}
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
-            {connectedIds.map((id) => {
-              const on = (!defaults || defaults.length === 0) ? true : defaults.includes(id)
-              const label = SOCIAL_PLATFORMS.find((p) => p.id === id)?.label || id
-              return (
-                <button
-                  key={id} type="button" onClick={() => toggleDefault(id)}
-                  title={on ? 'Posts here by default' : 'Skipped by default'}
-                  style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 999,
-                    cursor: 'pointer', fontSize: 11.5, fontWeight: 700,
-                    background: on ? 'rgba(46,204,113,0.14)' : 'var(--surface-2)',
-                    border: `1px solid ${on ? 'rgba(46,204,113,0.45)' : 'var(--border)'}`,
-                    color: on ? '#2ecc71' : 'var(--muted)',
-                  }}
-                >
-                  {on && <Check size={12} />}{label}
-                </button>
-              )
-            })}
-          </div>
-          {connectedIds.includes('tiktok') && (
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, cursor: 'pointer', marginBottom: 4 }}>
-              <input type="checkbox" checked={directPost} onChange={() => { setDirectPost((v) => !v); setDirty(true) }} />
-              <span>Post to TikTok straight to the public feed (instead of leaving a draft in the TikTok app)</span>
-            </label>
-          )}
-          {dirty && (
-            <button className="btn-primary" onClick={saveSettings} disabled={savingSettings} style={{ marginTop: 8 }}>
-              {savingSettings ? <span className="spinner" /> : 'Save posting defaults'}
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
 
 // ── Main page ─────────────────────────────────────────────────────────────
 const TABS = [
@@ -2034,6 +1819,8 @@ const TABS = [
 export default function Content() {
   const { session } = useAuth()
   const { selectedProfileId } = useProfile()
+  const navigate = useNavigate()
+  const isMobile = useIsMobile(768)
   // Calendar is the default surface for the Schedule page (backlog +
   // drag-to-slot scheduling). Library / Drafts / Approvals still selectable.
   const [tab, setTab] = useState('calendar')
@@ -2042,6 +1829,7 @@ export default function Content() {
   const [generating, setGenerating] = useState(false)
   const [opened, setOpened] = useState(null)
   const [pendingCount, setPendingCount] = useState(0)
+  const [accountCount, setAccountCount] = useState(null)
 
   const refresh = () => {
     if (!session || !selectedProfileId) return
@@ -2065,6 +1853,23 @@ export default function Content() {
   }
 
   useEffect(() => { refresh(); refreshPending() }, [session, selectedProfileId, tab])
+
+  // Connected-account count for the mobile "Autopilot on · N accounts" summary
+  // line (which replaces the full SocialAccountsPanel on phones). Desktop still
+  // renders the panel, so this is the only place mobile learns the count.
+  useEffect(() => {
+    if (!session?.access_token || !selectedProfileId) return
+    let alive = true
+    fetch(`/api/social/profiles?profile_id=${selectedProfileId}`, { headers: { Authorization: `Bearer ${session.access_token}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b) => {
+        if (!alive) return
+        const social = b?.profile?.social_accounts || {}
+        setAccountCount(Object.values(social).filter((info) => info && (info === true || info.access_token || info.connected || info.username)).length)
+      })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [session, selectedProfileId])
 
   // Silent Upload-Post orphan cleanup on profile open. Fire-and-forget:
   // scans Upload-Post for scheduled jobs the local DB has no row for and
@@ -2108,7 +1913,24 @@ export default function Content() {
   return (
     <TrialGate page="schedule">
     <div className="fade-up">
-      <SocialAccountsPanel profileId={selectedProfileId} token={session?.access_token} />
+      {isMobile ? (
+        // Mobile: the monthly account setup lives on Connections now. In its
+        // place, the big title + a one-line "Autopilot on · N accounts" summary
+        // that taps through to Connections. Desktop keeps the full panel below.
+        <div style={{ marginBottom: 16 }}>
+          <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 'var(--t-title)', letterSpacing: '-0.025em', lineHeight: 1.1, margin: 0 }}>Schedule</h1>
+          <button onClick={() => navigate('/schedule/connections')} aria-label="Manage connections"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 4, background: 'transparent', border: 'none', padding: '2px 0', cursor: 'pointer', fontSize: 12.5 }}>
+            <span style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--green)' }} />
+            <span style={{ color: 'var(--text-soft)', fontWeight: 600 }}>Autopilot on</span>
+            <span style={{ color: 'var(--muted)' }}>·</span>
+            <span style={{ color: 'var(--muted)' }}>{accountCount == null ? 'Connections' : `${accountCount} account${accountCount === 1 ? '' : 's'}`}</span>
+            <ChevronRight size={14} style={{ color: 'var(--muted)', marginLeft: 1 }} />
+          </button>
+        </div>
+      ) : (
+        <SocialAccountsPanel profileId={selectedProfileId} token={session?.access_token} />
+      )}
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14, gap: 10 }}>
         <div style={tabBar}>
           {TABS.map((t) => {

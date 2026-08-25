@@ -27,6 +27,23 @@
 
   /* motion */
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* ── Mobile Schedule redesign scale (docs/design/SCHEDULE-MOBILE-BRIEF.md) ──
+     Additive spacing / type / touch / extra radii the mobile layout is built
+     from. Theme-agnostic, so it lives in the shared :root; colors come from the
+     theme tokens (ScaleSolo red accent, not the artboard's blue). Existing
+     --r-sm/md/lg/pill are left untouched so desktop does not shift. */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;
+  --sp-4: 16px; --sp-5: 20px; --sp-6: 24px; --sp-8: 32px;
+
+  --r-card: 14px; --r-xl: 18px; --r-sheet: 22px;
+
+  --t-title: 30px; --t-h2: 19px; --t-row: 15px;
+  --t-body: 13px;  --t-meta: 11.5px; --t-label: 11px;
+
+  --tap: 44px; --tap-lg: 50px; --fab: 56px;
+
+  --safe-b: env(safe-area-inset-bottom, 0px);
 }
 
 /* Dark theme (default) */
