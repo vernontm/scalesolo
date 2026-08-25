@@ -12,6 +12,7 @@ import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { toast, confirmDialog } from '../components/Toast.jsx'
 import PayoutSendModal from '../components/PayoutSendModal.jsx'
+import useIsMobile from '../hooks/useIsMobile.js'
 
 const money = (n) => `$${(Number(n) || 0).toFixed(2)}`
 const short = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '')
@@ -124,6 +125,7 @@ function EditorHistoryModal({ token, editor, onClose }) {
 
 // ── admin dashboard ─────────────────────────────────────────────────────────
 function AdminPayouts({ token }) {
+  const isMobile = useIsMobile()
   const [editors, setEditors] = useState([])
   const [loading, setLoading] = useState(true)
   const [drafts, setDrafts] = useState({}) // email -> { amount, quota, wallet }
@@ -218,6 +220,48 @@ function AdminPayouts({ token }) {
             const noWallet = !ed.solana_address
             return (
               <div key={ed.email} style={card}>
+                {isMobile ? (
+                  // ── phone: stacked so nothing runs off a 375px screen ──
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 11 }}>
+                      <div style={{ width: 40, height: 40, borderRadius: '50%', flexShrink: 0, display: 'grid', placeItems: 'center', fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 15, color: '#fff', background: 'linear-gradient(135deg, var(--red), var(--red-dark))' }}>
+                        {(ed.name || ed.email || '?').trim().slice(0, 2).toUpperCase()}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15 }}>{ed.name || ed.email}</div>
+                        {ed.name && <div style={{ fontSize: 12, color: 'var(--muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ed.email}</div>}
+                        <div style={{ fontSize: 11.5, color: ed.solana_address ? 'var(--muted)' : 'var(--red)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <Wallet size={12} /> {ed.solana_address ? short(ed.solana_address) : 'no wallet set'}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 11, padding: '11px 13px', marginTop: 12 }}>
+                      <div>
+                        <div style={{ ...stat, fontSize: 26, lineHeight: 1 }}>{money(ed.outstanding)}</div>
+                        <div style={{ ...statLabel, marginTop: 3 }}>owed · {ed.unpaid_count} unpaid</div>
+                      </div>
+                      {ed.paid > 0 && <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 12, color: '#2ecc71', background: 'rgba(46,204,113,0.13)', border: '1px solid rgba(46,204,113,0.32)', borderRadius: 999, padding: '5px 11px', whiteSpace: 'nowrap' }}>{money(ed.paid)} paid out</span>}
+                    </div>
+                    <button className="btn-primary" title={noWallet ? 'Set a wallet first' : ''} onClick={() => setModal({ kind: 'pay', params: { email: ed.email } })} disabled={ed.unpaid_count === 0 || noWallet} style={{ width: '100%', marginTop: 12, justifyContent: 'center', height: 46 }}>
+                      <Send size={14} /> Release {money(ed.outstanding)}
+                    </button>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 9, marginTop: 9 }}>
+                      <button className="btn-secondary" onClick={() => setHistory({ email: ed.email, name: ed.name })} style={{ justifyContent: 'center', height: 42 }}><Receipt size={13} /> Payments</button>
+                      <button className="btn-secondary" onClick={() => markPaidManually(ed)} disabled={busy === `pay:${ed.email}` || ed.unpaid_count === 0} style={{ justifyContent: 'center', height: 42 }}>
+                        {busy === `pay:${ed.email}` ? <Loader2 size={13} className="spin" /> : 'Mark paid'}
+                      </button>
+                    </div>
+                    <div style={{ height: 1, background: 'var(--border)', margin: '15px 0' }} />
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 9 }}>
+                      <div><label className="label">Monthly $</label><input className="input" type="number" value={d.amount} onChange={(e) => setDrafts((p) => ({ ...p, [ed.email]: { ...d, amount: e.target.value } }))} style={{ width: '100%' }} /></div>
+                      <div><label className="label">Videos / mo</label><input className="input" type="number" value={d.quota} onChange={(e) => setDrafts((p) => ({ ...p, [ed.email]: { ...d, quota: e.target.value } }))} style={{ width: '100%' }} /></div>
+                    </div>
+                    <div style={{ marginTop: 9 }}><label className="label">Wallet address</label><input className="input" value={d.wallet} onChange={(e) => setDrafts((p) => ({ ...p, [ed.email]: { ...d, wallet: e.target.value } }))} placeholder="Solana address" style={{ width: '100%' }} /></div>
+                    <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 11, textAlign: 'center' }}>= <strong style={{ color: 'var(--text)' }}>{money(ed.rate)}</strong> / approved video</div>
+                    {drafts[ed.email] && <button className="btn-primary" onClick={() => saveComp(ed.email)} disabled={busy === `comp:${ed.email}`} style={{ width: '100%', marginTop: 10, justifyContent: 'center', height: 46 }}>{busy === `comp:${ed.email}` ? <span className="spinner" /> : 'Save changes'}</button>}
+                  </>
+                ) : (
+                <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                   <div style={{ flex: 1, minWidth: 180 }}>
                     <div style={{ fontWeight: 700, fontSize: 14 }}>{ed.name || ed.email}</div>
@@ -261,6 +305,8 @@ function AdminPayouts({ token }) {
                   </div>
                   {drafts[ed.email] && <button className="btn-secondary" onClick={() => saveComp(ed.email)} disabled={busy === `comp:${ed.email}`} style={{ marginBottom: 2 }}>{busy === `comp:${ed.email}` ? <span className="spinner" /> : 'Save'}</button>}
                 </div>
+                </>
+                )}
               </div>
             )
           })}

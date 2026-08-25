@@ -25,6 +25,7 @@ import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { toast, confirmDialog } from '../components/Toast.jsx'
 import PayoutSendModal from '../components/PayoutSendModal.jsx'
+import useIsMobile from '../hooks/useIsMobile.js'
 import { supabase } from '../lib/supabase.js'
 
 // Per-browser "confirm before releasing payment" preference (shared with the
@@ -763,6 +764,11 @@ export default function Board() {
   const [pwPrompt, setPwPrompt] = useState(false)
   const [payCard, setPayCard] = useState(null)
   const isAnyManager = (profiles || []).some((p) => ['owner', 'admin'].includes(p._role))
+  // Phone: show one stage at a time (segmented picker) instead of the 5-column
+  // horizontal board. Drag is desktop-only; on mobile you move cards via the
+  // card sheet's stage buttons (Approve, Request revisions, Send to Schedule).
+  const isMobile = useIsMobile()
+  const [mobileStage, setMobileStage] = useState(STAGES[0].key)
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
 
@@ -847,15 +853,56 @@ export default function Board() {
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 220 }}>
+        <div style={{ flex: 1, minWidth: isMobile ? 140 : 220 }}>
           <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, margin: 0 }}>Production board</h1>
-          <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 2 }}>All clients in one place. Upload raw footage, review editor versions, approve, then send to Schedule.</div>
+          {!isMobile && <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 2 }}>All clients in one place. Upload raw footage, review editor versions, approve, then send to Schedule.</div>}
         </div>
         {isAnyManager && <button className="btn-secondary" onClick={() => setShowEditors(true)}><Settings size={14} /> Settings</button>}
         <button className="btn-primary" onClick={() => setNewCardStage('editing')}><Plus size={14} /> New card</button>
       </div>
       {error && <div style={{ marginBottom: 12, padding: '10px 14px', background: 'var(--red-soft)', color: 'var(--red)', borderRadius: 10, fontSize: 13 }}>{error}</div>}
-      {/* Do NOT add fade-up here — its transform breaks DragOverlay's fixed positioning. */}
+      {isMobile ? (
+        <div>
+          {/* segmented stage picker — only this strip scrolls sideways */}
+          <div style={{ overflowX: 'auto', margin: '0 -4px', padding: '0 4px 2px', WebkitOverflowScrolling: 'touch' }}>
+            <div style={{ display: 'inline-flex', gap: 8 }}>
+              {STAGES.map((s) => {
+                const active = s.key === mobileStage
+                const n = (byStage.get(s.key) || []).length
+                return (
+                  <button key={s.key} onClick={() => setMobileStage(s.key)}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 7, whiteSpace: 'nowrap', flexShrink: 0, height: 42, padding: '0 14px', borderRadius: 999, cursor: 'pointer', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13, color: active ? 'var(--text)' : 'var(--muted)', background: active ? `${s.color}1f` : 'var(--surface-2)', border: `1px solid ${active ? `${s.color}80` : 'var(--border)'}` }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.color }} />
+                    {s.label}
+                    <span style={{ fontSize: 11, color: active ? s.color : 'var(--muted)', background: 'var(--surface)', borderRadius: 999, padding: '1px 7px' }}>{n}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          {/* selected stage's cards, full width, tap to open the detail sheet */}
+          <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {(byStage.get(mobileStage) || []).length === 0
+              ? <div style={{ ...dropHint, padding: 22 }}>No cards in {STAGE_LABEL[mobileStage]} yet.</div>
+              : (byStage.get(mobileStage) || []).map((c) => {
+                  const canPay = isAnyManager && isPayableStage(c) && !c.payout_id && c.assigned_editor_email
+                  return (
+                    <div key={c.id} onClick={() => setOpenCardId(c.id)} style={{ ...cardStyle(false), cursor: 'pointer' }}>
+                      <CardBody card={c} />
+                      {canPay && (
+                        <button className="btn-secondary" onClick={(e) => { e.stopPropagation(); setPayCard(c) }}
+                          style={{ marginTop: 8, fontSize: 12.5, width: '100%', justifyContent: 'center', height: 42 }}>
+                          <DollarSign size={13} /> Pay editor
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
+            <button style={addBtn} onClick={() => setNewCardStage(mobileStage)}><Plus size={13} /> Add card</button>
+          </div>
+        </div>
+      ) : (
+      // Do NOT add fade-up here — its transform breaks DragOverlay's fixed positioning.
       <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd}>
         <div style={board}>
           {STAGES.map((s) => (
@@ -870,6 +917,7 @@ export default function Board() {
           )}
         </DragOverlay>
       </DndContext>
+      )}
 
       {newCardStage && (
         <NewCardModal stage={newCardStage} profiles={profiles} defaultBrandId={selectedProfileId} token={token}
