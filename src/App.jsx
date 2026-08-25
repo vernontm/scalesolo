@@ -185,7 +185,7 @@ function AppShell() {
       )}
       <div style={dynamicMain} className="app-main">
         <Header onOpenSidebar={() => setMobileOpen(true)} onToggleSidebar={toggleSidebar} sidebarCollapsed={compact} />
-        <main style={contentStyle}>
+        <main className="app-content" style={contentStyle}>
           <Suspense fallback={<RouteFallback />}>
           {!pageAllowed && <Navigate to="/board" replace />}
           {/* Profile-keyed Routes: see the comment near useProfile()

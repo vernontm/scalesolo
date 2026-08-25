@@ -613,13 +613,15 @@ a:focus-visible {
   /* Tighten the sticky top header on mobile so it doesn't eat ~22%
      of a phone viewport. Single row, small gaps, slimmer padding. */
   .app-header { padding: 10px 14px !important; gap: 8px !important; }
-  /* The 40px page gutter wastes ~20% of a phone's width. Pull it in and
-     leave room at the bottom for any sticky action bar. */
-  .app-main { padding: 18px 14px 72px !important; }
+  /* The 40px page gutter wastes ~20% of a phone's width. The padding lives on
+     the inner <main class="app-content">, not the outer .app-main wrapper, so
+     it must be targeted there. Also cap width + hard-stop horizontal bleed so
+     a wide child can never push the whole page off-screen. */
+  .app-content { padding: 18px 14px 72px !important; max-width: 100% !important; overflow-x: clip; }
 }
 @media (max-width: 700px) {
   .app-header { padding: 10px 10px !important; gap: 6px !important; }
-  .app-main { padding: 14px 12px 72px !important; }
+  .app-content { padding: 14px 12px 72px !important; }
 }
 
 /* Schedule calendar header: on phones the long "Generate content for the

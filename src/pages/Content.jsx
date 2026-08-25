@@ -1904,11 +1904,11 @@ function SocialAccountsPanel({ profileId, token }) {
       background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12,
       padding: 16, marginBottom: 18,
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <div style={{ width: 28, height: 28, borderRadius: 7, background: 'linear-gradient(135deg, #2ecc71, #1abc9c)', color: '#fff', display: 'grid', placeItems: 'center' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+        <div style={{ width: 28, height: 28, borderRadius: 7, background: 'linear-gradient(135deg, #2ecc71, #1abc9c)', color: '#fff', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
           <Link2 size={14} />
         </div>
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, minWidth: 150 }}>
           <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14 }}>Social accounts</div>
           <div style={{ fontSize: 12, color: 'var(--muted)' }}>
             Connect the platforms ScaleSolo can publish to for this brand.
@@ -1970,7 +1970,7 @@ function SocialAccountsPanel({ profileId, token }) {
                 background: connected ? '#2ecc71' : 'var(--muted)',
               }} />
               {p.label}
-              {connected && handle && <span style={{ color: 'var(--muted)', fontWeight: 500 }}>· @{handle}</span>}
+              {connected && handle && <span style={{ color: 'var(--muted)', fontWeight: 500, display: 'inline-block', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>· @{handle}</span>}
             </div>
           )
         })}
