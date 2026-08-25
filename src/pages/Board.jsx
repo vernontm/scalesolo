@@ -53,7 +53,7 @@ const foldStage = (s) => (STAGE_KEYS.has(s) ? s : 'editing')
 const isPayableStage = (card) => ['approved', 'scheduled'].includes(foldStage(card.stage))
 
 // ── styles (cloned from Pipeline) ─────────────────────────────────────────
-const board = { display: 'flex', gap: 14, alignItems: 'flex-start', overflowX: 'auto', paddingBottom: 24, minHeight: 'calc(100vh - 220px)' }
+const board = { display: 'flex', gap: 14, alignItems: 'flex-start', overflowX: 'auto', paddingBottom: 24, minHeight: 'calc(100vh - 220px)', minWidth: 0, maxWidth: '100%' }
 const column = { flex: '0 0 270px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 190px)' }
 const columnHead = { display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', borderBottom: '1px solid var(--border)' }
 const stagePill = (color) => ({ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 })
