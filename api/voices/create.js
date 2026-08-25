@@ -1,15 +1,14 @@
-// /api/voices/create — Instant Voice Cloning into the brand's OWN
-// ElevenLabs workspace (BYOK).
+// /api/voices/create — Instant Voice Cloning.
 //
 // POST { profile_id, name, description?, sample_url, sample_urls? }
 //
-// Refuses if the brand profile hasn't connected an ElevenLabs API key
-// yet. We deliberately do NOT clone into our shared workspace — every
-// cloned voice belongs to the user's own account, which means:
-//   - they can manage / delete it from their own dashboard
-//   - we never accumulate other users' voices in our workspace
-//   - the voice_id returned must be used with their key at render time
-//     (the avatar row's voice_owner is set to 'byok' by the caller).
+// If the brand has connected its OWN ElevenLabs key (BYOK), the voice is
+// cloned into their workspace and voice_owner is 'byok' (resolves under
+// their key at render time). If no BYOK key is connected, it falls back to
+// the shared ScaleSolo ElevenLabs account (ELEVENLABS_API_KEY) and returns
+// voice_owner 'shared' — so a brand can clone a voice without wiring up its
+// own key. A shared voice resolves under our master key everywhere
+// (preview + render), because those paths key off voice_owner.
 
 import { setCors, requireUser, assertMinRole, supaFetch } from '../_lib/supabase.js'
 import { decryptSecret } from '../_lib/crypto.js'
@@ -30,22 +29,27 @@ export default async function handler(req, res) {
     if (!name?.trim()) return res.status(400).json({ error: 'name required' })
     await assertMinRole(auth.user.id, profile_id, 'editor')
 
-    // Resolve the user's BYOK ElevenLabs key. Refuse cloning if they
-    // haven't connected one — we never clone into our shared workspace.
+    // Resolve the ElevenLabs key. Prefer the brand's own BYOK key; if none is
+    // connected, fall back to the shared ScaleSolo account so cloning still
+    // works. voiceOwner tells the render/preview paths which key to use later.
     const profRows = await supaFetch(
       `profiles?id=eq.${profile_id}&select=elevenlabs_api_key_encrypted`
     )
     const enc = profRows?.[0]?.elevenlabs_api_key_encrypted
-    if (!enc) {
-      return res.status(401).json({
-        error: 'Connect your ElevenLabs API key first to clone voices.',
-        code: 'byok_not_connected',
-      })
-    }
     let userApiKey
-    try { userApiKey = decryptSecret(enc) }
-    catch {
-      return res.status(500).json({ error: 'Could not decrypt your stored key. Disconnect and reconnect.' })
+    let voiceOwner
+    if (enc) {
+      try { userApiKey = decryptSecret(enc) }
+      catch {
+        return res.status(500).json({ error: 'Could not decrypt your stored key. Disconnect and reconnect.' })
+      }
+      voiceOwner = 'byok'
+    } else {
+      userApiKey = process.env.ELEVENLABS_API_KEY
+      voiceOwner = 'shared'
+      if (!userApiKey) {
+        return res.status(500).json({ error: 'Voice cloning is not configured.', code: 'no_elevenlabs_key' })
+      }
     }
 
     const urls = Array.isArray(sample_urls) && sample_urls.length
@@ -81,7 +85,7 @@ export default async function handler(req, res) {
 
     const r = await fetch('https://api.elevenlabs.io/v1/voices/add', {
       method: 'POST',
-      headers: { 'xi-api-key': userApiKey },  // user's key — voice lands in their workspace
+      headers: { 'xi-api-key': userApiKey },  // BYOK key or the shared ScaleSolo key
       body: fd,
     })
     const text = await r.text()
@@ -93,7 +97,7 @@ export default async function handler(req, res) {
     return res.status(200).json({
       voice_id: body.voice_id,
       name: name.trim(),
-      voice_owner: 'byok',  // caller stores this on the avatar row
+      voice_owner: voiceOwner,  // 'byok' or 'shared' — caller stores it on the avatar row
     })
   } catch (err) {
     console.error('voices/create error:', err?.stack || err)
