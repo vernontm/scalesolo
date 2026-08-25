@@ -130,6 +130,20 @@ export default async function handler(req, res) {
       return res.status(200).json({ editors })
     }
 
+    // ── admin: one editor's full payment history (the analytics detail) ──
+    if (req.method === 'GET' && action === 'editor-history') {
+      const brandIds = await manageableBrandIds(auth.user.id)
+      if (!brandIds.length) return res.status(403).json({ error: 'Forbidden' })
+      const em = String(req.query.email || '').trim().toLowerCase()
+      if (!em) return res.status(400).json({ error: 'email required' })
+      if (!(await managerHasEditor(em, brandIds))) return res.status(403).json({ error: 'That editor is not on any of your brands.' })
+      const payouts = await supaFetch(`editor_payouts?editor_email=eq.${encodeURIComponent(em)}&order=created_at.desc&select=id,amount_usdt,video_count,status,tx_signature,note,created_at`)
+      const list = payouts || []
+      const total = list.reduce((s, p) => s + Number(p.amount_usdt || 0), 0)
+      const videos = list.reduce((s, p) => s + Number(p.video_count || 0), 0)
+      return res.status(200).json({ email: em, payouts: list, total_paid: round6(total), payment_count: list.length, video_count: videos })
+    }
+
     // ── editor: their own numbers ──
     if (req.method === 'GET') {
       if (!email) return res.status(200).json({ summary: null, payouts: [] })
