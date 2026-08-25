@@ -41,6 +41,11 @@ function isoToLocalDatetimeInput(iso) {
 // ── styles ─────────────────────────────────────────────────────────────────
 const tabBar = {
   display: 'flex',
+  // Wrap the tabs onto a second line on narrow screens. width:fit-content
+  // defeated the old overflow-x:auto (the strip just sized to its content and
+  // forced the whole page wider than the phone), so wrap instead — verified to
+  // collapse the Schedule page to the viewport width on iPhone.
+  flexWrap: 'wrap',
   gap: 4,
   padding: 4,
   background: 'var(--surface)',
@@ -49,10 +54,6 @@ const tabBar = {
   marginBottom: 18,
   width: 'fit-content',
   maxWidth: '100%',
-  // Scroll the tabs horizontally on narrow screens instead of wrapping /
-  // overflowing the viewport.
-  overflowX: 'auto',
-  WebkitOverflowScrolling: 'touch',
 }
 const tabBtn = (active) => ({
   display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', flexShrink: 0,

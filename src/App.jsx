@@ -76,6 +76,10 @@ const layoutStyle = { display: 'flex', minHeight: '100vh' }
 // global.css so the main content takes full width and the sidebar slides in.
 const mainStyle = {
   flex: 1,
+  // A flex item defaults to min-width:auto, so a wide child (e.g. the board's
+  // Kanban columns) grows the whole shell past the viewport. min-width:0 lets
+  // the shell stay viewport-width and the wide child scroll inside itself.
+  minWidth: 0,
   marginLeft: 240,
   display: 'flex',
   flexDirection: 'column',
@@ -83,6 +87,7 @@ const mainStyle = {
 }
 const contentStyle = {
   flex: 1,
+  minWidth: 0,
   width: '100%',
   maxWidth: 1280,
   margin: '0 auto',
