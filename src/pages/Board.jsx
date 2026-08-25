@@ -19,12 +19,18 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import {
   Plus, X, Upload, Film, MessageSquare, Check, CalendarPlus, Trash2,
-  Loader2, Download, Building2, Send, CornerUpLeft, Settings,
+  Loader2, Download, Building2, Send, CornerUpLeft, Settings, DollarSign, ExternalLink,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { toast, confirmDialog } from '../components/Toast.jsx'
+import PayoutSendModal from '../components/PayoutSendModal.jsx'
 import { supabase } from '../lib/supabase.js'
+
+// Per-browser "confirm before releasing payment" preference (shared with the
+// Payouts page). Default on.
+const payoutConfirmOn = () => { try { return localStorage.getItem('scalesolo.payoutConfirm') !== 'off' } catch { return true } }
+const solscanTx = (sig) => `https://solscan.io/tx/${sig}`
 
 // ── stages ───────────────────────────────────────────────────────────────
 const STAGES = [
@@ -124,25 +130,43 @@ function CardBody({ card }) {
             <Avatar name={card.assigned_editor_name || card.assigned_editor_email} size={16} /> {card.assigned_editor_name || card.assigned_editor_email.split('@')[0]}
           </span>
         )}
+        {/* Payment status — shown once a card has been approved (approved + scheduled). */}
+        {card.approved_at && (card.payout_id
+          ? <span style={catPill('#2ecc71')} title={card.payout?.created_at ? `Paid ${new Date(card.payout.created_at).toLocaleString()}` : 'Paid'}>
+              Paid{card.payout?.amount_usdt ? ` $${Number(card.payout.amount_usdt).toFixed(2)}` : ''}
+            </span>
+          : <span style={catPill('#f59e0b')}>Unpaid</span>
+        )}
+        {card.payout?.tx_signature && (
+          <a href={solscanTx(card.payout.tx_signature)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 2, color: 'var(--red)', fontSize: 10.5 }}>tx <ExternalLink size={9} /></a>
+        )}
       </div>
     </>
   )
 }
 
 // ── sortable card ─────────────────────────────────────────────────────────
-function SortableCard({ card, onClick }) {
+function SortableCard({ card, onClick, onPay, isManager }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: card.id, data: { type: 'card', card } })
   const style = isDragging ? { opacity: 0, pointerEvents: 'none' } : { transform: CSS.Transform.toString(transform), transition }
+  const canPay = isManager && card.approved_at && !card.payout_id && card.assigned_editor_email
   return (
     <div ref={setNodeRef} style={{ ...cardStyle(false), ...style }} {...attributes} {...listeners}
       onClick={() => { if (!isDragging && onClick) onClick(card) }}>
       <CardBody card={card} />
+      {canPay && (
+        <button className="btn-secondary" onClick={(e) => { e.stopPropagation(); onPay?.(card) }}
+          style={{ marginTop: 8, fontSize: 11.5, padding: '3px 10px', width: '100%', justifyContent: 'center' }}>
+          <DollarSign size={12} /> Pay editor
+        </button>
+      )}
     </div>
   )
 }
 
 // ── droppable column ──────────────────────────────────────────────────────
-function StageColumn({ stage, cards, onAdd, onCardClick }) {
+function StageColumn({ stage, cards, onAdd, onCardClick, onPay, isManager }) {
   const { setNodeRef, isOver } = useDroppable({ id: `stage:${stage.key}`, data: { type: 'stage', stage: stage.key } })
   return (
     <div style={column}>
@@ -155,7 +179,7 @@ function StageColumn({ stage, cards, onAdd, onCardClick }) {
         <SortableContext items={cards.map((c) => c.id)} strategy={verticalListSortingStrategy}>
           {cards.length === 0
             ? <div style={dropHint}>Drop a card here</div>
-            : cards.map((c) => <SortableCard key={c.id} card={c} onClick={onCardClick} />)}
+            : cards.map((c) => <SortableCard key={c.id} card={c} onClick={onCardClick} onPay={onPay} isManager={isManager} />)}
         </SortableContext>
         <button style={addBtn} onClick={() => onAdd(stage.key)}><Plus size={13} /> Add card</button>
       </div>
@@ -225,7 +249,7 @@ function NewCardModal({ stage, profiles, defaultBrandId, token, onClose, onCreat
 }
 
 // ── card detail drawer ────────────────────────────────────────────────────
-function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
+function CardDrawer({ card, profiles, token, role, onClose, onChanged, onPay }) {
   const isManager = ['owner', 'admin'].includes(role)
   const canWork = role !== 'viewer'
   const [versions, setVersions] = useState(card.versions || [])
@@ -536,6 +560,27 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged }) {
           <span style={{ flex: 1 }} />
           {isManager && <button onClick={removeCard} title="Delete card" style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6 }}><Trash2 size={16} /></button>}
         </div>
+
+        {/* Payment record — the assigned editor and managers both see when it
+            was paid and the crypto transaction. Managers can release it here. */}
+        {card.approved_at && (
+          <div style={{ marginTop: 14, padding: '10px 12px', borderRadius: 10, background: 'var(--surface-2)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <DollarSign size={14} style={{ color: card.payout_id ? 'var(--green)' : 'var(--amber)', flexShrink: 0 }} />
+            {card.payout_id ? (
+              <div style={{ fontSize: 12.5 }}>
+                <strong>Paid{card.payout?.amount_usdt ? ` $${Number(card.payout.amount_usdt).toFixed(2)} USDT` : ''}</strong>
+                {card.payout?.created_at && <span style={{ color: 'var(--muted)' }}> · {new Date(card.payout.created_at).toLocaleString()}</span>}
+                {card.payout?.tx_signature && <> · <a href={solscanTx(card.payout.tx_signature)} target="_blank" rel="noreferrer" style={{ color: 'var(--red)' }}>view transaction</a></>}
+              </div>
+            ) : (
+              <div style={{ fontSize: 12.5, color: 'var(--muted)', flex: 1 }}>Not paid yet.</div>
+            )}
+            <span style={{ flex: 1 }} />
+            {isManager && !card.payout_id && card.assigned_editor_email && (
+              <button className="btn-primary" onClick={() => onPay?.(card)} disabled={busy} style={{ fontSize: 12 }}><DollarSign size={13} /> Pay editor</button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -687,6 +732,7 @@ export default function Board() {
   const [openCardId, setOpenCardId] = useState(null)
   const [showEditors, setShowEditors] = useState(false)
   const [pwPrompt, setPwPrompt] = useState(false)
+  const [payCard, setPayCard] = useState(null)
   const isAnyManager = (profiles || []).some((p) => ['owner', 'admin'].includes(p._role))
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
@@ -784,7 +830,7 @@ export default function Board() {
       <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd}>
         <div style={board}>
           {STAGES.map((s) => (
-            <StageColumn key={s.key} stage={s} cards={byStage.get(s.key) || []} onAdd={setNewCardStage} onCardClick={(c) => setOpenCardId(c.id)} />
+            <StageColumn key={s.key} stage={s} cards={byStage.get(s.key) || []} onAdd={setNewCardStage} onCardClick={(c) => setOpenCardId(c.id)} onPay={setPayCard} isManager={isAnyManager} />
           ))}
         </div>
         <DragOverlay dropAnimation={null}>
@@ -803,7 +849,11 @@ export default function Board() {
       )}
       {openCard && (
         <CardDrawer card={openCard} profiles={profiles} token={token} role={role}
-          onClose={() => setOpenCardId(null)} onChanged={load} />
+          onClose={() => setOpenCardId(null)} onChanged={load} onPay={setPayCard} />
+      )}
+      {payCard && (
+        <PayoutSendModal token={token} kind="pay" params={{ card_id: payCard.id }} requireConfirm={payoutConfirmOn()}
+          onClose={() => setPayCard(null)} onDone={() => { setPayCard(null); load() }} />
       )}
       {showEditors && <EditorsModal token={token} onClose={() => setShowEditors(false)} />}
       {pwPrompt && <SetPasswordPrompt onDone={(set) => { setPwPrompt(false); if (!set) { try { sessionStorage.setItem('scalesolo.pwPromptSkipped', '1') } catch { /* noop */ } } }} />}
