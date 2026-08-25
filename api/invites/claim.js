@@ -49,6 +49,11 @@ export default async function handler(req, res) {
         await supaFetch(`board_invites?id=eq.${iv.id}`, {
           method: 'PATCH', body: { status: 'accepted', accepted_at: new Date().toISOString() }, prefer: 'return=minimal',
         })
+        // Link any cards pre-assigned to this editor by email (assigned before
+        // they accepted) to their now-known user_id, so they appear on the board.
+        await supaFetch(`board_cards?profile_id=eq.${iv.profile_id}&assigned_editor=is.null&assigned_editor_email=eq.${encodeURIComponent(email)}`, {
+          method: 'PATCH', body: { assigned_editor: auth.user.id }, prefer: 'return=minimal',
+        })
         claimed++
       } catch (e) { console.warn('[invites/claim] grant failed', iv.profile_id, e?.message) }
     }

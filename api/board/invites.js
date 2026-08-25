@@ -115,17 +115,26 @@ export default async function handler(req, res) {
       await assertMinRole(auth.user.id, profileId, 'admin')
       const [rows, invRows] = await Promise.all([
         supaFetch(`profile_access?profile_id=eq.${profileId}&role=eq.contributor&select=user_id`),
-        supaFetch(`board_invites?profile_id=eq.${profileId}&select=email,name`),
+        supaFetch(`board_invites?profile_id=eq.${profileId}&status=neq.revoked&select=email,name,status`),
       ])
       const nameByEmail = new Map((invRows || []).filter((i) => i.name).map((i) => [i.email, i.name]))
       const editors = []
+      const claimedEmails = new Set()
       for (const r of (rows || [])) {
         try {
           const u = await authAdmin(`users/${r.user_id}`)
           const em = u?.email || null
           const nm = u?.user_metadata?.full_name || u?.user_metadata?.name || (em ? nameByEmail.get(em) : null) || null
-          editors.push({ user_id: r.user_id, email: em, name: nm })
-        } catch { editors.push({ user_id: r.user_id, email: null, name: null }) }
+          if (em) claimedEmails.add(em.toLowerCase())
+          editors.push({ user_id: r.user_id, email: em, name: nm, pending: false })
+        } catch { editors.push({ user_id: r.user_id, email: null, name: null, pending: false }) }
+      }
+      // Invited-but-not-yet-accepted editors: assignable now by email; the
+      // card's assigned_editor (user_id) gets backfilled when they first sign in.
+      for (const iv of (invRows || [])) {
+        if (iv.email && !claimedEmails.has(iv.email.toLowerCase())) {
+          editors.push({ user_id: null, email: iv.email, name: iv.name || null, pending: true })
+        }
       }
       return res.status(200).json({ editors })
     }

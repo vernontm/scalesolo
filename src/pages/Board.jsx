@@ -334,10 +334,13 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged, onPay }) 
     catch (e) { setErr(e.message) } finally { setBusy(false) }
   }
 
-  const assignEditor = async (uid) => {
-    const ed = brandEditors.find((e) => e.user_id === uid)
+  // Keyed by email so a not-yet-accepted invite (no user_id yet) can still be
+  // assigned. assigned_editor (user_id) is filled now if the editor has claimed,
+  // otherwise it stays null and gets backfilled when they first sign in.
+  const assignEditor = async (email) => {
+    const ed = brandEditors.find((e) => e.email === email)
     setBusy(true); setErr(null)
-    try { await patchCard({ assigned_editor: uid || null, assigned_editor_email: uid ? (ed?.email || null) : null, assigned_editor_name: uid ? (ed?.name || null) : null }); onChanged() }
+    try { await patchCard({ assigned_editor: ed?.user_id || null, assigned_editor_email: email || null, assigned_editor_name: ed?.name || null }); onChanged() }
     catch (e) { setErr(e.message) } finally { setBusy(false) }
   }
 
@@ -461,9 +464,11 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged, onPay }) 
         {isManager && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
             <span style={{ fontSize: 12, color: 'var(--muted)' }}>Editor</span>
-            <select className="input" value={card.assigned_editor || ''} disabled={busy} onChange={(e) => assignEditor(e.target.value)} style={{ maxWidth: 260 }}>
+            <select className="input" value={card.assigned_editor_email || ''} disabled={busy} onChange={(e) => assignEditor(e.target.value)} style={{ maxWidth: 260 }}>
               <option value="">Unassigned</option>
-              {brandEditors.map((ed) => <option key={ed.user_id} value={ed.user_id}>{ed.name || ed.email || ed.user_id.slice(0, 8)}</option>)}
+              {brandEditors.filter((ed) => ed.email).map((ed) => (
+                <option key={ed.email} value={ed.email}>{(ed.name || ed.email)}{ed.pending ? ' (invite pending)' : ''}</option>
+              ))}
             </select>
           </div>
         )}
