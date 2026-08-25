@@ -108,8 +108,9 @@ export default async function handler(req, res) {
           stage: body.stage,
           position: body.position ?? 0,
           updated_at: new Date().toISOString(),
-          // Payable-on-approve: stamp once, the first time it lands in approved.
-          ...(body.stage === 'approved' && !rows[0].approved_at ? { approved_at: new Date().toISOString() } : {}),
+          // Payable once done: stamp approved_at the first time it lands in
+          // approved OR scheduled (a card sent straight to schedule is done too).
+          ...(APPROVED_STAGES.has(body.stage) && !rows[0].approved_at ? { approved_at: new Date().toISOString() } : {}),
         },
       })
       return res.status(200).json({ card: Array.isArray(updated) ? updated[0] : updated })
@@ -160,7 +161,7 @@ export default async function handler(req, res) {
       if (!draft?.id) return res.status(502).json({ error: 'Failed to create the schedule draft.' })
       const updated = await supaFetch(`board_cards?id=eq.${id}`, {
         method: 'PATCH',
-        body: { content_script_id: draft.id, stage: 'scheduled', updated_at: new Date().toISOString() },
+        body: { content_script_id: draft.id, stage: 'scheduled', updated_at: new Date().toISOString(), ...(cardRow.approved_at ? {} : { approved_at: new Date().toISOString() }) },
       })
       return res.status(200).json({ card: Array.isArray(updated) ? updated[0] : updated, content_id: draft.id })
     }
@@ -246,8 +247,8 @@ export default async function handler(req, res) {
         const stageErr = stageChangeError(rows[0], updates.stage, role)
         if (stageErr) return res.status(403).json({ error: stageErr, code: 'stage_locked' })
       }
-      // Payable-on-approve: stamp approved_at once, the first time it's approved.
-      if (updates.stage === 'approved' && !rows[0].approved_at) updates.approved_at = new Date().toISOString()
+      // Payable once done: stamp approved_at the first time it's approved or scheduled.
+      if (APPROVED_STAGES.has(updates.stage) && !rows[0].approved_at) updates.approved_at = new Date().toISOString()
       // Reassigning a card to a different brand: authorize the target and
       // cascade the denormalized profile_id onto its versions + comments so
       // their RLS stays consistent with the card.
