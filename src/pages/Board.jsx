@@ -604,6 +604,8 @@ function EditorsModal({ token, onClose }) {
   const [pick, setPick] = useState([]) // profile_ids to grant on invite (default: all)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
+  const [editingName, setEditingName] = useState(null) // email being renamed
+  const [nameDraft, setNameDraft] = useState('')
 
   const load = useCallback(() => {
     fetch('/api/board/invites', { headers: { Authorization: `Bearer ${token}` } })
@@ -635,6 +637,11 @@ function EditorsModal({ token, onClose }) {
     catch (e) { toast({ message: e.message, kind: 'error' }) }
   }
   const resend = async (ed) => { try { await post('/api/board/invites?action=resend', { email: ed }); toast({ message: 'Magic link resent', kind: 'success' }) } catch (e) { toast({ message: e.message, kind: 'error' }) } }
+  const saveName = async (em) => {
+    setBusy(true); setErr(null)
+    try { await post('/api/board/invites?action=set-name', { email: em, name: nameDraft.trim() || null }); setEditingName(null); toast({ message: 'Name saved', kind: 'success' }); load() }
+    catch (e) { setErr(e.message) } finally { setBusy(false) }
+  }
   const remove = async (ed) => {
     if (!(await confirmDialog({ title: `Remove ${ed}?`, message: 'They lose access to all your boards. You can re-invite them later.', confirmText: 'Remove', destructive: true }))) return
     try { await fetch(`/api/board/invites?email=${encodeURIComponent(ed)}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }); load() }
@@ -675,10 +682,23 @@ function EditorsModal({ token, onClose }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {data.editors.map((ed) => (
                 <div key={ed.email} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                    <strong style={{ fontSize: 13 }}>{ed.name || ed.email}</strong>
-                    {ed.name && <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>{ed.email}</span>}
-                    {Object.values(ed.brands).some((s) => s === 'pending') && <span style={{ fontSize: 10.5, color: 'var(--muted)', border: '1px solid var(--border)', borderRadius: 999, padding: '0 7px' }}>pending</span>}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                    {editingName === ed.email ? (
+                      <>
+                        <input className="input" autoFocus value={nameDraft} onChange={(e) => setNameDraft(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') saveName(ed.email); if (e.key === 'Escape') setEditingName(null) }}
+                          placeholder="Editor name" style={{ fontSize: 13, padding: '4px 8px', maxWidth: 200 }} />
+                        <button className="btn-primary" onClick={() => saveName(ed.email)} disabled={busy} style={{ fontSize: 11, padding: '3px 10px' }}>Save</button>
+                        <button onClick={() => setEditingName(null)} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 11.5 }}>Cancel</button>
+                      </>
+                    ) : (
+                      <>
+                        <strong style={{ fontSize: 13 }}>{ed.name || ed.email}</strong>
+                        {ed.name && <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>{ed.email}</span>}
+                        <button onClick={() => { setEditingName(ed.email); setNameDraft(ed.name || '') }} style={{ background: 'transparent', border: 'none', color: 'var(--red)', cursor: 'pointer', fontSize: 11.5, fontWeight: 600 }}>{ed.name ? 'Rename' : 'Add name'}</button>
+                        {Object.values(ed.brands).some((s) => s === 'pending') && <span style={{ fontSize: 10.5, color: 'var(--muted)', border: '1px solid var(--border)', borderRadius: 999, padding: '0 7px' }}>pending</span>}
+                      </>
+                    )}
                     <span style={{ flex: 1 }} />
                     <button onClick={() => resend(ed.email)} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 11.5, fontWeight: 600 }}>Resend link</button>
                     <button onClick={() => remove(ed.email)} title="Remove editor" style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}><Trash2 size={14} /></button>
