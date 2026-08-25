@@ -50,8 +50,12 @@ const navGroups = [
       { to: '/create', label: 'Create', icon: Wand2 },
       { to: '/spaces',  label: 'Spaces',   icon: Boxes },
       { to: '/schedule', label: 'Schedule', icon: Sparkles },
-      { to: '/board',   label: 'Board',    icon: LayoutGrid, beta: true },
-      { to: '/payouts', label: 'Payouts',  icon: DollarSign, beta: true },
+      // adminAlways: team-ops pages that admins see on every device without the
+      // ?beta=1 flag (that flag is per-browser localStorage, so a fresh phone
+      // hid these). Still hidden from normal paying customers, who are neither
+      // admin nor beta.
+      { to: '/board',   label: 'Board',    icon: LayoutGrid, beta: true, adminAlways: true },
+      { to: '/payouts', label: 'Payouts',  icon: DollarSign, beta: true, adminAlways: true },
       { to: '/avatars', label: 'Avatars',  icon: UserCircle2 },
       { to: '/library', label: 'Library',  icon: LibraryIcon },
       { to: '/email',   label: 'Email',    icon: Mail, beta: true },
@@ -241,7 +245,11 @@ export default function Sidebar({ mobile = false, compact = false, onClose }) {
   const pageKey = (to) => (to || '').split('/')[1] || ''
   const itemVisible = (it) => {
     if (!allowAll) return allowedPages.includes(pageKey(it.to))
-    return showBeta || !it.beta
+    if (!it.beta) return true
+    // Beta items need the ?beta=1 flag, EXCEPT adminAlways ones (Board,
+    // Payouts) which admins always see so a fresh device (e.g. phone) never
+    // hides team-ops pages behind a per-browser localStorage flag.
+    return showBeta || (it.adminAlways && isAdmin)
   }
 
   // Filter out beta-only groups + items unless the flag is on (owners), or keep

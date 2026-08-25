@@ -677,10 +677,18 @@ a:focus-visible {
   }
   .dashboard-shipped {
     padding: 14px 14px !important;
-    gap: 14px !important;
+    gap: 12px 14px !important;
+    flex-wrap: wrap !important;
   }
   .dashboard-shipped-num {
     font-size: 40px !important;
+  }
+  /* Number + copy share the top row; the Create button drops to its own
+     full-width row instead of squeezing the copy off-screen (mirrors the
+     hero card's wrap treatment above). */
+  .dashboard-shipped > button {
+    flex: 1 0 100% !important;
+    justify-content: center !important;
   }
   .dashboard-shipped > div:nth-child(2) > div:first-child {
     font-size: 13.5px !important;

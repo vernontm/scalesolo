@@ -3,6 +3,7 @@ import { Library as LibraryIcon, Download, Play, Image as ImageIcon, Search, X, 
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import MediaLightbox from '../components/MediaLightbox.jsx'
+import useIsMobile from '../hooks/useIsMobile.js'
 
 // All generated assets for the active brand profile, pulled from
 // content_scripts. One tile per item — image / video tiles are clickable
@@ -43,6 +44,7 @@ export default function LibraryPage() {
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   const [deleting, setDeleting] = useState(false)
+  const isMobile = useIsMobile()
 
   const toggleSelect = (id) => {
     setSelectedIds((prev) => {
@@ -128,7 +130,7 @@ export default function LibraryPage() {
   }, [previewItem])
 
   return (
-    <div style={{ padding: '24px 24px 48px', maxWidth: 1280, margin: '0 auto' }}>
+    <div style={{ padding: isMobile ? '4px 0 40px' : '24px 24px 48px', maxWidth: 1280, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
         <LibraryIcon size={20} style={{ color: 'var(--red)' }} />
         <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 22, margin: 0 }}>Library</h1>
@@ -223,8 +225,8 @@ export default function LibraryPage() {
         </div>
       ) : (
         <div style={{
-          display: 'grid', gap: 14,
-          gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+          display: 'grid', gap: isMobile ? 12 : 14,
+          gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(auto-fill, minmax(220px, 1fr))',
         }}>
           {filtered.map((it) => {
             const url = it.media_urls?.[0]
