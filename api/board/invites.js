@@ -174,6 +174,27 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true })
     }
 
+    // ── POST ?action=set-name : add/update an editor's display name after invite ──
+    if (req.method === 'POST' && action === 'set-name') {
+      const email = String(req.body?.email || '').trim().toLowerCase()
+      const name = (req.body?.name || '').trim() || null
+      if (!email) return res.status(400).json({ error: 'email required' })
+      const brandIds = await manageableBrandIds(auth.user.id)
+      if (!brandIds.length) return res.status(403).json({ error: 'Forbidden' })
+      const rows = await supaFetch(`board_invites?email=eq.${encodeURIComponent(email)}&profile_id=in.(${brandIds.join(',')})&select=id`)
+      if (!rows?.length) return res.status(404).json({ error: 'That editor is not on any of your brands.' })
+      // 1) the invite name (drives the assignee picker + future assignments)
+      await supaFetch(`board_invites?email=eq.${encodeURIComponent(email)}&profile_id=in.(${brandIds.join(',')})`, { method: 'PATCH', body: { name }, prefer: 'return=minimal' })
+      // 2) their account display name if they've signed up (never clobber with null)
+      const user = await findUserByEmail(email)
+      if (user && name) {
+        try { await authAdmin(`users/${user.id}`, { method: 'PUT', body: JSON.stringify({ user_metadata: { ...(user.user_metadata || {}), full_name: name } }) }) } catch { /* best-effort */ }
+      }
+      // 3) the denormalized name on their existing cards, so the board + payouts show it
+      await supaFetch(`board_cards?assigned_editor_email=eq.${encodeURIComponent(email)}&profile_id=in.(${brandIds.join(',')})`, { method: 'PATCH', body: { assigned_editor_name: name }, prefer: 'return=minimal' })
+      return res.status(200).json({ ok: true })
+    }
+
     // ── POST ?action=grant / revoke (single brand toggle) ──
     if (req.method === 'POST' && (action === 'grant' || action === 'revoke')) {
       const email = String(req.body?.email || '').trim().toLowerCase()
