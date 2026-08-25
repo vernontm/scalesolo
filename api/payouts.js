@@ -208,9 +208,9 @@ export default async function handler(req, res) {
       // ("Pay" on the card) or an editor's whole unpaid balance (Payouts page).
       let em, ids
       if (cardId) {
-        const crows = await supaFetch(`board_cards?id=eq.${encodeURIComponent(cardId)}&profile_id=in.(${brandIds.join(',')})&approved_at=not.is.null&payout_id=is.null&select=id,assigned_editor_email`)
+        const crows = await supaFetch(`board_cards?id=eq.${encodeURIComponent(cardId)}&profile_id=in.(${brandIds.join(',')})&stage=in.(approved,scheduled)&payout_id=is.null&select=id,assigned_editor_email`)
         const cardRow = crows?.[0]
-        if (!cardRow) return res.status(400).json({ error: 'That card is not payable (already paid, not approved, or not on your brands).', code: 'not_payable' })
+        if (!cardRow) return res.status(400).json({ error: 'That card is not payable (already paid, not yet approved/scheduled, or not on your brands).', code: 'not_payable' })
         if (!cardRow.assigned_editor_email) return res.status(400).json({ error: 'That card has no assigned editor to pay.', code: 'no_editor' })
         em = cardRow.assigned_editor_email.trim().toLowerCase()
         ids = [cardRow.id]
@@ -226,9 +226,14 @@ export default async function handler(req, res) {
       if (!ids.length) return res.status(400).json({ error: 'Nothing owed to this editor.', code: 'nothing_owed' })
       const amount = round6(ids.length * rate)
       const wallet = comp?.solana_address || null
+      // Cards that reached 'scheduled' without a separate Approve click have no
+      // approved_at; stamp it (only when actually paying, never on dry-run) so
+      // the editor's payout page and monthly counts include these videos.
+      const stampApproved = () => supaFetch(`board_cards?id=in.(${ids.join(',')})&approved_at=is.null`, { method: 'PATCH', body: { approved_at: new Date().toISOString() }, prefer: 'return=minimal' })
 
       // Manual record (paid off-platform) — no on-chain send.
       if (manual) {
+        await stampApproved()
         const created = await supaFetch('editor_payouts', {
           method: 'POST',
           body: { editor_email: em, amount_usdt: amount, video_count: ids.length, status: 'sent', note: String(req.body?.note || 'manual').slice(0, 200), created_by: auth.user.id },
@@ -253,6 +258,7 @@ export default async function handler(req, res) {
 
       // Reserve the cards to a pending payout BEFORE sending, so a concurrent
       // retry finds nothing owed and can't double-pay.
+      await stampApproved()
       const pending = await supaFetch('editor_payouts', {
         method: 'POST',
         body: { editor_email: em, amount_usdt: amount, video_count: ids.length, status: 'pending', note: String(req.body?.note || 'usdt').slice(0, 200), created_by: auth.user.id },

@@ -47,6 +47,10 @@ const STAGE_META = Object.fromEntries(STAGES.map((s) => [s.key, s]))
 const catPill = (color) => ({ display: 'inline-flex', alignItems: 'center', fontSize: 10, fontWeight: 800, letterSpacing: 0.2, textTransform: 'uppercase', color, background: `${color}22`, borderRadius: 999, padding: '1px 8px' })
 // Legacy 'raw' cards fold into the first column.
 const foldStage = (s) => (STAGE_KEYS.has(s) ? s : 'editing')
+// A card is payable once it's Approved or Scheduled (both mean the edit is
+// done). Keyed off the stage, not approved_at, so cards that were sent
+// straight to Schedule without a separate Approve click are still payable.
+const isPayableStage = (card) => ['approved', 'scheduled'].includes(foldStage(card.stage))
 
 // ── styles (cloned from Pipeline) ─────────────────────────────────────────
 const board = { display: 'flex', gap: 14, alignItems: 'flex-start', overflowX: 'auto', paddingBottom: 24, minHeight: 'calc(100vh - 220px)' }
@@ -130,8 +134,8 @@ function CardBody({ card }) {
             <Avatar name={card.assigned_editor_name || card.assigned_editor_email} size={16} /> {card.assigned_editor_name || card.assigned_editor_email.split('@')[0]}
           </span>
         )}
-        {/* Payment status — shown once a card has been approved (approved + scheduled). */}
-        {card.approved_at && (card.payout_id
+        {/* Payment status — shown once a card is Approved or Scheduled. */}
+        {isPayableStage(card) && (card.payout_id
           ? <span style={catPill('#2ecc71')} title={card.payout?.created_at ? `Paid ${new Date(card.payout.created_at).toLocaleString()}` : 'Paid'}>
               Paid{card.payout?.amount_usdt ? ` $${Number(card.payout.amount_usdt).toFixed(2)}` : ''}
             </span>
@@ -150,7 +154,7 @@ function CardBody({ card }) {
 function SortableCard({ card, onClick, onPay, isManager }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: card.id, data: { type: 'card', card } })
   const style = isDragging ? { opacity: 0, pointerEvents: 'none' } : { transform: CSS.Transform.toString(transform), transition }
-  const canPay = isManager && card.approved_at && !card.payout_id && card.assigned_editor_email
+  const canPay = isManager && isPayableStage(card) && !card.payout_id && card.assigned_editor_email
   return (
     <div ref={setNodeRef} style={{ ...cardStyle(false), ...style }} {...attributes} {...listeners}
       onClick={() => { if (!isDragging && onClick) onClick(card) }}>
@@ -568,7 +572,7 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged, onPay }) 
 
         {/* Payment record — the assigned editor and managers both see when it
             was paid and the crypto transaction. Managers can release it here. */}
-        {card.approved_at && (
+        {isPayableStage(card) && (
           <div style={{ marginTop: 14, padding: '10px 12px', borderRadius: 10, background: 'var(--surface-2)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <DollarSign size={14} style={{ color: card.payout_id ? 'var(--green)' : 'var(--amber)', flexShrink: 0 }} />
             {card.payout_id ? (
