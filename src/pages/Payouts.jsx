@@ -7,7 +7,7 @@
 // fires only on explicit confirm, and an "Are you sure you want to release
 // payment?" step can be toggled on/off. Nothing sends automatically.
 import { useEffect, useState, useCallback } from 'react'
-import { Wallet, Loader2, Send, ShieldCheck, ExternalLink, X, Receipt } from 'lucide-react'
+import { Wallet, Loader2, Send, ShieldCheck, ExternalLink, X, Receipt, Download } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { toast, confirmDialog } from '../components/Toast.jsx'
@@ -28,6 +28,8 @@ const authHeaders = (token) => ({ 'Content-Type': 'application/json', Authorizat
 function EditorHistoryModal({ token, editor, onClose }) {
   const [data, setData] = useState(null)
   const [err, setErr] = useState(null)
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
   useEffect(() => {
     fetch(`/api/payouts?action=editor-history&email=${encodeURIComponent(editor.email)}`, { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => r.json().then((b) => ({ ok: r.ok, b })))
@@ -35,9 +37,42 @@ function EditorHistoryModal({ token, editor, onClose }) {
       .catch((e) => setErr(e.message))
   }, [editor.email, token])
   const statusColor = (s) => (s === 'failed' ? 'var(--red)' : s === 'pending' ? 'var(--amber)' : 'var(--green)')
+
+  // Client-side date-range filter (the per-editor list is small).
+  const all = data?.payouts || []
+  const fromT = from ? new Date(`${from}T00:00:00`).getTime() : null
+  const toT = to ? new Date(`${to}T23:59:59.999`).getTime() : null
+  const rows = all.filter((p) => {
+    const t = new Date(p.created_at).getTime()
+    if (fromT !== null && t < fromT) return false
+    if (toT !== null && t > toT) return false
+    return true
+  })
+  const totalPaid = rows.reduce((s, p) => s + Number(p.amount_usdt || 0), 0)
+  const totalVideos = rows.reduce((s, p) => s + Number(p.video_count || 0), 0)
+  const filtered = from || to
+
+  const exportCsv = () => {
+    const esc = (c) => `"${String(c ?? '').replace(/"/g, '""')}"`
+    const lines = [['Date', 'Amount (USDT)', 'Videos', 'Status', 'Transaction', 'Note'].map(esc).join(',')]
+    for (const p of rows) {
+      lines.push([new Date(p.created_at).toISOString(), Number(p.amount_usdt || 0).toFixed(2), p.video_count ?? '', p.status || '', p.tx_signature || '', p.note || ''].map(esc).join(','))
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const slug = (editor.name || editor.email).replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '')
+    a.download = `${slug}-payments${from || to ? `-${from || 'start'}_${to || 'now'}` : ''}.csv`
+    document.body.appendChild(a); a.click(); a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 0)
+  }
+
+  const dateInput = { padding: '5px 8px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text)', fontSize: 12.5 }
+
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ ...card, width: 540, maxWidth: '100%', maxHeight: '85vh', overflowY: 'auto' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ ...card, width: 560, maxWidth: '100%', maxHeight: '85vh', overflowY: 'auto' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
           <Receipt size={16} />
           <div style={{ fontWeight: 700, fontSize: 15, flex: 1 }}>{editor.name || editor.email}</div>
@@ -48,14 +83,25 @@ function EditorHistoryModal({ token, editor, onClose }) {
         {!data && !err && <div style={{ padding: 24, textAlign: 'center' }}><span className="spinner" /></div>}
         {data && (
           <>
-            <div style={{ display: 'flex', gap: 18, margin: '10px 0 16px' }}>
-              <div><div style={stat}>{money(data.total_paid)}</div><div style={statLabel}>Total paid out</div></div>
-              <div><div style={stat}>{data.payment_count}</div><div style={statLabel}>Payments</div></div>
-              <div><div style={stat}>{data.video_count}</div><div style={statLabel}>Videos</div></div>
+            <div style={{ display: 'flex', gap: 18, margin: '10px 0 14px' }}>
+              <div><div style={stat}>{money(totalPaid)}</div><div style={statLabel}>{filtered ? 'Paid (range)' : 'Total paid out'}</div></div>
+              <div><div style={stat}>{rows.length}</div><div style={statLabel}>Payments</div></div>
+              <div><div style={stat}>{totalVideos}</div><div style={statLabel}>Videos</div></div>
             </div>
-            {data.payouts.length === 0 ? <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>No payments yet.</div> : (
+
+            {/* Date range + export */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+              <input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} style={dateInput} aria-label="From date" />
+              <span style={{ color: 'var(--muted)', fontSize: 12 }}>to</span>
+              <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} style={dateInput} aria-label="To date" />
+              {filtered && <button className="btn-secondary" onClick={() => { setFrom(''); setTo('') }} style={{ fontSize: 11.5, padding: '4px 8px' }}>Clear</button>}
+              <span style={{ flex: 1 }} />
+              <button className="btn-secondary" onClick={exportCsv} disabled={!rows.length} style={{ fontSize: 12 }}><Download size={13} /> Export CSV</button>
+            </div>
+
+            {rows.length === 0 ? <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>{filtered ? 'No payments in this range.' : 'No payments yet.'}</div> : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {data.payouts.map((p) => (
+                {rows.map((p) => (
                   <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 12px' }}>
                     <strong>{money(p.amount_usdt)}</strong>
                     <span style={{ color: 'var(--muted)' }}>{p.video_count} video{p.video_count === 1 ? '' : 's'}</span>
