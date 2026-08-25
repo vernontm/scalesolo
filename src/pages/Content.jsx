@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   Sparkles, Library, Calendar, FileEdit, ClipboardCheck, X, Wand2,
   Check, Trash2, Edit3, Send, Eye, AlertCircle, Link2, Plus, ExternalLink,
-  Image as ImageIcon, RotateCcw, Loader2, Copy, ChevronRight,
+  Image as ImageIcon, Film, RotateCcw, Loader2, Copy, ChevronRight,
 } from 'lucide-react'
 import BulkUploadView from '../components/BulkUploadView.jsx'
 import SocialAccountsPanel from '../components/SocialAccountsPanel.jsx'
@@ -959,6 +959,42 @@ function EmbedCoverIntroBlock({ item, onUpdate }) {
 // ── Item card ─────────────────────────────────────────────────────────────
 function ItemRow({ item, onOpen }) {
   const pill = STATUS_PILL[item.status] || STATUS_PILL.draft
+  const isMobile = useIsMobile(768)
+
+  // Mobile: the artboard post card — 56px media chip, title + status badge,
+  // one-line caption preview, scheduled time, trailing chevron. Whole card is
+  // the tap target (opens the detail drawer, same as desktop).
+  if (isMobile) {
+    const isVideo = (item.media_type || '').toLowerCase().includes('video')
+    const previewText = item.hook || item.full_script || item.caption || ''
+    const timeText = item.scheduled_datetime
+      ? new Date(item.scheduled_datetime).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+      : 'Not scheduled'
+    return (
+      <div
+        role="button" tabIndex={0}
+        aria-label={`Open ${item.title || 'content item'}`}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(item) } }}
+        onClick={() => onOpen(item)}
+        style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, borderRadius: 'var(--r-card)', background: 'var(--surface)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-card)', marginBottom: 10, cursor: 'pointer' }}
+      >
+        <div style={{ width: 56, height: 56, borderRadius: 'var(--r-md)', background: 'var(--surface-2)', border: '1px solid var(--border)', display: 'grid', placeItems: 'center', color: 'var(--muted)', flexShrink: 0 }}>
+          {isVideo ? <Film size={20} /> : <ImageIcon size={20} />}
+        </div>
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 'var(--t-row)', letterSpacing: '-0.01em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.title || 'Untitled'}</span>
+            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', padding: '2px 6px', borderRadius: 6, background: pill.bg, color: pill.fg, flexShrink: 0 }}>{pill.label}</span>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{previewText || 'No caption yet'}</div>
+          <div style={{ fontSize: 11, color: 'var(--muted)' }}>{timeText}</div>
+        </div>
+        <ChevronRight size={18} style={{ color: 'var(--muted)', flexShrink: 0 }} />
+      </div>
+    )
+  }
+
+  // Desktop: unchanged.
   return (
     <div
       style={itemCard}
