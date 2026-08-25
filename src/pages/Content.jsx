@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Sparkles, Library, Calendar, FileEdit, ClipboardCheck, X, Wand2,
   Check, Trash2, Edit3, Send, Eye, AlertCircle, Link2, Plus, ExternalLink,
-  Image as ImageIcon, RotateCcw, Loader2, Copy,
+  Image as ImageIcon, RotateCcw, Loader2, Copy, ChevronRight,
 } from 'lucide-react'
 import BulkUploadView from '../components/BulkUploadView.jsx'
 import SocialAccountsPanel from '../components/SocialAccountsPanel.jsx'
@@ -1818,6 +1819,8 @@ const TABS = [
 export default function Content() {
   const { session } = useAuth()
   const { selectedProfileId } = useProfile()
+  const navigate = useNavigate()
+  const isMobile = useIsMobile(768)
   // Calendar is the default surface for the Schedule page (backlog +
   // drag-to-slot scheduling). Library / Drafts / Approvals still selectable.
   const [tab, setTab] = useState('calendar')
@@ -1826,6 +1829,7 @@ export default function Content() {
   const [generating, setGenerating] = useState(false)
   const [opened, setOpened] = useState(null)
   const [pendingCount, setPendingCount] = useState(0)
+  const [accountCount, setAccountCount] = useState(null)
 
   const refresh = () => {
     if (!session || !selectedProfileId) return
@@ -1849,6 +1853,23 @@ export default function Content() {
   }
 
   useEffect(() => { refresh(); refreshPending() }, [session, selectedProfileId, tab])
+
+  // Connected-account count for the mobile "Autopilot on · N accounts" summary
+  // line (which replaces the full SocialAccountsPanel on phones). Desktop still
+  // renders the panel, so this is the only place mobile learns the count.
+  useEffect(() => {
+    if (!session?.access_token || !selectedProfileId) return
+    let alive = true
+    fetch(`/api/social/profiles?profile_id=${selectedProfileId}`, { headers: { Authorization: `Bearer ${session.access_token}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b) => {
+        if (!alive) return
+        const social = b?.profile?.social_accounts || {}
+        setAccountCount(Object.values(social).filter((info) => info && (info === true || info.access_token || info.connected || info.username)).length)
+      })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [session, selectedProfileId])
 
   // Silent Upload-Post orphan cleanup on profile open. Fire-and-forget:
   // scans Upload-Post for scheduled jobs the local DB has no row for and
@@ -1892,7 +1913,24 @@ export default function Content() {
   return (
     <TrialGate page="schedule">
     <div className="fade-up">
-      <SocialAccountsPanel profileId={selectedProfileId} token={session?.access_token} />
+      {isMobile ? (
+        // Mobile: the monthly account setup lives on Connections now. In its
+        // place, the big title + a one-line "Autopilot on · N accounts" summary
+        // that taps through to Connections. Desktop keeps the full panel below.
+        <div style={{ marginBottom: 16 }}>
+          <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 'var(--t-title)', letterSpacing: '-0.025em', lineHeight: 1.1, margin: 0 }}>Schedule</h1>
+          <button onClick={() => navigate('/schedule/connections')} aria-label="Manage connections"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 4, background: 'transparent', border: 'none', padding: '2px 0', cursor: 'pointer', fontSize: 12.5 }}>
+            <span style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--green)' }} />
+            <span style={{ color: 'var(--text-soft)', fontWeight: 600 }}>Autopilot on</span>
+            <span style={{ color: 'var(--muted)' }}>·</span>
+            <span style={{ color: 'var(--muted)' }}>{accountCount == null ? 'Connections' : `${accountCount} account${accountCount === 1 ? '' : 's'}`}</span>
+            <ChevronRight size={14} style={{ color: 'var(--muted)', marginLeft: 1 }} />
+          </button>
+        </div>
+      ) : (
+        <SocialAccountsPanel profileId={selectedProfileId} token={session?.access_token} />
+      )}
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14, gap: 10 }}>
         <div style={tabBar}>
           {TABS.map((t) => {
