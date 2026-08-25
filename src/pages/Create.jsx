@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Images, Clapperboard, ArrowRight, PlusSquare, Boxes } from 'lucide-react'
+import useIsMobile from '../hooks/useIsMobile.js'
 
 // Create hub — template cards with a 9:16 preview of what the template
 // actually produces (drop example media in public/media/create/<key>.gif or
@@ -29,7 +30,7 @@ const TEMPLATES = [
 
 // 9:16 preview frame. Tries <key>.mp4 then <key>.gif from /media/create/;
 // falls back to a styled icon placeholder until example media is added.
-function PreviewFrame({ tpl }) {
+function PreviewFrame({ tpl, isMobile }) {
   const [stage, setStage] = useState(0) // 0 = try mp4, 1 = try gif, 2 = fallback
   const Icon = tpl.icon
   const frame = {
@@ -37,6 +38,9 @@ function PreviewFrame({ tpl }) {
     background: `linear-gradient(160deg, ${tpl.accent}30, ${tpl.accent}08)`,
     border: '1px solid var(--border)', display: 'grid', placeItems: 'center',
     position: 'relative',
+    // Phone: a full-width 9:16 preview is a whole screen tall, so cap it to a
+    // centered portrait card and let the title/copy sit right below it.
+    ...(isMobile ? { maxWidth: 190, margin: '0 auto' } : {}),
   }
   if (stage === 0) {
     return (
@@ -74,6 +78,7 @@ function PreviewFrame({ tpl }) {
 
 export default function Create() {
   const navigate = useNavigate()
+  const isMobile = useIsMobile()
   const cardBase = {
     textAlign: 'left', cursor: 'pointer',
     background: 'var(--surface)', border: '1px solid var(--border)',
@@ -99,7 +104,7 @@ export default function Create() {
             onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.transform = 'none' }}
             style={cardBase}
           >
-            <PreviewFrame tpl={t} />
+            <PreviewFrame tpl={t} isMobile={isMobile} />
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
               <div style={{ width: 30, height: 30, borderRadius: 9, display: 'grid', placeItems: 'center', background: `${t.accent}1f`, color: t.accent, flexShrink: 0 }}>
                 <t.icon size={15} />
@@ -125,6 +130,7 @@ export default function Create() {
             aspectRatio: '9 / 16', width: '100%', borderRadius: 12,
             border: '1.5px dashed var(--border)', background: 'var(--surface-2)',
             display: 'grid', placeItems: 'center',
+            ...(isMobile ? { maxWidth: 190, margin: '0 auto' } : {}),
           }}>
             <div style={{ textAlign: 'center', color: '#ef4444' }}>
               <PlusSquare size={40} strokeWidth={1.4} />
