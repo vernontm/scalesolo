@@ -200,18 +200,29 @@ export default async function handler(req, res) {
     if (req.method === 'POST' && action === 'pay') {
       const brandIds = await manageableBrandIds(auth.user.id)
       if (!brandIds.length) return res.status(403).json({ error: 'Forbidden' })
-      const em = String(req.body?.email || '').trim().toLowerCase()
-      if (!em) return res.status(400).json({ error: 'email required' })
       const confirm = req.body?.confirm === true
       const manual = req.body?.manual === true
+      const cardId = String(req.body?.card_id || '').trim()
 
-      const [comps, cards] = await Promise.all([
-        supaFetch(`editor_comp?email=eq.${encodeURIComponent(em)}&select=*`),
-        supaFetch(`board_cards?profile_id=in.(${brandIds.join(',')})&assigned_editor_email=eq.${encodeURIComponent(em)}&approved_at=not.is.null&payout_id=is.null&select=id`),
-      ])
+      // Resolve which cards to pay + the editor. Either a single board card
+      // ("Pay" on the card) or an editor's whole unpaid balance (Payouts page).
+      let em, ids
+      if (cardId) {
+        const crows = await supaFetch(`board_cards?id=eq.${encodeURIComponent(cardId)}&profile_id=in.(${brandIds.join(',')})&approved_at=not.is.null&payout_id=is.null&select=id,assigned_editor_email`)
+        const cardRow = crows?.[0]
+        if (!cardRow) return res.status(400).json({ error: 'That card is not payable (already paid, not approved, or not on your brands).', code: 'not_payable' })
+        if (!cardRow.assigned_editor_email) return res.status(400).json({ error: 'That card has no assigned editor to pay.', code: 'no_editor' })
+        em = cardRow.assigned_editor_email.trim().toLowerCase()
+        ids = [cardRow.id]
+      } else {
+        em = String(req.body?.email || '').trim().toLowerCase()
+        if (!em) return res.status(400).json({ error: 'email or card_id required' })
+        const cards = await supaFetch(`board_cards?profile_id=in.(${brandIds.join(',')})&assigned_editor_email=eq.${encodeURIComponent(em)}&approved_at=not.is.null&payout_id=is.null&select=id`)
+        ids = (cards || []).map((c) => c.id)
+      }
+      const comps = await supaFetch(`editor_comp?email=eq.${encodeURIComponent(em)}&select=*`)
       const comp = comps?.[0] || null
       const rate = perVideoRate(comp)
-      const ids = (cards || []).map((c) => c.id)
       if (!ids.length) return res.status(400).json({ error: 'Nothing owed to this editor.', code: 'nothing_owed' })
       const amount = round6(ids.length * rate)
       const wallet = comp?.solana_address || null

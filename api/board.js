@@ -34,6 +34,17 @@ function stageChangeError(card, targetStage, role) {
   return null
 }
 
+// Attach the covering payout (amount, tx signature, date) to any paid card, so
+// the board can show "Paid" + the crypto transaction to both admin and editor.
+async function attachPayouts(cards) {
+  const ids = [...new Set((cards || []).map((c) => c.payout_id).filter(Boolean))]
+  if (!ids.length) return cards
+  const payouts = await supaFetch(`editor_payouts?id=in.(${ids.join(',')})&select=id,amount_usdt,video_count,status,tx_signature,created_at`)
+  const byId = new Map((payouts || []).map((p) => [p.id, p]))
+  for (const c of (cards || [])) if (c.payout_id) c.payout = byId.get(c.payout_id) || null
+  return cards
+}
+
 export default async function handler(req, res) {
   setCors(req, res)
   if (req.method === 'OPTIONS') return res.status(204).end()
@@ -72,6 +83,7 @@ export default async function handler(req, res) {
         filter = `or=(${clauses.join(',')})`
       }
       const cards = await supaFetch(`board_cards?${filter}&order=position.asc,created_at.asc&select=${select}`)
+      await attachPayouts(cards)
       return res.status(200).json({ cards: cards || [] })
     }
 
