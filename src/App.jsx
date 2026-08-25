@@ -36,6 +36,7 @@ const Forms         = lazy(() => import('./pages/Forms.jsx'))
 const Contacts      = lazy(() => import('./pages/Contacts.jsx'))
 const Profiles      = lazy(() => import('./pages/Profiles.jsx'))
 const Content        = lazy(() => import('./pages/Content.jsx'))
+const Connections    = lazy(() => import('./pages/Connections.jsx'))
 const Create         = lazy(() => import('./pages/Create.jsx'))
 const CarouselBuilder = lazy(() => import('./pages/CarouselBuilder.jsx'))
 const WalkthroughBuilder = lazy(() => import('./pages/WalkthroughBuilder.jsx'))
@@ -215,6 +216,7 @@ function AppShell() {
             <Route path="/spaces"    element={<Spaces />} />
             <Route path="/schedule"        element={<Content />} />
             <Route path="/schedule/queue"  element={<ApprovalQueue />} />
+            <Route path="/schedule/connections" element={<Connections />} />
             <Route path="/content"         element={<Navigate to="/schedule" replace />} />
             <Route path="/avatars"   element={<Avatars />} />
             <Route path="/library"   element={<Library />} />
