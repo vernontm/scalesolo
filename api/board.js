@@ -147,13 +147,11 @@ export default async function handler(req, res) {
       // post has nowhere to go. Prefer the brand's saved posting default; fall back
       // to whatever the brand is actually synced to on Upload-Post. Captions still
       // get written on the Schedule page by the (frame-first) generator.
-      const profRows = await supaFetch(`profiles?id=eq.${cardRow.profile_id}&select=default_platforms,social_accounts`)
+      const profRows = await supaFetch(`profiles?id=eq.${cardRow.profile_id}&select=default_platforms,uploadpost_platforms`)
       const prof = profRows?.[0] || {}
-      const connectedPlatforms = Object.entries(prof.social_accounts || {})
-        .filter(([, info]) => info && (info === true || info.connected || info.access_token || info.username))
-        .map(([pid]) => pid)
       const defaultPlatforms = Array.isArray(prof.default_platforms) ? prof.default_platforms.filter(Boolean) : []
-      const draftPlatforms = defaultPlatforms.length ? defaultPlatforms : connectedPlatforms
+      const syncedPlatforms = Array.isArray(prof.uploadpost_platforms) ? prof.uploadpost_platforms.filter(Boolean) : []
+      const draftPlatforms = defaultPlatforms.length ? defaultPlatforms : syncedPlatforms
       // Create a content_scripts draft — same shape bulk upload uses.
       const created = await supaFetch('content_scripts', {
         method: 'POST',
