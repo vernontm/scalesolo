@@ -4,8 +4,9 @@
 //   POST   { card_id, video_url, thumbnail_url?, kind?, note? }  → append a version
 //   PATCH  ?id=... { note?, thumbnail_url? }
 //   DELETE ?id=...
-// Uploading a fresh edit auto-advances a card from needs_revisions/editing/raw
-// into in_review (approved/scheduled cards are left alone).
+// Uploading a fresh edit to an already approved/scheduled card repoints its
+// final_version_id to that new cut, so send-to-schedule ships the latest edit
+// (e.g. a re-voiced replacement) instead of the originally-approved version.
 import { setCors, requireUser, supaFetch, assertProfileAccess, fmtErr } from '../_lib/supabase.js'
 
 // Uploader display identity for the activity thread (see comments.js).
@@ -68,8 +69,16 @@ export default async function handler(req, res) {
       const version = Array.isArray(created) ? created[0] : created
       // Bump the card's updated_at so it sorts as recently touched; the user
       // drives the columns by dragging (no auto stage move).
+      const cardPatch = { updated_at: new Date().toISOString() }
+      // If the card is already approved or scheduled, a freshly uploaded edit
+      // becomes the version that ships. send-to-schedule reads final_version_id,
+      // so without this a re-upload to a finished card (e.g. a re-voiced cut)
+      // would leave the OLD approved version as the one that schedules + posts.
+      if (kind === 'edit' && ['approved', 'scheduled'].includes(card.stage)) {
+        cardPatch.final_version_id = version.id
+      }
       await supaFetch(`board_cards?id=eq.${body.card_id}`, {
-        method: 'PATCH', body: { updated_at: new Date().toISOString() }, prefer: 'return=minimal',
+        method: 'PATCH', body: cardPatch, prefer: 'return=minimal',
       })
       return res.status(201).json({ version })
     }
