@@ -142,9 +142,19 @@ export default async function handler(req, res) {
       if (!finalV?.video_url) {
         return res.status(400).json({ error: 'This card has no uploaded video to schedule yet.', code: 'no_media' })
       }
-      // Create a content_scripts draft — same shape bulk upload uses. Platforms
-      // are left empty so the Schedule page fills the brand defaults at schedule
-      // time; captions get written there by the (frame-first) generator.
+      // Resolve the publish platforms up front so a board draft never lands with
+      // an empty platform list — which silently fails at schedule time because the
+      // post has nowhere to go. Prefer the brand's saved posting default; fall back
+      // to whatever the brand is actually synced to on Upload-Post. Captions still
+      // get written on the Schedule page by the (frame-first) generator.
+      const profRows = await supaFetch(`profiles?id=eq.${cardRow.profile_id}&select=default_platforms,social_accounts`)
+      const prof = profRows?.[0] || {}
+      const connectedPlatforms = Object.entries(prof.social_accounts || {})
+        .filter(([, info]) => info && (info === true || info.connected || info.access_token || info.username))
+        .map(([pid]) => pid)
+      const defaultPlatforms = Array.isArray(prof.default_platforms) ? prof.default_platforms.filter(Boolean) : []
+      const draftPlatforms = defaultPlatforms.length ? defaultPlatforms : connectedPlatforms
+      // Create a content_scripts draft — same shape bulk upload uses.
       const created = await supaFetch('content_scripts', {
         method: 'POST',
         body: {
@@ -155,6 +165,7 @@ export default async function handler(req, res) {
           post_type: 'video',
           status: 'draft',
           generated_by: 'board',
+          ...(draftPlatforms.length ? { platforms: draftPlatforms } : {}),
         },
       })
       const draft = Array.isArray(created) ? created[0] : created
