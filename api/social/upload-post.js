@@ -404,6 +404,12 @@ export default async function handler(req, res) {
       fd.append('video', video_url)
       fd.append('async_upload', 'true')
     } else {
+      // TODO(tiktok-carousel): TikTok photo/carousel uploads are still
+      // failing intermittently at Upload-Post's validation (Aug 2-6 misses)
+      // and the exact trigger is under investigation — recent fixes narrowed
+      // it to the 1080px cap + corrupt-source handling above, but it isn't
+      // fully confirmed. Until it is, the sync cron marks a failed carousel
+      // failed ONCE and never auto-retries it (post-once rule).
       // For TikTok, normalize every slide to a TikTok-safe JPEG (PNG is
       // rejected there); other platforms get the original bytes.
       const tiktokPhotos = platforms.includes('tiktok')
