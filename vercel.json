@@ -1,7 +1,15 @@
 {
-  "buildCommand": "npm run build",
+  "buildCommand": "npm run build:no-lint",
   "outputDirectory": "dist",
   "framework": "vite",
+  "redirects": [
+    {
+      "source": "/((?!api/).*)",
+      "has": [{ "type": "host", "value": "scalesolo.ai" }],
+      "destination": "https://www.scalesolo.ai/$1",
+      "permanent": false
+    }
+  ],
   "rewrites": [
     { "source": "/((?!api/|studio-compositions/|free-blueprint|build-your-ai-empire|done-for-you|welcome|oto|media/|downloads/).*)", "destination": "/index.html" }
   ],
