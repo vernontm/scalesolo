@@ -181,6 +181,14 @@ async function generateCaptions({ res, profile_id, script_ids, user_id }) {
   // so the four prompt variants can't drift apart on length rules.
   const CAPTION_LENGTH_RULE = 'The caption MUST be 250-450 characters TOTAL (hard cap 450 — count characters, not words). Structure: one CTA or hook line, then 1-2 short beats, then a one-line closer. Blank line between each. No stacked story paragraphs, no repeating what the video already says.'
 
+  // Truth guardrail applied to every prompt variant. Root-caused from a
+  // real incident (2026-08): a POV skit where a celebrity "walks in" to a
+  // restaurant got captioned as if the star had actually visited. The
+  // model treats an on-screen premise as literal, so we spell it out —
+  // dramatizations are fiction, and we never assert unverifiable real-
+  // world facts about real people.
+  const TRUTH_RULE = 'TRUTH: Do NOT state anything as real fact that you cannot verify from the brand context. Skits, POV setups, jokes, look-alikes, and dramatizations are creative premises, not real events: write around the concept, the feeling, or the viewer, not as something that happened. NEVER claim a real or famous person actually visited, endorsed, ate at, or said anything about the brand, and never put words in a real person\'s mouth. If a frame or on-screen line implies a celebrity or an event that did not verifiably happen, treat it as the setup (address the viewer, play up the vibe), not as fact. When unsure whether a detail is real, describe the experience, not the claim.'
+
   // Per-media-type prompt builders. The user message carries the actual
   // image (image rows only) so Claude Vision can read it; for video
   // rows with a transcript we bake the transcript into the system
@@ -210,6 +218,7 @@ RULES:
 - Match the brand voice and tone from the brand bible
 - Make the caption punchy and engaging
 - The title should be curiosity-driven, not generic
+- ${TRUTH_RULE}
 
 Return ONLY valid JSON:
 {"title": "...", "hook": "...", "full_script": "...", "caption": "...", "hashtags": "...", "first_comment": "..."}`
@@ -252,6 +261,7 @@ RULES:
 - Match the brand voice from the brand bible.
 - Reference things you actually see in the frames, not generic stock phrasing.
 - Make the title curiosity-driven, not generic.
+- ${TRUTH_RULE}
 
 Return ONLY valid JSON:
 {"title": "...", "hook": "...", "full_script": "...", "caption": "...", "hashtags": "...", "first_comment": "..."}`
@@ -278,6 +288,7 @@ RULES:
 - Match the brand voice and tone from the brand bible.
 - Only reference things visible in the frames. Do not invent dialogue.
 - The title should be curiosity-driven, not generic.
+- ${TRUTH_RULE}
 
 Return ONLY valid JSON:
 {"title": "...", "hook": "...", "full_script": "...", "caption": "...", "hashtags": "...", "first_comment": "..."}`
@@ -300,6 +311,7 @@ RULES:
 - Match the brand voice and tone from the brand bible
 - Reference what's actually visible in the image
 - Caption should drive engagement (question, story, or CTA)
+- ${TRUTH_RULE}
 
 Return ONLY valid JSON:
 {"title": "...", "caption": "...", "hashtags": "...", "first_comment": "..."}`
@@ -428,7 +440,7 @@ Return ONLY valid JSON:
         return { ...parsed, _caption_source: captionSource }
       } catch (e) {
         console.warn(`[generate-captions] video Claude failed for ${s.id} (${captionSource}):`, e?.message)
-        return null
+        return { _error: e?.data?.error?.message || e?.message || 'AI request failed', _status: e?.status || null }
       }
     }
     if (isImage) {
@@ -447,7 +459,7 @@ Return ONLY valid JSON:
         return parseJsonObject(ai?.content?.[0]?.text)
       } catch (e) {
         console.warn(`[generate-captions] image Claude failed for ${s.id}:`, e?.message)
-        return null
+        return { _error: e?.data?.error?.message || e?.message || 'AI request failed', _status: e?.status || null }
       }
     }
     // No media, no transcript — generic placeholder.
@@ -475,9 +487,16 @@ Return ONLY valid JSON:
   // job firing with the stale text and forcing the user to manually
   // re-schedule.
   const needsUploadPostResync = []
+  // AI-call failures (e.g. a 401 from an invalid ANTHROPIC_API_KEY). Collected
+  // so we can surface them loudly instead of returning a misleading updated:0.
+  const aiErrors = []
   const results = await Promise.allSettled(captionResults.map((r, i) => {
     const script = scripts[i]
     if (!script || !r) return Promise.resolve({ ok: false })
+    if (r._error) {
+      aiErrors.push({ id: script.id, error: r._error, status: r._status || null })
+      return Promise.resolve({ ok: false, error: r._error })
+    }
     if (r._no_transcript) {
       transcriptFailures.push({ id: script.id, reason: 'no_speech_detected' })
       return Promise.resolve({ ok: false, skipped: 'no_transcript' })
@@ -503,6 +522,25 @@ Return ONLY valid JSON:
       .catch((e) => { console.warn('caption patch failed for', script.id, e.message); return { ok: false } })
   }))
   const updated = results.filter((r) => r.status === 'fulfilled' && r.value?.ok).length
+
+  // Nothing captioned AND the failures were AI-call errors (not missing
+  // transcripts): surface it loudly. Before this, a 401 from an invalid
+  // ANTHROPIC_API_KEY was swallowed to null and the UI just showed
+  // "nothing happened" with no way to tell why. No credits are consumed
+  // on this path (the consume below is gated on updated > 0).
+  if (updated === 0 && aiErrors.length > 0) {
+    const first = aiErrors[0]
+    const isAuth = first.status === 401 || /x-api-key|authentication/i.test(String(first.error || ''))
+    return res.status(502).json({
+      error: isAuth
+        ? 'Caption generation failed: the AI service rejected the request (authentication). The ANTHROPIC_API_KEY is likely invalid or expired.'
+        : `Caption generation failed: ${first.error}`,
+      code: isAuth ? 'ai_auth_error' : 'ai_error',
+      ai_status: first.status || null,
+      updated: 0,
+      total: scripts.length,
+    })
+  }
 
   // Push the new caption to Upload-Post for every scheduled row we
   // just refreshed. Reuses the existing resync flow which cancels the
