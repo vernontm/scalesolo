@@ -238,23 +238,51 @@ function ItemDetail({ item, onClose, onUpdate }) {
   )
   const ttSaved = item.tiktok_direct_override === true || item.tiktok_direct_override === false
     ? item.tiktok_direct_override : null
-  const captionDirty = captionDraft !== (item.caption || '') || hashtagsDraft !== (item.hashtags || '') || ttOverride !== ttSaved
-  const saveCaption = async () => {
-    setSavingCaption(true); setError(null); setSuccess(null)
+  // What's actually persisted right now. Updated after every save (manual
+  // OR autosave) so the dirty check + autosave never loop and never depend
+  // on a full list refetch to settle.
+  const savedRef = useRef({ caption: item.caption || '', hashtags: item.hashtags || '', tt: ttSaved })
+  const captionDirty = captionDraft !== savedRef.current.caption
+    || hashtagsDraft !== savedRef.current.hashtags
+    || ttOverride !== savedRef.current.tt
+  const [autoStatus, setAutoStatus] = useState('idle') // idle | saving | saved | error
+  const saveCaption = async ({ silent = false } = {}) => {
+    if (silent && savingCaption) return // don't stack autosaves on an in-flight save
+    setSavingCaption(true)
+    if (silent) setAutoStatus('saving'); else { setError(null); setSuccess(null) }
     try {
+      const hashtags = limitHashtags(hashtagsDraft, 5)
       const r = await fetch(`/api/content?id=${item.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ caption: captionDraft, hashtags: limitHashtags(hashtagsDraft, 5), tiktok_direct_override: ttOverride }),
+        body: JSON.stringify({ caption: captionDraft, hashtags, tiktok_direct_override: ttOverride }),
       })
       const b = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(b?.error || 'Could not save the caption')
-      setSuccess(b.upload_post_resynced
-        ? 'Saved and pushed to the scheduled post — the edited caption is what will publish.'
-        : 'Caption saved.')
-      onUpdate()
-    } catch (e) { setError(e.message) } finally { setSavingCaption(false) }
+      savedRef.current = { caption: captionDraft, hashtags, tt: ttOverride }
+      if (silent) { setAutoStatus('saved'); setTimeout(() => setAutoStatus((s) => (s === 'saved' ? 'idle' : s)), 1500) }
+      else {
+        setSuccess(b.upload_post_resynced
+          ? 'Saved and pushed to the scheduled post — the edited caption is what will publish.'
+          : 'Caption saved.')
+        onUpdate()
+      }
+    } catch (e) { if (silent) setAutoStatus('error'); else setError(e.message) }
+    finally { setSavingCaption(false) }
   }
+  // Autosave the caption + hashtags ~1s after typing stops, so a caption is
+  // never lost by forgetting to hit Save (the #1 reported caption problem).
+  // Gated to pre-publish rows: a live 'scheduled'/'posted' row still saves
+  // via the explicit button (which re-pushes to Upload-Post) so we don't
+  // churn the queued job on every keystroke.
+  const autoTimer = useRef(null)
+  const autosaveEligible = !['scheduled', 'posted'].includes(item.status)
+  useEffect(() => {
+    if (!autosaveEligible || !captionDirty) return
+    if (autoTimer.current) clearTimeout(autoTimer.current)
+    autoTimer.current = setTimeout(() => { saveCaption({ silent: true }) }, 900)
+    return () => { if (autoTimer.current) clearTimeout(autoTimer.current) }
+  }, [captionDraft, hashtagsDraft, ttOverride])
   // Copy-to-clipboard feedback for the caption field (mobile-friendly).
   const [copied, setCopied] = useState(false)
   const copyCaption = async () => {
@@ -366,7 +394,7 @@ function ItemDetail({ item, onClose, onUpdate }) {
                 that's easy to hit on mobile. */}
             <div style={{ marginBottom: 14 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                <div style={{ flex: 1, fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Caption</div>
+                <div style={{ flex: 1, fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: autoStatus === 'saved' ? '#2ecc71' : autoStatus === 'error' ? 'var(--red)' : 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Caption{autoStatus === 'saving' ? ' · saving…' : autoStatus === 'saved' ? ' · saved' : autoStatus === 'error' ? ' · save failed' : ''}</div>
                 <button
                   onClick={copyCaption}
                   disabled={!captionDraft}
@@ -451,10 +479,15 @@ function ItemDetail({ item, onClose, onUpdate }) {
                   onChange={(e) => setScheduledAt(e.target.value)}
                   style={{ flex: 1, minWidth: 0 }}
                 />
-                <button className="btn-primary" onClick={() => action('schedule', { scheduled_datetime: new Date(scheduledAt).toISOString() })} disabled={busy || !scheduledAt}>
+                <button className="btn-primary" onClick={async () => { if (captionDirty) await saveCaption(); action('schedule', { scheduled_datetime: new Date(scheduledAt).toISOString() }) }} disabled={busy || !scheduledAt || !captionDraft.trim()}>
                   <Send size={13} /> Schedule
                 </button>
               </div>
+              {!captionDraft.trim() && (
+                <div style={{ fontSize: 11.5, color: 'var(--red)', marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <AlertCircle size={12} style={{ flexShrink: 0 }} /> Add a caption before this can be scheduled.
+                </div>
+              )}
             </div>
           </div>
         </div>

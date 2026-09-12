@@ -298,6 +298,19 @@ export default async function handler(req, res) {
               scheduleFor = findNextOpenSlot(pr?.[0], (taken || []).map((t) => t.scheduled_datetime))
             } catch (e) { console.warn('auto-schedule on approve failed:', e.message) }
           }
+          // Never schedule/publish a real post with no caption. The old
+          // fallback shipped the raw transcript or filename as the caption
+          // (fixed separately); this stops a caption-less post from going out
+          // at all, and stamps last_error so the row shows an alert. Text
+          // posts are exempt: their body IS the caption.
+          if (scheduleFor && item.media_type !== 'text' && !String(item.caption || '').trim()) {
+            await supaFetch(`content_scripts?id=eq.${id}`, {
+              method: 'PATCH',
+              body: { last_error: 'Not scheduled: add a caption first.', last_error_at: new Date().toISOString() },
+              prefer: 'return=minimal',
+            }).catch(() => {})
+            return res.status(422).json({ error: 'This post has no caption. Add a caption before scheduling.', code: 'no_caption' })
+          }
           if (scheduleFor && (hasMedia(item) || item.media_type === 'text')) {
             updates.scheduled_datetime = scheduleFor
             updates.status = 'scheduled'
