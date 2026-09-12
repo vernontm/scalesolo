@@ -26,6 +26,7 @@ import { useProfile } from '../context/ProfileContext.jsx'
 import { toast, confirmDialog } from '../components/Toast.jsx'
 import NewVideoModal from '../components/NewVideoModal.jsx'
 import { supabase } from '../lib/supabase.js'
+import { saveMedia } from '../lib/download.js'
 
 async function authedFetch(path, token, init = {}) {
   // Auto-serialize plain-object bodies. fetch() doesn't do this for
@@ -1426,9 +1427,13 @@ function StudioVideoEditor({ videoId }) {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, fontSize: 12, color: 'var(--muted)' }}>
                 <span>Final render</span>
                 <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                  <a href={video.final_video_url} download style={{ color: 'var(--red)', fontWeight: 700 }}>
+                  <button
+                    type="button"
+                    onClick={() => saveMedia(video.final_video_url, `${String(video.title || 'render').replace(/\W+/g, '-').toLowerCase()}.mp4`)}
+                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--red)', fontWeight: 700, font: 'inherit' }}
+                  >
                     Download MP4 ↓
-                  </a>
+                  </button>
                   <button
                     type="button"
                     className="btn"

@@ -25,25 +25,15 @@ import {
   Library as LibraryIcon, Edit3, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { supabase } from './supabase.js'
+import { saveMedia } from './download.js'
 import MusicMixPreview from '../components/MusicMixPreview.jsx'
 
 // ── shared download helper ──────────────────────────────────────────────────
-export async function downloadUrl(url, filename) {
-  try {
-    const r = await fetch(url)
-    if (!r.ok) throw new Error('fetch failed')
-    const blob = await r.blob()
-    const obj = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = obj
-    a.download = filename || url.split('/').pop()?.split('?')[0] || 'download'
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    setTimeout(() => URL.revokeObjectURL(obj), 1500)
-  } catch {
-    window.open(url, '_blank')
-  }
+// Thin wrapper kept for the many call sites below. The real logic (mobile
+// share-sheet -> Save to Photos/Files, desktop blob download, CORS fallback)
+// lives in lib/download.js so every download button behaves the same.
+export function downloadUrl(url, filename) {
+  return saveMedia(url, filename)
 }
 
 // ── MediaItem: hoverable image/video tile with action overlay ───────────────

@@ -27,6 +27,7 @@ import { toast, confirmDialog } from '../components/Toast.jsx'
 import PayoutSendModal from '../components/PayoutSendModal.jsx'
 import useIsMobile from '../hooks/useIsMobile.js'
 import { supabase } from '../lib/supabase.js'
+import { saveMedia } from '../lib/download.js'
 
 // Per-browser "confirm before releasing payment" preference (shared with the
 // Payouts page). Default on.
@@ -516,7 +517,7 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged, onPay }) 
                     <div style={{ marginTop: 6 }}>
                       <video src={`${d.video_url}#t=0.1`} controls preload="metadata" style={{ width: '100%', maxHeight: 240, borderRadius: 8, background: '#000' }} />
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 6 }}>
-                        <a href={d.video_url} download style={{ color: 'var(--muted)', display: 'inline-flex' }} title="Download"><Download size={14} /></a>
+                        <button type="button" onClick={() => saveMedia(d.video_url, `v${d.version_no || 1}.mp4`)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--muted)', display: 'inline-flex' }} title="Download"><Download size={14} /></button>
                         {canWork && replyBtn(() => startReply('version', d.id, `v${d.version_no}`))}
                       </div>
                     </div>
