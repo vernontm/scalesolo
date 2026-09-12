@@ -21,7 +21,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Upload, Loader2, Sparkles, CalendarClock, Send, Download, Trash2,
-  Check, X, AlertCircle, Image as ImageIcon, Video as VideoIcon, ChevronDown, Zap,
+  Check, X, AlertCircle, Image as ImageIcon, Video as VideoIcon, Zap,
   RefreshCw, Type, Wand2, Settings as SettingsIcon, Film, Maximize2,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase.js'
@@ -190,126 +190,6 @@ function TypeCell({ row, kindBorder, isVideo, isText, onPreview, onSelectView })
         document.body,
       )}
     </span>
-  )
-}
-
-function PlatformsCell({ value, mediaType, onSave }) {
-  const cur = Array.isArray(value) ? value : []
-  const [open, setOpen] = useState(false)
-  // anchor rect drives the portal positioning so the dropdown can escape
-  // the table cell's overflow / clipping bounds and float above the
-  // surrounding frame.
-  const [anchor, setAnchor] = useState(null)
-  const btnRef = useRef(null)
-  const popRef = useRef(null)
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e) => {
-      // Click-outside check has to look at BOTH the trigger button and
-      // the portaled popover, since the popover lives outside the
-      // component's DOM subtree.
-      const t = e.target
-      if (btnRef.current?.contains(t)) return
-      if (popRef.current?.contains(t)) return
-      setOpen(false)
-    }
-    const onScroll = () => {
-      // Re-measure on scroll so the popover stays glued to the button.
-      // Cheaper than a ResizeObserver because the cell rarely resizes.
-      if (btnRef.current) setAnchor(btnRef.current.getBoundingClientRect())
-    }
-    document.addEventListener('mousedown', onDown)
-    window.addEventListener('scroll', onScroll, true)
-    window.addEventListener('resize', onScroll)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      window.removeEventListener('scroll', onScroll, true)
-      window.removeEventListener('resize', onScroll)
-    }
-  }, [open])
-  const toggleOpen = () => {
-    if (!open && btnRef.current) setAnchor(btnRef.current.getBoundingClientRect())
-    setOpen((o) => !o)
-  }
-  const toggle = (id) => {
-    const next = cur.includes(id) ? cur.filter((p) => p !== id) : [...cur, id]
-    onSave(next)
-  }
-  const visible = ROW_PLATFORMS.filter((p) => !mediaType || p.kinds.includes(mediaType))
-
-  // Position the popover relative to the viewport. If there's not
-  // enough room below the button (eg the row is near the bottom of a
-  // short table), flip above. Width matches the button so the dropdown
-  // visually anchors but never shrinks below 180px.
-  const POPOVER_HEIGHT_EST = Math.min(visible.length * 30 + 16, 320)
-  let popoverStyle = null
-  if (anchor) {
-    const spaceBelow = window.innerHeight - anchor.bottom
-    const flipUp = spaceBelow < POPOVER_HEIGHT_EST + 12 && anchor.top > POPOVER_HEIGHT_EST + 12
-    popoverStyle = {
-      position: 'fixed',
-      left: Math.max(8, anchor.left),
-      width: Math.max(180, anchor.width),
-      zIndex: 1000,
-      ...(flipUp
-        ? { bottom: window.innerHeight - anchor.top + 4 }
-        : { top: anchor.bottom + 4 }),
-    }
-  }
-
-  return (
-    <div style={{ position: 'relative' }}>
-      <button
-        ref={btnRef}
-        type="button"
-        onClick={toggleOpen}
-        style={{
-          width: '100%', padding: '6px 8px', borderRadius: 6,
-          border: '1px solid var(--border)', background: 'var(--surface-2)',
-          color: 'var(--text-soft)', fontSize: 11.5, cursor: 'pointer',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4,
-        }}
-        title="Pick which platforms this row publishes to"
-      >
-        <span style={{ overflow: 'hidden', display: 'flex', alignItems: 'center', gap: 4 }}>
-          {cur.length === 0
-            ? <span style={{ color: 'var(--muted)' }}>Pick platforms</span>
-            : cur.map((id) => <PlatformBadge key={id} id={id} size={18} />)}
-        </span>
-        <ChevronDown size={11} />
-      </button>
-      {open && popoverStyle && createPortal(
-        <div
-          ref={popRef}
-          style={{
-            ...popoverStyle,
-            padding: 6, borderRadius: 8, maxHeight: 320, overflowY: 'auto',
-            background: 'var(--surface)', border: '1px solid var(--border)',
-            boxShadow: '0 12px 32px rgba(0,0,0,0.32)',
-          }}
-        >
-          {visible.map((p) => {
-            const on = cur.includes(p.id)
-            return (
-              <button
-                key={p.id} type="button"
-                onClick={() => toggle(p.id)}
-                style={{
-                  width: '100%', padding: '6px 8px', borderRadius: 6, border: 'none',
-                  background: on ? 'rgba(239,68,68,0.16)' : 'transparent',
-                  color: on ? 'var(--text)' : 'var(--text-soft)',
-                  fontSize: 12, textAlign: 'left', cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', gap: 6,
-                }}
-              >
-                {on ? <Check size={11} /> : <span style={{ width: 11 }} />} {p.label}
-              </button>
-            )
-          })}
-        </div>,
-        document.body
-      )}
-    </div>
   )
 }
 
@@ -936,10 +816,11 @@ export default function BulkUploadView({ profileId, token, onChange }) {
         // — critically — never falls back to the raw video before the
         // user notices because polish has actually run.
         setUploads((u) => u.map((x) => x.id === job.id ? { ...x, progress: 70 } : x))
-        // Pre-select the profile's preferred platforms, filtered to ones
-        // that actually accept this media kind (TikTok/YouTube reject
-        // images, for example). The PlatformsCell still lets the user
-        // override per row.
+        // Pre-select the brand's posting-default platforms (set once on the
+        // Social accounts panel), filtered to ones that actually accept this
+        // media kind (TikTok/YouTube reject images, for example). There is no
+        // per-row platform picker anymore: the brand-level defaults are the
+        // single source of truth for where a post publishes.
         const compatibleByKind = new Set(
           ROW_PLATFORMS.filter((p) => p.kinds.includes(job.kind)).map((p) => p.id)
         )
@@ -2462,7 +2343,6 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                 <th style={{ ...headerCell, width: '20%' }}>Caption</th>
                 <th className="hide-on-tablet" style={{ ...headerCell, width: '13%' }}>Hashtags</th>
                 <th className="hide-on-tablet" style={{ ...headerCell, width: '13%' }}>1st comment</th>
-                <th style={{ ...headerCell, width: 100 }}>Platforms</th>
                 <th style={{ ...headerCell, width: 175 }}>Scheduled</th>
                 <th style={{ ...headerCell, width: 90 }}>Status</th>
                 <th style={{ ...headerCell, width: 44 }} aria-label="Actions">{' '}</th>
@@ -2618,13 +2498,6 @@ export default function BulkUploadView({ profileId, token, onChange }) {
                     </td>
                     <td className="hide-on-tablet" style={{ padding: 4, verticalAlign: 'top' }}>
                       <EditableCell value={r.first_comment} placeholder="First comment" onSave={(v) => patchScript(r.id, { first_comment: v })} />
-                    </td>
-                    <td style={{ padding: 4, verticalAlign: 'top' }}>
-                      <PlatformsCell
-                        value={r.platforms}
-                        mediaType={r.media_type}
-                        onSave={(next) => patchScript(r.id, { platforms: next })}
-                      />
                     </td>
                     <td style={{ padding: 8, verticalAlign: 'top', fontSize: 11.5, color: 'var(--text-soft)' }}>
                       <input
