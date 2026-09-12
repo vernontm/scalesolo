@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { X, ChevronLeft, ChevronRight, Download } from 'lucide-react'
+import { saveMedia } from '../lib/download.js'
 
 // Fullscreen media viewer. Pass `video` for a single clip, or `images` (an
 // array) for a scrollable carousel — arrows, dots, keyboard (←/→/Esc), and a
@@ -26,9 +27,7 @@ export default function MediaLightbox({ images = [], video = null, startIndex = 
   const url = list[i]
   const slug = String(title || 'asset').replace(/\W+/g, '-').toLowerCase()
   const download = () => {
-    const a = document.createElement('a')
-    a.href = url; a.download = `${slug}${multi ? `-${i + 1}` : ''}.${isVideo ? 'mp4' : 'jpg'}`
-    document.body.appendChild(a); a.click(); a.remove()
+    saveMedia(url, `${slug}${multi ? `-${i + 1}` : ''}.${isVideo ? 'mp4' : 'jpg'}`)
   }
   const iconBtn = { background: 'rgba(0,0,0,0.6)', border: 'none', color: '#fff', cursor: 'pointer', display: 'grid', placeItems: 'center', backdropFilter: 'blur(4px)' }
 

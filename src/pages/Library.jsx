@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import MediaLightbox from '../components/MediaLightbox.jsx'
 import useIsMobile from '../hooks/useIsMobile.js'
+import { saveMedia } from '../lib/download.js'
 
 // All generated assets for the active brand profile, pulled from
 // content_scripts. One tile per item — image / video tiles are clickable
@@ -22,14 +23,7 @@ const kindOptions = [
 ]
 
 function downloadUrl(url, filename) {
-  const a = document.createElement('a')
-  a.href = url
-  if (filename) a.download = filename
-  a.target = '_blank'
-  a.rel = 'noopener'
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
+  return saveMedia(url, filename)
 }
 
 export default function LibraryPage() {

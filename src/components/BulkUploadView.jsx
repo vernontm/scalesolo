@@ -25,6 +25,7 @@ import {
   RefreshCw, Type, Wand2, Settings as SettingsIcon, Film, Maximize2,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase.js'
+import { saveMedia } from '../lib/download.js'
 import { toast, confirmDialog } from './Toast.jsx'
 import { PlatformBadge, PLATFORMS as PB_PLATFORMS } from './PlatformBadge.jsx'
 import { VideoPolishEditor } from '../lib/space-nodes.jsx'
@@ -2783,10 +2784,7 @@ export default function BulkUploadView({ profileId, token, onChange }) {
           <button
             onClick={(e) => {
               e.stopPropagation()
-              const a = document.createElement('a')
-              a.href = previewItem.url
-              a.download = previewItem.title || (previewItem.type === 'video' ? 'video.mp4' : 'image')
-              a.click()
+              saveMedia(previewItem.url, previewItem.title || (previewItem.type === 'video' ? 'video.mp4' : 'image'))
             }}
             style={{
               position: 'absolute', top: 18, right: 18,
