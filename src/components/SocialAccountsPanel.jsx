@@ -3,7 +3,7 @@
 // Connections screen while desktop keeps it inline. Logic is unchanged:
 // connect via the upload-post JWT flow, per-brand default platforms + TikTok
 // direct-post persisted on the ScaleSolo profile row.
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Link2, Plus, ExternalLink, AlertCircle, Check } from 'lucide-react'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { toast } from './Toast.jsx'
@@ -30,14 +30,17 @@ export default function SocialAccountsPanel({ profileId, token }) {
   const ssProfile = (profiles || []).find((p) => p.id === profileId) || null
   const [defaults, setDefaults] = useState([])
   const [directPost, setDirectPost] = useState(false)
-  const [dirty, setDirty] = useState(false)
-  const [savingSettings, setSavingSettings] = useState(false)
+  // Posting defaults save automatically (no Save button). autoStatus drives a
+  // small "Saving… / Saved" hint; saveTimer debounces rapid toggles into one
+  // PATCH.
+  const [autoStatus, setAutoStatus] = useState('idle') // idle | saving | saved | error
+  const saveTimer = useRef(null)
   const dpKey = JSON.stringify(ssProfile?.default_platforms || [])
   useEffect(() => {
     setDefaults(Array.isArray(ssProfile?.default_platforms) ? ssProfile.default_platforms : [])
     setDirectPost(!!ssProfile?.tiktok_force_direct_post)
-    setDirty(false)
   }, [profileId, ssProfile?.id, dpKey, ssProfile?.tiktok_force_direct_post])
+  useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current) }, [])
 
   const refresh = () => {
     if (!profileId || !token) return
@@ -80,29 +83,57 @@ export default function SocialAccountsPanel({ profileId, token }) {
     .filter(([, info]) => info && (info === true || info.access_token || info.connected || info.username))
     .map(([id]) => id)
 
-  // Toggle a platform in the default set. An empty default set means "all
-  // connected" (the scheduler's own fallback), so the first toggle expands to
-  // the full connected list before removing the one clicked.
-  const toggleDefault = (id) => {
-    setDefaults((cur) => {
-      const base = (!cur || cur.length === 0) ? [...connectedIds] : cur
-      return base.includes(id) ? base.filter((x) => x !== id) : [...base, id]
-    })
-    setDirty(true)
+  // Persist the posting preferences. Debounced so a burst of toggles becomes a
+  // single PATCH. We pass the next values explicitly (not from state) so the
+  // save never races a stale closure.
+  const persist = (nextDefaults, nextDirect) => {
+    if (!profileId || !token) return
+    if (saveTimer.current) clearTimeout(saveTimer.current)
+    setAutoStatus('saving')
+    saveTimer.current = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/profiles?id=${profileId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ default_platforms: nextDefaults, tiktok_force_direct_post: nextDirect }),
+        })
+        const b = await r.json().catch(() => ({}))
+        if (!r.ok) throw new Error(b.error || 'Failed to save')
+        setAutoStatus('saved')
+        refreshProfiles()
+        setTimeout(() => setAutoStatus((s) => (s === 'saved' ? 'idle' : s)), 1600)
+      } catch (e) {
+        setAutoStatus('error')
+        toast({ message: e.message, kind: 'error' })
+      }
+    }, 500)
   }
-  const saveSettings = async () => {
-    setSavingSettings(true)
-    try {
-      const r = await fetch(`/api/profiles?id=${profileId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ default_platforms: defaults, tiktok_force_direct_post: directPost }),
-      })
-      const b = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(b.error || 'Failed to save')
-      toast({ message: 'Posting defaults saved', kind: 'success' })
-      setDirty(false); refreshProfiles()
-    } catch (e) { toast({ message: e.message, kind: 'error' }) } finally { setSavingSettings(false) }
+
+  // Toggle whether a connected platform is in the posting set. An empty stored
+  // set means "all connected" (the scheduler's own fallback), so the first
+  // toggle materializes the full connected list before flipping the one
+  // clicked. We never let the set drop to empty via the UI, otherwise it would
+  // silently flip back to that "all connected" meaning.
+  const toggleDefault = (id) => {
+    const base = (!defaults || defaults.length === 0) ? [...connectedIds] : defaults
+    const isOn = base.includes(id)
+    let next
+    if (isOn) {
+      next = base.filter((x) => x !== id)
+      if (next.length === 0) {
+        toast({ message: 'Keep at least one platform on so posts have somewhere to go.', kind: 'error' })
+        return
+      }
+    } else {
+      next = [...base, id]
+    }
+    setDefaults(next)
+    persist(next, directPost)
+  }
+  const toggleDirect = () => {
+    const next = !directPost
+    setDirectPost(next)
+    persist(defaults, next)
   }
 
   return (
@@ -117,7 +148,7 @@ export default function SocialAccountsPanel({ profileId, token }) {
         <div style={{ flex: 1, minWidth: 150 }}>
           <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14 }}>Social accounts</div>
           <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-            Connect the platforms ScaleSolo can publish to for this brand.
+            Pick which connected platforms this brand posts to. New posts publish to every platform that is on. Saves automatically.
           </div>
         </div>
         <button className="btn-secondary" onClick={refresh} disabled={loading} style={{ padding: '6px 10px' }}>
@@ -134,9 +165,16 @@ export default function SocialAccountsPanel({ profileId, token }) {
           <AlertCircle size={12} style={{ verticalAlign: '-2px', marginRight: 6 }} /> {err}
         </div>
       )}
+      {/* One row of platforms. Connected platforms are toggles: green + check
+          means new posts publish there; a connected-but-off platform is muted
+          with a green connection dot. Not-connected platforms are dashed and
+          click through to the connect flow. */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
         {SOCIAL_PLATFORMS.map((p) => {
           const connected = connectedIds.includes(p.id)
+          // A platform posts by default when it is connected AND either the
+          // stored set is empty (means "all connected") or explicitly lists it.
+          const on = connected && ((!defaults || defaults.length === 0) || defaults.includes(p.id))
           const info = social[p.id]
           // Only show a handle in the pill if it looks like an actual
           // username. Upload-Post returns whatever the platform stores;
@@ -157,70 +195,57 @@ export default function SocialAccountsPanel({ profileId, token }) {
             return true
           })()
           const handle = looksLikeRealHandle ? rawHandle : null
+          const title = !connected
+            ? 'Not connected. Click to connect this platform.'
+            : on
+              ? `Posts here by default${handle ? ` (@${handle})` : ''}. Click to skip.`
+              : `Connected${handle ? ` as @${handle}` : ''} but skipped. Click to post here.`
           return (
-            <div
+            <button
               key={p.id}
-              title={connected && handle ? `Connected as @${handle}` : connected ? 'Connected' : 'Not connected'}
+              type="button"
+              onClick={() => (connected ? toggleDefault(p.id) : onConnect())}
+              title={title}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 6,
-                padding: '5px 10px', borderRadius: 999,
-                background: connected ? 'rgba(46,204,113,0.14)' : 'var(--surface-2)',
-                border: `1px solid ${connected ? 'rgba(46,204,113,0.45)' : 'var(--border)'}`,
-                color: connected ? '#2ecc71' : 'var(--muted)',
+                padding: '5px 10px', borderRadius: 999, cursor: 'pointer',
+                background: on ? 'rgba(46,204,113,0.14)' : 'var(--surface-2)',
+                border: on
+                  ? '1px solid rgba(46,204,113,0.45)'
+                  : `1px ${connected ? 'solid' : 'dashed'} var(--border)`,
+                color: on ? '#2ecc71' : connected ? 'var(--text)' : 'var(--muted)',
                 fontSize: 11.5, fontFamily: 'var(--font-display)', fontWeight: 700,
                 letterSpacing: '0.02em',
               }}
             >
-              <span style={{
-                width: 6, height: 6, borderRadius: 999,
-                background: connected ? '#2ecc71' : 'var(--muted)',
-              }} />
+              {on
+                ? <Check size={12} />
+                : <span style={{ width: 6, height: 6, borderRadius: 999, background: connected ? '#2ecc71' : 'var(--muted)' }} />}
               {p.label}
               {connected && handle && <span style={{ color: 'var(--muted)', fontWeight: 500, display: 'inline-block', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>· @{handle}</span>}
-            </div>
+            </button>
           )
         })}
       </div>
 
       {connectedIds.length > 0 && (
-        <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13, marginBottom: 2 }}>Posting defaults</div>
-          <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 8 }}>
-            Which platforms new posts and board drafts publish to by default.{(!defaults || defaults.length === 0) ? ' Right now: all connected.' : ''}
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
-            {connectedIds.map((id) => {
-              const on = (!defaults || defaults.length === 0) ? true : defaults.includes(id)
-              const label = SOCIAL_PLATFORMS.find((p) => p.id === id)?.label || id
-              return (
-                <button
-                  key={id} type="button" onClick={() => toggleDefault(id)}
-                  title={on ? 'Posts here by default' : 'Skipped by default'}
-                  style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 999,
-                    cursor: 'pointer', fontSize: 11.5, fontWeight: 700,
-                    background: on ? 'rgba(46,204,113,0.14)' : 'var(--surface-2)',
-                    border: `1px solid ${on ? 'rgba(46,204,113,0.45)' : 'var(--border)'}`,
-                    color: on ? '#2ecc71' : 'var(--muted)',
-                  }}
-                >
-                  {on && <Check size={12} />}{label}
-                </button>
-              )
-            })}
-          </div>
-          {connectedIds.includes('tiktok') && (
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, cursor: 'pointer', marginBottom: 4 }}>
-              <input type="checkbox" checked={directPost} onChange={() => { setDirectPost((v) => !v); setDirty(true) }} />
-              <span>Post to TikTok straight to the public feed (instead of leaving a draft in the TikTok app)</span>
-            </label>
-          )}
-          {dirty && (
-            <button className="btn-primary" onClick={saveSettings} disabled={savingSettings} style={{ marginTop: 8 }}>
-              {savingSettings ? <span className="spinner" /> : 'Save posting defaults'}
-            </button>
-          )}
+        <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+            {(!defaults || defaults.length === 0)
+              ? 'New posts and board drafts publish to all connected platforms.'
+              : `New posts publish to ${defaults.length} of ${connectedIds.length} connected platforms.`}
+          </span>
+          {autoStatus === 'saving' && <span style={{ fontSize: 11, color: 'var(--muted)' }}>Saving…</span>}
+          {autoStatus === 'saved' && <span style={{ fontSize: 11, color: '#2ecc71', display: 'inline-flex', alignItems: 'center', gap: 3 }}><Check size={11} /> Saved</span>}
+          {autoStatus === 'error' && <span style={{ fontSize: 11, color: 'var(--red)' }}>Save failed</span>}
         </div>
+      )}
+
+      {connectedIds.includes('tiktok') && (
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, cursor: 'pointer', marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+          <input type="checkbox" checked={directPost} onChange={toggleDirect} />
+          <span>Post to TikTok straight to the public feed (instead of leaving a draft in the TikTok app)</span>
+        </label>
       )}
     </div>
   )
