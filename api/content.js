@@ -123,7 +123,13 @@ async function rescheduleUploadPostJob({ row, newScheduledIso, authToken, req })
     is_text_post: isTextPost || undefined,
     video_url: isTextPost ? undefined : videoToSend,
     photo_urls: !isTextPost && !isVideo ? mediaUrls : undefined,
-    description: fullCaption || row.full_script || row.title || '',
+    // Caption text sent to each platform. ONLY the user's caption + hashtags.
+    // Never fall back to full_script (the raw Scribe transcript, e.g.
+    // "[outro jingle]" on a music-only clip) or the title/filename: that
+    // silently ships transcription junk as the caption (upload-post.js
+    // promotes description into the caption column when caption is empty).
+    // No caption means post with none, not garbage.
+    description: fullCaption || '',
     title: row.title || undefined,
     caption: row.caption || undefined,
     hashtags: row.hashtags || undefined,

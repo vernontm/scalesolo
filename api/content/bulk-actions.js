@@ -974,7 +974,10 @@ async function publishSelected({ res, profile_id, script_ids, user_id }) {
       const platforms = Array.isArray(r.platforms) && r.platforms.length
         ? r.platforms
         : (isText ? ['threads'] : ['tiktok'])
-      const desc = [r.caption, r.hashtags].filter(Boolean).join('\n\n').trim() || (r.full_script || '').slice(0, 500)
+      // Caption text: user's caption + hashtags only. Never fall back to
+      // full_script (the raw transcript, e.g. "[outro jingle]") — that ships
+      // transcription junk as the caption. No caption ⇒ post with none.
+      const desc = [r.caption, r.hashtags].filter(Boolean).join('\n\n').trim()
       const hasTikTok = platforms.includes('tiktok')
 
       // ── VIDEO: URL pass-through ─────────────────────────────────────────
@@ -1273,7 +1276,9 @@ async function resyncUploadPost({ req, res, profile_id, script_ids }) {
       platforms,
       video_url: videoToSend,
       photo_urls: !isVideo ? mediaUrls : undefined,
-      description: fullCaption || row.full_script || row.title || '',
+      // User's caption + hashtags only — never the raw transcript/title (see
+      // the same fix in api/content.js). Prevents "[outro jingle]" captions.
+      description: fullCaption || '',
       title: row.title || undefined,
       caption: row.caption || undefined,
       hashtags: row.hashtags || undefined,
