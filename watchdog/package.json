@@ -1,0 +1,13 @@
+{
+  "name": "scalesolo-post-watchdog",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local Mac watchdog: verifies live client posts have a real caption + hashtags, iMessages an URGENT alert if not.",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node watch.mjs",
+    "dry-run": "node watch.mjs --dry-run",
+    "test-message": "node watch.mjs --test-message"
+  }
+}
