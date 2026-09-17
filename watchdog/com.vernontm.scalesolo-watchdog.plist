@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd job template for the post-caption watchdog.
+
+  1. Fill in the two __PLACEHOLDER__ paths below:
+       __NODE__  = output of `which node`   (e.g. /usr/local/bin/node or /opt/homebrew/bin/node)
+       __DIR__   = absolute path to this watchdog folder
+  2. Copy to ~/Library/LaunchAgents/com.vernontm.scalesolo-watchdog.plist
+  3. launchctl load -w ~/Library/LaunchAgents/com.vernontm.scalesolo-watchdog.plist
+  Runs every 60s. Unload with: launchctl unload -w ~/Library/LaunchAgents/com.vernontm.scalesolo-watchdog.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.vernontm.scalesolo-watchdog</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE__</string>
+    <string>__DIR__/watch.mjs</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__DIR__</string>
+  <key>StartInterval</key>
+  <integer>60</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>__DIR__/watchdog.log</string>
+  <key>StandardErrorPath</key>
+  <string>__DIR__/watchdog.log</string>
+</dict>
+</plist>
