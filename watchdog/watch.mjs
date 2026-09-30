@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { existsSync, statSync, writeFileSync, rmSync } from 'node:fs'
 import { loadEnv, getConfig, loadState, saveState } from './lib/config.mjs'
-import { fetchNewPublished, brandName } from './lib/supabase.mjs'
+import { fetchNewPublished, fetchNewFailed, brandName } from './lib/supabase.mjs'
 import { scrapeLivePost, platformFromUrl } from './lib/apify.mjs'
 import { evaluateCaption } from './lib/caption.mjs'
 import { sendIMessage } from './lib/imessage.mjs'
@@ -59,6 +59,12 @@ async function alert({ brand, platform, url, reasons }) {
   const text = `URGENT: ${brand} ${platform} post has a caption problem: ${reasons.join('; ')}. ${url}`
   await sendIMessage({ to: cfg.alertTo, text, dryRun: cfg.dryRun })
   log(cfg.dryRun ? '[dry-run] would alert:' : 'ALERTED:', text)
+}
+
+async function alertFailure({ brand, title, reason }) {
+  const text = `URGENT: ${brand} post "${title}" FAILED to publish and did not go out: ${reason}`
+  await sendIMessage({ to: cfg.failureAlertTo, text, dryRun: cfg.dryRun })
+  log(cfg.dryRun ? '[dry-run] would alert (failed post):' : 'ALERTED (failed post):', text)
 }
 
 async function main() {
@@ -135,11 +141,36 @@ async function main() {
     processed.add(item.notifId)
   }
 
+  // ── Failure alerts: posts the pipeline marked failed since last check ──
+  // Independent of the caption/scrape path above, so it covers every failure
+  // (text posts, inbox-only, platforms we do not scrape, etc.).
+  const failSinceIso = state.lastFailIso
+    || new Date(nowMs - cfg.firstRunLookbackMin * 60 * 1000).toISOString()
+  let lastFailIso = state.lastFailIso
+  let failedCount = 0
+  try {
+    const failed = await fetchNewFailed({ url: cfg.supabaseUrl, key: cfg.supabaseKey, sinceIso: failSinceIso })
+    for (const f of failed) {
+      if (!lastFailIso || f.last_error_at > lastFailIso) lastFailIso = f.last_error_at
+      // Key by id + error time so a fresh failure of the same post re-alerts,
+      // but the same failure never texts twice.
+      const failKey = `fail:${f.id}:${f.last_error_at}`
+      if (processed.has(failKey)) continue
+      const brand = await brandName({ url: cfg.supabaseUrl, key: cfg.supabaseKey, profileId: f.profile_id })
+      await alertFailure({ brand, title: f.title || 'Untitled', reason: f.last_error || 'no error detail' })
+      processed.add(failKey)
+      failedCount++
+    }
+  } catch (e) {
+    log('failure check skipped:', e.message)
+  }
+  state.lastFailIso = lastFailIso
+
   state.lastSeenIso = lastSeenIso
   state.processed = [...processed]
   state.pending = stillPending
   saveState(STATE_PATH, state)
-  log(`cycle done. new=${fresh.length} pending=${stillPending.length}`)
+  log(`cycle done. new=${fresh.length} pending=${stillPending.length} failed=${failedCount}`)
 }
 
 try {
