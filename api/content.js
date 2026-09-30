@@ -30,18 +30,39 @@ import { invokeHandler } from './_lib/internal-invoke.js'
 // Returns the new uploadpost_request_id, or null if there was nothing
 // to reschedule (no prior job, no media, etc.). Failures are surfaced
 // so the caller can decide whether to block the local DB update.
+// Resolve which platforms a post should publish to. Prefer the row's own
+// list; when it is empty (e.g. a Board draft created before the brand had a
+// posting default), fall back to the brand's saved default_platforms, then to
+// the accounts the brand is actually connected to on Upload-Post. Returns []
+// only when the brand truly has nowhere to post. Callers turn that into a
+// visible "no platforms" error instead of a silent scheduled-but-never-sent row.
+async function resolvePlatformsForRow(row) {
+  const own = Array.isArray(row?.platforms) ? row.platforms.filter(Boolean) : []
+  if (own.length) return own
+  if (!row?.profile_id) return []
+  try {
+    const rows = await supaFetch(`profiles?id=eq.${row.profile_id}&select=default_platforms,uploadpost_platforms`)
+    const prof = rows?.[0] || {}
+    const def = Array.isArray(prof.default_platforms) ? prof.default_platforms.filter(Boolean) : []
+    if (def.length) return def
+    return Array.isArray(prof.uploadpost_platforms) ? prof.uploadpost_platforms.filter(Boolean) : []
+  } catch {
+    return []
+  }
+}
+
 async function rescheduleUploadPostJob({ row, newScheduledIso, authToken, req }) {
   // Pre-flight: row must have all the pieces a fresh upload-post call
   // would need. If any are missing (older row, never actually scheduled
   // through us), skip the upload-post round trip entirely — the local
   // PATCH still happens so the user's view is consistent.
-  const platforms = Array.isArray(row.platforms) ? row.platforms : null
+  const platforms = await resolvePlatformsForRow(row)
   const mediaUrls = Array.isArray(row.media_urls) ? row.media_urls : []
   // Text posts (media_type='text') go through Upload-Post's /upload_text
   // endpoint and intentionally carry no media_urls. Only bail on missing
   // media when the row is NOT a text post.
   const isTextPost = row.media_type === 'text'
-  if (!platforms || !platforms.length) return null
+  if (!platforms.length) return null
   if (!mediaUrls.length && !isTextPost) return null
 
   // Cancel old job if there is one. Prefer the stored uploadpost_job_id
@@ -312,8 +333,22 @@ export default async function handler(req, res) {
             return res.status(422).json({ error: 'This post has no caption. Add a caption before scheduling.', code: 'no_caption' })
           }
           if (scheduleFor && (hasMedia(item) || item.media_type === 'text')) {
+            // Resolve where this post publishes (its own list, else the brand
+            // default, else its connected accounts). Block scheduling when
+            // nothing resolves, otherwise the row is marked scheduled but
+            // never submitted (nowhere to post) and fails silently later.
+            const resolvedPlatforms = await resolvePlatformsForRow(item)
+            if (!resolvedPlatforms.length) {
+              await supaFetch(`content_scripts?id=eq.${id}`, {
+                method: 'PATCH',
+                body: { last_error: 'Not scheduled: no connected platforms. Connect an account or pick posting platforms in Social accounts.', last_error_at: new Date().toISOString() },
+                prefer: 'return=minimal',
+              }).catch(() => {})
+              return res.status(422).json({ error: 'This post has no platforms to publish to. Connect an account or set posting platforms.', code: 'no_platforms' })
+            }
             updates.scheduled_datetime = scheduleFor
             updates.status = 'scheduled'
+            updates.platforms = resolvedPlatforms
             // Submit to Upload-Post NOW so approval = live. The user
             // explicitly chose Option A: approval immediately fires.
             // Upload-Post stores future-dated jobs fine — it'll fire at
@@ -370,10 +405,24 @@ export default async function handler(req, res) {
               code: 'missing_media',
             })
           }
+          // Resolve platforms (caller-provided, else brand default, else
+          // connected accounts) and block when nothing resolves, so a post
+          // never lands scheduled with nowhere to publish.
+          const schedPlatforms = (Array.isArray(req.body.platforms) && req.body.platforms.length)
+            ? req.body.platforms
+            : await resolvePlatformsForRow(item)
+          if (!schedPlatforms.length) {
+            await supaFetch(`content_scripts?id=eq.${id}`, {
+              method: 'PATCH',
+              body: { last_error: 'Not scheduled: no connected platforms. Connect an account or pick posting platforms in Social accounts.', last_error_at: new Date().toISOString() },
+              prefer: 'return=minimal',
+            }).catch(() => {})
+            return res.status(422).json({ error: 'This post has no platforms to publish to. Connect an account or set posting platforms.', code: 'no_platforms' })
+          }
           updates = {
             scheduled_datetime: req.body.scheduled_datetime,
             status: 'scheduled',
-            platforms: req.body.platforms || null,
+            platforms: schedPlatforms,
           }
           // If this row was ALREADY scheduled and is being moved to a
           // new time, update the Upload-Post job. Preferred path: PATCH
