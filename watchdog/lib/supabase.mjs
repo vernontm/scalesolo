@@ -25,17 +25,38 @@ export async function fetchNewPublished({ url, key, sinceIso, limit = 50 }) {
   return res.json()
 }
 
+/**
+ * Posts the pipeline marked failed after `sinceIso` (by last_error_at),
+ * oldest first. These are posts that did not go out (e.g. never submitted
+ * to Upload-Post, or Upload-Post rejected them).
+ * @returns {Promise<Array<{id,title,profile_id,platforms,last_error,last_error_at}>>}
+ */
+export async function fetchNewFailed({ url, key, sinceIso, limit = 50 }) {
+  const q = new URLSearchParams({
+    status: 'eq.failed',
+    last_error_at: `gt.${sinceIso}`,
+    order: 'last_error_at.asc',
+    limit: String(limit),
+    select: 'id,title,profile_id,platforms,last_error,last_error_at',
+  })
+  const res = await fetch(`${url}/rest/v1/content_scripts?${q}`, { headers: headers(key) })
+  if (!res.ok) throw new Error(`supabase content_scripts ${res.status}: ${await res.text()}`)
+  return res.json()
+}
+
 // Best-effort brand/profile name for a friendlier alert. Never throws.
+// The real column is business_name (there is no name/brand_name column), so
+// selecting the wrong ones used to 400 and fall back to the raw UUID.
 const nameCache = new Map()
 export async function brandName({ url, key, profileId }) {
   if (!profileId) return 'a brand'
   if (nameCache.has(profileId)) return nameCache.get(profileId)
   try {
-    const q = new URLSearchParams({ id: `eq.${profileId}`, select: 'name,brand_name', limit: '1' })
+    const q = new URLSearchParams({ id: `eq.${profileId}`, select: 'business_name', limit: '1' })
     const res = await fetch(`${url}/rest/v1/profiles?${q}`, { headers: headers(key) })
     if (res.ok) {
       const rows = await res.json()
-      const nm = rows?.[0]?.name || rows?.[0]?.brand_name || profileId
+      const nm = rows?.[0]?.business_name || profileId
       nameCache.set(profileId, nm)
       return nm
     }

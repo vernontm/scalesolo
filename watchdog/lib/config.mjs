@@ -25,6 +25,9 @@ export function getConfig() {
     supabaseKey: process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY || '',
     apifyToken: process.env.APIFY_TOKEN || '',
     alertTo: process.env.ALERT_IMESSAGE_TO || '',
+    // Where "post failed to publish" alerts go. Defaults to the same number
+    // as caption alerts; set FAILURE_ALERT_TO to route failures elsewhere.
+    failureAlertTo: process.env.FAILURE_ALERT_TO || process.env.ALERT_IMESSAGE_TO || '',
     platforms,
     requireHashtags: (process.env.REQUIRE_HASHTAGS || 'true') !== 'false',
     // How long to keep retrying a post that is not indexed yet (minutes).
