@@ -67,8 +67,7 @@ export default async function handler(req, res) {
         },
       })
       const version = Array.isArray(created) ? created[0] : created
-      // Bump the card's updated_at so it sorts as recently touched; the user
-      // drives the columns by dragging (no auto stage move).
+      // Bump the card's updated_at so it sorts as recently touched.
       const cardPatch = { updated_at: new Date().toISOString() }
       // If the card is already approved or scheduled, a freshly uploaded edit
       // becomes the version that ships. send-to-schedule reads final_version_id,
@@ -76,6 +75,16 @@ export default async function handler(req, res) {
       // would leave the OLD approved version as the one that schedules + posts.
       if (kind === 'edit' && ['approved', 'scheduled'].includes(card.stage)) {
         cardPatch.final_version_id = version.id
+      }
+      // Handoff automation: when the assigned EDITOR uploads a cut to a card
+      // that still needs work, move it straight into the owner's review lane
+      // and record this upload as the submitted version. Editors kept
+      // forgetting to click "Submit for review", so finished cuts sat in Needs
+      // Editing. Managers uploading an edit are not auto-moved (they are the
+      // reviewer), and raw footage uploads never move anything.
+      if (kind === 'edit' && role === 'contributor' && ['raw', 'editing', 'needs_revisions'].includes(card.stage)) {
+        cardPatch.stage = 'in_review'
+        cardPatch.submitted_version_id = version.id
       }
       await supaFetch(`board_cards?id=eq.${body.card_id}`, {
         method: 'PATCH', body: cardPatch, prefer: 'return=minimal',
