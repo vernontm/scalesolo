@@ -358,10 +358,27 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged, onPay }) 
     finally { setUploading(false); setUploadPct(0) }
   }
 
+  // Changing the client also moves the card's post on the Schedule page (same
+  // scheduled time + caption). The server reports what happened to that post
+  // so the toast can say so, or flag that it needs re-scheduling.
   const changeBrand = async (newId) => {
     if (!newId || newId === card.profile_id) return
     setBusy(true); setErr(null)
-    try { await patchCard({ profile_id: newId }); toast({ message: 'Client updated', kind: 'success' }); onChanged() }
+    try {
+      const r = await fetch(`/api/board?id=${card.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ profile_id: newId }),
+      })
+      const b = await r.json()
+      if (!r.ok) throw new Error(b.error || 'Update failed')
+      const pm = b.post_move
+      if (!pm) toast({ message: 'Client updated', kind: 'success' })
+      else if (pm.ok && pm.resubmitted) toast({ message: 'Client updated. Its scheduled post moved too, same time and caption.', kind: 'success' })
+      else if (pm.ok && pm.resubmit_error) toast({ message: `Client updated and the post moved, but it needs re-scheduling: ${pm.resubmit_error}`, kind: 'error' })
+      else if (pm.ok) toast({ message: 'Client updated. Its post on the Schedule page moved too.', kind: 'success' })
+      else toast({ message: `Client updated, but its post could not be moved: ${pm.error}`, kind: 'error' })
+      onChanged()
+    }
     catch (e) { setErr(e.message) } finally { setBusy(false) }
   }
 

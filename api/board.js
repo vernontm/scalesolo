@@ -9,6 +9,8 @@
 // Each card becomes a scheduled post by spawning a normal content_scripts draft
 // (same shape bulk upload uses) that flows into the existing scheduler — no new
 // posting code lives here.
+import { invokeHandler } from './_lib/internal-invoke.js'
+import contentHandler from './content.js'
 import { setCors, requireUser, supaFetch, assertProfileAccess, fmtErr } from './_lib/supabase.js'
 
 const STAGES = ['raw', 'editing', 'in_review', 'needs_revisions', 'approved', 'scheduled']
@@ -229,7 +231,7 @@ export default async function handler(req, res) {
     if (req.method === 'PATCH' || req.method === 'PUT') {
       const id = req.query.id
       if (!id) return res.status(400).json({ error: 'id required' })
-      const rows = await supaFetch(`board_cards?id=eq.${id}&select=profile_id,assigned_editor,stage,approved_at,payout_id`)
+      const rows = await supaFetch(`board_cards?id=eq.${id}&select=profile_id,assigned_editor,stage,approved_at,payout_id,content_script_id`)
       const currentProfile = rows?.[0]?.profile_id
       if (!currentProfile) return res.status(404).json({ error: 'Not found' })
       const role = await assertProfileAccess(auth.user.id, currentProfile)
@@ -263,6 +265,7 @@ export default async function handler(req, res) {
       // their RLS stays consistent with the card.
       const newProfile = updates.profile_id
       const brandChanged = newProfile && newProfile !== currentProfile
+      let postMove = null
       if (brandChanged) await assertProfileAccess(auth.user.id, newProfile)
       updates.updated_at = new Date().toISOString()
       // Handoff signal: pin editing_started_at to this same updated_at so the
@@ -274,8 +277,28 @@ export default async function handler(req, res) {
       if (brandChanged) {
         await supaFetch(`board_card_versions?card_id=eq.${id}`, { method: 'PATCH', body: { profile_id: newProfile }, prefer: 'return=minimal' })
         await supaFetch(`board_card_comments?card_id=eq.${id}`, { method: 'PATCH', body: { profile_id: newProfile }, prefer: 'return=minimal' })
+        // If this card was already sent to the Schedule page, move that post too
+        // (keeps its scheduled time + caption; cancels + re-submits its posting
+        // job under the new brand). Done in-process via the content handler so
+        // there is exactly one implementation of "move a post to a brand". A
+        // failure here must not undo the card move that already landed, so it
+        // is surfaced to the caller instead of thrown.
+        if (rows[0].content_script_id) {
+          try {
+            const r = await invokeHandler(contentHandler, req, {
+              method: 'POST',
+              query: { action: 'move-brand', id: rows[0].content_script_id },
+              body: { profile_id: newProfile },
+            })
+            postMove = r.statusCode >= 300
+              ? { ok: false, error: r.body?.error || `move-brand ${r.statusCode}` }
+              : { ok: true, ...(r.body?.moved || {}) }
+          } catch (e) {
+            postMove = { ok: false, error: e.message }
+          }
+        }
       }
-      return res.status(200).json({ card: Array.isArray(updated) ? updated[0] : updated })
+      return res.status(200).json({ card: Array.isArray(updated) ? updated[0] : updated, ...(postMove ? { post_move: postMove } : {}) })
     }
 
     // ── DELETE ──
