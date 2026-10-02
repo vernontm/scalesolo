@@ -297,6 +297,7 @@ export default async function handler(req, res) {
 
         let updates = {}
         let submittedRequestId = null
+        let moveInfo = null
         if (action === 'approve') {
           updates = {
             approval_status: 'approved',
@@ -461,13 +462,83 @@ export default async function handler(req, res) {
               }
             }
           }
+        } else if (action === 'move-brand') {
+          // Re-home a post onto a different brand, keeping its scheduled time,
+          // caption, hashtags and media. If it already holds an Upload-Post job
+          // the job is cancelled on the OLD brand's account first and the post is
+          // re-submitted under the NEW brand at the same time, so a scheduled
+          // post filed under the wrong client just moves instead of needing a
+          // delete + re-upload.
+          const newProfile = req.body?.profile_id
+          if (!newProfile) return res.status(400).json({ error: 'profile_id required' })
+          if (newProfile === item.profile_id) return res.status(400).json({ error: 'Post is already on that brand.' })
+          await assertMinRole(auth.user.id, newProfile, 'editor')
+          const hadJob = !!(item.uploadpost_job_id || item.uploadpost_request_id)
+          if (hadJob) {
+            // Cancel on the old brand's Upload-Post account. 404 / not_found
+            // means it already fired or was pruned, fine to move past. Any
+            // other failure aborts BEFORE anything changes, so we never leave
+            // a live job behind and then submit a second one.
+            let cancel
+            if (item.uploadpost_job_id) {
+              cancel = await uploadpostCancelScheduled(item.uploadpost_job_id)
+            } else {
+              const oldUser = await resolveUploadpostUser(item.profile_id)
+              cancel = await uploadpostCancelByRequestId(oldUser, item.uploadpost_request_id)
+            }
+            if (!cancel.ok && cancel.status !== 404 && cancel.reason !== 'not_found') {
+              return res.status(502).json({ error: `Couldn't cancel the post's existing job on the old brand (${cancel.reason || cancel.status}). Nothing was moved.` })
+            }
+          }
+          // Platforms are brand-specific: drop the old list and resolve fresh for
+          // the new brand (its saved default, else its connected accounts).
+          const newPlatforms = await resolvePlatformsForRow({ profile_id: newProfile, platforms: [] })
+          updates = {
+            profile_id: newProfile,
+            platforms: newPlatforms,
+            uploadpost_request_id: null,
+            uploadpost_job_id: null,
+          }
+          moveInfo = { from: item.profile_id, to: newProfile, had_job: hadJob, resubmitted: false }
+          // Re-submit under the new brand at the same scheduled time. The cleared
+          // ids make rescheduleUploadPostJob skip its cancel step and submit
+          // fresh, and the new profile_id routes it to the new brand's account.
+          if (hadJob && item.status === 'scheduled' && item.scheduled_datetime) {
+            const knockBack = (why) => {
+              // The old job is already cancelled, so land the move honestly:
+              // keep it on the new brand, knock it back to caption_ready and
+              // surface why, instead of pretending it is still scheduled.
+              updates.status = 'caption_ready'
+              updates.last_error = why
+              updates.last_error_at = new Date().toISOString()
+              moveInfo.resubmit_error = why
+            }
+            if (!newPlatforms.length) {
+              knockBack('Moved brand, but the new brand has no connected platforms to post to. Connect an account, then re-schedule it.')
+            } else {
+              try {
+                const authToken = req.headers.authorization?.replace(/^Bearer\s+/i, '') || ''
+                const submitResult = await rescheduleUploadPostJob({
+                  row: { ...item, ...updates },
+                  newScheduledIso: item.scheduled_datetime,
+                  authToken, req,
+                })
+                if (submitResult?.request_id) updates.uploadpost_request_id = submitResult.request_id
+                if (submitResult?.job_id) updates.uploadpost_job_id = submitResult.job_id
+                moveInfo.resubmitted = !!submitResult?.request_id
+                if (!submitResult?.request_id) knockBack('Moved brand, but re-submitting to Upload-Post returned no job. Re-schedule it under the new brand.')
+              } catch (e) {
+                knockBack(`Moved brand, but re-submitting failed: ${e.message}. Re-schedule it under the new brand.`)
+              }
+            }
+          }
         } else {
           return res.status(400).json({ error: `unknown action: ${action}` })
         }
 
         const updated = await supaFetch(`content_scripts?id=eq.${id}`, { method: 'PATCH', body: updates })
         if (updates.status) {
-          syncContentStatusInSpaces(item.profile_id, id, updates.status).catch(() => {})
+          syncContentStatusInSpaces(updates.profile_id || item.profile_id, id, updates.status).catch(() => {})
         }
         const finalRow = Array.isArray(updated) ? updated[0] : updated
         // For approve, also return the payload the UI needs to build a
@@ -483,6 +554,7 @@ export default async function handler(req, res) {
             },
           })
         }
+        if (action === 'move-brand') return res.status(200).json({ item: finalRow, moved: moveInfo })
         return res.status(200).json({ item: finalRow })
       }
 
