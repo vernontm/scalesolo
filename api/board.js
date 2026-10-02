@@ -240,8 +240,8 @@ export default async function handler(req, res) {
         return res.status(403).json({ error: 'Forbidden' })
       }
       const allowed = role === 'contributor'
-        ? ['stage', 'position', 'submitted_version_id']
-        : ['title', 'assigned_editor', 'assigned_editor_email', 'assigned_editor_name', 'final_version_id', 'submitted_version_id', 'source_note', 'stage', 'position', 'profile_id']
+        ? ['stage', 'position', 'submitted_version_id', 'editing_started_at']
+        : ['title', 'assigned_editor', 'assigned_editor_email', 'assigned_editor_name', 'final_version_id', 'submitted_version_id', 'source_note', 'stage', 'position', 'profile_id', 'editing_started_at']
       const updates = {}
       for (const k of allowed) if (k in (req.body || {})) updates[k] = req.body[k]
       // Clearing the assignee (no user_id AND no email) clears the denormalized
@@ -265,6 +265,11 @@ export default async function handler(req, res) {
       const brandChanged = newProfile && newProfile !== currentProfile
       if (brandChanged) await assertProfileAccess(auth.user.id, newProfile)
       updates.updated_at = new Date().toISOString()
+      // Handoff signal: pin editing_started_at to this same updated_at so the
+      // two are equal right after a stamp. The client re-stamps only when a
+      // revision round bumps updated_at PAST editing_started_at, so equal
+      // timestamps are what stops it from re-stamping itself in a loop.
+      if (updates.editing_started_at) updates.editing_started_at = updates.updated_at
       const updated = await supaFetch(`board_cards?id=eq.${id}`, { method: 'PATCH', body: updates })
       if (brandChanged) {
         await supaFetch(`board_card_versions?card_id=eq.${id}`, { method: 'PATCH', body: { profile_id: newProfile }, prefer: 'return=minimal' })

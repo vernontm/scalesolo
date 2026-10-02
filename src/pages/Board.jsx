@@ -131,6 +131,12 @@ function CardBody({ card }) {
         <span><Film size={11} style={{ verticalAlign: '-1px' }} /> {versions.length ? `v${versions.length}` : 'no video'}</span>
         {comments > 0 && <span><MessageSquare size={11} style={{ verticalAlign: '-1px' }} /> {comments}</span>}
         {card.content_script_id && <span style={{ color: 'var(--red)' }}>· draft</span>}
+        {/* Handoff signal: the assigned editor has picked this card up. */}
+        {card.editing_started_at && ['editing', 'needs_revisions'].includes(foldStage(card.stage)) && (
+          <span style={catPill('#60a5fa')} title={`Editing started ${new Date(card.editing_started_at).toLocaleString()}`}>
+            In progress · {timeAgo(card.editing_started_at)}
+          </span>
+        )}
         {(card.assigned_editor_name || card.assigned_editor_email) && (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }} title={`Assigned to ${card.assigned_editor_name || card.assigned_editor_email}`}>
             <Avatar name={card.assigned_editor_name || card.assigned_editor_email} size={16} /> {card.assigned_editor_name || card.assigned_editor_email.split('@')[0]}
@@ -283,6 +289,25 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged, onPay }) 
     fetch(`/api/board/invites?action=brand_editors&profile_id=${card.profile_id}`, { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => r.json()).then((b) => setBrandEditors(b.editors || [])).catch(() => {})
   }, [card.profile_id, isManager, token])
+
+  // Handoff signal: the first time the assigned editor opens a card that still
+  // needs editing (or picks up a fresh revision round), stamp editing_started_at
+  // so the owner sees "In progress" on the board. Best-effort: it never blocks
+  // the drawer and silently no-ops until the column exists. The server pins the
+  // stamp equal to updated_at, so a card only re-stamps when a revision request
+  // has bumped updated_at past it (not after our own stamp).
+  useEffect(() => {
+    if (role !== 'contributor') return
+    const st = foldStage(card.stage)
+    if (st !== 'editing' && st !== 'needs_revisions') return
+    const started = card.editing_started_at
+    const freshRound = st === 'needs_revisions' && started && card.updated_at && card.updated_at > started
+    if (started && !freshRound) return
+    fetch(`/api/board?id=${card.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ editing_started_at: new Date().toISOString() }),
+    }).then((r) => { if (r.ok) onChanged() }).catch(() => {})
+  }, [role, card.id, card.stage, card.updated_at, card.editing_started_at, token, onChanged])
 
   const versionNo = useCallback((vid) => versions.find((v) => v.id === vid)?.version_no, [versions])
 
