@@ -367,43 +367,59 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged, onPay }) 
     } catch (e) { setErr(e.message); setBusy(false) }
   }
 
+  // Send this card to the Schedule page (spawn the content_scripts draft) and
+  // kick off caption generation. Shared by Approve (one click) and the manual
+  // "Send to Schedule" button. Resolves once the draft exists; caption
+  // generation keeps running in the background with its own follow-up toast.
+  const runSendToSchedule = async () => {
+    const r = await fetch(`/api/board?id=${card.id}&action=send-to-schedule`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+    const b = await r.json()
+    if (!r.ok) throw new Error(b.error || 'Failed')
+    if (b.already) {
+      toast({ message: 'Already on the Schedule page.', kind: 'success' })
+      return
+    }
+    toast({ message: 'Sent to Schedule. Writing title, caption, hashtags + first comment...', kind: 'success' })
+    // Auto-generate title + caption + hashtags + first comment for the new
+    // draft (same frame-first generator the Schedule page uses). Runs in the
+    // background so the board stays responsive; a follow-up toast reports it.
+    if (b.content_id) {
+      fetch('/api/content/bulk-actions?action=generate-captions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ profile_id: card.profile_id, script_ids: [b.content_id] }),
+      })
+        .then((res) => res.json().then((cb) => ({ ok: res.ok, cb })))
+        .then(({ ok, cb }) => {
+          if (!ok) { toast({ message: `Caption did not generate: ${cb.error || 'error'}. Open the Schedule page to generate it.`, kind: 'error' }); return }
+          if (cb.updated) toast({ message: 'Title, caption + hashtags ready on the Schedule page.', kind: 'success' })
+          else toast({ message: 'Draft is on the Schedule page. Its caption needs a manual generate there.', kind: 'error' })
+        })
+        .catch(() => toast({ message: 'Caption generation did not finish. Generate it on the Schedule page.', kind: 'error' }))
+    }
+  }
+
+  // One click: approve AND send to the scheduler. These used to be two separate
+  // buttons (Approve, then Send to Schedule), so every card had to be approved
+  // twice. The approval is reflected immediately; if the send fails afterward
+  // the card stays approved and the manual Send to Schedule button is still
+  // there to retry, so nothing is lost.
   const approve = async () => {
     if (!latestVersionId) { toast({ message: 'Upload a video before approving.', kind: 'warn' }); return }
     setBusy(true); setErr(null)
     try {
       await patchCard({ stage: 'approved', final_version_id: latestVersionId })
-      toast({ message: 'Approved — using the latest upload', kind: 'success' }); onChanged(); onClose()
-    } catch (e) { setErr(e.message); setBusy(false) }
+      onChanged()
+      toast({ message: 'Approved, using the latest upload', kind: 'success' })
+      if (!card.content_script_id) await runSendToSchedule()
+      onChanged(); onClose()
+    } catch (e) { setErr(e.message); toast({ message: e.message, kind: 'error' }); setBusy(false) }
   }
 
   const sendToSchedule = async () => {
     setBusy(true); setErr(null)
     try {
-      const r = await fetch(`/api/board?id=${card.id}&action=send-to-schedule`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
-      const b = await r.json()
-      if (!r.ok) throw new Error(b.error || 'Failed')
-      if (b.already) {
-        toast({ message: 'Already on the Schedule page.', kind: 'success' })
-      } else {
-        toast({ message: 'Sent to Schedule. Writing title, caption, hashtags + first comment...', kind: 'success' })
-        // Auto-generate title + caption + hashtags + first comment for the new
-        // draft (same frame-first generator the Schedule page uses). Runs in the
-        // background so the board stays responsive; a follow-up toast reports it.
-        if (b.content_id) {
-          fetch('/api/content/bulk-actions?action=generate-captions', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ profile_id: card.profile_id, script_ids: [b.content_id] }),
-          })
-            .then((res) => res.json().then((cb) => ({ ok: res.ok, cb })))
-            .then(({ ok, cb }) => {
-              if (!ok) { toast({ message: `Caption did not generate: ${cb.error || 'error'}. Open the Schedule page to generate it.`, kind: 'error' }); return }
-              if (cb.updated) toast({ message: 'Title, caption + hashtags ready on the Schedule page.', kind: 'success' })
-              else toast({ message: 'Draft is on the Schedule page. Its caption needs a manual generate there.', kind: 'error' })
-            })
-            .catch(() => toast({ message: 'Caption generation did not finish. Generate it on the Schedule page.', kind: 'error' }))
-        }
-      }
+      await runSendToSchedule()
       onChanged(); onClose()
     } catch (e) { setErr(e.message); toast({ message: e.message, kind: 'error' }); setBusy(false) }
   }
