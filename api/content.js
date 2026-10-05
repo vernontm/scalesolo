@@ -298,6 +298,7 @@ export default async function handler(req, res) {
         let updates = {}
         let submittedRequestId = null
         let moveInfo = null
+        let unscheduleInfo = null
         if (action === 'approve') {
           updates = {
             approval_status: 'approved',
@@ -532,6 +533,44 @@ export default async function handler(req, res) {
               }
             }
           }
+        } else if (action === 'unschedule') {
+          // Pull a post back OFF the schedule without deleting it: cancel its
+          // Upload-Post job so the current cut can no longer go live, and park
+          // it as caption_ready keeping its time, caption and media so it can be
+          // re-scheduled once a new cut lands. Used when a Board card is sent
+          // back for another edit while its post was already scheduled.
+          if (item.status === 'posted') {
+            return res.status(409).json({ error: 'This post has already published, so it cannot be pulled back off the schedule.', code: 'already_posted' })
+          }
+          const hasJob = !!(item.uploadpost_job_id || item.uploadpost_request_id)
+          if (item.status !== 'scheduled' && !hasJob) {
+            // Nothing is on the schedule (still a draft): leave the row alone
+            // rather than stamping a confusing "held" notice on it.
+            return res.status(200).json({ item, unscheduled: { cancelled: false, noop: true } })
+          }
+          if (hasJob) {
+            let cancel
+            if (item.uploadpost_job_id) {
+              cancel = await uploadpostCancelScheduled(item.uploadpost_job_id)
+            } else {
+              const upUser = await resolveUploadpostUser(item.profile_id)
+              cancel = await uploadpostCancelByRequestId(upUser, item.uploadpost_request_id)
+            }
+            // 404 / not_found means the job already fired or was pruned. Any
+            // other failure aborts BEFORE we change the row, so we never show
+            // "held" while a live job is still queued to publish.
+            if (!cancel.ok && cancel.status !== 404 && cancel.reason !== 'not_found') {
+              return res.status(502).json({ error: `Couldn't cancel this post's scheduled job (${cancel.reason || cancel.status}). Nothing was changed.` })
+            }
+          }
+          updates = {
+            status: 'caption_ready',
+            uploadpost_request_id: null,
+            uploadpost_job_id: null,
+            last_error: String(req.body?.reason || 'Held: pulled off the schedule.').slice(0, 1000),
+            last_error_at: new Date().toISOString(),
+          }
+          unscheduleInfo = { cancelled: hasJob, kept_time: item.scheduled_datetime || null }
         } else {
           return res.status(400).json({ error: `unknown action: ${action}` })
         }
@@ -555,6 +594,7 @@ export default async function handler(req, res) {
           })
         }
         if (action === 'move-brand') return res.status(200).json({ item: finalRow, moved: moveInfo })
+        if (action === 'unschedule') return res.status(200).json({ item: finalRow, unscheduled: unscheduleInfo })
         return res.status(200).json({ item: finalRow })
       }
 

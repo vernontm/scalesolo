@@ -142,13 +142,14 @@ function CardBody({ card }) {
             <Avatar name={card.assigned_editor_name || card.assigned_editor_email} size={16} /> {card.assigned_editor_name || card.assigned_editor_email.split('@')[0]}
           </span>
         )}
-        {/* Payment status — shown once a card is Approved or Scheduled. */}
-        {isPayableStage(card) && (card.payout_id
+        {/* Payment status. "Paid" sticks to the card for good once a payout
+            covers it, including while it is back in an edit round, so a second
+            round never looks unpaid. "Unpaid" stays gated to the done stages. */}
+        {card.payout_id
           ? <span style={catPill('#2ecc71')} title={card.payout?.created_at ? `Paid ${new Date(card.payout.created_at).toLocaleString()}` : 'Paid'}>
               Paid{card.payout?.amount_usdt ? ` $${Number(card.payout.amount_usdt).toFixed(2)}` : ''}
             </span>
-          : <span style={catPill('#f59e0b')}>Unpaid</span>
-        )}
+          : isPayableStage(card) ? <span style={catPill('#f59e0b')}>Unpaid</span> : null}
         {card.payout?.tx_signature && (
           <a href={solscanTx(card.payout.tx_signature)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 2, color: 'var(--red)', fontSize: 10.5 }}>tx <ExternalLink size={9} /></a>
@@ -392,10 +393,29 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged, onPay }) 
     catch (e) { setErr(e.message) } finally { setBusy(false) }
   }
 
-  const moveStage = async (stage, msg) => {
+  // Send the card back for another edit round, on the SAME card. A paid card is
+  // allowed back and is never charged again (payout_id stays set, and every
+  // payment path skips cards that already have one). If its post was already on
+  // the schedule the server pulls that post back, so the current cut cannot
+  // publish while the new one is being edited; the toast reports what happened.
+  const requestRevisions = async () => {
     setBusy(true); setErr(null)
-    try { await patchCard({ stage }); if (msg) toast({ message: msg, kind: 'success' }); onChanged(); onClose() }
-    catch (e) { setErr(e.message); setBusy(false) }
+    try {
+      const r = await fetch(`/api/board?id=${card.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ stage: 'needs_revisions' }),
+      })
+      const b = await r.json()
+      if (!r.ok) throw new Error(b.error || 'Update failed')
+      const h = b.post_hold
+      const base = card.payout_id ? 'Sent back for another edit. Already paid, so no second payment.' : 'Sent back for revisions'
+      if (!h || h.noop) toast({ message: base, kind: 'success' })
+      else if (h.ok && h.cancelled) toast({ message: `${base} Its scheduled post was pulled off the schedule, so the current cut will not go out.`, kind: 'success' })
+      else if (h.ok) toast({ message: `${base} Its post on the Schedule page is on hold.`, kind: 'success' })
+      else if (h.code === 'already_posted') toast({ message: `${base} Heads up: its post already published, so that cut is live.`, kind: 'error' })
+      else toast({ message: `${base} But its scheduled post could not be pulled back: ${h.error}`, kind: 'error' })
+      onChanged(); onClose()
+    } catch (e) { setErr(e.message); setBusy(false) }
   }
 
   const submitForReview = async () => {
@@ -619,8 +639,11 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged, onPay }) 
           {isManager && !['approved', 'scheduled'].includes(stage) && (
             <button className="btn-primary" onClick={approve} disabled={busy || uploading || !versions.length}><Check size={14} /> Approve</button>
           )}
-          {isManager && !['needs_revisions', 'scheduled'].includes(stage) && (
-            <button className="btn-secondary" onClick={() => moveStage('needs_revisions', 'Sent back for revisions')} disabled={busy}>Request revisions</button>
+          {isManager && stage !== 'needs_revisions' && (
+            <button className="btn-secondary" onClick={requestRevisions} disabled={busy}
+              title={card.payout_id ? 'Send it back for another edit on this same card. It is already paid, so this will not create a second payment.' : 'Send it back for another edit on this same card.'}>
+              {card.payout_id ? 'Request another edit' : 'Request revisions'}
+            </button>
           )}
           {isManager && stage === 'approved' && !card.content_script_id && (
             <button className="btn-primary" onClick={sendToSchedule} disabled={busy}><CalendarPlus size={14} /> Send to Schedule</button>
