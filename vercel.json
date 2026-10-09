@@ -92,6 +92,10 @@
     },
     "api/payouts.js": {
       "maxDuration": 60
+    },
+    "api/mcp.js": {
+      "maxDuration": 300,
+      "memory": 2048
     }
   }
 }

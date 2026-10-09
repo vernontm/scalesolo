@@ -39,7 +39,7 @@ const REMOTE_TOOLS = TOOLS.filter((t) => !REMOTE_EXCLUDE.has(t.name))
 const READONLY = ['list_brands', 'get_post', 'next_slots']
 const ROLE_TOOLS = {
   readonly: new Set(READONLY),
-  draft: new Set([...READONLY, 'autocaption', 'update_post', 'set_platforms', 'generate_image', 'generate_video']),
+  draft: new Set([...READONLY, 'autocaption', 'update_post', 'set_platforms', 'generate_image', 'generate_video', 'add_from_url']),
   publish: new Set(REMOTE_TOOLS.map((t) => t.name)),
 }
 
