@@ -587,4 +587,4 @@ const TOOLS = [
 
 // ── Wire up the server ───────────────────────────────────────────────
 
-export { TOOLS, impls, requireEnv }
+export { TOOLS, impls, requireEnv, resolveBrand, api }
