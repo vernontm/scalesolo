@@ -127,6 +127,67 @@ async function connectedPlatforms(profileId) {
 
 // ── Tool implementations ─────────────────────────────────────────────
 const impls = {
+  // Read one brand's full profile: voice (brand bible), visual identity and
+  // posting config. Fields are an explicit ALLOWLIST, never the raw row:
+  // GET /api/profiles selects profiles(*), so the resolved object also carries
+  // elevenlabs_api_key_encrypted, elevenlabs_api_key_last4 and intake_token.
+  // Those must never reach a caller, so nothing is spread in here by accident.
+  async get_brand({ brand }) {
+    const p = await resolveBrand(brand)
+    const arr = (v) => (Array.isArray(v) ? v : (v == null ? [] : v))
+    return ok({
+      id: p.id,
+      name: p.business_name,
+      owner_name: p.owner_name || null,
+      business_type: p.business_type || null,
+      industry: p.industry || null,
+      location: p.location || null,
+      website_url: p.website_url || null,
+      logo_url: p.logo_url || null,
+      voice: {
+        brand_bible: p.brand_bible || null,
+        brand_bible_summary: p.brand_bible_summary || null,
+        preferred_tone: p.preferred_tone || null,
+        target_audience: p.target_audience || null,
+        brand_cta: p.brand_cta || null,
+        brand_ctas: arr(p.brand_ctas),
+        always_include: arr(p.always_include),
+        do_not_say: arr(p.do_not_say),
+        core_hashtags: arr(p.core_hashtags),
+        hashtag_sets: p.hashtag_sets ?? null,
+      },
+      visual: {
+        style_guide: p.visual_style_guide || null,
+        keywords: arr(p.visual_keywords),
+        avoid: arr(p.visual_avoid),
+        colors: p.brand_colors ?? null,
+        primary_color: p.brand_primary_color || null,
+        secondary_color: p.brand_secondary_color || null,
+        fonts: p.brand_fonts ?? null,
+      },
+      posting: {
+        default_platforms: arr(p.default_platforms),
+        connected_platforms: await connectedPlatforms(p.id),
+        uploadpost_user: p.uploadpost_user || null,
+        tiktok_force_direct_post: p.tiktok_force_direct_post === true,
+        tiktok_draft_mode: p.tiktok_draft_mode ?? null,
+        timezone: p.timezone || null,
+        posting_schedule: p.posting_schedule ?? null,
+        default_formats: arr(p.default_formats),
+        monthly_content_goal: p.monthly_content_goal ?? null,
+      },
+      handles: {
+        tiktok: p.tiktok_handle || null,
+        instagram: p.instagram_handle || null,
+        youtube: p.youtube_handle || null,
+        facebook: p.facebook_handle || null,
+        linkedin: p.linkedin_handle || null,
+        threads: p.threads_handle || null,
+        x: p.x_handle || null,
+      },
+    })
+  },
+
   async list_brands() {
     const { profiles } = await api('/api/profiles')
     const out = await Promise.all((profiles || []).map(async (p) => ({
@@ -659,6 +720,7 @@ const PLATFORM_VALUES = ['instagram', 'facebook', 'tiktok', 'youtube', 'threads'
 const platformsSchema = { type: 'array', items: { type: 'string', enum: PLATFORM_VALUES }, description: 'Which social platforms to post to (use "x" for Twitter/X). Only ones the brand is connected to will actually publish.' }
 
 const TOOLS = [
+  { name: 'get_brand', description: "Read one brand's full profile: its brand bible and voice rules (tone, target audience, CTAs, always-include, do-not-say, core hashtags), visual identity, posting config (default + connected platforms, schedule, timezone, TikTok direct-post) and social handles. Read this before writing captions so the copy matches the brand.", inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' } }, required: ['brand'] } },
   { name: 'list_brands', description: 'List the ScaleSolo brand profiles you can post for, each with its Upload-Post handle and the platforms it is connected to (the valid choices for this brand).', inputSchema: { type: 'object', properties: {} } },
   { name: 'upload_media', description: 'Upload a local video or image file to ScaleSolo under a brand and create a draft post. Optionally set target platforms (defaults to the brand\'s connected platforms). Returns a content_id. Does NOT publish.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id (e.g. "RayvaughnCEO").' }, file_path: { type: 'string', description: 'Absolute path to the local video/image file.' }, platforms: platformsSchema }, required: ['brand', 'file_path'] } },
   { name: 'add_from_url', description: 'Import a video or image into ScaleSolo straight from a URL (direct link, Google Drive, or Dropbox share link) and create a draft post for the brand, auto-captioned by default. Use this instead of upload_media when the file is not on this machine. Returns the content_id to review and schedule.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, url: { type: 'string', description: 'Direct link to the video/image. Google Drive and Dropbox share links are converted automatically; the file must be shared publicly.' }, title: { type: 'string', description: 'Optional title. Defaults to the filename.' }, autocaption: { type: 'boolean', description: 'Generate title/caption/hashtags right away (default true).' }, platforms: platformsSchema }, required: ['brand', 'url'] } },
