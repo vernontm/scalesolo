@@ -36,7 +36,7 @@ const REMOTE_EXCLUDE = new Set(['upload_media', 'upload_carousel', 'add_to_backl
 const REMOTE_TOOLS = TOOLS.filter((t) => !REMOTE_EXCLUDE.has(t.name))
 
 // What each role may call. publish = every remote tool.
-const READONLY = ['list_brands', 'get_post', 'next_slots']
+const READONLY = ['list_brands', 'get_brand', 'get_post', 'next_slots']
 const ROLE_TOOLS = {
   readonly: new Set(READONLY),
   draft: new Set([...READONLY, 'autocaption', 'update_post', 'set_platforms', 'generate_image', 'generate_video', 'add_from_url']),
