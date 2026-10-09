@@ -96,6 +96,16 @@ async function resolveBrand(brand) {
   return hit
 }
 
+// Turn a share link into something that actually returns bytes. Google Drive
+// and Dropbox "view" links serve an HTML page, not the file.
+function directDownloadUrl(raw) {
+  const u = String(raw || '').trim()
+  const drive = u.match(/drive\.google\.com\/file\/d\/([^/]+)/) || u.match(/drive\.google\.com\/open\?id=([^&]+)/)
+  if (drive) return `https://drive.google.com/uc?export=download&id=${drive[1]}`
+  if (/dropbox\.com/.test(u)) return u.replace(/([?&])dl=0/, '$1dl=1') + (/[?&]dl=/.test(u) ? '' : (u.includes('?') ? '&dl=1' : '?dl=1'))
+  return u
+}
+
 const ok = (obj) => ({ content: [{ type: 'text', text: JSON.stringify(obj, null, 2) }] })
 
 // Normalize platform names to what the system stores ("x", not "twitter").
@@ -176,6 +186,86 @@ const impls = {
     const id = created?.item?.id
     if (!id) throw new Error('Row created but no id returned')
     return ok({ content_id: id, brand: profile.business_name, media_type: init.media_type, media_url: init.public_url, platforms: chosen, ...(transcodeNote ? { transcode: transcodeNote } : {}) })
+  },
+
+  // Import media straight from a URL. Unlike upload_media this never touches a
+  // local disk, so it works for remote callers (hosted /api/mcp). The server
+  // fetches the bytes, PUTs them to storage with a signed URL, and creates the
+  // draft. No ffmpeg here: a HEVC video cannot be transcoded server-side, so
+  // TikTok-incompatible codecs are reported rather than silently shipped.
+  async add_from_url({ brand, url, title, platforms, autocaption: wantCaption = true }) {
+    if (!url) throw new Error('url is required')
+    const profile = await resolveBrand(brand)
+    const src = directDownloadUrl(url)
+
+    const r = await fetch(src, { redirect: 'follow' })
+    if (!r.ok) throw new Error(`Could not fetch that URL (${r.status}). Make sure it is a direct, publicly reachable link.`)
+    const header = (r.headers.get('content-type') || '').toLowerCase()
+    if (header.includes('text/html')) {
+      throw new Error('That link returned a web page, not a file. Use a direct download link (for Google Drive set sharing to "anyone with the link"; very large Drive files hit a virus-scan page and will not work).')
+    }
+    const buf = Buffer.from(await r.arrayBuffer())
+    const MAX = 200 * 1024 * 1024
+    if (!buf.length) throw new Error('That URL returned an empty file.')
+    if (buf.length > MAX) throw new Error(`That file is ${(buf.length / 1048576).toFixed(0)}MB, over the ${MAX / 1048576}MB import limit.`)
+
+    // Kind + content type: trust the response header, fall back to the extension.
+    const cleanPath = src.split('?')[0].split('#')[0]
+    const ext = extname(cleanPath).slice(1).toLowerCase()
+    let kind = header.startsWith('video/') ? 'video' : header.startsWith('image/') ? 'image' : null
+    if (!kind) kind = VIDEO_EXT.has(ext) ? 'video' : IMAGE_EXT.has(ext) ? 'image' : null
+    if (!kind) throw new Error(`Could not tell whether that is a video or an image (content-type "${header || 'none'}"). Supported: ${[...VIDEO_EXT, ...IMAGE_EXT].join(', ')}.`)
+    const contentType = (header.startsWith('video/') || header.startsWith('image/'))
+      ? header.split(';')[0]
+      : (MIME[ext] || (kind === 'video' ? 'video/mp4' : 'image/jpeg'))
+
+    const init = await api('/api/content/upload-media', {
+      method: 'POST', query: { mode: 'init' },
+      json: { profile_id: profile.id, content_type: contentType, kind },
+    })
+    const put = await fetch(init.signed_url, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${init.token}`, 'Content-Type': contentType, 'x-upsert': 'true' },
+      body: buf,
+    })
+    if (!put.ok) throw new Error(`Storage upload failed (${put.status}): ${(await put.text()).slice(0, 200)}`)
+
+    const chosen = platforms?.length ? normPlatforms(platforms) : await connectedPlatforms(profile.id)
+    const guessTitle = (title || basename(cleanPath).replace(/\.[^.]+$/, '') || 'Imported clip').slice(0, 80)
+    const created = await api('/api/content', {
+      method: 'POST',
+      json: {
+        profile_id: profile.id, title: guessTitle,
+        media_urls: [init.public_url], media_type: init.media_type,
+        post_type: init.media_type === 'video' ? 'video' : 'post',
+        status: 'draft', generated_by: 'mcp',
+        platforms: chosen.length ? chosen : null,
+      },
+    })
+    const row = Array.isArray(created) ? created[0] : (created?.item || created)
+    const content_id = row?.id
+    if (!content_id) throw new Error('Uploaded, but the draft row came back without an id.')
+
+    let captioned = false
+    if (wantCaption) {
+      try {
+        await api('/api/content/bulk-actions', {
+          method: 'POST', query: { action: 'generate-captions' },
+          json: { profile_id: profile.id, script_ids: [content_id] },
+        })
+        captioned = true
+      } catch { /* the draft exists; caption can be generated later */ }
+    }
+    const warn = kind === 'video' && !/mp4/.test(contentType)
+      ? 'Heads up: this was not an mp4. TikTok can reject non-H.264 video, and the server cannot transcode.'
+      : null
+    return ok({
+      content_id, brand: profile.business_name, title: guessTitle,
+      media_type: init.media_type, size_mb: +(buf.length / 1048576).toFixed(1),
+      platforms: chosen, captioned,
+      ...(warn ? { warning: warn } : {}),
+      next: 'Review with get_post, edit with update_post, then schedule_post.',
+    })
   },
 
   async autocaption({ content_id }) {
@@ -571,6 +661,7 @@ const platformsSchema = { type: 'array', items: { type: 'string', enum: PLATFORM
 const TOOLS = [
   { name: 'list_brands', description: 'List the ScaleSolo brand profiles you can post for, each with its Upload-Post handle and the platforms it is connected to (the valid choices for this brand).', inputSchema: { type: 'object', properties: {} } },
   { name: 'upload_media', description: 'Upload a local video or image file to ScaleSolo under a brand and create a draft post. Optionally set target platforms (defaults to the brand\'s connected platforms). Returns a content_id. Does NOT publish.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id (e.g. "RayvaughnCEO").' }, file_path: { type: 'string', description: 'Absolute path to the local video/image file.' }, platforms: platformsSchema }, required: ['brand', 'file_path'] } },
+  { name: 'add_from_url', description: 'Import a video or image into ScaleSolo straight from a URL (direct link, Google Drive, or Dropbox share link) and create a draft post for the brand, auto-captioned by default. Use this instead of upload_media when the file is not on this machine. Returns the content_id to review and schedule.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, url: { type: 'string', description: 'Direct link to the video/image. Google Drive and Dropbox share links are converted automatically; the file must be shared publicly.' }, title: { type: 'string', description: 'Optional title. Defaults to the filename.' }, autocaption: { type: 'boolean', description: 'Generate title/caption/hashtags right away (default true).' }, platforms: platformsSchema }, required: ['brand', 'url'] } },
   { name: 'autocaption', description: 'Run ScaleSolo autopilot on an uploaded post: analyze the media and generate a title, caption, and hashtags. Returns them for review. Does NOT publish.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' } }, required: ['content_id'] } },
   { name: 'add_to_backlog', description: 'Upload a local video/image AND auto-caption it in one step, then leave it UNSCHEDULED in the calendar\'s "Waiting to schedule" backlog for that brand. Use this when the user wants a post prepared to drag onto the calendar later. Never posts or schedules anything.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id (e.g. "RayvaughnCEO").' }, file_path: { type: 'string', description: 'Absolute path to the local video/image file.' }, platforms: platformsSchema }, required: ['brand', 'file_path'] } },
   { name: 'batch_add_to_backlog', description: 'Upload MANY local files at once, each becoming its OWN separate post (upload + auto-caption), all left UNSCHEDULED in the brand\'s "Waiting to schedule" backlog. Pass file_paths (a list) and/or folder (a directory whose video/image files are all uploaded). Runs one at a time, continues past failures, and returns a per-file result list. Use this to prep a batch of posts to schedule later. Never posts or schedules anything. (For ONE post made of multiple images, use upload_carousel instead.)', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, file_paths: { type: 'array', items: { type: 'string' }, description: 'Absolute paths to local video/image files, each becomes its own post.' }, folder: { type: 'string', description: 'Optional absolute path to a directory; all video/image files inside are uploaded (in filename order).' }, platforms: platformsSchema }, required: ['brand'] } },
