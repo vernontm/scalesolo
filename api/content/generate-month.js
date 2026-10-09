@@ -154,6 +154,7 @@ ${platformList}${ctaBlock}
 - Never use em dashes. Use commas, periods, or colons instead.
 - No emojis unless the brand exemplars use them.
 - Each post stands on its own; do not reference "yesterday's post" or "as I said earlier".
+- TRUTH: do not fabricate real-world facts. Never claim a real or famous person visited, endorsed, ate at, or partnered with the brand, and do not invent events, awards, press, or statistics. Aspirational or playful angles must read as clearly hypothetical (address the reader, "imagine", "picture this"), never as things that actually happened.
 - Return ONLY the JSON array — start with [ and end with ].`
 }
 
