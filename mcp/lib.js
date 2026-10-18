@@ -188,6 +188,27 @@ const impls = {
     })
   },
 
+  // Mint the Upload-Post connect link for a brand. This is the URL a client
+  // opens to link their own TikTok / Instagram / Facebook to the brand. The
+  // token is short lived, so the expiry is returned rather than left implicit.
+  async get_connect_link({ brand, redirect_url }) {
+    const profile = await resolveBrand(brand)
+    const r = await api('/api/social/profiles', {
+      method: 'POST', query: { action: 'jwt' },
+      json: { profile_id: profile.id, ...(redirect_url ? { redirect_url } : {}) },
+    })
+    if (!r?.access_url) throw new Error('Upload-Post did not return a connect link.')
+    const hours = Number(r.duration) ? Math.round(Number(r.duration) / 3600) : null
+    return ok({
+      brand: profile.business_name,
+      connect_url: r.access_url,
+      uploadpost_user: r.username || null,
+      expires_in_hours: hours,
+      already_connected: await connectedPlatforms(profile.id),
+      note: 'Send this to the client. Anyone holding the link can connect social accounts to this brand, so treat it like a password.',
+    })
+  },
+
   async list_brands() {
     const { profiles } = await api('/api/profiles')
     const out = await Promise.all((profiles || []).map(async (p) => ({
@@ -721,6 +742,7 @@ const platformsSchema = { type: 'array', items: { type: 'string', enum: PLATFORM
 
 const TOOLS = [
   { name: 'get_brand', description: "Read one brand's full profile: its brand bible and voice rules (tone, target audience, CTAs, always-include, do-not-say, core hashtags), visual identity, posting config (default + connected platforms, schedule, timezone, TikTok direct-post) and social handles. Read this before writing captions so the copy matches the brand.", inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' } }, required: ['brand'] } },
+  { name: 'get_connect_link', description: "Get the link a client opens to connect their own social accounts (TikTok, Instagram, Facebook, etc) to a brand. Returns a short-lived URL to send them, plus which platforms are already connected. Use when a brand has no connected accounts or one needs reconnecting.", inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, redirect_url: { type: 'string', description: 'Optional URL to send the client back to after they finish connecting.' } }, required: ['brand'] } },
   { name: 'list_brands', description: 'List the ScaleSolo brand profiles you can post for, each with its Upload-Post handle and the platforms it is connected to (the valid choices for this brand).', inputSchema: { type: 'object', properties: {} } },
   { name: 'upload_media', description: 'Upload a local video or image file to ScaleSolo under a brand and create a draft post. Optionally set target platforms (defaults to the brand\'s connected platforms). Returns a content_id. Does NOT publish.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id (e.g. "RayvaughnCEO").' }, file_path: { type: 'string', description: 'Absolute path to the local video/image file.' }, platforms: platformsSchema }, required: ['brand', 'file_path'] } },
   { name: 'add_from_url', description: 'Import a video or image into ScaleSolo straight from a URL (direct link, Google Drive, or Dropbox share link) and create a draft post for the brand, auto-captioned by default. Use this instead of upload_media when the file is not on this machine. Returns the content_id to review and schedule.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, url: { type: 'string', description: 'Direct link to the video/image. Google Drive and Dropbox share links are converted automatically; the file must be shared publicly.' }, title: { type: 'string', description: 'Optional title. Defaults to the filename.' }, autocaption: { type: 'boolean', description: 'Generate title/caption/hashtags right away (default true).' }, platforms: platformsSchema }, required: ['brand', 'url'] } },
