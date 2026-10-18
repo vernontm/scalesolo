@@ -126,6 +126,43 @@ const impls = {
     return ok(out)
   },
 
+  // The link a CLIENT opens to attach their own socials. Minted on demand
+  // rather than stored: the token inside expires in 48 hours, so a saved link
+  // is a link that quietly stops working. Nothing is sent anywhere, the URL
+  // comes back to be pasted into a text or an email.
+  async get_connect_link({ brand, redirect_url, connect_title, connect_description }) {
+    const profile = await resolveBrand(brand)
+    const branding = {}
+    if (connect_title) branding.connect_title = connect_title
+    if (connect_description) branding.connect_description = connect_description
+
+    const out = await api('/api/social/profiles?action=jwt', {
+      method: 'POST',
+      json: {
+        profile_id: profile.id,
+        ...(redirect_url ? { redirect_url } : {}),
+        ...(Object.keys(branding).length ? { branding } : {}),
+      },
+    })
+
+    // Report the real expiry off the token instead of the advertised duration,
+    // so whoever sends the link knows exactly when it dies.
+    let expires_at = null
+    try {
+      const claims = JSON.parse(Buffer.from(out.access_url.split('token=')[1].split('.')[1], 'base64url').toString('utf8'))
+      if (claims.exp) expires_at = new Date(claims.exp * 1000).toISOString()
+    } catch { /* a missing expiry is not worth failing the call over */ }
+
+    return ok({
+      brand: profile.business_name,
+      uploadpost_user: out.username,
+      connect_url: out.access_url,
+      duration: out.duration || '48h',
+      expires_at,
+      note: 'Send this to the client. It expires in 48 hours, and generating a new one does not break accounts they already connected.',
+    })
+  },
+
   async upload_media({ brand, file_path, platforms }) {
     if (!file_path) throw new Error('file_path is required')
     const profile = await resolveBrand(brand)
@@ -570,6 +607,7 @@ const platformsSchema = { type: 'array', items: { type: 'string', enum: PLATFORM
 
 const TOOLS = [
   { name: 'list_brands', description: 'List the ScaleSolo brand profiles you can post for, each with its Upload-Post handle and the platforms it is connected to (the valid choices for this brand).', inputSchema: { type: 'object', properties: {} } },
+  { name: 'get_connect_link', description: 'Get the link a CLIENT opens to connect their own social accounts (TikTok, Instagram, and the rest) to a brand. No passwords change hands and the link expires in 48 hours, so mint a fresh one each time you need to send it rather than reusing an old one. Returns the URL to paste into a text or email; it does not send anything.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id (e.g. "LUL Fitness").' }, redirect_url: { type: 'string', description: 'Where the client lands after connecting.' }, connect_title: { type: 'string', description: 'Heading shown on the connect page.' }, connect_description: { type: 'string', description: 'One line explaining what they are connecting and why.' } }, required: ['brand'] } },
   { name: 'upload_media', description: 'Upload a local video or image file to ScaleSolo under a brand and create a draft post. Optionally set target platforms (defaults to the brand\'s connected platforms). Returns a content_id. Does NOT publish.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id (e.g. "RayvaughnCEO").' }, file_path: { type: 'string', description: 'Absolute path to the local video/image file.' }, platforms: platformsSchema }, required: ['brand', 'file_path'] } },
   { name: 'autocaption', description: 'Run ScaleSolo autopilot on an uploaded post: analyze the media and generate a title, caption, and hashtags. Returns them for review. Does NOT publish.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' } }, required: ['content_id'] } },
   { name: 'add_to_backlog', description: 'Upload a local video/image AND auto-caption it in one step, then leave it UNSCHEDULED in the calendar\'s "Waiting to schedule" backlog for that brand. Use this when the user wants a post prepared to drag onto the calendar later. Never posts or schedules anything.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id (e.g. "RayvaughnCEO").' }, file_path: { type: 'string', description: 'Absolute path to the local video/image file.' }, platforms: platformsSchema }, required: ['brand', 'file_path'] } },

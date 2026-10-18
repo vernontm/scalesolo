@@ -1928,6 +1928,7 @@ export default function Profiles() {
   const [quickstart, setQuickstart] = useState(false)
   const [intakeFor, setIntakeFor] = useState(null)   // profile whose responses modal is open
   const [linkBusy, setLinkBusy] = useState(null)      // profile id currently minting a link
+  const [connectBusy, setConnectBusy] = useState(null) // profile id currently minting a connect link
 
   const startNew = () => setEditing({})
   const startQuickstart = () => setQuickstart(true)
@@ -1955,6 +1956,34 @@ export default function Profiles() {
       toast({ message: e.message, kind: 'error' })
     } finally {
       setLinkBusy(null)
+    }
+  }
+
+  // Mint the client-facing link for connecting their own socials and copy it.
+  // Deliberately copied rather than opened: this one is for sending to the
+  // client, not for the operator to walk through. The token expires in 48
+  // hours, so it is minted fresh on every click instead of being stored.
+  const getConnectLink = async (p) => {
+    setConnectBusy(p.id)
+    try {
+      const r = await fetch('/api/social/profiles?action=jwt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ profile_id: p.id }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok || !body.access_url) throw new Error(body.error || `Could not create link (${r.status})`)
+      try {
+        await navigator.clipboard.writeText(body.access_url)
+        toast('Connect link copied. It works for the next 48 hours.')
+      } catch {
+        // Clipboard blocked (permissions / http): show it so it can be copied by hand.
+        toast({ message: `Connect link: ${body.access_url}`, ttl: 12000 })
+      }
+    } catch (e) {
+      toast({ message: e.message, kind: 'error' })
+    } finally {
+      setConnectBusy(null)
     }
   }
 
@@ -2075,6 +2104,15 @@ export default function Profiles() {
                       onClick={(e) => { e.stopPropagation(); getIntakeLink(p) }}
                     >
                       {linkBusy === p.id ? <Loader2 size={12} className="spin" /> : <Link2 size={12} />} Get intake link
+                    </button>
+                    <button
+                      className="btn-ghost"
+                      style={{ padding: '6px 10px', fontSize: 12 }}
+                      disabled={connectBusy === p.id}
+                      title="Copy the link this client opens to connect their own social accounts. Expires in 48 hours."
+                      onClick={(e) => { e.stopPropagation(); getConnectLink(p) }}
+                    >
+                      {connectBusy === p.id ? <Loader2 size={12} className="spin" /> : <Share2 size={12} />} Get connect link
                     </button>
                     <button
                       className="btn-ghost"
