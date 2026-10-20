@@ -1928,6 +1928,38 @@ export default function Profiles() {
   const [quickstart, setQuickstart] = useState(false)
   const [intakeFor, setIntakeFor] = useState(null)   // profile whose responses modal is open
   const [linkBusy, setLinkBusy] = useState(null)      // profile id currently minting a link
+  const [connectBusy, setConnectBusy] = useState(null) // profile id currently minting a connect link
+
+  // Mint the brand's Upload-Post connect link and copy it, so it can be sent
+  // straight to the client. Previously the only way to get this URL was to hit
+  // "Add / manage" in Social accounts and read it out of the address bar.
+  const getConnectLink = async (p) => {
+    setConnectBusy(p.id)
+    try {
+      const r = await fetch('/api/social/profiles?action=jwt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ profile_id: p.id }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok || !body.access_url) throw new Error(body.error || `Could not create link (${r.status})`)
+      // These tokens are short lived, so say so: a client opening a stale link
+      // just sees a failure with no explanation.
+      const hrs = Number(body.duration) ? Math.round(Number(body.duration) / 3600) : null
+      const note = hrs ? ` Expires in ${hrs} hours.` : ''
+      try {
+        await navigator.clipboard.writeText(body.access_url)
+        toast(`Connect link copied for ${p.business_name}.${note}`)
+      } catch {
+        // Clipboard blocked (permissions / http): show it so it can be copied by hand.
+        toast({ message: `Connect link: ${body.access_url}`, ttl: 20000 })
+      }
+    } catch (e) {
+      toast({ message: e.message, kind: 'error' })
+    } finally {
+      setConnectBusy(null)
+    }
+  }
 
   const startNew = () => setEditing({})
   const startQuickstart = () => setQuickstart(true)
@@ -2075,6 +2107,15 @@ export default function Profiles() {
                       onClick={(e) => { e.stopPropagation(); getIntakeLink(p) }}
                     >
                       {linkBusy === p.id ? <Loader2 size={12} className="spin" /> : <Link2 size={12} />} Get intake link
+                    </button>
+                    <button
+                      className="btn-ghost"
+                      style={{ padding: '6px 10px', fontSize: 12 }}
+                      disabled={connectBusy === p.id}
+                      title="Copy a link the client opens to connect their TikTok / Instagram / Facebook to this brand"
+                      onClick={(e) => { e.stopPropagation(); getConnectLink(p) }}
+                    >
+                      {connectBusy === p.id ? <Loader2 size={12} className="spin" /> : <Share2 size={12} />} Get connect link
                     </button>
                     <button
                       className="btn-ghost"
