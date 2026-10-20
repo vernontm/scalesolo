@@ -185,7 +185,10 @@ export default async function handler(req, res) {
       audit(caller, name, args, out?.content?.[0]?.text, false, ip)
       return out
     } catch (e) {
-      const msg = `Error: ${e?.message || String(e)}`
+      let msg = `Error: ${e?.message || String(e)}`
+      // resolveBrand names every brand it knows when nothing matches, which
+      // would hand a brand-scoped caller the whole client roster on a typo.
+      if (caller.profileIds.length) msg = msg.replace(/\.?\s*Available:[\s\S]*$/, '.')
       audit(caller, name, args, msg, true, ip)
       return { content: [{ type: 'text', text: msg }], isError: true }
     }
