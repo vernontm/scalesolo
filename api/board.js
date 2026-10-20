@@ -21,19 +21,44 @@ const APPROVED_STAGES = new Set(['approved', 'scheduled'])
 // string to reject with, or null if the move is allowed.
 //   - Only an owner/admin can move a card INTO approved/scheduled, so an editor
 //     can never self-approve their own work to trigger a payout.
-//   - A card that has already been PAID (payout_id set) can't be dragged back
-//     out of approved/scheduled — that's the "move it back and forth to get paid
-//     again" hole. It may still move approved <-> scheduled.
+//   - A PAID card may still go back for another edit round on the SAME card.
+//     It cannot be paid twice: payout_id stays set, and every payment path
+//     filters on payout_id IS NULL (paying one card, paying a balance, the
+//     atomic claim, and the unpaid count), so the card is simply never
+//     selected for payment again. approved_at is likewise stamped once and
+//     never re-stamped, so a second round does not inflate the editor's
+//     approved-video count either. Only a manager may pull a paid card back
+//     out of approved/scheduled, so an editor can never do it themselves.
 function stageChangeError(card, targetStage, role) {
   if (!targetStage || targetStage === card.stage) return null
   const isManager = ['owner', 'admin'].includes(role)
   if (APPROVED_STAGES.has(targetStage) && !isManager) {
     return 'Only an owner or admin can approve or schedule a card.'
   }
-  if (card.payout_id && !APPROVED_STAGES.has(targetStage)) {
-    return 'This card has already been paid and can no longer be moved back.'
+  if (card.payout_id && APPROVED_STAGES.has(card.stage) && !APPROVED_STAGES.has(targetStage) && !isManager) {
+    return 'Only an owner or admin can send a paid card back for another edit.'
   }
   return null
+}
+
+// A card leaving approved/scheduled means its cut is being reworked. If the
+// card already spawned a post on the Schedule page, pull that post back off the
+// schedule so the OLD cut cannot publish while the new one is being edited.
+// Never throws: the card move has already landed, so a failure here is reported
+// to the caller rather than undoing the move.
+async function holdScheduledPost({ card, req }) {
+  if (!card?.content_script_id) return null
+  try {
+    const r = await invokeHandler(contentHandler, req, {
+      method: 'POST',
+      query: { action: 'unschedule', id: card.content_script_id },
+      body: { reason: 'Held: the Board card was sent back for another edit.' },
+    })
+    if (r.statusCode >= 300) return { ok: false, error: r.body?.error || `unschedule ${r.statusCode}`, code: r.body?.code }
+    return { ok: true, ...(r.body?.unscheduled || {}) }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
 }
 
 // Attach the covering payout (amount, tx signature, date) to any paid card, so
@@ -95,7 +120,7 @@ export default async function handler(req, res) {
       if (!id) return res.status(400).json({ error: 'id required' })
       const body = req.body || {}
       if (!body.stage || !STAGES.includes(body.stage)) return res.status(400).json({ error: 'valid stage required' })
-      const rows = await supaFetch(`board_cards?id=eq.${id}&select=profile_id,assigned_editor,stage,approved_at,payout_id`)
+      const rows = await supaFetch(`board_cards?id=eq.${id}&select=profile_id,assigned_editor,stage,approved_at,payout_id,content_script_id`)
       const profileId = rows?.[0]?.profile_id
       if (!profileId) return res.status(404).json({ error: 'Not found' })
       const role = await assertProfileAccess(auth.user.id, profileId)
@@ -115,7 +140,9 @@ export default async function handler(req, res) {
           ...(APPROVED_STAGES.has(body.stage) && !rows[0].approved_at ? { approved_at: new Date().toISOString() } : {}),
         },
       })
-      return res.status(200).json({ card: Array.isArray(updated) ? updated[0] : updated })
+      const draggedOut = APPROVED_STAGES.has(rows[0].stage) && !APPROVED_STAGES.has(body.stage)
+      const dragHold = draggedOut ? await holdScheduledPost({ card: rows[0], req }) : null
+      return res.status(200).json({ card: Array.isArray(updated) ? updated[0] : updated, ...(dragHold ? { post_hold: dragHold } : {}) })
     }
 
     // ── POST ?action=send-to-schedule ── spawn a content_scripts draft
@@ -298,7 +325,9 @@ export default async function handler(req, res) {
           }
         }
       }
-      return res.status(200).json({ card: Array.isArray(updated) ? updated[0] : updated, ...(postMove ? { post_move: postMove } : {}) })
+      const leftApproved = updates.stage && APPROVED_STAGES.has(rows[0].stage) && !APPROVED_STAGES.has(updates.stage)
+      const postHold = leftApproved ? await holdScheduledPost({ card: rows[0], req }) : null
+      return res.status(200).json({ card: Array.isArray(updated) ? updated[0] : updated, ...(postMove ? { post_move: postMove } : {}), ...(postHold ? { post_hold: postHold } : {}) })
     }
 
     // ── DELETE ──
