@@ -117,12 +117,30 @@ const normPlatforms = (arr) => (Array.isArray(arr) ? arr : [])
 
 // The platforms a new post for this brand should default to: the brand's
 // configured default_platforms if set, otherwise all connected platforms.
-async function connectedPlatforms(profileId) {
+async function brandPlatforms(profileId) {
   try {
     const b = await api('/api/account/uploadpost-connected', { query: { profile_id: profileId } })
-    if (Array.isArray(b?.default_platforms) && b.default_platforms.length) return normPlatforms(b.default_platforms)
-    return normPlatforms(b?.connected_platforms)
-  } catch { return [] }
+    return {
+      connected: normPlatforms(b?.connected_platforms),
+      defaults: normPlatforms(b?.default_platforms),
+    }
+  } catch { return { connected: [], defaults: [] } }
+}
+
+// Where a post should go when the caller did not name platforms: the brand's
+// saved posting default, else whatever it is actually connected to.
+async function postingTargets(profileId) {
+  const { connected, defaults } = await brandPlatforms(profileId)
+  return defaults.length ? defaults : connected
+}
+
+// What the brand is REALLY connected to on Upload-Post, for reporting only.
+// This must never fold in default_platforms. Doing so told an employee on
+// 2026-10-20 that a brand was "connected to tiktok" when that was merely its
+// posting default and instagram was connected too, which is exactly the kind
+// of confident wrong answer that gets a post sent to the wrong place.
+async function connectedPlatforms(profileId) {
+  return (await brandPlatforms(profileId)).connected
 }
 
 // ── Tool implementations ─────────────────────────────────────────────
@@ -229,6 +247,7 @@ const impls = {
     const out = await Promise.all((profiles || []).map(async (p) => ({
       id: p.id, name: p.business_name, uploadpost_user: p.uploadpost_user || null,
       connected_platforms: await connectedPlatforms(p.id),
+      posting_defaults: Array.isArray(p.default_platforms) ? p.default_platforms.filter(Boolean) : [],
     })))
     return ok(out)
   },
@@ -267,7 +286,7 @@ const impls = {
     if (uploadPath !== file_path) { try { await unlink(uploadPath) } catch {} }
     if (!put.ok) throw new Error(`Storage upload failed (${put.status}): ${(await put.text()).slice(0, 200)}`)
     // Platforms: use what was passed, else default to the brand's connected set.
-    const chosen = platforms?.length ? normPlatforms(platforms) : await connectedPlatforms(profile.id)
+    const chosen = platforms?.length ? normPlatforms(platforms) : await postingTargets(profile.id)
     // 3. create the draft content row
     const created = await api('/api/content', {
       method: 'POST',
@@ -327,7 +346,7 @@ const impls = {
     })
     if (!put.ok) throw new Error(`Storage upload failed (${put.status}): ${(await put.text()).slice(0, 200)}`)
 
-    const chosen = platforms?.length ? normPlatforms(platforms) : await connectedPlatforms(profile.id)
+    const chosen = platforms?.length ? normPlatforms(platforms) : await postingTargets(profile.id)
     const guessTitle = (title || basename(cleanPath).replace(/\.[^.]+$/, '') || 'Imported clip').slice(0, 80)
     const created = await api('/api/content', {
       method: 'POST',
@@ -485,7 +504,7 @@ const impls = {
       if (!put.ok) throw new Error(`Storage upload failed for "${fp}" (${put.status})`)
       urls.push(init.public_url)
     }
-    const chosen = platforms?.length ? normPlatforms(platforms) : await connectedPlatforms(profile.id)
+    const chosen = platforms?.length ? normPlatforms(platforms) : await postingTargets(profile.id)
     const created = await api('/api/content', {
       method: 'POST',
       json: {
@@ -556,7 +575,7 @@ const impls = {
 
     const result = { brand: profile.business_name, model, prompt, count: urls.length, images: urls }
     if (alsoBacklog) {
-      const chosen = platforms?.length ? normPlatforms(platforms) : await connectedPlatforms(profile.id)
+      const chosen = platforms?.length ? normPlatforms(platforms) : await postingTargets(profile.id)
       const created = await api('/api/content', {
         method: 'POST',
         json: {
@@ -619,7 +638,7 @@ const impls = {
 
     const result = { brand: profile.business_name, model: 'veo3_fast', prompt, aspect, duration, video: url }
     if (alsoBacklog) {
-      const chosen = platforms?.length ? normPlatforms(platforms) : await connectedPlatforms(profile.id)
+      const chosen = platforms?.length ? normPlatforms(platforms) : await postingTargets(profile.id)
       const created = await api('/api/content', {
         method: 'POST',
         json: {
@@ -752,7 +771,7 @@ const impls = {
     if (!row0) throw new Error('post not found')
     let targets = normPlatforms(platforms)
     if (!targets.length) targets = normPlatforms(row0.platforms)
-    if (!targets.length) targets = await connectedPlatforms(row0.profile_id)
+    if (!targets.length) targets = await postingTargets(row0.profile_id)
     if (!targets.length) throw new Error('No platforms selected and none connected for this brand. Pass platforms, e.g. ["instagram","tiktok"].')
     // 1. pin the slot + platforms
     await api('/api/content', { method: 'PATCH', query: { id: content_id }, json: { scheduled_datetime, platforms: targets } })
@@ -781,7 +800,7 @@ const impls = {
     // If platforms passed, set them on the row first so publish uses them.
     let targets = normPlatforms(platforms)
     if (!targets.length) targets = normPlatforms(row0.platforms)
-    if (!targets.length) targets = await connectedPlatforms(row0.profile_id)
+    if (!targets.length) targets = await postingTargets(row0.profile_id)
     if (!targets.length) throw new Error('No platforms selected and none connected for this brand. Pass platforms, e.g. ["tiktok"].')
     if (Array.isArray(platforms) && platforms.length) {
       await api('/api/content', { method: 'PATCH', query: { id: content_id }, json: { platforms: targets } })
