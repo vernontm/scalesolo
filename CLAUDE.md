@@ -18,12 +18,30 @@ Vite SPA in `src/`, serverless endpoints in `api/`, Supabase backend (`supabase/
 
 ## How sessions must finish
 
-Any session that changes code in this repo finishes the job itself before ending:
-1. Commit all work on a `claude/*` branch.
-2. Push the branch explicitly (`git push -u origin claude/<slug>`).
-3. Create the PR yourself with `gh pr create` and put the PR URL in your final reply.
+Ship straight to `main`. Do not open a pull request, and do not ask Ray to
+review or merge one.
 
-Never end by pointing at a GitHub compare page or telling Ray to click a Create PR button. If you made no changes, say "no changes, nothing to ship" explicitly instead of offering a PR.
+Any session that changes code in this repo finishes the job itself before
+ending:
+1. Make `npm run lint` and `npm run build` both pass. This is not optional now
+   that nothing sits in a PR first: pushing to `main` deploys to production,
+   where real clients publish, so a broken push is a broken product.
+2. Commit the work.
+3. Push it to `main`. From a worktree that cannot check `main` out, that is
+   `git push origin HEAD:main`.
+4. Fast-forward `feature/studio-v1` to the same commit, so Ray's preview URL
+   stays current: `git push origin main:refs/heads/feature/studio-v1`.
+5. Confirm the deploy actually landed before calling it done. Read the Vercel
+   check on that commit, and where it is cheap, probe production itself rather
+   than trusting the dashboard. A failed build does not take the site down,
+   Vercel keeps serving the last good deployment, so a silent "nothing
+   deployed" is the realistic failure and it has to be caught.
+
+Never deploy with `vercel --prod` from a local checkout. It uploads the working
+directory and bypasses git, which replaced production with a stale tree on
+2026-10-19 and knocked out the employees' MCP access.
+
+If you made no changes, say "no changes, nothing to ship" explicitly.
 
 ## Known context
 
