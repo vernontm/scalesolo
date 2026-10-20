@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "ScaleSolo — the AI-native operating system for solopreneurs.",
+  "description": "ScaleSolo: the AI-native operating system for solopreneurs.",
   "scripts": {
     "dev": "vite",
     "prebuild": "node scripts/bundle-solana.mjs",
@@ -59,6 +59,6 @@
     "vite": "^5.4.8"
   },
   "engines": {
-    "node": "22.x"
+    "node": "24.x"
   }
 }

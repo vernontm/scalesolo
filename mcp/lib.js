@@ -191,21 +191,36 @@ const impls = {
   // Mint the Upload-Post connect link for a brand. This is the URL a client
   // opens to link their own TikTok / Instagram / Facebook to the brand. The
   // token is short lived, so the expiry is returned rather than left implicit.
-  async get_connect_link({ brand, redirect_url }) {
+  async get_connect_link({ brand, redirect_url, connect_title, connect_description }) {
     const profile = await resolveBrand(brand)
+    const branding = {}
+    if (connect_title) branding.connect_title = connect_title
+    if (connect_description) branding.connect_description = connect_description
     const r = await api('/api/social/profiles', {
       method: 'POST', query: { action: 'jwt' },
-      json: { profile_id: profile.id, ...(redirect_url ? { redirect_url } : {}) },
+      json: {
+        profile_id: profile.id,
+        ...(redirect_url ? { redirect_url } : {}),
+        ...(Object.keys(branding).length ? { branding } : {}),
+      },
     })
     if (!r?.access_url) throw new Error('Upload-Post did not return a connect link.')
+    // Report the real expiry read off the token itself, not the advertised
+    // duration, so whoever sends the link knows exactly when it dies.
+    let expires_at = null
+    try {
+      const claims = JSON.parse(Buffer.from(r.access_url.split('token=')[1].split('.')[1], 'base64url').toString('utf8'))
+      if (claims.exp) expires_at = new Date(claims.exp * 1000).toISOString()
+    } catch { /* a missing expiry is not worth failing the call over */ }
     const hours = Number(r.duration) ? Math.round(Number(r.duration) / 3600) : null
     return ok({
       brand: profile.business_name,
       connect_url: r.access_url,
       uploadpost_user: r.username || null,
+      expires_at,
       expires_in_hours: hours,
       already_connected: await connectedPlatforms(profile.id),
-      note: 'Send this to the client. Anyone holding the link can connect social accounts to this brand, so treat it like a password.',
+      note: 'Send this to the client. It expires in 48 hours, and minting a new one does not break accounts they already connected. Anyone holding the link can connect accounts to this brand, so treat it like a password.',
     })
   },
 
@@ -645,6 +660,62 @@ const impls = {
     })
   },
 
+  // Find a post by name. Danesha's ask: knowing the id of a post should not
+  // be a precondition for touching it. Returns a bare array so api/mcp.js can
+  // narrow it to a brand-scoped caller's own rows with one generic filter.
+  async list_posts({ brand, query, status, limit = 20 }) {
+    const FILTER = {
+      draft: 'drafts', caption_ready: 'caption_ready', unscheduled: 'unscheduled',
+      scheduled: 'scheduled', posted: 'posted',
+    }
+    if (status && !FILTER[status]) {
+      throw new Error(`status must be one of: ${Object.keys(FILTER).join(', ')}`)
+    }
+    const filter = status ? FILTER[status] : 'library'
+    const wanted = String(query || '').trim()
+    const cap = Math.min(Math.max(Number(limit) || 20, 1), 100)
+    // No brand named: look across every brand the caller can see, so a
+    // half-remembered title still finds its post.
+    const targets = brand ? [await resolveBrand(brand)] : ((await api('/api/profiles'))?.profiles || [])
+    if (!targets.length) throw new Error('No brands are available to search.')
+
+    const fetchFor = async (p) => {
+      const r = await api('/api/content', {
+        query: { profile_id: p.id, filter, limit: cap, ...(wanted ? { q: wanted } : {}) },
+      })
+      return (r?.items || []).map((row) => ({ brandName: p.business_name, profileId: p.id, row }))
+    }
+    // A named brand reports its own failure; a fan-out skips a brand that
+    // errors rather than failing the whole search over one bad profile.
+    const perBrand = brand
+      ? [await fetchFor(targets[0])]
+      : await Promise.all(targets.map((p) => fetchFor(p).catch(() => [])))
+
+    const lower = wanted.toLowerCase()
+    const rank = (title) => {
+      const t = String(title || '').toLowerCase()
+      if (!lower) return 2
+      if (t === lower) return 0
+      return t.startsWith(lower) ? 1 : 2
+    }
+    const hits = perBrand.flat()
+      .sort((a, b) => rank(a.row.title) - rank(b.row.title)
+        || String(b.row.updated_at || '').localeCompare(String(a.row.updated_at || '')))
+      .slice(0, cap)
+
+    return ok(hits.map(({ brandName, profileId, row }) => ({
+      content_id: row.id,
+      brand: brandName,
+      profile_id: profileId,
+      title: row.title || null,
+      status: row.status,
+      scheduled_datetime: row.scheduled_datetime || null,
+      platforms: Array.isArray(row.platforms) ? row.platforms : [],
+      has_media: Array.isArray(row.media_urls) && row.media_urls.length > 0,
+      caption_preview: row.caption ? String(row.caption).replace(/\s+/g, ' ').slice(0, 80) : null,
+    })))
+  },
+
   async update_post({ content_id, title, caption, hashtags, first_comment }) {
     if (!content_id) throw new Error('content_id is required')
     const patch = {}
@@ -742,7 +813,7 @@ const platformsSchema = { type: 'array', items: { type: 'string', enum: PLATFORM
 
 const TOOLS = [
   { name: 'get_brand', description: "Read one brand's full profile: its brand bible and voice rules (tone, target audience, CTAs, always-include, do-not-say, core hashtags), visual identity, posting config (default + connected platforms, schedule, timezone, TikTok direct-post) and social handles. Read this before writing captions so the copy matches the brand.", inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' } }, required: ['brand'] } },
-  { name: 'get_connect_link', description: "Get the link a client opens to connect their own social accounts (TikTok, Instagram, Facebook, etc) to a brand. Returns a short-lived URL to send them, plus which platforms are already connected. Use when a brand has no connected accounts or one needs reconnecting.", inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, redirect_url: { type: 'string', description: 'Optional URL to send the client back to after they finish connecting.' } }, required: ['brand'] } },
+  { name: 'get_connect_link', description: "Get the link a CLIENT opens to connect their own social accounts (TikTok, Instagram, and the rest) to a brand. No passwords change hands and the link expires in 48 hours, so mint a fresh one each time rather than reusing an old one. Returns the URL to paste into a text or email plus which platforms are already connected; it does not send anything.", inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id (e.g. \"LUL Fitness\").' }, redirect_url: { type: 'string', description: 'Where the client lands after connecting.' }, connect_title: { type: 'string', description: 'Heading shown on the connect page.' }, connect_description: { type: 'string', description: 'One line explaining what they are connecting and why.' } }, required: ['brand'] } },
   { name: 'list_brands', description: 'List the ScaleSolo brand profiles you can post for, each with its Upload-Post handle and the platforms it is connected to (the valid choices for this brand).', inputSchema: { type: 'object', properties: {} } },
   { name: 'upload_media', description: 'Upload a local video or image file to ScaleSolo under a brand and create a draft post. Optionally set target platforms (defaults to the brand\'s connected platforms). Returns a content_id. Does NOT publish.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id (e.g. "RayvaughnCEO").' }, file_path: { type: 'string', description: 'Absolute path to the local video/image file.' }, platforms: platformsSchema }, required: ['brand', 'file_path'] } },
   { name: 'add_from_url', description: 'Import a video or image into ScaleSolo straight from a URL (direct link, Google Drive, or Dropbox share link) and create a draft post for the brand, auto-captioned by default. Use this instead of upload_media when the file is not on this machine. Returns the content_id to review and schedule.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, url: { type: 'string', description: 'Direct link to the video/image. Google Drive and Dropbox share links are converted automatically; the file must be shared publicly.' }, title: { type: 'string', description: 'Optional title. Defaults to the filename.' }, autocaption: { type: 'boolean', description: 'Generate title/caption/hashtags right away (default true).' }, platforms: platformsSchema }, required: ['brand', 'url'] } },
@@ -753,6 +824,7 @@ const TOOLS = [
   { name: 'generate_image', description: 'Generate AI image(s) for a brand via KIE.ai (nano-banana / GPT-Image). Billed to the brand owner\'s ScaleSolo credits (~4,000 ai_tokens per image); returns an insufficient-credits error if the balance is too low, so it can never overspend. Returns the finished image URLs. Set add_to_backlog to also drop them into the calendar backlog as a captioned draft post.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, prompt: { type: 'string', description: 'What to generate.' }, count: { type: 'number', description: '1-8 images (default 1).' }, aspect: { type: 'string', description: 'Aspect ratio, e.g. "1:1", "9:16", "16:9", "4:5" (default "1:1").' }, model: { type: 'string', description: 'nano-banana (default), nano-banana-pro, gpt-2, or seedream. For images of a PERSON, use model:"seedream" with the person\'s photos in reference_urls to nail likeness, then call generate_image AGAIN with model:"nano-banana" or "gpt-2" and reference_urls:[that seedream image] to compose the final graphic (the RayvaughnCEO pipeline).' }, reference_urls: { type: 'array', items: { type: 'string' }, description: 'Reference image URLs for image-to-image / likeness (the person photos for seedream, or the seedream portrait for the compose step).' }, enhance_prompt: { type: 'boolean', description: 'Let Claude expand the prompt with composition/lighting first.' }, add_to_backlog: { type: 'boolean', description: 'Also create a captioned draft post from the generated images in the calendar backlog.' }, platforms: platformsSchema }, required: ['brand', 'prompt'] } },
   { name: 'generate_video', description: 'Generate a short AI video (Veo 3.1 via KIE.ai) for a brand. Text-to-video, or image-to-video when image_urls is given (animate a photo). Billed to the brand owner\'s ScaleSolo credits (~110,000 ai_tokens per clip); returns an insufficient-credits error if too low, so it can never overspend. Returns the finished video URL. Set add_to_backlog to also create a captioned draft post from it. Takes 1-4 minutes.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, prompt: { type: 'string', description: 'What the video should show / how it should move.' }, image_urls: { type: 'array', items: { type: 'string' }, description: 'Optional reference image URL(s) to animate (image-to-video).' }, aspect: { type: 'string', description: 'Aspect ratio, e.g. "9:16" (default), "16:9", "1:1".' }, duration: { type: 'number', description: 'Clip length in seconds: 4, 6, or 8 (default 8).' }, add_to_backlog: { type: 'boolean', description: 'Also create a captioned draft post from the video in the calendar backlog.' }, platforms: platformsSchema }, required: ['brand', 'prompt'] } },
   { name: 'next_slots', description: "List the next open posting time slots from a brand's posting schedule (ISO + human-readable local time).", inputSchema: { type: 'object', properties: { brand: { type: 'string' }, count: { type: 'number', description: 'How many slots (default 5).' } }, required: ['brand'] } },
+  { name: 'list_posts', description: "Find posts by NAME instead of by id. Searches post titles (for one brand, or across every brand you can see when none is named) and returns each match's content_id, brand, status, slot and platforms. Use this first whenever you know a post by its title, then pass the content_id to get_post or update_post.", inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Optional brand name, handle or id. Omit to search every brand you can see.' }, query: { type: 'string', description: 'Part of the post title, e.g. "R05" or "shawarma". Omit to list the most recent posts.' }, status: { type: 'string', enum: ['draft', 'caption_ready', 'unscheduled', 'scheduled', 'posted'], description: 'Optional status filter.' }, limit: { type: 'number', description: 'Max results, 1 to 100. Default 20.' } }, required: [] } },
   { name: 'get_post', description: 'Read a draft/scheduled post (title, caption, hashtags, media, platforms, slot) for review.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' } }, required: ['content_id'] } },
   { name: 'update_post', description: 'Apply edits to a post\'s title / caption / hashtags / first_comment before scheduling. Does NOT publish.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' }, title: { type: 'string' }, caption: { type: 'string' }, hashtags: { type: 'string' }, first_comment: { type: 'string' } }, required: ['content_id'] } },
   { name: 'set_platforms', description: 'Set which social platforms a post will go to. Does NOT publish.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' }, platforms: platformsSchema }, required: ['content_id', 'platforms'] } },

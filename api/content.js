@@ -275,8 +275,17 @@ export default async function handler(req, res) {
       // green-pill scheduled rows.
       if (filter === 'calendar')  where += '&or=(and(status.in.(scheduled,posted),scheduled_datetime.not.is.null),and(status.eq.draft,approval_status.eq.pending,scheduled_datetime.not.is.null))'
       if (filter === 'approvals') where += '&approval_status=eq.pending'
+      // Title search, so a caller who knows a post by name does not have to
+      // know its id. The characters stripped below are the ones that would
+      // otherwise break out of the PostgREST filter value.
+      const q = String(req.query.q || '').trim()
+      if (q) {
+        const safe = q.replace(/[,()*\\]/g, ' ').trim()
+        if (safe) where += `&title=ilike.*${encodeURIComponent(safe)}*`
+      }
+      const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 200)
       const order = (filter === 'scheduled' || filter === 'calendar') ? 'scheduled_datetime.asc' : 'updated_at.desc'
-      const rows = await supaFetch(`content_scripts?${where}&order=${order}&limit=200&select=*`)
+      const rows = await supaFetch(`content_scripts?${where}&order=${order}&limit=${limit}&select=*`)
       return res.status(200).json({ items: rows || [] })
     }
 
