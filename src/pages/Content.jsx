@@ -229,6 +229,9 @@ function ItemDetail({ item, onClose, onUpdate }) {
   // Upload-Post job so the edited copy is what actually publishes.
   const [captionDraft, setCaptionDraft] = useState(item.caption || '')
   const [hashtagsDraft, setHashtagsDraft] = useState(item.hashtags || '')
+  // The generators have always written a first comment and the publisher has
+  // always sent it, but until now there was nowhere to read or change it.
+  const [firstCommentDraft, setFirstCommentDraft] = useState(item.first_comment || '')
   const [savingCaption, setSavingCaption] = useState(false)
   // Per-post TikTok mode: null = brand default, true = direct post,
   // false = draft (inbox). Applies when the post is (re)submitted.
@@ -241,9 +244,10 @@ function ItemDetail({ item, onClose, onUpdate }) {
   // What's actually persisted right now. Updated after every save (manual
   // OR autosave) so the dirty check + autosave never loop and never depend
   // on a full list refetch to settle.
-  const savedRef = useRef({ caption: item.caption || '', hashtags: item.hashtags || '', tt: ttSaved })
+  const savedRef = useRef({ caption: item.caption || '', hashtags: item.hashtags || '', first_comment: item.first_comment || '', tt: ttSaved })
   const captionDirty = captionDraft !== savedRef.current.caption
     || hashtagsDraft !== savedRef.current.hashtags
+    || firstCommentDraft !== savedRef.current.first_comment
     || ttOverride !== savedRef.current.tt
   const [autoStatus, setAutoStatus] = useState('idle') // idle | saving | saved | error
   const saveCaption = async ({ silent = false } = {}) => {
@@ -255,11 +259,11 @@ function ItemDetail({ item, onClose, onUpdate }) {
       const r = await fetch(`/api/content?id=${item.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ caption: captionDraft, hashtags, tiktok_direct_override: ttOverride }),
+        body: JSON.stringify({ caption: captionDraft, hashtags, first_comment: firstCommentDraft, tiktok_direct_override: ttOverride }),
       })
       const b = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(b?.error || 'Could not save the caption')
-      savedRef.current = { caption: captionDraft, hashtags, tt: ttOverride }
+      savedRef.current = { caption: captionDraft, hashtags, first_comment: firstCommentDraft, tt: ttOverride }
       if (silent) { setAutoStatus('saved'); setTimeout(() => setAutoStatus((s) => (s === 'saved' ? 'idle' : s)), 1500) }
       else {
         setSuccess(b.upload_post_resynced
@@ -282,7 +286,7 @@ function ItemDetail({ item, onClose, onUpdate }) {
     if (autoTimer.current) clearTimeout(autoTimer.current)
     autoTimer.current = setTimeout(() => { saveCaption({ silent: true }) }, 900)
     return () => { if (autoTimer.current) clearTimeout(autoTimer.current) }
-  }, [captionDraft, hashtagsDraft, ttOverride])
+  }, [captionDraft, hashtagsDraft, firstCommentDraft, ttOverride])
   // Copy-to-clipboard feedback for the caption field (mobile-friendly).
   const [copied, setCopied] = useState(false)
   const copyCaption = async () => {
@@ -442,6 +446,26 @@ function ItemDetail({ item, onClose, onUpdate }) {
                 placeholder="#tag1 #tag2 …"
                 style={{ width: '100%', boxSizing: 'border-box', color: 'var(--red)', border: `1px solid ${hashtagsDraft !== (item.hashtags || '') ? 'var(--red)' : 'var(--border)'}` }}
               />
+            </div>
+
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>
+                First comment <span style={{ textTransform: 'none', fontWeight: 500 }}>(posted as the first reply)</span>
+              </div>
+              <textarea
+                className="input"
+                value={firstCommentDraft}
+                onChange={(e) => setFirstCommentDraft(e.target.value)}
+                placeholder="An engagement prompt that lands as the first reply. Leave empty to post none."
+                rows={Math.min(6, Math.max(2, String(firstCommentDraft || '').split('\n').length + 1))}
+                style={{
+                  width: '100%', boxSizing: 'border-box', resize: 'vertical', lineHeight: 1.5,
+                  border: `1px solid ${firstCommentDraft !== (item.first_comment || '') ? 'var(--red)' : 'var(--border)'}`,
+                }}
+              />
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                {firstCommentDraft.length} characters. Keep it under 220 and out of the hashtags.
+              </div>
             </div>
 
             {(item.platforms || []).includes('tiktok') && (

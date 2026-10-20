@@ -36,7 +36,11 @@ const REMOTE_EXCLUDE = new Set(['upload_media', 'upload_carousel', 'add_to_backl
 const REMOTE_TOOLS = TOOLS.filter((t) => !REMOTE_EXCLUDE.has(t.name))
 
 // What each role may call. publish = every remote tool.
-const READONLY = ['list_brands', 'get_brand', 'get_post', 'next_slots']
+// Results that must be narrowed to a brand-scoped caller's own brands,
+// mapped to the field on each row that carries the brand id.
+const SCOPE_FILTERED = { list_brands: 'id', list_posts: 'profile_id' }
+
+const READONLY = ['list_brands', 'get_brand', 'get_post', 'list_posts', 'next_slots']
 const ROLE_TOOLS = {
   readonly: new Set(READONLY),
   draft: new Set([...READONLY, 'autocaption', 'update_post', 'set_platforms', 'generate_image', 'generate_video', 'add_from_url', 'get_connect_link']),
@@ -162,12 +166,20 @@ export default async function handler(req, res) {
         }
       }
       let out = await impls[name](args)
-      // A brand-scoped caller should only ever see their own brands listed.
-      if (name === 'list_brands' && caller.profileIds.length) {
+      // Tools that list rows across brands have to be narrowed after the
+      // fact: targetProfileId only catches a call that NAMES a brand, and
+      // these can be called without one. The value is the field on each
+      // returned row that holds its brand id.
+      const scopeKey = SCOPE_FILTERED[name]
+      if (scopeKey && caller.profileIds.length) {
         const txt = out?.content?.[0]?.text
-        if (txt) {
-          const kept = JSON.parse(txt).filter((b) => caller.profileIds.includes(b.id))
+        try {
+          const kept = JSON.parse(txt).filter((r) => caller.profileIds.includes(r?.[scopeKey]))
           out = { content: [{ type: 'text', text: JSON.stringify(kept, null, 2) }] }
+        } catch {
+          // Unparseable means we cannot prove the rows are in scope, so fail
+          // closed rather than hand a scoped caller someone else's brands.
+          return deny('Could not apply your brand scope to that result, so it was withheld.')
         }
       }
       audit(caller, name, args, out?.content?.[0]?.text, false, ip)

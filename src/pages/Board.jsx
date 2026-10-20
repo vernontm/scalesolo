@@ -17,10 +17,7 @@ import {
   SortableContext, useSortable, verticalListSortingStrategy, arrayMove,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import {
-  Plus, X, Upload, Film, MessageSquare, Check, CalendarPlus, Trash2,
-  Loader2, Download, Building2, Send, CornerUpLeft, Settings, DollarSign, ExternalLink,
-} from 'lucide-react'
+import { Plus, X, Upload, Film, MessageSquare, Check, CalendarPlus, Trash2, Loader2, Download, Building2, Send, CornerUpLeft, Settings, DollarSign, ExternalLink, AlertCircle } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { toast, confirmDialog } from '../components/Toast.jsx'
@@ -131,6 +128,9 @@ function CardBody({ card }) {
         <span><Film size={11} style={{ verticalAlign: '-1px' }} /> {versions.length ? `v${versions.length}` : 'no video'}</span>
         {comments > 0 && <span><MessageSquare size={11} style={{ verticalAlign: '-1px' }} /> {comments}</span>}
         {card.content_script_id && <span style={{ color: 'var(--red)' }}>· draft</span>}
+        {!card.content_script_id && foldStage(card.stage) === 'scheduled' && (
+          <span style={catPill('#ef4444')} title="In Scheduled, but no post was ever created, so nothing will publish">no post</span>
+        )}
         {/* Handoff signal: the assigned editor has picked this card up. */}
         {card.editing_started_at && ['editing', 'needs_revisions'].includes(foldStage(card.stage)) && (
           <span style={catPill('#60a5fa')} title={`Editing started ${new Date(card.editing_started_at).toLocaleString()}`}>
@@ -609,6 +609,16 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged, onPay }) 
         )}
 
         {/* Actions */}
+        {stage === 'scheduled' && !card.content_script_id && (
+          <div style={{ marginTop: 16, padding: '10px 12px', borderRadius: 10, background: 'rgba(239,68,68,0.10)', border: '1px solid var(--red)', fontSize: 12.5, display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+            <AlertCircle size={14} style={{ flexShrink: 0, marginTop: 1, color: 'var(--red)' }} />
+            <span>
+              This card is in Scheduled but never became a post, so nothing will publish from it.
+              {isManager ? ' Use the button below to create the post, then set its time on the Schedule page.' : ' Ask a manager to create the post for it.'}
+            </span>
+          </div>
+        )}
+
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 20, alignItems: 'center' }}>
           {canWork && ['editing', 'needs_revisions'].includes(stage) && (
             <button className="btn-primary" onClick={submitForReview} disabled={busy || uploading || nothingNewToReview}
@@ -622,8 +632,11 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged, onPay }) 
           {isManager && !['needs_revisions', 'scheduled'].includes(stage) && (
             <button className="btn-secondary" onClick={() => moveStage('needs_revisions', 'Sent back for revisions')} disabled={busy}>Request revisions</button>
           )}
-          {isManager && stage === 'approved' && !card.content_script_id && (
-            <button className="btn-primary" onClick={sendToSchedule} disabled={busy}><CalendarPlus size={14} /> Send to Schedule</button>
+          {isManager && ['approved', 'scheduled'].includes(stage) && !card.content_script_id && (
+            <button className="btn-primary" onClick={sendToSchedule} disabled={busy || !versions.length}
+              title={versions.length ? '' : 'Upload the final video first'}>
+              <CalendarPlus size={14} /> {stage === 'scheduled' ? 'Create the missing post' : 'Send to Schedule'}
+            </button>
           )}
           {card.content_script_id && <span style={{ fontSize: 12.5, color: 'var(--red)', fontWeight: 600 }}>On the Schedule page →</span>}
           <span style={{ flex: 1 }} />
