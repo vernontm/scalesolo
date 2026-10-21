@@ -592,6 +592,29 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged, onPay }) 
             </select>
           </div>
         )}
+        {isManager && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, color: 'var(--muted)' }}>Pay rate</span>
+            <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+              <span style={{ position: 'absolute', left: 10, fontSize: 12.5, color: 'var(--muted)', pointerEvents: 'none' }}>$</span>
+              <input
+                className="input" type="number" min="0" step="0.01" inputMode="decimal"
+                value={rateDraft}
+                onChange={(e) => setRateDraft(e.target.value)}
+                onBlur={saveRate}
+                placeholder="editor default"
+                disabled={busy || !!card.payout_id}
+                title={card.payout_id ? 'Already paid, so the rate is locked to what was actually paid.' : ''}
+                style={{ width: 140, fontSize: 12.5, paddingLeft: 20 }}
+              />
+            </div>
+            <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+              {card.payout_id
+                ? 'Locked: already paid.'
+                : rateDraft === '' ? "Blank uses the editor's usual rate." : 'This card only.'}
+            </span>
+          </div>
+        )}
 
         {err && <div style={{ background: 'var(--red-soft)', color: 'var(--red)', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, marginTop: 8 }}>{err}</div>}
 
@@ -756,23 +779,6 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged, onPay }) 
             <span style={{ flex: 1 }} />
             {isManager && !card.payout_id && card.assigned_editor_email && (
               <button className="btn-primary" onClick={() => onPay?.(card)} disabled={busy} style={{ fontSize: 12 }}><DollarSign size={13} /> Pay editor</button>
-            )}
-            {isManager && !card.payout_id && (
-              <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', paddingTop: 8, borderTop: '1px solid var(--border)' }}>
-                <span style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Rate for this card</span>
-                <input
-                  className="input" type="number" min="0" step="0.01" inputMode="decimal"
-                  value={rateDraft}
-                  onChange={(e) => setRateDraft(e.target.value)}
-                  onBlur={saveRate}
-                  placeholder="editor default"
-                  disabled={busy}
-                  style={{ width: 130, fontSize: 12.5 }}
-                />
-                <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>
-                  {rateDraft === '' ? "Blank uses the editor's usual rate." : 'This card only. Clear it to go back to the usual rate.'}
-                </span>
-              </div>
             )}
           </div>
         )}

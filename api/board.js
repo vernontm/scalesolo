@@ -122,14 +122,21 @@ export default async function handler(req, res) {
       // A contributor (editor) only ever sees cards ASSIGNED to them; owners /
       // admins / editors see every card for their brands. Enforced server-side.
       let filter
+      // Brands where this user may see money. pay_rate is management
+      // information: an editor must never learn what a card pays, theirs or
+      // anyone else's, so it is stripped from the response rather than merely
+      // hidden in the UI, which devtools would undo.
+      const payVisible = new Set()
       if (profileId) {
         const role = await assertProfileAccess(auth.user.id, profileId)
+        if (['owner', 'admin'].includes(role)) payVisible.add(profileId)
         filter = role === 'contributor'
           ? `profile_id=eq.${profileId}&assigned_editor=eq.${auth.user.id}`
           : `profile_id=eq.${profileId}`
       } else {
         const access = await supaFetch(`profile_access?user_id=eq.${auth.user.id}&select=profile_id,role`)
         const rows = access || []
+        for (const a of rows) if (['owner', 'admin'].includes(a.role)) payVisible.add(a.profile_id)
         const managerIds = rows.filter((a) => ['owner', 'admin', 'editor'].includes(a.role)).map((a) => a.profile_id)
         const contribIds = rows.filter((a) => a.role === 'contributor').map((a) => a.profile_id)
         if (!managerIds.length && !contribIds.length) return res.status(200).json({ cards: [] })
@@ -148,6 +155,7 @@ export default async function handler(req, res) {
       // board self-healing with no cron to go quiet, and it is idempotent.
       const retired = wantArchived ? [] : await autoArchive(cards)
       const live = retired.length ? (cards || []).filter((c) => !retired.includes(c.id)) : (cards || [])
+      for (const c of live) if (!payVisible.has(c.profile_id)) delete c.pay_rate
       return res.status(200).json({ cards: live, archived_now: retired.length })
     }
 
@@ -307,7 +315,11 @@ export default async function handler(req, res) {
       }
       const allowed = role === 'contributor'
         ? ['stage', 'position', 'submitted_version_id', 'editing_started_at']
-        : ['title', 'assigned_editor', 'assigned_editor_email', 'assigned_editor_name', 'final_version_id', 'submitted_version_id', 'source_note', 'stage', 'position', 'profile_id', 'editing_started_at', 'pay_rate', 'archived_at']
+        : ['title', 'assigned_editor', 'assigned_editor_email', 'assigned_editor_name', 'final_version_id', 'submitted_version_id', 'source_note', 'stage', 'position', 'profile_id', 'editing_started_at', 'archived_at']
+      // Setting what a card pays is an owner/admin call, matching who is
+      // allowed to SEE the rate. A brand 'editor' can run the board without
+      // being able to change anyone's money.
+      if (['owner', 'admin'].includes(role)) allowed.push('pay_rate')
       const updates = {}
       for (const k of allowed) if (k in (req.body || {})) updates[k] = req.body[k]
       // Clearing the assignee (no user_id AND no email) clears the denormalized
