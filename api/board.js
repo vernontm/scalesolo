@@ -63,6 +63,32 @@ async function holdScheduledPost({ card, req }) {
 
 // Attach the covering payout (amount, tx signature, date) to any paid card, so
 // the board can show "Paid" + the crypto transaction to both admin and editor.
+// A card is finished when its post actually published AND nobody is still owed
+// money for it. Posting alone is not enough: an unpaid card has to stay visible
+// or the editor's money quietly disappears off the board. A card with no editor
+// assigned owes nothing, so posting is enough for it.
+function isFinished(card) {
+  if (!card || card.archived_at) return false
+  if (card.post?.status !== 'posted') return false
+  const owesEditor = !!(card.assigned_editor || card.assigned_editor_email)
+  return owesEditor ? !!card.payout_id : true
+}
+
+async function autoArchive(cards) {
+  const due = (cards || []).filter(isFinished).map((c) => c.id)
+  if (!due.length) return []
+  try {
+    await supaFetch(`board_cards?id=in.(${due.join(',')})`, {
+      method: 'PATCH', body: { archived_at: new Date().toISOString() }, prefer: 'return=minimal',
+    })
+    return due
+  } catch {
+    // Never fail a board load because the tidy-up did not stick; it retries on
+    // the next read.
+    return []
+  }
+}
+
 async function attachPayouts(cards) {
   const ids = [...new Set((cards || []).map((c) => c.payout_id).filter(Boolean))]
   if (!ids.length) return cards
@@ -89,7 +115,10 @@ export default async function handler(req, res) {
       const profileId = req.query.profile_id
       const select = '*,brand:profiles(id,business_name),' +
         'versions:board_card_versions!board_card_versions_card_id_fkey(id,version_no,video_url,thumbnail_url,kind,note,uploaded_by,author_name,author_avatar,created_at),' +
-        'comments:board_card_comments(count)'
+        'comments:board_card_comments(count),' +
+        // Named columns only. content_scripts carries far more than a board
+        // card should, and select(*) on an embed is how secrets leak.
+        'post:content_scripts(id,status,scheduled_datetime,last_error,last_error_at)'
       // A contributor (editor) only ever sees cards ASSIGNED to them; owners /
       // admins / editors see every card for their brands. Enforced server-side.
       let filter
@@ -109,9 +138,17 @@ export default async function handler(req, res) {
         if (contribIds.length) clauses.push(`and(profile_id.in.(${contribIds.join(',')}),assigned_editor.eq.${auth.user.id})`)
         filter = `or=(${clauses.join(',')})`
       }
-      const cards = await supaFetch(`board_cards?${filter}&order=position.asc,created_at.asc&select=${select}`)
+      // The board shows live cards; the archive is a separate, explicit view.
+      const wantArchived = req.query.archived === '1'
+      const archiveFilter = wantArchived ? '&archived_at=not.is.null' : '&archived_at=is.null'
+      const order = wantArchived ? 'archived_at.desc' : 'position.asc,created_at.asc'
+      const cards = await supaFetch(`board_cards?${filter}${archiveFilter}&order=${order}&select=${select}`)
       await attachPayouts(cards)
-      return res.status(200).json({ cards: cards || [] })
+      // Retire anything that is genuinely finished. Doing it on read keeps the
+      // board self-healing with no cron to go quiet, and it is idempotent.
+      const retired = wantArchived ? [] : await autoArchive(cards)
+      const live = retired.length ? (cards || []).filter((c) => !retired.includes(c.id)) : (cards || [])
+      return res.status(200).json({ cards: live, archived_now: retired.length })
     }
 
     // ── POST ?action=move ── drag persist
@@ -270,7 +307,7 @@ export default async function handler(req, res) {
       }
       const allowed = role === 'contributor'
         ? ['stage', 'position', 'submitted_version_id', 'editing_started_at']
-        : ['title', 'assigned_editor', 'assigned_editor_email', 'assigned_editor_name', 'final_version_id', 'submitted_version_id', 'source_note', 'stage', 'position', 'profile_id', 'editing_started_at']
+        : ['title', 'assigned_editor', 'assigned_editor_email', 'assigned_editor_name', 'final_version_id', 'submitted_version_id', 'source_note', 'stage', 'position', 'profile_id', 'editing_started_at', 'pay_rate', 'archived_at']
       const updates = {}
       for (const k of allowed) if (k in (req.body || {})) updates[k] = req.body[k]
       // Clearing the assignee (no user_id AND no email) clears the denormalized
@@ -280,6 +317,19 @@ export default async function handler(req, res) {
         updates.assigned_editor_email = null; updates.assigned_editor_name = null
       }
       if (updates.stage && !STAGES.includes(updates.stage)) return res.status(400).json({ error: 'invalid stage' })
+      // null means "use the editor's derived rate", any number must be sane.
+      if ('pay_rate' in updates && updates.pay_rate !== null) {
+        const r = Number(updates.pay_rate)
+        if (!Number.isFinite(r) || r < 0) {
+          return res.status(400).json({ error: 'pay_rate must be a non-negative number, or null to use the editor rate.' })
+        }
+        updates.pay_rate = Math.round(r * 1e6) / 1e6
+      }
+      // A paid card must not be edited away from what was paid for, but
+      // archiving and restoring it is just tidying, so allow it.
+      if ('archived_at' in updates && updates.archived_at !== null && typeof updates.archived_at !== 'string') {
+        return res.status(400).json({ error: 'archived_at must be a timestamp or null.' })
+      }
       // Payout-replay guard: gate who can approve + lock paid cards in place.
       if (updates.stage) {
         const stageErr = stageChangeError(rows[0], updates.stage, role)

@@ -27,6 +27,15 @@ const perVideoRate = (comp) => {
   return q > 0 ? amt / q : 0
 }
 const round6 = (n) => Number(Number(n).toFixed(6))
+// What one card is actually worth. A card may override the editor's derived
+// rate; null means inherit. Everything that used to be count * rate has to go
+// through here instead, or a card with its own rate gets paid the wrong amount.
+export const cardRate = (card, fallbackRate) => {
+  const own = card?.pay_rate
+  return own === null || own === undefined || own === '' ? Number(fallbackRate || 0) : Number(own)
+}
+export const sumRates = (cards, fallbackRate) =>
+  round6((cards || []).reduce((s, c) => s + cardRate(c, fallbackRate), 0))
 const monthKey = (d) => { const dt = new Date(d); return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}` }
 const monthsSince = (started) => {
   const s = new Date(started); const now = new Date()
@@ -53,7 +62,7 @@ async function managerHasEditor(email, brandIds) {
 }
 
 // Derive an editor's numbers from their approved cards + comp + payouts.
-function summarize(comp, cards, payouts) {
+export function summarize(comp, cards, payouts) {
   const rate = perVideoRate(comp)
   const approved = (cards || []).filter((c) => c.approved_at)
   const total = approved.length
@@ -68,7 +77,11 @@ function summarize(comp, cards, payouts) {
     rate, monthly_amount: Number(comp?.monthly_amount || 0), monthly_quota: quota,
     started_on: comp?.started_on || null, solana_address: comp?.solana_address || null,
     total_approved: total, this_month: thisMonth, owed_videos: owedVideos,
-    unpaid_count: unpaid, earned: total * rate, paid, outstanding: unpaid * rate,
+    // Summed per card, never count * rate: cards can carry their own rate.
+    unpaid_count: unpaid,
+    earned: sumRates(approved, rate),
+    paid,
+    outstanding: sumRates(approved.filter((c) => !c.payout_id), rate),
   }
 }
 
@@ -109,7 +122,7 @@ export default async function handler(req, res) {
       const emailList = [...emails]
       const emailIn = emailList.map(encodeURIComponent).join(',')
       const [cards, comps, payouts] = await Promise.all([
-        supaFetch(`board_cards?profile_id=in.(${inBrands})&approved_at=not.is.null&assigned_editor_email=in.(${emailIn})&select=assigned_editor_email,assigned_editor_name,approved_at,payout_id`),
+        supaFetch(`board_cards?profile_id=in.(${inBrands})&approved_at=not.is.null&assigned_editor_email=in.(${emailIn})&select=assigned_editor_email,assigned_editor_name,approved_at,payout_id,pay_rate`),
         supaFetch(`editor_comp?email=in.(${emailIn})&select=*`),
         supaFetch(`editor_payouts?editor_email=in.(${emailIn})&select=editor_email,amount_usdt`),
       ])
@@ -149,7 +162,7 @@ export default async function handler(req, res) {
       if (!email) return res.status(200).json({ summary: null, payouts: [] })
       const [comps, cards, payouts] = await Promise.all([
         supaFetch(`editor_comp?email=eq.${encodeURIComponent(email)}&select=*`),
-        supaFetch(`board_cards?assigned_editor_email=eq.${encodeURIComponent(email)}&approved_at=not.is.null&select=approved_at,payout_id`),
+        supaFetch(`board_cards?assigned_editor_email=eq.${encodeURIComponent(email)}&approved_at=not.is.null&select=approved_at,payout_id,pay_rate`),
         supaFetch(`editor_payouts?editor_email=eq.${encodeURIComponent(email)}&order=created_at.desc&select=amount_usdt,video_count,status,created_at,tx_signature,note`),
       ])
       return res.status(200).json({ summary: summarize(comps?.[0] || null, cards || [], payouts || []), payouts: payouts || [] })
@@ -220,25 +233,29 @@ export default async function handler(req, res) {
 
       // Resolve which cards to pay + the editor. Either a single board card
       // ("Pay" on the card) or an editor's whole unpaid balance (Payouts page).
-      let em, ids
+      let em, ids, payCards
       if (cardId) {
-        const crows = await supaFetch(`board_cards?id=eq.${encodeURIComponent(cardId)}&profile_id=in.(${brandIds.join(',')})&stage=in.(approved,scheduled)&payout_id=is.null&select=id,assigned_editor_email`)
+        const crows = await supaFetch(`board_cards?id=eq.${encodeURIComponent(cardId)}&profile_id=in.(${brandIds.join(',')})&stage=in.(approved,scheduled)&payout_id=is.null&select=id,assigned_editor_email,pay_rate`)
         const cardRow = crows?.[0]
         if (!cardRow) return res.status(400).json({ error: 'That card is not payable (already paid, not yet approved/scheduled, or not on your brands).', code: 'not_payable' })
         if (!cardRow.assigned_editor_email) return res.status(400).json({ error: 'That card has no assigned editor to pay.', code: 'no_editor' })
         em = cardRow.assigned_editor_email.trim().toLowerCase()
         ids = [cardRow.id]
+        payCards = [cardRow]
       } else {
         em = String(req.body?.email || '').trim().toLowerCase()
         if (!em) return res.status(400).json({ error: 'email or card_id required' })
-        const cards = await supaFetch(`board_cards?profile_id=in.(${brandIds.join(',')})&assigned_editor_email=eq.${encodeURIComponent(em)}&approved_at=not.is.null&payout_id=is.null&select=id`)
+        const cards = await supaFetch(`board_cards?profile_id=in.(${brandIds.join(',')})&assigned_editor_email=eq.${encodeURIComponent(em)}&approved_at=not.is.null&payout_id=is.null&select=id,pay_rate`)
         ids = (cards || []).map((c) => c.id)
+        payCards = cards || []
       }
       const comps = await supaFetch(`editor_comp?email=eq.${encodeURIComponent(em)}&select=*`)
       const comp = comps?.[0] || null
       const rate = perVideoRate(comp)
       if (!ids.length) return res.status(400).json({ error: 'Nothing owed to this editor.', code: 'nothing_owed' })
-      const amount = round6(ids.length * rate)
+      // Summed per card. This used to be ids.length * rate, which pays the
+      // wrong amount the moment any card carries its own rate.
+      const amount = sumRates(payCards, rate)
       const wallet = comp?.solana_address || null
       // Cards that reached 'scheduled' without a separate Approve click have no
       // approved_at; stamp it (only when actually paying, never on dry-run) so

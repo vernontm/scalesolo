@@ -17,7 +17,7 @@ import {
   SortableContext, useSortable, verticalListSortingStrategy, arrayMove,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Plus, X, Upload, Film, MessageSquare, Check, CalendarPlus, Trash2, Loader2, Download, Building2, Send, CornerUpLeft, Settings, DollarSign, ExternalLink, AlertCircle } from 'lucide-react'
+import { Plus, X, Upload, Film, MessageSquare, Check, CalendarPlus, Trash2, Loader2, Download, Building2, Send, CornerUpLeft, Settings, DollarSign, ExternalLink, AlertCircle, Archive } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { toast, confirmDialog } from '../components/Toast.jsx'
@@ -134,6 +134,11 @@ function CardBody({ card }) {
         {!card.content_script_id && foldStage(card.stage) === 'scheduled' && (
           <span style={catPill('#ef4444')} title="In Scheduled, but no post was ever created, so nothing will publish">no post</span>
         )}
+        {card.post?.status === 'failed' && (
+          <span style={catPill('#ef4444')} title={card.post?.last_error || 'This post failed to publish'}>FAILED TO POST</span>
+        )}
+        {card.post?.status === 'posted' && <span style={catPill('#22c55e')}>published</span>}
+        {card.archived_at && <span style={catPill('#64748b')}>archived</span>}
         {/* Handoff signal: the assigned editor has picked this card up. */}
         {card.editing_started_at && ['editing', 'needs_revisions'].includes(foldStage(card.stage)) && (
           <span style={catPill('#60a5fa')} title={`Editing started ${new Date(card.editing_started_at).toLocaleString()}`}>
@@ -277,6 +282,11 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged, onPay }) 
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
   const [brandEditors, setBrandEditors] = useState([])
+  // Per-card pay rate. Empty string means "use the editor's usual rate", which
+  // is stored as null; 0 is a real rate and must survive the round trip.
+  const [rateDraft, setRateDraft] = useState(
+    card.pay_rate === null || card.pay_rate === undefined ? '' : String(card.pay_rate)
+  )
   const fileRef = useRef(null)
   const commentRef = useRef(null)
 
@@ -330,6 +340,29 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged, onPay }) 
     if (!versions.length) return null
     return versions.reduce((a, b) => ((a.version_no || 0) >= (b.version_no || 0) ? a : b)).id
   }, [versions])
+
+  // Saved on blur rather than per keystroke: this is money, and a half-typed
+  // "1" from "13.33" should never reach the payout ledger.
+  const saveRate = async () => {
+    const raw = rateDraft.trim()
+    const next = raw === '' ? null : Number(raw)
+    if (next !== null && (!Number.isFinite(next) || next < 0)) {
+      setErr('Enter a rate like 13.33, or clear it to use the editor rate.')
+      setRateDraft(card.pay_rate === null || card.pay_rate === undefined ? '' : String(card.pay_rate))
+      return
+    }
+    const current = card.pay_rate === null || card.pay_rate === undefined ? null : Number(card.pay_rate)
+    if (next === current) return
+    setBusy(true); setErr(null)
+    try {
+      await patchCard({ pay_rate: next })
+      onChanged()
+      toast({ message: next === null ? 'Back to the editor rate for this card.' : `This card now pays $${next.toFixed(2)}.`, kind: 'success' })
+    } catch (e) {
+      setErr(e.message)
+      setRateDraft(current === null ? '' : String(current))
+    } finally { setBusy(false) }
+  }
 
   const patchCard = async (updates) => {
     const r = await fetch(`/api/board?id=${card.id}`, {
@@ -632,6 +665,29 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged, onPay }) 
         )}
 
         {/* Actions */}
+        {card.post?.status === 'failed' && (
+          <div style={{ marginTop: 16, padding: '12px 14px', borderRadius: 10, background: 'rgba(239,68,68,0.12)', border: '1px solid var(--red)', fontSize: 12.5 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontWeight: 700, color: 'var(--red)', marginBottom: 6 }}>
+              <AlertCircle size={15} style={{ flexShrink: 0 }} /> This post failed to publish
+            </div>
+            <div style={{ color: 'var(--text)' }}>{card.post.last_error || 'No error detail was recorded.'}</div>
+            {card.post.last_error_at && (
+              <div style={{ color: 'var(--muted)', marginTop: 4 }}>Failed {new Date(card.post.last_error_at).toLocaleString()}</div>
+            )}
+            <div style={{ color: 'var(--muted)', marginTop: 6 }}>
+              Nothing went out, and it will not retry on its own. Fix the cause on the Schedule page, then reschedule it there.
+            </div>
+          </div>
+        )}
+
+        {card.post?.status === 'posted' && !card.archived_at && (
+          <div style={{ marginTop: 16, padding: '10px 12px', borderRadius: 10, background: 'rgba(34,197,94,0.10)', border: '1px solid rgba(34,197,94,0.5)', fontSize: 12.5 }}>
+            Published. {card.payout_id || !(card.assigned_editor || card.assigned_editor_email)
+              ? 'It archives automatically on the next board refresh.'
+              : 'It stays on the board until the editor is paid, so the payment is not forgotten.'}
+          </div>
+        )}
+
         {stage === 'scheduled' && !card.content_script_id && (
           <div style={{ marginTop: 16, padding: '10px 12px', borderRadius: 10, background: 'rgba(239,68,68,0.10)', border: '1px solid var(--red)', fontSize: 12.5, display: 'flex', gap: 8, alignItems: 'flex-start' }}>
             <AlertCircle size={14} style={{ flexShrink: 0, marginTop: 1, color: 'var(--red)' }} />
@@ -665,6 +721,20 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged, onPay }) 
             </button>
           )}
           {card.content_script_id && <span style={{ fontSize: 12.5, color: 'var(--red)', fontWeight: 600 }}>On the Schedule page →</span>}
+          {isManager && card.archived_at && (
+            <button className="btn-secondary" disabled={busy} onClick={async () => {
+              setBusy(true); setErr(null)
+              try { await patchCard({ archived_at: null }); onChanged(); onClose(); toast({ message: 'Back on the board.', kind: 'success' }) }
+              catch (e) { setErr(e.message); toast({ message: e.message, kind: 'error' }); setBusy(false) }
+            }}><CornerUpLeft size={14} /> Restore to board</button>
+          )}
+          {isManager && !card.archived_at && card.post?.status === 'posted' && (
+            <button className="btn-secondary" disabled={busy} onClick={async () => {
+              setBusy(true); setErr(null)
+              try { await patchCard({ archived_at: new Date().toISOString() }); onChanged(); onClose(); toast({ message: 'Archived.', kind: 'success' }) }
+              catch (e) { setErr(e.message); toast({ message: e.message, kind: 'error' }); setBusy(false) }
+            }}><Archive size={14} /> Archive now</button>
+          )}
           <span style={{ flex: 1 }} />
           {isManager && <button onClick={removeCard} title="Delete card" style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6 }}><Trash2 size={16} /></button>}
         </div>
@@ -686,6 +756,23 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged, onPay }) 
             <span style={{ flex: 1 }} />
             {isManager && !card.payout_id && card.assigned_editor_email && (
               <button className="btn-primary" onClick={() => onPay?.(card)} disabled={busy} style={{ fontSize: 12 }}><DollarSign size={13} /> Pay editor</button>
+            )}
+            {isManager && !card.payout_id && (
+              <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', paddingTop: 8, borderTop: '1px solid var(--border)' }}>
+                <span style={{ fontSize: 11, fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Rate for this card</span>
+                <input
+                  className="input" type="number" min="0" step="0.01" inputMode="decimal"
+                  value={rateDraft}
+                  onChange={(e) => setRateDraft(e.target.value)}
+                  onBlur={saveRate}
+                  placeholder="editor default"
+                  disabled={busy}
+                  style={{ width: 130, fontSize: 12.5 }}
+                />
+                <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+                  {rateDraft === '' ? "Blank uses the editor's usual rate." : 'This card only. Clear it to go back to the usual rate.'}
+                </span>
+              </div>
             )}
           </div>
         )}
@@ -861,6 +948,10 @@ export default function Board() {
   const [showEditors, setShowEditors] = useState(false)
   const [pwPrompt, setPwPrompt] = useState(false)
   const [payCard, setPayCard] = useState(null)
+  // The archive is a separate fetch, not a client-side filter: finished cards
+  // are the ones that pile up, so the board should never load them at all.
+  const [showArchive, setShowArchive] = useState(false)
+  const [unpaidOnly, setUnpaidOnly] = useState(false)
   const isAnyManager = (profiles || []).some((p) => ['owner', 'admin'].includes(p._role))
   // Phone: show one stage at a time (segmented picker) instead of the 5-column
   // horizontal board. Drag is desktop-only; on mobile you move cards via the
@@ -872,12 +963,12 @@ export default function Board() {
 
   const load = useCallback(() => {
     if (!token) return
-    fetch('/api/board', { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`/api/board${showArchive ? '?archived=1' : ''}`, { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => r.json())
       .then((b) => { if (b.error) throw new Error(b.error); setCards(b.cards || []) })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
-  }, [token])
+  }, [token, showArchive])
 
   useEffect(() => { setLoading(true); load() }, [load])
 
@@ -890,12 +981,14 @@ export default function Board() {
     if (!skip) setPwPrompt(true)
   }, [role, session])
 
+  const isUnpaid = (c) => !!c.approved_at && !c.payout_id
   const byStage = useMemo(() => {
     const map = new Map(STAGES.map((s) => [s.key, []]))
-    for (const c of cards) map.get(foldStage(c.stage)).push(c)
+    const shown = unpaidOnly ? cards.filter(isUnpaid) : cards
+    for (const c of shown) map.get(foldStage(c.stage)).push(c)
     for (const arr of map.values()) arr.sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
     return map
-  }, [cards])
+  }, [cards, unpaidOnly])
 
   const findCard = useCallback((id) => cards.find((c) => c.id === id), [cards])
   const findStage = useCallback((id) => { const c = findCard(id); return c ? foldStage(c.stage) : null }, [findCard])
@@ -955,8 +1048,18 @@ export default function Board() {
           <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, margin: 0 }}>Production board</h1>
           {!isMobile && <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 2 }}>All clients in one place. Upload raw footage, review editor versions, approve, then send to Schedule.</div>}
         </div>
-        {isAnyManager && <button className="btn-secondary" onClick={() => setShowEditors(true)}><Settings size={14} /> Settings</button>}
-        <button className="btn-primary" onClick={() => setNewCardStage('editing')}><Plus size={14} /> New card</button>
+        {isAnyManager && (
+          <button className="btn-secondary" onClick={() => setUnpaidOnly((v) => !v)}
+            title="Show only cards that are approved but not paid yet"
+            style={unpaidOnly ? { borderColor: 'var(--red)', color: 'var(--red)' } : undefined}>
+            <DollarSign size={14} /> {unpaidOnly ? 'Unpaid only' : 'All cards'}
+          </button>
+        )}
+        <button className="btn-secondary" onClick={() => { setLoading(true); setShowArchive((v) => !v) }}
+          title={showArchive ? 'Back to the live board' : 'Cards that published and are fully paid'}>
+          <Archive size={14} /> {showArchive ? 'Back to board' : 'Archive'}
+        </button>
+        {!showArchive && <button className="btn-primary" onClick={() => setNewCardStage('editing')}><Plus size={14} /> New card</button>}
       </div>
       {error && <div style={{ marginBottom: 12, padding: '10px 14px', background: 'var(--red-soft)', color: 'var(--red)', borderRadius: 10, fontSize: 13 }}>{error}</div>}
       {isMobile ? (
