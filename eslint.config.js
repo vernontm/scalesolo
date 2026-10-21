@@ -11,6 +11,7 @@
 import js from '@eslint/js'
 import globals from 'globals'
 import reactHooks from 'eslint-plugin-react-hooks'
+import react from 'eslint-plugin-react'
 
 export default [
   // Ignore generated / vendored directories
@@ -143,5 +144,19 @@ export default [
       'react-hooks/rules-of-hooks':   'off',
       'react-hooks/exhaustive-deps':  'off',
     },
+  },
+
+  // Undefined JSX components. Base no-undef does NOT see <Foo />, so using an
+  // icon or component without importing it passes lint AND build, then throws
+  // "Foo is not defined" the moment the page renders and the error boundary
+  // eats the whole screen. That took the production board down on 2026-10-21
+  // over a missing lucide import. This is the one rule that catches it, and it
+  // is exactly the trade this config was written for: a runtime crash turned
+  // into a half-second lint failure.
+  {
+    files: ['**/*.jsx'],
+    plugins: { react },
+    languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
+    rules: { 'react/jsx-no-undef': 'error' },
   },
 ]
