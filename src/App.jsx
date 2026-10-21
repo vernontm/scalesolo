@@ -94,6 +94,10 @@ const contentStyle = {
   margin: '0 auto',
   padding: '32px 40px 56px',
 }
+// The production board scrolls sideways through its columns, so capping it at
+// 1280 wastes every pixel of a wide monitor and clips a column at each edge.
+const contentStyleWide = { ...contentStyle, maxWidth: 'none' }
+const WIDE_PAGES = ['/board']
 const loadingStyle = {
   minHeight: '100vh',
   display: 'grid',
@@ -191,7 +195,7 @@ function AppShell() {
       )}
       <div style={dynamicMain} className="app-main">
         <Header onOpenSidebar={() => setMobileOpen(true)} onToggleSidebar={toggleSidebar} sidebarCollapsed={compact} />
-        <main className="app-content" style={contentStyle}>
+        <main className="app-content" style={WIDE_PAGES.some((p) => pathname.startsWith(p)) ? contentStyleWide : contentStyle}>
           <Suspense fallback={<RouteFallback />}>
           {!pageAllowed && <Navigate to="/board" replace />}
           {/* Profile-keyed Routes: see the comment near useProfile()

@@ -1682,3 +1682,13 @@ a:focus-visible {
    edge group interactive so click/hover on the line still fires; the
    individual sub-paths opt out via their own pointerEvents. */
 .react-flow__edge { pointer-events: auto; }
+
+/* The production board scrolls sideways, so it bleeds out through the page
+   gutter and puts that gutter back inside itself. A column then scrolls to the
+   real window edge instead of being clipped inside the page padding. The
+   values track .app-content's own gutter at each breakpoint: hardcoding one
+   number overflows between 769px and 900px, where the board is still in its
+   desktop layout but the gutter has already shrunk. */
+.board-bleed { margin-inline: -40px; padding-inline: 40px; }
+@media (max-width: 900px) { .board-bleed { margin-inline: -14px; padding-inline: 14px; } }
+@media (max-width: 700px) { .board-bleed { margin-inline: -12px; padding-inline: 12px; } }
