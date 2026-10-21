@@ -751,13 +751,7 @@ function CardDrawer({ card, profiles, token, role, onClose, onChanged, onPay }) 
               catch (e) { setErr(e.message); toast({ message: e.message, kind: 'error' }); setBusy(false) }
             }}><CornerUpLeft size={14} /> Restore to board</button>
           )}
-          {isManager && !card.archived_at && card.post?.status === 'posted' && (
-            <button className="btn-secondary" disabled={busy} onClick={async () => {
-              setBusy(true); setErr(null)
-              try { await patchCard({ archived_at: new Date().toISOString() }); onChanged(); onClose(); toast({ message: 'Archived.', kind: 'success' }) }
-              catch (e) { setErr(e.message); toast({ message: e.message, kind: 'error' }); setBusy(false) }
-            }}><Archive size={14} /> Archive now</button>
-          )}
+
           <span style={{ flex: 1 }} />
           {isManager && <button onClick={removeCard} title="Delete card" style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6 }}><Trash2 size={16} /></button>}
         </div>
@@ -958,6 +952,9 @@ export default function Board() {
   // are the ones that pile up, so the board should never load them at all.
   const [showArchive, setShowArchive] = useState(false)
   const [unpaidOnly, setUnpaidOnly] = useState(false)
+  const [fBrand, setFBrand] = useState('')
+  const [fEditor, setFEditor] = useState('')
+  const [fPost, setFPost] = useState('')
   const isAnyManager = (profiles || []).some((p) => ['owner', 'admin'].includes(p._role))
   // Phone: show one stage at a time (segmented picker) instead of the 5-column
   // horizontal board. Drag is desktop-only; on mobile you move cards via the
@@ -988,13 +985,53 @@ export default function Board() {
   }, [role, session])
 
   const isUnpaid = (c) => !!c.approved_at && !c.payout_id
+  // What a card's post is actually doing, which is not the same as its stage:
+  // a card can sit in Scheduled with no post at all, or with one that failed.
+  const postState = (c) => {
+    if (!c.content_script_id) return 'none'
+    const s = c.post?.status
+    return s === 'posted' ? 'posted' : s === 'failed' ? 'failed' : 'queued'
+  }
+  const POST_LABEL = { posted: 'Published', failed: 'Failed to post', queued: 'Waiting to post', none: 'No post yet' }
+
+  // Options come from the cards actually on the board, so a filter can never
+  // offer something that would return nothing.
+  const filterOptions = useMemo(() => {
+    const brands = new Map()
+    const editors = new Map()
+    const posts = new Set()
+    for (const c of cards) {
+      if (c.profile_id) brands.set(c.profile_id, c.brand?.business_name || 'Unnamed brand')
+      const key = c.assigned_editor_email || ''
+      if (key) editors.set(key, c.assigned_editor_name || key)
+      posts.add(postState(c))
+    }
+    return {
+      brands: [...brands].sort((a, b) => a[1].localeCompare(b[1])),
+      editors: [...editors].sort((a, b) => a[1].localeCompare(b[1])),
+      posts: ['posted', 'queued', 'failed', 'none'].filter((p) => posts.has(p)),
+      hasUnassigned: cards.some((c) => !c.assigned_editor_email),
+    }
+  }, [cards])
+
+  const matches = (c) => {
+    if (unpaidOnly && !isUnpaid(c)) return false
+    if (fBrand && c.profile_id !== fBrand) return false
+    if (fEditor === '__none') { if (c.assigned_editor_email) return false }
+    else if (fEditor && c.assigned_editor_email !== fEditor) return false
+    if (fPost && postState(c) !== fPost) return false
+    return true
+  }
+  const activeFilters = [unpaidOnly, fBrand, fEditor, fPost].filter(Boolean).length
+  const visibleCount = cards.filter(matches).length
+
   const byStage = useMemo(() => {
     const map = new Map(STAGES.map((s) => [s.key, []]))
-    const shown = unpaidOnly ? cards.filter(isUnpaid) : cards
+    const shown = cards.filter(matches)
     for (const c of shown) map.get(foldStage(c.stage)).push(c)
     for (const arr of map.values()) arr.sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
     return map
-  }, [cards, unpaidOnly])
+  }, [cards, unpaidOnly, fBrand, fEditor, fPost])
 
   const findCard = useCallback((id) => cards.find((c) => c.id === id), [cards])
   const findStage = useCallback((id) => { const c = findCard(id); return c ? foldStage(c.stage) : null }, [findCard])
@@ -1054,20 +1091,66 @@ export default function Board() {
           <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, margin: 0 }}>Production board</h1>
           {!isMobile && <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 2 }}>All clients in one place. Upload raw footage, review editor versions, approve, then send to Schedule.</div>}
         </div>
-        {isAnyManager && (
-          <button className="btn-secondary" onClick={() => setUnpaidOnly((v) => !v)}
-            title="Show only cards that are approved but not paid yet"
-            style={unpaidOnly ? { borderColor: 'var(--red)', color: 'var(--red)' } : undefined}>
-            <DollarSign size={14} /> {unpaidOnly ? 'Unpaid only' : 'All cards'}
-          </button>
-        )}
         <button className="btn-secondary" onClick={() => { setLoading(true); setShowArchive((v) => !v) }}
-          title={showArchive ? 'Back to the live board' : 'Cards that published and are fully paid'}>
-          <Archive size={14} /> {showArchive ? 'Back to board' : 'Archive'}
+          title={showArchive ? 'Back to the live board' : 'Opens a list of finished cards. Viewing only, it archives nothing.'}>
+          <Archive size={14} /> {showArchive ? 'Back to board' : 'View archive'}
         </button>
         {!showArchive && <button className="btn-primary" onClick={() => setNewCardStage('editing')}><Plus size={14} /> New card</button>}
       </div>
       {error && <div style={{ marginBottom: 12, padding: '10px 14px', background: 'var(--red-soft)', color: 'var(--red)', borderRadius: 10, fontSize: 13 }}>{error}</div>}
+
+      {showArchive && (
+        <div style={{ marginBottom: 12, padding: '10px 14px', borderRadius: 10, background: 'var(--surface-2)', border: '1px solid var(--border)', fontSize: 12.5, color: 'var(--muted)' }}>
+          Finished work. A card lands here on its own once its post has actually published and the editor has been paid.
+          Nothing is deleted, and opening a card here lets you put it back on the board.
+        </div>
+      )}
+
+      {/* Filters apply to every column at once, so the board stays a board:
+          you still see where the work sits, just less of it. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--muted)' }}>
+          <Filter size={13} /> Filter
+        </span>
+        {filterOptions.brands.length > 1 && (
+          <select className="input" value={fBrand} onChange={(e) => setFBrand(e.target.value)}
+            style={{ maxWidth: 200, fontSize: 12.5, height: 36, borderColor: fBrand ? 'var(--red)' : undefined }}>
+            <option value="">All clients</option>
+            {filterOptions.brands.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+          </select>
+        )}
+        {isAnyManager && (filterOptions.editors.length > 0 || filterOptions.hasUnassigned) && (
+          <select className="input" value={fEditor} onChange={(e) => setFEditor(e.target.value)}
+            style={{ maxWidth: 200, fontSize: 12.5, height: 36, borderColor: fEditor ? 'var(--red)' : undefined }}>
+            <option value="">All editors</option>
+            {filterOptions.editors.map(([email, name]) => <option key={email} value={email}>{name}</option>)}
+            {filterOptions.hasUnassigned && <option value="__none">Unassigned</option>}
+          </select>
+        )}
+        {filterOptions.posts.length > 1 && (
+          <select className="input" value={fPost} onChange={(e) => setFPost(e.target.value)}
+            style={{ maxWidth: 190, fontSize: 12.5, height: 36, borderColor: fPost ? 'var(--red)' : undefined }}>
+            <option value="">Any post status</option>
+            {filterOptions.posts.map((p) => <option key={p} value={p}>{POST_LABEL[p]}</option>)}
+          </select>
+        )}
+        {isAnyManager && (
+          <button className="btn-secondary" onClick={() => setUnpaidOnly((v) => !v)}
+            title="Only cards that are approved but not paid yet"
+            style={{ height: 36, fontSize: 12.5, ...(unpaidOnly ? { borderColor: 'var(--red)', color: 'var(--red)' } : null) }}>
+            <DollarSign size={13} /> Unpaid
+          </button>
+        )}
+        {activeFilters > 0 && (
+          <>
+            <button className="btn-secondary" onClick={() => { setFBrand(''); setFEditor(''); setFPost(''); setUnpaidOnly(false) }}
+              style={{ height: 36, fontSize: 12.5 }}><X size={13} /> Clear</button>
+            <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+              {visibleCount} of {cards.length} card{cards.length === 1 ? '' : 's'}
+            </span>
+          </>
+        )}
+      </div>
       {isMobile ? (
         <div>
           {/* segmented stage picker — only this strip scrolls sideways */}
