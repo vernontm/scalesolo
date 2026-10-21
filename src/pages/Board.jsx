@@ -17,7 +17,7 @@ import {
   SortableContext, useSortable, verticalListSortingStrategy, arrayMove,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Plus, X, Upload, Film, MessageSquare, Check, CalendarPlus, Trash2, Loader2, Download, Building2, Send, CornerUpLeft, Settings, DollarSign, ExternalLink, AlertCircle, Archive } from 'lucide-react'
+import { Plus, X, Upload, Film, MessageSquare, Check, CalendarPlus, Trash2, Loader2, Download, Building2, Send, CornerUpLeft, Settings, DollarSign, ExternalLink, AlertCircle, Archive, Filter } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { toast, confirmDialog } from '../components/Toast.jsx'
