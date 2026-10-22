@@ -34,6 +34,7 @@ const Board         = lazy(() => import('./pages/Board.jsx'))
 const Payouts       = lazy(() => import('./pages/Payouts.jsx'))
 const Forms         = lazy(() => import('./pages/Forms.jsx'))
 const Contacts      = lazy(() => import('./pages/Contacts.jsx'))
+const Email         = lazy(() => import('./pages/Email.jsx'))
 const Profiles      = lazy(() => import('./pages/Profiles.jsx'))
 const Content        = lazy(() => import('./pages/Content.jsx'))
 const Connections    = lazy(() => import('./pages/Connections.jsx'))
@@ -232,7 +233,7 @@ function AppShell() {
                 directly (?beta=1 stickies the localStorage flag the
                 sidebar reads) so existing deep links keep working —
                 they're only hidden from the nav by default. */}
-            <Route path="/email"     element={<Placeholder title="Email engine" hint="Composer, sequences, deliverability. Native sending lands in Milestone 4." />} />
+            <Route path="/email"     element={<Email />} />
             <Route path="/contacts"  element={<Contacts />} />
             <Route path="/pipeline"  element={<Pipeline />} />
             <Route path="/board"     element={<Board />} />

@@ -27,7 +27,8 @@
     { "path": "/api/cron/distill-brand-voice",  "schedule": "30 6 * * *" },
     { "path": "/api/cron/run-scheduled-workflows", "schedule": "* * * * *" },
     { "path": "/api/cron/run-carousel-jobs", "schedule": "* * * * *" },
-    { "path": "/api/cron/cleanup-uploadpost-orphans", "schedule": "*/30 * * * *" }
+    { "path": "/api/cron/cleanup-uploadpost-orphans", "schedule": "*/30 * * * *" },
+    { "path": "/api/cron/email-send", "schedule": "* * * * *" }
   ],
   "functions": {
     "api/carousels/process.js": {
@@ -96,6 +97,15 @@
     "api/mcp.js": {
       "maxDuration": 300,
       "memory": 2048
+    },
+    "api/cron/email-send.js": {
+      "maxDuration": 60
+    },
+    "api/email/campaigns.js": {
+      "maxDuration": 60
+    },
+    "api/email/generate.js": {
+      "maxDuration": 60
     }
   }
 }

@@ -18,6 +18,8 @@ export default [
   {
     ignores: [
       'dist/**',
+      '.vercel/**',
+      '.claude/**',
       'node_modules/**',
       'playwright-report/**',
       'test-results/**',
