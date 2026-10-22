@@ -10,7 +10,7 @@ ScaleSolo sends campaign email through Amazon SES in the VTM AWS project
 |---|---|---|
 | Configuration set | `scalesolo` | TLS required, reputation metrics on, suppresses bounces + complaints |
 | Event destination | `sns-events` on that set | SEND, REJECT, BOUNCE, COMPLAINT, DELIVERY, OPEN, CLICK, RENDERING_FAILURE, DELIVERY_DELAY, SUBSCRIPTION |
-| SNS topic | `arn:aws:sns:us-east-2:063280428943:scalesolo-ses-events` | HTTPS subscription to `https://www.scalesolo.ai/api/email/ses-webhook` |
+| SNS topic | `arn:aws:sns:us-east-2:063280428943:scalesolo-ses-events` | HTTPS subscription to `https://www.scalesolo.ai/api/email/ses-webhook` (confirmed). Topic policy carries an `AllowSESPublish` statement for `ses.amazonaws.com` scoped to the configuration set ARN; without it SES events were silently dropped, which is what the console adds for you and the API does not. |
 | Shared sending identity | `mail.scalesolo.ai` | Easy DKIM (RSA 2048), custom MAIL FROM `bounce.mail.scalesolo.ai` |
 | Account suppression list | bounces + complaints | account wide |
 | IAM user | `scalesolo-vercel-ses` | inline policy `scalesolo-ses-send`: SendEmail, SendBulkEmail, identity create/get/delete, GetAccount, suppression read/write |
