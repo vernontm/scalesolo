@@ -1134,7 +1134,7 @@ function campaignWhen(c) {
   return null
 }
 
-function CampaignChip({ c, onOpen, compact = false }) {
+function CampaignChip({ c, onOpen, compact = false, brandName }) {
   const when = campaignWhen(c)
   const done = ['sent', 'partial'].includes(c.status)
   const time = when ? new Date(when).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : ''
@@ -1142,29 +1142,37 @@ function CampaignChip({ c, onOpen, compact = false }) {
     <div
       onClick={() => onOpen(c)}
       draggable={false}
-      title={`Email: ${c.subject || 'Untitled'}. Click to open it in the composer.`}
+      title={[brandName, `Email: ${c.subject || 'Untitled'}`, done ? 'sent' : 'scheduled'].filter(Boolean).join(' · ') + '. Click to open it in the composer.'}
       style={{
         background: done
           ? 'linear-gradient(135deg, rgba(99,102,241,0.08), rgba(99,102,241,0.03))'
           : 'linear-gradient(135deg, rgba(99,102,241,0.16), rgba(99,102,241,0.06))',
         border: `1px ${done ? 'solid' : 'dashed'} rgba(99,102,241,0.45)`,
         borderLeft: `3px solid ${CAMPAIGN_COLOR}`,
-        borderRadius: 6, padding: compact ? 6 : 12,
-        cursor: 'pointer', display: 'flex', gap: compact ? 6 : 12, alignItems: compact ? 'flex-start' : 'center',
+        borderRadius: 6, padding: compact ? '5px 6px' : 12,
+        cursor: 'pointer', display: 'flex', gap: compact ? 5 : 12,
+        flexDirection: compact ? 'column' : 'row', alignItems: compact ? 'stretch' : 'center',
         fontSize: compact ? 11.5 : 14, color: 'var(--text-soft)',
       }}
     >
       <div style={{
-        width: compact ? 36 : 46, height: compact ? 36 : 46, borderRadius: compact ? 4 : 6, flexShrink: 0,
+        width: compact ? 22 : 46, height: compact ? 22 : 46, borderRadius: 4, flexShrink: 0,
         background: 'rgba(99,102,241,0.14)', border: '1px solid rgba(99,102,241,0.4)',
         display: 'grid', placeItems: 'center', color: CAMPAIGN_COLOR,
       }}>
-        <Mail size={compact ? 16 : 20} />
+        <Mail size={compact ? 13 : 20} />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
+        {brandName && (
+          <div style={{
+            fontSize: compact ? 9 : 10, fontWeight: 800, letterSpacing: '0.07em', textTransform: 'uppercase',
+            color: 'var(--muted)', lineHeight: 1.2, marginBottom: 2,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>{brandName}</div>
+        )}
         <div style={{
-          fontWeight: 600, color: 'var(--text)', fontSize: compact ? 11.5 : 14, lineHeight: 1.3,
-          overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+          fontWeight: 650, color: 'var(--text)', fontSize: compact ? 12 : 14, lineHeight: 1.28,
+          overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: compact ? 3 : 2, WebkitBoxOrient: 'vertical',
         }}>{c.subject || 'Untitled email'}</div>
         <div style={{ fontSize: compact ? 10 : 11.5, color: CAMPAIGN_COLOR, marginTop: 2, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
           <span>{time}</span>
@@ -1183,7 +1191,7 @@ function CampaignChip({ c, onOpen, compact = false }) {
   )
 }
 
-function CalendarView({ items, onOpen, token, onChange, profileId }) {
+function CalendarView({ items, onOpen, token, onChange, profileId, brandName }) {
   const isMobile = useIsMobile(760)
   const navigate = useNavigate()
 
@@ -1345,6 +1353,10 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
   // The specific slot the cursor is over, so only THAT slot glows (lets
   // you aim any slot directly instead of filling top-down).
   const [hoverSlot, setHoverSlot] = useState(null)
+  // Which day is showing everything it has. A day cell is capped at a few
+  // cards so one busy day cannot stretch its whole grid row; clicking the
+  // count opens that day in place.
+  const [expandedDay, setExpandedDay] = useState(null)
 
   // Backlog: unscheduled ready-to-post rows for this brand. Refreshed
   // whenever the calendar items change (so a just-scheduled post leaves
@@ -1564,11 +1576,19 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
         background: 'var(--surface)', border: '1px solid var(--border)',
         borderRadius: 10,
       }}>
-        <div className="cal-header-title" style={{
-          fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700,
-          color: 'var(--text)', flex: 1, minWidth: 140, letterSpacing: '0.02em',
-        }}>
-          {isMobile ? 'Schedule' : viewMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
+        <div className="cal-header-title" style={{ flex: 1, minWidth: 140 }}>
+          <div style={{
+            fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700,
+            color: 'var(--text)', letterSpacing: '0.02em', lineHeight: 1.2,
+          }}>
+            {isMobile ? 'Schedule' : viewMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
+          </div>
+          {brandName && (
+            <div style={{
+              fontSize: 11, fontWeight: 800, letterSpacing: '0.07em', textTransform: 'uppercase',
+              color: 'var(--muted)', marginTop: 2,
+            }}>{brandName}</div>
+          )}
         </div>
         <button
           className="btn-primary cal-header-gen"
@@ -1672,7 +1692,7 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {g.items.map((entry) => {
                   if (entry.campaign) {
-                    return <CampaignChip key={`campaign-${entry.campaign.id}`} c={entry.campaign} onOpen={openCampaign} />
+                    return <CampaignChip key={`campaign-${entry.campaign.id}`} c={entry.campaign} onOpen={openCampaign} brandName={brandName} />
                   }
                   const item = entry.post
                   const hasCover = !!item.cover_image_url
@@ -1701,6 +1721,13 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
                         <div style={{ width: 46, height: 46, borderRadius: 6, background: 'var(--surface-2)', border: '1px solid var(--border)', display: 'grid', placeItems: 'center', color: 'var(--muted)', fontWeight: 700, flexShrink: 0 }}>{item.media_type === 'text' ? '“”' : '?'}</div>
                       )}
                       <div style={{ flex: 1, minWidth: 0 }}>
+                        {brandName && (
+                          <div style={{
+                            fontSize: 9.5, fontWeight: 800, letterSpacing: '0.07em', textTransform: 'uppercase',
+                            color: 'var(--muted)', lineHeight: 1.2, marginBottom: 2,
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          }}>{brandName}</div>
+                        )}
                         <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{item.title || 'Untitled'}</div>
                         <div style={{ fontSize: 11.5, marginTop: 3, color: isPosted ? '#2ecc71' : isPending ? '#f59e0b' : 'var(--muted)', fontWeight: isPosted || isPending ? 700 : 400 }}>
                           {isPosted ? 'Posted' : isPending ? 'Needs approval' : 'Scheduled'}
@@ -1722,7 +1749,7 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
       {!isMobile && (
       <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
         <div style={{
-          width: 250, flexShrink: 0, background: 'var(--surface)',
+          width: 176, flexShrink: 0, background: 'var(--surface)',
           border: '1px solid var(--border)', borderRadius: 10, padding: 10,
           position: 'sticky', top: 12, maxHeight: 'calc(100vh - 200px)', overflowY: 'auto',
         }}>
@@ -1809,6 +1836,11 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
           const k = dayKey(d)
           const dayItems = byDay.get(k) || []
           const dayCampaigns = campaignsByDay.get(k) || []
+          const dayExpanded = expandedDay === k
+          const cap = dayExpanded ? Infinity : 2
+          const shownItems = dayItems.slice(0, cap)
+          const shownCampaigns = dayCampaigns.slice(0, Math.max(0, cap - shownItems.length))
+          const hiddenCount = (dayItems.length - shownItems.length) + (dayCampaigns.length - shownCampaigns.length)
           const isToday = k === todayKey
           const isCurrentMonth = d.getMonth() === viewMonth.getMonth()
           const isDropTarget = !!dragId
@@ -1820,7 +1852,7 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
               style={{
                 background: 'var(--surface)',
                 border: `1px solid ${isToday ? 'rgba(239,68,68,0.45)' : 'var(--border)'}`,
-                borderRadius: 10, padding: 8, minHeight: 120,
+                borderRadius: 10, padding: 8, minHeight: 150,
                 position: 'relative',
                 // Dim days outside the current month so the user knows
                 // what month they're looking at without removing context
@@ -1853,7 +1885,7 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {dayItems.map((item) => {
+                  {shownItems.map((item) => {
                     const isDragging = item.id === dragId
                     // Prefer the generated Instagram cover when one is set —
                     // that's what'll actually appear in the feed, so showing
@@ -1892,7 +1924,7 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
                         onDragStart={(e) => onDragStart(e, item)}
                         onDragEnd={onDragEnd}
                         onClick={() => onOpen(item)}
-                        title={isPosted ? 'Posted — already delivered' : undefined}
+                        title={[brandName, item.title || 'Untitled', isPosted ? 'posted' : isPendingApproval ? 'needs approval' : 'scheduled'].filter(Boolean).join(' · ')}
                         style={{
                           background: isPosted
                             ? 'linear-gradient(135deg, rgba(46,204,113,0.10), rgba(46,204,113,0.04))'
@@ -1905,19 +1937,27 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
                             ? '1px dashed rgba(245,158,11,0.55)'
                             : '1px solid var(--border)',
                           borderLeft: `3px solid ${kindBorder}`,
-                          borderRadius: 6, padding: 6,
+                          borderRadius: 6, padding: '5px 6px',
                           cursor: isPosted ? 'pointer' : 'grab',
                           opacity: isDragging ? 0.5 : isPosted ? 0.85 : 1,
                           fontSize: 11.5, color: 'var(--text-soft)',
-                          display: 'flex', gap: 6, alignItems: 'flex-start',
+                          display: 'flex', flexDirection: 'column', gap: 3,
                           position: 'relative',
                         }}
                       >
+                       {brandName && (
+                         <div style={{
+                           fontSize: 8.5, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase',
+                           color: 'var(--muted)', lineHeight: 1.1,
+                           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                         }}>{brandName}</div>
+                       )}
+                       <div style={{ display: 'flex', gap: 5, alignItems: 'center', minWidth: 0 }}>
                         {thumb ? (
-                          <div style={{ position: 'relative', width: 36, height: 36, flexShrink: 0 }}>
+                          <div style={{ position: 'relative', width: 22, height: 22, flexShrink: 0 }}>
                             {thumbIsVideo
-                              ? <video src={thumb} muted playsInline preload="metadata" style={{ width: 36, height: 36, borderRadius: 4, objectFit: 'cover', background: '#000', display: 'block' }} />
-                              : <img src={thumb} alt="" style={{ width: 36, height: 36, borderRadius: 4, objectFit: 'cover', background: 'var(--surface)', display: 'block' }} />}
+                              ? <video src={thumb} muted playsInline preload="metadata" style={{ width: 22, height: 22, borderRadius: 4, objectFit: 'cover', background: '#000', display: 'block' }} />
+                              : <img src={thumb} alt="" style={{ width: 22, height: 22, borderRadius: 4, objectFit: 'cover', background: 'var(--surface)', display: 'block' }} />}
                             {/* Small "COVER" pill when we're showing the
                                 generated thumbnail rather than the raw
                                 video frame. Helps the user tell at a
@@ -1935,22 +1975,18 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
                           </div>
                         ) : (
                           <div style={{
-                            width: 36, height: 36, borderRadius: 4,
+                            width: 22, height: 22, borderRadius: 4,
                             background: isText ? 'rgba(245,158,11,0.10)' : 'var(--surface)',
                             border: isText ? '1px solid rgba(245,158,11,0.4)' : '1px solid var(--border)',
                             display: 'grid', placeItems: 'center',
                             color: isText ? '#f59e0b' : 'var(--muted)',
                             fontFamily: 'var(--font-display)', fontWeight: 700,
-                            fontSize: isText ? 16 : 11,
+                            fontSize: isText ? 13 : 10,
                             flexShrink: 0,
                           }}>{isText ? '“”' : '?'}</div>
                         )}
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 600, color: 'var(--text)', fontSize: 11.5, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-                            {item.title || 'Untitled'}
-                          </div>
-                          <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 5 }}>
-                            <span>{new Date(item.scheduled_datetime).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>
+                          <div style={{ fontSize: 10, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+                            <span style={{ whiteSpace: 'nowrap' }}>{new Date(item.scheduled_datetime).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>
                             {isPosted && (
                               <span title="Posted" style={{
                                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -1968,15 +2004,29 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
                               }}>Pending</span>
                             )}
                           </div>
-                          {/* Platform icons hidden for a compact card — the
-                              targets live on the post's detail drawer. */}
-                        </div>
+                       </div>
+                       {/* Full card width, so a real title is readable rather
+                           than clipped after three words. */}
+                       <div style={{ fontWeight: 650, color: 'var(--text)', fontSize: 11.5, lineHeight: 1.25, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                         {item.title || 'Untitled'}
+                       </div>
                       </div>
                     )
                   })}
-                  {dayCampaigns.map((c) => (
-                    <CampaignChip key={`campaign-${c.id}`} c={c} onOpen={openCampaign} compact />
+                  {shownCampaigns.map((c) => (
+                    <CampaignChip key={`campaign-${c.id}`} c={c} onOpen={openCampaign} compact brandName={brandName} />
                   ))}
+                  {(hiddenCount > 0 || dayExpanded) && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setExpandedDay(dayExpanded ? null : k) }}
+                      style={{
+                        background: 'transparent', border: '1px dashed var(--border)', borderRadius: 6,
+                        color: 'var(--muted)', cursor: 'pointer', padding: '3px 4px',
+                        fontSize: 10, fontWeight: 700, width: '100%',
+                      }}>
+                      {dayExpanded ? 'Show less' : `+${hiddenCount} more`}
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -1989,6 +2039,29 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
                 // Active for BOTH backlog drags (schedule new) and calendar
                 // drags (move an existing post to this exact time).
                 const active = dragKind === 'backlog' || dragKind === 'calendar'
+                // At rest the chips are not drop targets and nobody clicks
+                // them, so they are pure noise: one line says the same thing.
+                // They come back in full the moment a drag starts, which is
+                // the only time you aim at one.
+                if (!active && !dayExpanded) {
+                  // A day that already has posts does not need its spare
+                  // slots advertised underneath them; that line is for
+                  // finding room, and it comes back on drag or on expand.
+                  if (dayItems.length || dayCampaigns.length) return null
+                  return (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setExpandedDay(k) }}
+                      title={`Open posting slots: ${slots.map((x) => x.label).join(', ')}`}
+                      style={{
+                        marginTop: 6, width: '100%', background: 'transparent',
+                        border: '1px dashed var(--border)', borderRadius: 5,
+                        color: 'var(--muted)', cursor: 'pointer',
+                        fontSize: 9.5, fontWeight: 700, padding: '3px 4px',
+                      }}>
+                      +{slots.length} slot{slots.length === 1 ? '' : 's'}
+                    </button>
+                  )
+                }
                 return (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 6 }}>
                     {slots.map((slot) => {
@@ -2047,7 +2120,7 @@ const TABS = [
 
 export default function Content() {
   const { session } = useAuth()
-  const { selectedProfileId } = useProfile()
+  const { selectedProfileId, selectedProfile } = useProfile()
   const navigate = useNavigate()
   const isMobile = useIsMobile(768)
   // Calendar is the default surface for the Schedule page (backlog +
@@ -2251,7 +2324,7 @@ export default function Content() {
       ) : loading ? (
         <div className="card-flat" style={{ padding: 40, textAlign: 'center' }}><span className="spinner" /></div>
       ) : tab === 'calendar' ? (
-        <CalendarView items={items} onOpen={setOpened} token={session?.access_token} onChange={refresh} profileId={selectedProfileId} />
+        <CalendarView items={items} onOpen={setOpened} token={session?.access_token} onChange={refresh} profileId={selectedProfileId} brandName={selectedProfile?.business_name} />
       ) : (
         <ItemList items={items} emptyHint={TABS.find((t) => t.value === tab).empty} onOpen={setOpened}
           selectMode={selectMode} selected={selected} onToggle={toggleSelect} onEnter={enterSelect} />
