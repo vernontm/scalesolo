@@ -21,6 +21,21 @@ function tallyBy(rows, key) {
   return out
 }
 
+// Connected platform ids from an Upload-Post user profile's social_accounts
+// (twitter normalized to x). Used by connect-link to report live state.
+function platformsFromProfile(profile) {
+  const social = profile?.social_accounts || profile?.profile?.social_accounts || {}
+  const alias = (k) => (String(k).toLowerCase() === 'twitter' ? 'x' : String(k).toLowerCase())
+  const out = new Set()
+  if (social && typeof social === 'object' && !Array.isArray(social)) {
+    for (const [k, v] of Object.entries(social)) {
+      if (v === true || v?.connected || v?.access_token || v?.username) out.add(alias(k))
+    }
+  }
+  for (const p of (profile?.platforms || profile?.connected_platforms || [])) out.add(alias(p))
+  return [...out]
+}
+
 async function brandRow(pid) {
   const rows = await supaFetch(
     `profiles?id=eq.${pid}&select=id,business_name,timezone,default_platforms,uploadpost_platforms,tiktok_force_direct_post&limit=1`,
@@ -219,13 +234,13 @@ async function act(action, pid, body) {
     // to the client. Requires the brand to exist (token scoped to its pid).
     const { resolveUploadpostUser, uploadpostEnsureUserProfile, uploadpostGenerateJwt } = await import('./_lib/uploadpost.js')
     const username = await resolveUploadpostUser(pid)
-    await uploadpostEnsureUserProfile(username)
+    const profile = await uploadpostEnsureUserProfile(username)
     const jwt = await uploadpostGenerateJwt(username, {
       redirect_url: body?.redirect_url,
       connect_title: 'Connect your social accounts',
       connect_description: 'Link the platforms we should publish to.',
     })
-    return { ok: true, profile_id: pid, access_url: jwt.access_url, duration: jwt.duration }
+    return { ok: true, profile_id: pid, access_url: jwt.access_url, duration: jwt.duration, connected_platforms: platformsFromProfile(profile) }
   }
 
   const e = new Error(`Unknown action: ${action}`); e.status = 400; throw e
