@@ -9,8 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Mail, Plus, Send, Clock, Pencil, Trash2, Sparkles, Loader2, CheckCircle2, AlertCircle,
-  RefreshCw, Globe, Copy, X, Eye, Code2, ShieldCheck, Ban, Play,
+  Mail, Plus, Send, Clock, Pencil, Trash2, Sparkles, Loader2, CheckCircle2, AlertCircle, RefreshCw, Globe, Copy, X, Eye, Code2, ShieldCheck, Ban, Play, Users,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
@@ -195,7 +194,7 @@ function Composer({ profileId, campaign, tags, onClose, onSaved }) {
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-card modal-card-xl" onClick={(e) => e.stopPropagation()} style={{ display: 'grid', gap: 16, maxHeight: '92vh', overflow: 'auto' }}>
+      <div className="modal-card modal-card-xl" onClick={(e) => e.stopPropagation()} style={{ display: 'grid', gap: 16, alignContent: 'start' }}>
         <div style={{ ...row, justifyContent: 'space-between' }}>
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, margin: 0 }}>{id ? 'Edit campaign' : 'New campaign'}</h3>
           <button aria-label="Close" onClick={onClose} className="btn-ghost" style={{ padding: 6 }}><X size={18} /></button>
@@ -272,6 +271,189 @@ function Composer({ profileId, campaign, tags, onClose, onSaved }) {
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+
+// ── Subscribers tab ────────────────────────────────────────────────────────
+// The list behind every campaign. Status is shown plainly because the
+// difference matters: unsubscribed is the person's choice and reversible by
+// them, while bounced and complained are permanent and deliberately cannot be
+// flipped back to active.
+const STATUS_STYLE = {
+  active:      { label: 'Active',       color: '#22c55e' },
+  unsubscribed:{ label: 'Unsubscribed', color: '#94a3b8' },
+  bounced:     { label: 'Bounced',      color: '#ef4444' },
+  complained:  { label: 'Spam report',  color: '#ef4444' },
+}
+
+function SubscribersTab({ profileId, canEdit }) {
+  const { session } = useAuth()
+  const token = session?.access_token
+  const [rows, setRows] = useState([])
+  const [counts, setCounts] = useState({})
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState(null)
+  const [q, setQ] = useState('')
+  const [status, setStatus] = useState('')
+  const [offset, setOffset] = useState(0)
+  const [adding, setAdding] = useState(false)
+  const [newEmail, setNewEmail] = useState('')
+  const [newName, setNewName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const LIMIT = 50
+
+  const load = useCallback(async () => {
+    if (!profileId || !token) return
+    setLoading(true); setErr(null)
+    try {
+      const qs = new URLSearchParams({ profile_id: profileId, limit: String(LIMIT), offset: String(offset) })
+      if (q.trim()) qs.set('q', q.trim())
+      if (status) qs.set('status', status)
+      const r = await fetch(`/api/email/contacts?${qs}`, { headers: { Authorization: `Bearer ${token}` } })
+      const b = await r.json()
+      if (!r.ok) throw new Error(b.error || 'Could not load subscribers')
+      setRows(b.contacts || []); setCounts(b.counts || {}); setTotal(b.total || 0)
+    } catch (e) { setErr(e.message) } finally { setLoading(false) }
+  }, [profileId, token, q, status, offset])
+
+  // Debounced so typing in the search box does not fire a request per key.
+  useEffect(() => { const t = setTimeout(load, 250); return () => clearTimeout(t) }, [load])
+
+  const act = async (fn) => {
+    setBusy(true); setErr(null)
+    try { await fn(); await load() } catch (e) { setErr(e.message); toast({ message: e.message, kind: 'error' }) } finally { setBusy(false) }
+  }
+
+  const addOne = () => act(async () => {
+    const r = await fetch('/api/email/contacts', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ profile_id: profileId, email: newEmail, name: newName }),
+    })
+    const b = await r.json()
+    if (!r.ok) throw new Error(b.error || 'Could not add')
+    setNewEmail(''); setNewName(''); setAdding(false)
+    toast({ message: 'Subscriber added.', kind: 'success' })
+  })
+
+  const setStatusFor = (c, next) => act(async () => {
+    const r = await fetch(`/api/email/contacts?id=${c.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ status: next }),
+    })
+    const b = await r.json()
+    if (!r.ok) throw new Error(b.error || 'Could not update')
+    toast({ message: next === 'unsubscribed' ? 'Unsubscribed.' : 'Updated.', kind: 'success' })
+  })
+
+  const remove = (c) => act(async () => {
+    const ok = await confirmDialog({
+      title: 'Remove subscriber?',
+      message: `${c.email} will be deleted from this list. If they bounced or reported spam they stay suppressed, so a later import cannot bring them back.`,
+      confirmText: 'Remove', destructive: true,
+    })
+    if (!ok) return
+    const r = await fetch(`/api/email/contacts?id=${c.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Could not remove')
+    toast({ message: 'Removed.', kind: 'success' })
+  })
+
+  const pill = (key) => {
+    const s = STATUS_STYLE[key] || STATUS_STYLE.active
+    return { fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999, color: s.color, background: `${s.color}1f`, whiteSpace: 'nowrap' }
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 12 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <input className="input" value={q} onChange={(e) => { setOffset(0); setQ(e.target.value) }}
+          placeholder="Search name or email" style={{ flex: 1, minWidth: 180, height: 38, fontSize: 13 }} />
+        <select className="input" value={status} onChange={(e) => { setOffset(0); setStatus(e.target.value) }}
+          style={{ height: 38, fontSize: 13, maxWidth: 180 }}>
+          <option value="">All statuses</option>
+          {Object.entries(STATUS_STYLE).map(([k, s]) => (
+            <option key={k} value={k}>{s.label}{counts[k] ? ` (${counts[k]})` : ''}</option>
+          ))}
+        </select>
+        {canEdit && <button className="btn-primary" onClick={() => setAdding((v) => !v)} style={{ height: 38 }}><Plus size={14} /> Add</button>}
+      </div>
+
+      {adding && canEdit && (
+        <div className="card-flat" style={{ padding: 14, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input className="input" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="email@example.com"
+            style={{ flex: 2, minWidth: 200, height: 38, fontSize: 13 }} />
+          <input className="input" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Name (optional)"
+            style={{ flex: 1, minWidth: 140, height: 38, fontSize: 13 }} />
+          <button className="btn-primary" onClick={addOne} disabled={busy || !newEmail.trim()} style={{ height: 38 }}>Add</button>
+          <button className="btn-ghost" onClick={() => setAdding(false)} style={{ height: 38 }}>Cancel</button>
+        </div>
+      )}
+
+      <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+        {total} subscriber{total === 1 ? '' : 's'}
+        {counts.active ? ` · ${counts.active} active` : ''}
+        {counts.unsubscribed ? ` · ${counts.unsubscribed} unsubscribed` : ''}
+        {(counts.bounced || counts.complained) ? ` · ${(counts.bounced || 0) + (counts.complained || 0)} suppressed` : ''}
+      </div>
+
+      {err && <div style={{ padding: '10px 14px', background: 'var(--red-soft)', color: 'var(--red)', borderRadius: 10, fontSize: 13 }}>{err}</div>}
+
+      {loading ? (
+        <div style={{ padding: 40, textAlign: 'center' }}><span className="spinner" /></div>
+      ) : rows.length === 0 ? (
+        <div className="card-flat" style={{ padding: 44, textAlign: 'center', color: 'var(--muted)' }}>
+          <Users size={30} style={{ marginBottom: 10 }} />
+          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--text)', fontSize: 15, marginBottom: 4 }}>
+            {q || status ? 'Nothing matches that' : 'No subscribers yet'}
+          </div>
+          <div style={{ fontSize: 13 }}>
+            {q || status ? 'Try a different search or status.' : 'Add one above, or collect them from a landing page.'}
+          </div>
+        </div>
+      ) : (
+        <div className="card-flat" style={{ padding: 0, overflow: 'hidden' }}>
+          {rows.map((c, i) => (
+            <div key={c.id} style={{
+              display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px', flexWrap: 'wrap',
+              borderTop: i === 0 ? 'none' : '1px solid var(--border)',
+            }}>
+              <div style={{ flex: 1, minWidth: 180 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 600 }}>{c.name || c.email}</div>
+                {c.name && <div style={{ fontSize: 12, color: 'var(--muted)' }}>{c.email}</div>}
+              </div>
+              {Array.isArray(c.tags) && c.tags.slice(0, 3).map((t) => (
+                <span key={t} style={{ fontSize: 11, color: 'var(--muted)', background: 'var(--surface-2)', borderRadius: 999, padding: '2px 8px' }}>{t}</span>
+              ))}
+              <span style={pill(c.status)}>{(STATUS_STYLE[c.status] || STATUS_STYLE.active).label}</span>
+              {canEdit && (
+                <>
+                  {c.status === 'active' && (
+                    <button className="btn-ghost" onClick={() => setStatusFor(c, 'unsubscribed')} disabled={busy}
+                      style={{ fontSize: 12, padding: '4px 10px' }}>Unsubscribe</button>
+                  )}
+                  {c.status === 'unsubscribed' && (
+                    <button className="btn-ghost" onClick={() => setStatusFor(c, 'active')} disabled={busy}
+                      style={{ fontSize: 12, padding: '4px 10px' }}>Resubscribe</button>
+                  )}
+                  <button onClick={() => remove(c)} disabled={busy} title="Remove"
+                    style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 5 }}>
+                    <Trash2 size={15} />
+                  </button>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {(offset > 0 || rows.length === LIMIT) && (
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+          <button className="btn-secondary" disabled={offset === 0 || loading} onClick={() => setOffset(Math.max(0, offset - LIMIT))}>Previous</button>
+          <button className="btn-secondary" disabled={rows.length < LIMIT || loading} onClick={() => setOffset(offset + LIMIT)}>Next</button>
+        </div>
+      )}
     </div>
   )
 }
@@ -468,16 +650,19 @@ export default function Email() {
   }
 
   return (
+    <>
     <div className="fade-up" style={{ display: 'grid', gap: 16 }}>
       <div style={{ ...row, justifyContent: 'space-between', flexWrap: 'wrap' }}>
         <div style={{ ...row, gap: 4 }}>
           <button className={tab === 'campaigns' ? 'btn-secondary' : 'btn-ghost'} onClick={() => setTab('campaigns')}><Mail size={14} /> Campaigns</button>
+          <button className={tab === 'subscribers' ? 'btn-secondary' : 'btn-ghost'} onClick={() => setTab('subscribers')}><Users size={14} /> Subscribers</button>
           <button className={tab === 'sender' ? 'btn-secondary' : 'btn-ghost'} onClick={() => setTab('sender')}><Globe size={14} /> Sender</button>
         </div>
         {tab === 'campaigns' && <button className="btn-primary" onClick={() => setComposing({})}><Plus size={14} /> New campaign</button>}
       </div>
 
-      {tab === 'sender' ? <SenderTab profileId={selectedProfileId} canAdmin={canAdmin} /> : loading ? (
+      {tab === 'subscribers' ? <SubscribersTab profileId={selectedProfileId} canEdit={canAdmin} />
+        : tab === 'sender' ? <SenderTab profileId={selectedProfileId} canAdmin={canAdmin} /> : loading ? (
         <div style={{ padding: 40, textAlign: 'center' }}><span className="spinner" /></div>
       ) : error ? (
         <div className="card-flat" style={{ padding: 40, textAlign: 'center' }}>
@@ -498,7 +683,12 @@ export default function Email() {
         </div>
       )}
 
-      {composing && <Composer profileId={selectedProfileId} campaign={composing.id ? composing : null} tags={tags} onClose={() => setComposing(null)} onSaved={refresh} />}
     </div>
+    {/* Rendered OUTSIDE the .fade-up wrapper on purpose. That class animates
+        transform with `forwards`, and a transformed ancestor becomes the
+        containing block for position:fixed, so a modal inside it is clipped
+        to the page box instead of filling the viewport. */}
+    {composing && <Composer profileId={selectedProfileId} campaign={composing.id ? composing : null} tags={tags} onClose={() => setComposing(null)} onSaved={refresh} />}
+    </>
   )
 }
