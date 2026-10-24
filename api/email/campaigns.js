@@ -19,6 +19,7 @@ import { setCors, requireUser, supaFetch, assertProfileAccess, assertMinRole, is
 import { resolveSender, renderCampaignEmail, mergeVarsFor, mergeTags, htmlToText } from '../_lib/email-render.js'
 import { sendEmail, isConfigured, configurationSetFor } from '../_lib/email-provider.js'
 import { processCampaign, countRecipients } from '../_lib/email-send-worker.js'
+import { validateTemplate, mergeVarHelp } from '../_lib/email-validate.js'
 
 export const config = { maxDuration: 60 }
 
@@ -166,6 +167,21 @@ export default async function handler(req, res) {
           hint = ' That domain is not verified on Mailgun yet, or the account is still on a sandbox domain.'
         }
         return res.status(502).json({ error: `${sender.provider} refused the test send: ${msg}.${hint}` })
+      }
+    }
+
+    // Refuse to send or schedule a template whose merge tags will not
+    // resolve. The failure is invisible until it is in a subscriber's inbox.
+    if (['send', 'schedule'].includes(action)) {
+      const check = validateTemplate({ subject: c.subject, html: c.html_body, previewText: c.preview_text })
+      if (!check.ok) {
+        return res.status(422).json({
+          error: check.errors[0],
+          errors: check.errors,
+          warnings: check.warnings,
+          merge_variables: mergeVarHelp(),
+          code: 'template_invalid',
+        })
       }
     }
 

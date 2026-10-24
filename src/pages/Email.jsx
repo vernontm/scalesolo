@@ -14,6 +14,9 @@ import {
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
 import { toast, confirmDialog } from '../components/Toast.jsx'
+// Same validator the API gates on, so the composer cannot disagree with the
+// server about whether an email is sendable.
+import { validateTemplate, MERGE_VARS } from '../../api/_lib/email-validate.js'
 
 const label = { fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6, fontFamily: 'var(--font-display)' }
 const muted = { fontSize: 12.5, color: 'var(--muted)' }
@@ -114,6 +117,10 @@ function Composer({ profileId, campaign, tags, onClose, onSaved }) {
   const [busy, setBusy] = useState('')
   const [testTo, setTestTo] = useState('')
   const [schedAt, setSchedAt] = useState(campaign?.scheduled_at ? new Date(campaign.scheduled_at).toISOString().slice(0, 16) : '')
+  const [showVars, setShowVars] = useState(false)
+  // Recomputed as you type, from the same module the API gates on, so the
+  // button state and the server's answer can never disagree.
+  const check = useMemo(() => validateTemplate({ subject, html, previewText: preview }), [subject, html, preview])
   const previewTimer = useRef(null)
 
   const audienceCount = useMemo(() => {
@@ -258,16 +265,59 @@ function Composer({ profileId, campaign, tags, onClose, onSaved }) {
             <div style={label}>Or schedule</div>
             <div style={row}>
               <input className="input" type="datetime-local" value={schedAt} onChange={(e) => setSchedAt(e.target.value)} />
-              <button className="btn-secondary" onClick={schedule} disabled={busy !== ''}>{busy === 'schedule' ? <Loader2 size={14} className="spin" /> : <Clock size={14} />} Schedule</button>
+              <button className="btn-secondary" onClick={schedule} disabled={busy !== '' || !check.ok}
+                title={check.ok ? '' : 'Fix the problems listed below first'}>{busy === 'schedule' ? <Loader2 size={14} className="spin" /> : <Clock size={14} />} Schedule</button>
             </div>
           </div>
+        </div>
+
+        {(check.errors.length > 0 || check.warnings.length > 0) && (
+          <div style={{
+            padding: '12px 14px', borderRadius: 10, fontSize: 12.5, lineHeight: 1.55,
+            background: check.errors.length ? 'rgba(239,68,68,0.10)' : 'rgba(245,158,11,0.10)',
+            border: `1px solid ${check.errors.length ? 'var(--red)' : 'var(--amber)'}`,
+          }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontWeight: 700, marginBottom: 6, color: check.errors.length ? 'var(--red)' : 'var(--amber)' }}>
+              <AlertCircle size={15} />
+              {check.errors.length
+                ? `${check.errors.length} problem${check.errors.length === 1 ? '' : 's'} to fix before this can send`
+                : 'Worth a look before sending'}
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 18 }}>
+              {check.errors.map((e) => <li key={e} style={{ marginBottom: 3 }}>{e}</li>)}
+              {check.warnings.map((w) => <li key={w} style={{ marginBottom: 3, color: 'var(--muted)' }}>{w}</li>)}
+            </ul>
+          </div>
+        )}
+
+        <div>
+          <button className="btn-ghost" onClick={() => setShowVars((v) => !v)} style={{ fontSize: 12, padding: '4px 8px' }}>
+            {showVars ? 'Hide' : 'Show'} the tags you can use
+          </button>
+          {showVars && (
+            <div className="card-flat" style={{ marginTop: 8, padding: 12, fontSize: 12.5, display: 'grid', gap: 6 }}>
+              {MERGE_VARS.map((v) => (
+                <div key={v.tag} style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                  <code style={{ background: 'var(--surface-2)', padding: '2px 6px', borderRadius: 5, color: 'var(--red)', whiteSpace: 'nowrap' }}>{`{{${v.tag}}}`}</code>
+                  <span style={{ color: 'var(--muted)' }}>{v.what}</span>
+                </div>
+              ))}
+              <div style={{ color: 'var(--muted)', marginTop: 4 }}>
+                Double braces only. Single braces like {'{first_name}'} are never filled in.
+              </div>
+            </div>
+          )}
         </div>
 
         <div style={{ ...row, justifyContent: 'space-between', borderTop: '1px solid var(--border)', paddingTop: 14 }}>
           <button className="btn-ghost" onClick={onClose}>Cancel</button>
           <div style={{ ...row, gap: 8 }}>
             <button className="btn-secondary" onClick={saveDraft} disabled={busy !== ''}>{busy === 'save' ? <Loader2 size={14} className="spin" /> : null} Save draft</button>
-            <button className="btn-primary" onClick={sendNow} disabled={busy !== '' || !!senderIssue}>{busy === 'send' ? <Loader2 size={14} className="spin" /> : <Play size={14} />} Send now</button>
+            <button className="btn-primary" onClick={sendNow}
+              disabled={busy !== '' || !!senderIssue || !check.ok}
+              title={check.ok ? '' : 'Fix the problems listed above first'}>
+              {busy === 'send' ? <Loader2 size={14} className="spin" /> : <Play size={14} />} Send now
+            </button>
           </div>
         </div>
       </div>
