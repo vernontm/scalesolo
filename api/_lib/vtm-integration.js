@@ -23,7 +23,7 @@ const MAX_SKEW_MS = 2 * 60 * 1000 // reject tokens issued more than 2 min in the
 export const CAPABILITIES = {
   viewer: [],
   manager: ['edit-caption', 'approve-card', 'move-card'],
-  admin: ['edit-caption', 'approve-card', 'move-card', 'set-defaults'],
+  admin: ['edit-caption', 'approve-card', 'move-card', 'set-defaults', 'set-external-ref', 'create-brand', 'connect-link'],
 }
 export const PHASE2_ACTIONS = new Set([
   'send-to-schedule', 'generate-captions', 'approve-post',

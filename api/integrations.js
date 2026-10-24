@@ -28,9 +28,19 @@ async function brandRow(pid) {
   return Array.isArray(rows) ? rows[0] : null
 }
 
+// contact_email / external_ref arrive with migration 0079. Read them separately
+// and best-effort so overview/clients keep working if the migration is not
+// applied yet (a bare select of a missing column would 400 the whole query).
+async function linkFields(filter) {
+  const rows = await supaFetch(`profiles?${filter}&select=id,contact_email,external_ref`).catch(() => null)
+  if (!Array.isArray(rows)) return new Map()
+  return new Map(rows.map((r) => [r.id, { contact_email: r.contact_email || null, external_ref: r.external_ref || null }]))
+}
+
 async function overview(pid) {
   const brand = await brandRow(pid)
   if (!brand) { const e = new Error('Brand not found'); e.status = 404; throw e }
+  const ex = (await linkFields(`id=eq.${pid}&limit=1`)).get(pid) || { contact_email: null, external_ref: null }
 
   const posts = await supaFetch(
     `content_scripts?profile_id=eq.${pid}&select=status,scheduled_datetime&limit=2000`,
@@ -58,6 +68,8 @@ async function overview(pid) {
   return {
     profile_id: brand.id,
     business_name: brand.business_name,
+    contact_email: ex.contact_email,
+    external_ref: ex.external_ref,
     timezone: brand.timezone || null,
     synced: connected.length > 0 || (posts || []).length > 0,
     connected_platforms: connected,
@@ -89,9 +101,18 @@ async function clients() {
   const rows = await supaFetch(
     'profiles?select=id,business_name,uploadpost_platforms&order=business_name.asc&limit=1000',
   ).catch(() => [])
+  const ex = await linkFields('limit=1000')
   return (rows || []).map((b) => {
     const connected = Array.isArray(b.uploadpost_platforms) ? b.uploadpost_platforms.filter(Boolean) : []
-    return { profile_id: b.id, business_name: b.business_name, connected_platforms: connected, synced: connected.length > 0 }
+    const link = ex.get(b.id) || { contact_email: null, external_ref: null }
+    return {
+      profile_id: b.id,
+      business_name: b.business_name,
+      contact_email: link.contact_email,
+      external_ref: link.external_ref,
+      connected_platforms: connected,
+      synced: connected.length > 0,
+    }
   })
 }
 
@@ -137,6 +158,76 @@ async function act(action, pid, body) {
     return { ok: true, card_id: cardId, stage }
   }
 
+  if (action === 'set-external-ref') {
+    const raw = body?.external_ref
+    const clearing = raw === null || raw === undefined || raw === ''   // unlink
+    if (!clearing && (typeof raw !== 'string' || raw.length > 200)) { const e = new Error('external_ref must be a string up to 200 chars'); e.status = 400; throw e }
+    const ref = clearing ? null : raw.trim()
+    try {
+      // A ref must point at exactly one brand. If another brand already holds
+      // it, refuse rather than create the ambiguity the CRM is avoiding.
+      if (ref) {
+        const held = await supaFetch(`profiles?external_ref=eq.${encodeURIComponent(ref)}&select=id&limit=2`)
+        const other = (Array.isArray(held) ? held : []).find((r) => r.id !== pid)
+        if (other) { const e = new Error('external_ref is already linked to another brand'); e.status = 409; e.code = 'ref_conflict'; throw e }
+      }
+      await supaFetch(`profiles?id=eq.${pid}`, { method: 'PATCH', body: { external_ref: ref }, prefer: 'return=minimal' })
+    } catch (e) {
+      if (e.status === 409) throw e
+      // Column not there yet (migration 0079 unapplied): say so clearly.
+      if (/external_ref|column/i.test(String(e.message || ''))) { const ne = new Error('external_ref is unavailable until migration 0079 is applied'); ne.status = 503; ne.code = 'needs_migration'; throw ne }
+      throw e
+    }
+    return { ok: true, profile_id: pid, external_ref: ref }
+  }
+
+  if (action === 'create-brand') {
+    // The CRM creates a brand up front and stores the returned profile_id, so
+    // the link is exact from the first second. pid is not used (no brand yet).
+    const ownerId = process.env.VTM_INTEGRATION_OWNER_USER_ID
+    if (!ownerId) { const e = new Error('Brand creation is not configured (owner user id missing)'); e.status = 503; e.code = 'not_configured'; throw e }
+    const name = typeof body?.business_name === 'string' ? body.business_name.trim() : ''
+    if (!name) { const e = new Error('business_name required'); e.status = 400; throw e }
+    const insert = { business_name: name.slice(0, 200), is_active: true }
+    if (typeof body.timezone === 'string' && body.timezone) insert.timezone = body.timezone
+    if (typeof body.contact_email === 'string' && body.contact_email) insert.contact_email = body.contact_email.trim()
+    if (typeof body.external_ref === 'string' && body.external_ref) insert.external_ref = body.external_ref.trim()
+    if (insert.external_ref) {
+      const held = await supaFetch(`profiles?external_ref=eq.${encodeURIComponent(insert.external_ref)}&select=id&limit=1`).catch(() => [])
+      if (Array.isArray(held) && held.length) { const e = new Error('external_ref is already linked to another brand'); e.status = 409; e.code = 'ref_conflict'; throw e }
+    }
+    let created
+    try {
+      const rows = await supaFetch('profiles', { method: 'POST', body: insert })
+      created = Array.isArray(rows) ? rows[0] : rows
+    } catch (e) {
+      if (/contact_email|external_ref|column/i.test(String(e.message || ''))) { const ne = new Error('contact_email / external_ref need migration 0079 applied first'); ne.status = 503; ne.code = 'needs_migration'; throw ne }
+      throw e
+    }
+    if (!created?.id) { const e = new Error('Brand creation failed'); e.status = 502; throw e }
+    // Grant the ScaleSolo account owner access so the brand shows up in the app.
+    await supaFetch('profile_access', { method: 'POST', prefer: 'return=minimal', body: { user_id: ownerId, profile_id: created.id, role: 'owner', allowed_pages: ['*'] } }).catch(() => {})
+    return {
+      ok: true, profile_id: created.id, business_name: created.business_name,
+      contact_email: insert.contact_email || null, external_ref: insert.external_ref || null,
+      synced: false, connected_platforms: [],
+    }
+  }
+
+  if (action === 'connect-link') {
+    // Mint the Upload-Post connect link for this brand so the CRM can send it
+    // to the client. Requires the brand to exist (token scoped to its pid).
+    const { resolveUploadpostUser, uploadpostEnsureUserProfile, uploadpostGenerateJwt } = await import('./_lib/uploadpost.js')
+    const username = await resolveUploadpostUser(pid)
+    await uploadpostEnsureUserProfile(username)
+    const jwt = await uploadpostGenerateJwt(username, {
+      redirect_url: body?.redirect_url,
+      connect_title: 'Connect your social accounts',
+      connect_description: 'Link the platforms we should publish to.',
+    })
+    return { ok: true, profile_id: pid, access_url: jwt.access_url, duration: jwt.duration }
+  }
+
   const e = new Error(`Unknown action: ${action}`); e.status = 400; throw e
 }
 
@@ -174,9 +265,10 @@ export default async function handler(req, res) {
         await audit(supaFetch, { actorId: claims.aid, role: claims.role, action, profileId: claims.pid, result: 'denied' })
         return res.status(403).json({ error: `Role "${claims.role}" cannot perform "${action}"` })
       }
-      if (!isUuid(claims.pid)) return res.status(400).json({ error: 'Token is not scoped to a brand' })
+      // create-brand has no brand yet, so it is the one action not scoped to a pid.
+      if (action !== 'create-brand' && !isUuid(claims.pid)) return res.status(400).json({ error: 'Token is not scoped to a brand' })
       const out = await act(action, claims.pid, body)
-      await audit(supaFetch, { actorId: claims.aid, role: claims.role, action, profileId: claims.pid, targetId: out.target_id || out.card_id || null, result: 'ok' })
+      await audit(supaFetch, { actorId: claims.aid, role: claims.role, action, profileId: isUuid(claims.pid) ? claims.pid : (out.profile_id || null), targetId: out.target_id || out.card_id || out.profile_id || null, result: 'ok' })
       return res.status(200).json(out)
     }
     return res.status(400).json({ error: 'Unknown op. Use overview, clients, or act.' })
