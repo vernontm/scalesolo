@@ -203,14 +203,24 @@ async function act(action, pid, body) {
     if (!ownerId) { const e = new Error('Brand creation is not configured (owner user id missing)'); e.status = 503; e.code = 'not_configured'; throw e }
     const name = typeof body?.business_name === 'string' ? body.business_name.trim() : ''
     if (!name) { const e = new Error('business_name required'); e.status = 400; throw e }
+    const ref = (typeof body.external_ref === 'string' && body.external_ref) ? body.external_ref.trim() : null
+
+    // Idempotent on external_ref: a retry with the same ref returns the
+    // existing brand instead of creating a duplicate, so the CRM can safely
+    // send external_ref on every call.
+    if (ref) {
+      const existing = await supaFetch(`profiles?external_ref=eq.${encodeURIComponent(ref)}&select=id,business_name,contact_email,external_ref,uploadpost_platforms&limit=1`).catch(() => [])
+      const row = Array.isArray(existing) ? existing[0] : null
+      if (row) {
+        const connected = Array.isArray(row.uploadpost_platforms) ? row.uploadpost_platforms.filter(Boolean) : []
+        return { ok: true, idempotent: true, profile_id: row.id, business_name: row.business_name, contact_email: row.contact_email || null, external_ref: row.external_ref || null, synced: connected.length > 0, connected_platforms: connected }
+      }
+    }
+
     const insert = { business_name: name.slice(0, 200), is_active: true }
     if (typeof body.timezone === 'string' && body.timezone) insert.timezone = body.timezone
     if (typeof body.contact_email === 'string' && body.contact_email) insert.contact_email = body.contact_email.trim()
-    if (typeof body.external_ref === 'string' && body.external_ref) insert.external_ref = body.external_ref.trim()
-    if (insert.external_ref) {
-      const held = await supaFetch(`profiles?external_ref=eq.${encodeURIComponent(insert.external_ref)}&select=id&limit=1`).catch(() => [])
-      if (Array.isArray(held) && held.length) { const e = new Error('external_ref is already linked to another brand'); e.status = 409; e.code = 'ref_conflict'; throw e }
-    }
+    if (ref) insert.external_ref = ref
     let created
     try {
       const rows = await supaFetch('profiles', { method: 'POST', body: insert })
@@ -222,9 +232,16 @@ async function act(action, pid, body) {
     if (!created?.id) { const e = new Error('Brand creation failed'); e.status = 502; throw e }
     // Grant the ScaleSolo account owner access so the brand shows up in the app.
     await supaFetch('profile_access', { method: 'POST', prefer: 'return=minimal', body: { user_id: ownerId, profile_id: created.id, role: 'owner', allowed_pages: ['*'] } }).catch(() => {})
+    // Best-effort: provision the Upload-Post profile now so a connect link can
+    // be minted the same day. Does not block brand creation if Upload-Post is
+    // down; connect-link ensures it again at mint time regardless.
+    try {
+      const { resolveUploadpostUser, uploadpostEnsureUserProfile } = await import('./_lib/uploadpost.js')
+      await uploadpostEnsureUserProfile(await resolveUploadpostUser(created.id))
+    } catch { /* lazy-created on first connect-link / publish instead */ }
     return {
       ok: true, profile_id: created.id, business_name: created.business_name,
-      contact_email: insert.contact_email || null, external_ref: insert.external_ref || null,
+      contact_email: insert.contact_email || null, external_ref: ref,
       synced: false, connected_platforms: [],
     }
   }
