@@ -9,7 +9,7 @@
 // throttle, where SES accepted nothing, releases the row for the next tick.
 
 import { supaFetch } from './supabase.js'
-import { sendEmail, classifySendError, SES_CONFIGURATION_SET } from './ses.js'
+import { sendEmail, classifySendError, configurationSetFor } from './email-provider.js'
 import { resolveSender, renderCampaignEmail, mergeVarsFor, mergeTags, htmlToText, listUnsubscribeHeaders } from './email-render.js'
 
 const PAGE = 100
@@ -149,17 +149,17 @@ export async function processCampaign(campaignId, { budgetMs = 45000 } = {}) {
           from: fromEmail, fromName, to: email, replyTo, subject, html, text: htmlToText(html),
           headers: listUnsubscribeHeaders(vars.unsubscribe_url),
           tags: { campaign_id: campaign.id, profile_id: campaign.profile_id },
-          configurationSet: SES_CONFIGURATION_SET,
-        })
+          configurationSet: configurationSetFor(sender.provider),
+        }, sender.provider)
         await patchSend(sendRow.id, { status: 'sent', ses_message_id: messageId, sent_at: new Date().toISOString() })
         await bump(campaign.id, 'sent_count')
         stats.sent++
       } catch (e) {
-        const kind = classifySendError(e)
+        const kind = classifySendError(e, sender.provider)
         if (kind === 'throttled' || kind === 'paused') {
-          // SES accepted nothing. Release the claim and let the next tick resume.
+          // Nothing was accepted. Release the claim and let the next tick resume.
           await supaFetch(`email_sends?id=eq.${enc(sendRow.id)}`, { method: 'DELETE', prefer: 'return=minimal' }).catch(() => {})
-          if (kind === 'paused') await patchCampaign(campaign.id, { last_error: `SES sending is paused: ${e.message}` })
+          if (kind === 'paused') await patchCampaign(campaign.id, { last_error: `${sender.provider} sending is paused: ${e.message}` })
           stats.stopped = kind
           break
         }

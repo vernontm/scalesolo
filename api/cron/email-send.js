@@ -7,7 +7,7 @@
 
 import { setCors, supaFetch } from '../_lib/supabase.js'
 import { processCampaign } from '../_lib/email-send-worker.js'
-import { isConfigured } from '../_lib/ses.js'
+import { isConfigured } from '../_lib/email-provider.js'
 
 export const config = { maxDuration: 60 }
 

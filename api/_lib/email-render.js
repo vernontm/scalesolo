@@ -12,7 +12,8 @@
 
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { supaFetch } from './supabase.js'
-import { SHARED_DOMAIN, domainOf } from './ses.js'
+import { sharedDomain, providerNameFor } from './email-provider.js'
+import { domainOf } from './email-domain.js'
 
 const APP_URL = process.env.SCALESOLO_DOMAIN || process.env.FRONTEND_URL || 'https://www.scalesolo.ai'
 
@@ -44,15 +45,20 @@ export async function resolveSender(profileId) {
   const fromDomain = domainOf(config.from_email)
   if (!fromDomain) return { ok: false, reason: 'From address is not a valid email.', profile, config }
 
+  // Each brand names its own provider; the shared fallback domain differs
+  // per provider, so resolve that before deciding whether this From is usable.
+  const provider = providerNameFor(config.email_provider)
+  const shared = sharedDomain(provider)
+
   let verifiedVia = null
-  if (fromDomain === SHARED_DOMAIN) {
+  if (fromDomain === shared) {
     verifiedVia = 'shared'
   } else {
     const rows = await supaFetch(`email_domains?profile_id=eq.${encodeURIComponent(profileId)}&domain=eq.${encodeURIComponent(fromDomain)}&select=status&limit=1`)
     if (rows?.[0]?.status === 'verified') verifiedVia = 'domain'
-    else return { ok: false, reason: `${fromDomain} is not verified yet. Add the DNS records in the Sender tab, or send from ${SHARED_DOMAIN}.`, profile, config }
+    else return { ok: false, reason: `${fromDomain} is not verified yet. Add the DNS records in the Sender tab, or send from ${shared}.`, profile, config, provider }
   }
-  return { ok: true, profile, config, verifiedVia }
+  return { ok: true, profile, config, verifiedVia, provider }
 }
 
 const UNSUB_SECRET = () => process.env.EMAIL_LINK_SECRET || process.env.CRON_SECRET || process.env.SUPABASE_SERVICE_KEY || ''

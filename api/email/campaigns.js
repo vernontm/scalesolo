@@ -17,7 +17,7 @@
 
 import { setCors, requireUser, supaFetch, assertProfileAccess, assertMinRole, isUuid } from '../_lib/supabase.js'
 import { resolveSender, renderCampaignEmail, mergeVarsFor, mergeTags, htmlToText } from '../_lib/email-render.js'
-import { sendEmail, isConfigured, SES_CONFIGURATION_SET } from '../_lib/ses.js'
+import { sendEmail, isConfigured, configurationSetFor } from '../_lib/email-provider.js'
 import { processCampaign, countRecipients } from '../_lib/email-send-worker.js'
 
 export const config = { maxDuration: 60 }
@@ -152,15 +152,20 @@ export default async function handler(req, res) {
           from: cfg.from_email, fromName: c.from_name || cfg.from_name || profile.business_name, to,
           replyTo: c.reply_to || cfg.reply_to_email || null,
           subject: `[Test] ${mergeTags(c.subject, vars)}`, html, text: htmlToText(html),
-          tags: { campaign_id: c.id, profile_id: c.profile_id, test: '1' }, configurationSet: SES_CONFIGURATION_SET,
-        })
+          tags: { campaign_id: c.id, profile_id: c.profile_id, test: '1' }, configurationSet: configurationSetFor(sender.provider),
+        }, sender.provider)
         return res.status(200).json({ ok: true, message_id: messageId })
       } catch (e) {
         const msg = String(e?.message || e)
-        const hint = /not verified/i.test(msg)
-          ? ' The SES account is still in sandbox mode, so test recipients must be verified in AWS first.'
-          : ''
-        return res.status(502).json({ error: `SES refused the test send: ${msg}.${hint}` })
+        let hint = ''
+        if (sender.provider === 'ses' && /not verified/i.test(msg)) {
+          hint = ' The SES account is still in sandbox mode, so test recipients must be verified in AWS first.'
+        } else if (sender.provider === 'mailgun' && /activate your mailgun account/i.test(msg)) {
+          hint = ' Click the activation link Mailgun emailed you, then try again.'
+        } else if (sender.provider === 'mailgun' && /not allowed to send/i.test(msg)) {
+          hint = ' That domain is not verified on Mailgun yet, or the account is still on a sandbox domain.'
+        }
+        return res.status(502).json({ error: `${sender.provider} refused the test send: ${msg}.${hint}` })
       }
     }
 

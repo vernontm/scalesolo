@@ -12,6 +12,7 @@
 
 import { createVerify } from 'node:crypto'
 import { supaFetch } from '../_lib/supabase.js'
+import { bumpCampaign, suppress as suppressAddress, markContacts as markContactStatus } from '../_lib/email-events.js'
 
 const enc = encodeURIComponent
 const EXPECTED_TOPIC = process.env.SES_SNS_TOPIC_ARN || ''
@@ -61,26 +62,11 @@ async function verifySignature(msg) {
   return v.verify(pem, msg.Signature, 'base64')
 }
 
-async function bump(campaignId, col, n = 1) {
-  if (!campaignId) return
-  await supaFetch('rpc/bump_email_campaign_counter', { method: 'POST', body: { p_campaign: campaignId, p_col: col, p_n: n }, prefer: 'return=minimal' })
-    .catch((e) => console.warn('[ses-webhook] bump failed', col, e?.message))
-}
-
-async function suppress({ email, reason, source }) {
-  await supaFetch('email_suppressions', {
-    method: 'POST', prefer: 'return=minimal',
-    body: { profile_id: null, email: String(email).toLowerCase(), reason, source },
-  }).catch((e) => { if (e?.status !== 409) console.warn('[ses-webhook] suppress failed', e?.message) })
-}
-
-async function markContacts(emails, status) {
-  if (!emails.length) return
-  const list = emails.map((e) => `"${String(e).toLowerCase().replace(/"/g, '')}"`).join(',')
-  await supaFetch(`email_contacts?email=in.(${list})&status=eq.active`, {
-    method: 'PATCH', body: { status, updated_at: new Date().toISOString() }, prefer: 'return=minimal',
-  }).catch((e) => console.warn('[ses-webhook] contact status failed', e?.message))
-}
+// Bookkeeping is shared with the Mailgun webhook so a fix to suppression
+// cannot land in one and miss the other. See api/_lib/email-events.js.
+const bump = (campaignId, col, n = 1) => bumpCampaign(campaignId, col, n, 'ses-webhook')
+const suppress = (args) => suppressAddress(args, 'ses-webhook')
+const markContacts = (emails, status) => markContactStatus(emails, status, 'ses-webhook')
 
 async function handleEvent(ev) {
   const type = String(ev.eventType || ev.notificationType || '').toLowerCase()

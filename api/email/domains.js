@@ -10,11 +10,15 @@
 // affects SPF alignment, not whether we can send.
 
 import { setCors, requireUser, supaFetch, assertProfileAccess, assertMinRole, isUuid } from '../_lib/supabase.js'
-import { createDomainIdentity, getDomainIdentity, deleteDomainIdentity, dnsRecordsFor, normalizeDomain, SHARED_DOMAIN, isConfigured } from '../_lib/ses.js'
+import { createDomainIdentity, getDomainIdentity, deleteDomainIdentity, dnsRecordsFor, verifyDomain, sharedDomain, isConfigured, providerNameFor } from '../_lib/email-provider.js'
+import { normalizeDomain } from '../_lib/email-domain.js'
 
 const enc = encodeURIComponent
 const RECHECK_AFTER_MS = 60 * 1000
-const RESERVED = new Set([SHARED_DOMAIN, 'scalesolo.ai', 'www.scalesolo.ai', 'amazonses.com'])
+const RESERVED = new Set([
+  sharedDomain('ses'), sharedDomain('mailgun'),
+  'scalesolo.ai', 'www.scalesolo.ai', 'amazonses.com', 'mailgun.org',
+])
 
 function statusFrom(identity) {
   if (identity.verified && identity.dkimStatus === 'SUCCESS') return 'verified'
@@ -22,12 +26,21 @@ function statusFrom(identity) {
   return 'pending'
 }
 
-function withRecords(row) {
-  return { ...row, records: dnsRecordsFor({ domain: row.domain, dkimTokens: row.dkim_tokens || [], mailFromDomain: row.mail_from_domain }) }
+function withRecords(row, provider) {
+  return {
+    ...row,
+    provider,
+    records: dnsRecordsFor({
+      domain: row.domain,
+      dkimTokens: row.dkim_tokens || [],
+      sendingDnsRecords: Array.isArray(row.dkim_tokens) ? row.dkim_tokens : [],
+      mailFromDomain: row.mail_from_domain,
+    }, provider),
+  }
 }
 
-async function refresh(row) {
-  const identity = await getDomainIdentity(row.domain)
+async function refresh(row, provider) {
+  const identity = await getDomainIdentity(row.domain, provider)
   const status = statusFrom(identity)
   const fields = {
     status,
@@ -56,15 +69,16 @@ export default async function handler(req, res) {
       const profileId = req.query.profile_id
       if (!isUuid(profileId)) return res.status(400).json({ error: 'profile_id required' })
       await assertProfileAccess(userId, profileId)
+      const provider = providerNameFor((await supaFetch(`email_config?profile_id=eq.${enc(profileId)}&select=email_provider&limit=1`))?.[0]?.email_provider)
       let rows = await supaFetch(`email_domains?profile_id=eq.${enc(profileId)}&select=*&order=created_at.asc`) || []
-      if (isConfigured()) {
+      if (isConfigured(provider)) {
         rows = await Promise.all(rows.map(async (r) => {
           const stale = !r.last_checked_at || Date.now() - new Date(r.last_checked_at).getTime() > RECHECK_AFTER_MS
-          if (r.status !== 'verified' && stale) return refresh(r).catch(() => r)
+          if (r.status !== 'verified' && stale) return refresh(r, provider).catch(() => r)
           return r
         }))
       }
-      return res.status(200).json({ domains: rows.map(withRecords), shared_domain: SHARED_DOMAIN })
+      return res.status(200).json({ domains: rows.map((r) => withRecords(r, provider)), shared_domain: sharedDomain(provider), provider })
     }
 
     if (req.method === 'POST' && !action) {

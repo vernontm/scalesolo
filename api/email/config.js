@@ -9,7 +9,8 @@
 // can fill in its settings while DNS propagates.
 
 import { setCors, requireUser, supaFetch, assertProfileAccess, assertMinRole, isUuid } from '../_lib/supabase.js'
-import { SHARED_DOMAIN, domainOf, isConfigured, getAccountStatus } from '../_lib/ses.js'
+import { sharedDomain, isConfigured, getAccountStatus, providerNameFor } from '../_lib/email-provider.js'
+import { domainOf } from '../_lib/email-domain.js'
 import { sharedLocalPart } from '../_lib/email-render.js'
 
 const enc = encodeURIComponent
@@ -33,18 +34,21 @@ export default async function handler(req, res) {
         supaFetch(`email_domains?profile_id=eq.${enc(profileId)}&select=domain,status&order=created_at.asc`),
       ])
       const profile = profiles?.[0] || {}
+      const provider = providerNameFor(configs?.[0]?.email_provider)
+      const shared = sharedDomain(provider)
       let account = null
-      if (isConfigured()) account = await getAccountStatus().catch((e) => ({ error: e?.message || 'unavailable' }))
+      if (isConfigured(provider)) account = await getAccountStatus(provider).catch((e) => ({ error: e?.message || 'unavailable' }))
       return res.status(200).json({
         config: configs?.[0] || null,
         suggested: {
           from_name: profile.business_name || '',
-          from_email: `${sharedLocalPart(profile.business_name)}@${SHARED_DOMAIN}`,
+          from_email: `${sharedLocalPart(profile.business_name)}@${shared}`,
           postal_address: profile.location || '',
         },
-        shared_domain: SHARED_DOMAIN,
+        shared_domain: shared,
+        provider,
         domains: domains || [],
-        configured: isConfigured(),
+        configured: isConfigured(provider),
         account,
       })
     }
@@ -56,17 +60,19 @@ export default async function handler(req, res) {
 
       const fromEmail = String(body.from_email || '').trim().toLowerCase()
       if (!EMAIL_RE.test(fromEmail)) return res.status(400).json({ error: 'Enter a valid from address.' })
+      const saveProvider = providerNameFor(body.email_provider)
+      const saveShared = sharedDomain(saveProvider)
       const d = domainOf(fromEmail)
-      if (d !== SHARED_DOMAIN) {
+      if (d !== saveShared) {
         const own = await supaFetch(`email_domains?profile_id=eq.${enc(body.profile_id)}&domain=eq.${enc(d)}&select=id&limit=1`)
-        if (!own?.length) return res.status(400).json({ error: `Add ${d} under Sending domains before using it as a from address, or use an address on ${SHARED_DOMAIN}.` })
+        if (!own?.length) return res.status(400).json({ error: `Add ${d} under Sending domains before using it as a from address, or use an address on ${saveShared}.` })
       }
       const replyTo = body.reply_to_email ? String(body.reply_to_email).trim().toLowerCase() : null
       if (replyTo && !EMAIL_RE.test(replyTo)) return res.status(400).json({ error: 'Reply-to is not a valid email.' })
 
       const row = {
         profile_id: body.profile_id,
-        email_provider: 'ses',
+        email_provider: saveProvider,
         from_name: String(body.from_name || '').trim().slice(0, 120),
         from_email: fromEmail,
         reply_to_email: replyTo,

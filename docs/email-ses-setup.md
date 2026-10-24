@@ -96,3 +96,45 @@ While the account is in sandbox, every recipient (including test sends)
 must be a verified identity in SES. Verify an address from the SES console
 (Identities > Create identity > Email address) and SES emails a
 confirmation link to it.
+
+## Mailgun (added 2026-10-24)
+
+SES production access was DENIED (case 179269796600754), so that account can
+only reach verified addresses. Mailgun was added alongside it rather than
+replacing it: SES is roughly ten times cheaper, so if the appeal lands a brand
+can be moved back by changing one column.
+
+Which provider a brand uses is `email_config.email_provider` (`ses` or
+`mailgun`). `api/_lib/email-provider.js` dispatches; `api/_lib/ses.js` and
+`api/_lib/mailgun.js` implement the same interface.
+
+| Thing | Value |
+|---|---|
+| Shared sending domain | `mg.scalesolo.ai` (SPF + DKIM + tracking CNAME, verified 2026-10-24) |
+| Per-client domains | `<client>.mg.scalesolo.ai`, created via the Mailgun API + the Namecheap MCP |
+| Event webhook | `https://www.scalesolo.ai/api/email/mailgun-webhook` |
+
+Keep client marketing under `mg.`. Never put it on `send.scalesolo.ai`
+(Resend, transactional) or `mail.scalesolo.ai` (SES): a client's stale list
+must not sit next to password resets and board invites.
+
+### Env (Vercel, never committed)
+
+| Name | Notes |
+|---|---|
+| `MAILGUN_API_KEY` | Private API key. Rotate if it is ever pasted anywhere. |
+| `MAILGUN_WEBHOOK_SIGNING_KEY` | Webhook signing key, NOT the sending key. Without it the webhook rejects everything with 401. |
+| `MAILGUN_SHARED_DOMAIN` | Defaults to `mg.scalesolo.ai`. |
+| `MAILGUN_BASE_URL` | Defaults to `https://api.mailgun.net`. Use the EU host for the EU region. |
+| `EMAIL_PROVIDER` | Default for brands with nothing saved. Defaults to `mailgun`. |
+
+### Two things that fail silently, both covered by tests
+
+Mailgun returns a message id wrapped in angle brackets on send and reports it
+bare on every webhook event. If the two are not normalized, a bounce never
+finds its send row and the address is never suppressed, so it is mailed again
+forever. Both sides go through `normalizeMessageId`.
+
+The webhook verifies Mailgun's HMAC and rejects anything older than 15
+minutes. Without the signing key set, anyone who learns the URL could mark a
+brand's whole list as bounced.
