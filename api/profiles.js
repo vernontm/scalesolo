@@ -79,7 +79,7 @@ export default async function handler(req, res) {
       // onboarding survey can hand us a brand_bible / target_audience /
       // tone all at once and have them stick. Anything else is dropped.
       const ALLOWED = new Set([
-        'business_name','industry','business_type','website_url','owner_name',
+        'business_name','industry','business_type','website_url','owner_name','contact_email',
         'brand_bible','brand_bible_summary','brand_cta',
         'brand_primary_color','brand_secondary_color','logo_url',
         'preferred_tone','target_audience','core_hashtags',
@@ -135,7 +135,7 @@ export default async function handler(req, res) {
       // (incl. context-side helpers like _role / _allowed_pages, and joined
       // access cols) is silently dropped.
       const ALLOWED = new Set([
-        'business_name','owner_name','industry','business_type','website_url',
+        'business_name','owner_name','industry','business_type','website_url','contact_email',
         'brand_bible','brand_bible_summary','brand_cta','brand_primary_color','brand_secondary_color',
         'do_not_say','always_include','default_formats','default_platforms','tiktok_force_direct_post',
         'brand_colors','brand_fonts','logo_url',

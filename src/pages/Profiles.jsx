@@ -51,6 +51,7 @@ const FORM_DEFAULTS = {
   industry: '',
   business_type: '',
   website_url: '',
+  contact_email: '',
   brand_bible: '',
   brand_cta: '',
   do_not_say: [],
@@ -518,6 +519,9 @@ function IdentitySection({ form, set }) {
       </Field>
       <Field label="Website">
         <input className="input" value={form.website_url || ''} onChange={(e) => set('website_url', e.target.value)} placeholder="https://yourbrand.com" />
+      </Field>
+      <Field label="Contact email">
+        <input className="input" type="email" value={form.contact_email || ''} onChange={(e) => set('contact_email', e.target.value)} placeholder="client@brand.com" />
       </Field>
       <Field label="Industry">
         <input className="input" value={form.industry || ''} onChange={(e) => set('industry', e.target.value)} placeholder="Coaching, e-commerce, agency…" />
