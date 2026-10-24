@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
-  Mail, Plus, Send, Clock, Pencil, Trash2, Sparkles, Loader2, CheckCircle2, AlertCircle, RefreshCw, Globe, Copy, X, Eye, Code2, ShieldCheck, Ban, Play, Users, ImagePlus,
+  Mail, Plus, Send, Clock, Pencil, Trash2, Loader2, CheckCircle2, AlertCircle, RefreshCw, Globe, Copy, X, Eye, Code2, ShieldCheck, Ban, Play, Users, ImagePlus,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
@@ -153,7 +153,6 @@ function Composer({ profileId, campaign, tags, onClose, onSaved }) {
   const [tab, setTab] = useState(campaign?.html_body ? 'preview' : 'write')
   const [previewHtml, setPreviewHtml] = useState('')
   const [senderIssue, setSenderIssue] = useState(null)
-  const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState('')
   const [testTo, setTestTo] = useState('')
   const [schedAt, setSchedAt] = useState(campaign?.scheduled_at ? new Date(campaign.scheduled_at).toISOString().slice(0, 16) : '')
@@ -222,14 +221,6 @@ function Composer({ profileId, campaign, tags, onClose, onSaved }) {
     setBusy(what)
     try { await fn() } catch (e) { toast({ message: e.message, kind: 'error' }) } finally { setBusy('') }
   }
-
-  const generate = () => run('ai', async () => {
-    if (!prompt.trim()) throw new Error('Tell the composer what this email is about.')
-    const r = await api('/api/email/generate', { method: 'POST', body: { profile_id: profileId, prompt, current: html || subject ? { subject, html_body: html } : null } })
-    setSubject(r.subject || subject); setPreview(r.preview_text || preview); setHtml(r.html_body || html)
-    setPrompt(''); setTab('preview')
-    toast({ kind: 'success', message: 'Draft ready. Read it through before sending.' })
-  })
 
   const saveDraft = () => run('save', async () => { await save(); toast({ kind: 'success', message: 'Draft saved.' }); onSaved?.() })
 
@@ -303,17 +294,6 @@ function Composer({ profileId, campaign, tags, onClose, onSaved }) {
         <div style={{ ...row, justifyContent: 'space-between' }}>
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, margin: 0 }}>{id ? 'Edit campaign' : 'New campaign'}</h3>
           <button aria-label="Close" onClick={onClose} className="btn-ghost" style={{ padding: 6 }}><X size={18} /></button>
-        </div>
-
-        <div style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 12, padding: 12, display: 'grid', gap: 8 }}>
-          <div style={label}><Sparkles size={12} style={{ verticalAlign: '-2px' }} /> Write with AI</div>
-          <div style={{ ...row, alignItems: 'stretch' }}>
-            <textarea className="textarea" rows={2} value={prompt} onChange={(e) => setPrompt(e.target.value)} style={{ flex: 1 }}
-              placeholder={html ? 'Change something: "make the subject punchier", "add a line about Friday lamb chops"' : 'What is this email about? "Father\'s Day family platter special, 20% off Sunday only"'} />
-            <button className="btn-primary" onClick={generate} disabled={busy !== ''} style={{ alignSelf: 'stretch' }}>
-              {busy === 'ai' ? <Loader2 size={14} className="spin" /> : <Sparkles size={14} />} {html ? 'Revise' : 'Draft'}
-            </button>
-          </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
