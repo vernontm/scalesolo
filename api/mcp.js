@@ -32,18 +32,25 @@ import { TOOLS, impls, resolveBrand, api } from '../mcp/lib.js'
 const SERVER_INFO = { name: 'scalesolo', version: '0.2.0' }
 
 // Local-disk tools cannot work for a remote caller (no shared filesystem).
+// upload_email_image reads a local file too, but it also accepts a url, so it
+// stays available remotely and refuses file_path on its own.
 const REMOTE_EXCLUDE = new Set(['upload_media', 'upload_carousel', 'add_to_backlog', 'batch_add_to_backlog'])
 const REMOTE_TOOLS = TOOLS.filter((t) => !REMOTE_EXCLUDE.has(t.name))
 
 // What each role may call. publish = every remote tool.
 // Results that must be narrowed to a brand-scoped caller's own brands,
 // mapped to the field on each row that carries the brand id.
-const SCOPE_FILTERED = { list_brands: 'id', list_posts: 'profile_id' }
+// Any new tool that can list across brands belongs here or it leaks.
+const SCOPE_FILTERED = { list_brands: 'id', list_posts: 'profile_id', list_email_campaigns: 'profile_id' }
 
-const READONLY = ['list_brands', 'get_brand', 'get_post', 'list_posts', 'next_slots']
+const READONLY = ['list_brands', 'get_brand', 'get_post', 'list_posts', 'next_slots', 'list_email_campaigns']
 const ROLE_TOOLS = {
   readonly: new Set(READONLY),
-  draft: new Set([...READONLY, 'autocaption', 'update_post', 'set_platforms', 'generate_image', 'generate_video', 'add_from_url', 'get_connect_link']),
+  // draft = can prepare anything, can publish nothing. A test send is part of
+  // preparing: it is one message to an address the caller names, and the API
+  // will not let a campaign reach a list without one.
+  draft: new Set([...READONLY, 'autocaption', 'update_post', 'set_platforms', 'generate_image', 'generate_video', 'add_from_url', 'get_connect_link',
+    'create_email_campaign', 'update_email_campaign', 'send_test_email', 'upload_email_image']),
   publish: new Set(REMOTE_TOOLS.map((t) => t.name)),
 }
 
@@ -87,12 +94,19 @@ function audit(caller, tool, args, result, isError, ip) {
   }).catch(() => {})
 }
 
-// Which brand a call targets: tools take either `brand` or `content_id`.
-// null means "not brand specific" (e.g. list_brands), which is always allowed.
+// Which brand a call targets: tools take `brand`, `content_id` or
+// `campaign_id`. null means "not brand specific" (e.g. list_brands), which is
+// always allowed. Every id-shaped argument has to resolve here, or a
+// brand-scoped caller can act on another brand's row just by quoting its id:
+// the scope check below only sees what this function returns.
 async function targetProfileId(args) {
   if (args?.brand) return (await resolveBrand(args.brand))?.id || null
   if (args?.content_id) {
     const row = (await api('/api/content', { query: { id: args.content_id } }))?.item
+    return row?.profile_id || null
+  }
+  if (args?.campaign_id) {
+    const row = (await api('/api/email/campaigns', { query: { id: args.campaign_id } }))?.campaign
     return row?.profile_id || null
   }
   return null

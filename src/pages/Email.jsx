@@ -8,8 +8,9 @@
 // Delivery is server-side (api/email/*). This page never talks to SES.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
-  Mail, Plus, Send, Clock, Pencil, Trash2, Sparkles, Loader2, CheckCircle2, AlertCircle, RefreshCw, Globe, Copy, X, Eye, Code2, ShieldCheck, Ban, Play, Users,
+  Mail, Plus, Send, Clock, Pencil, Trash2, Sparkles, Loader2, CheckCircle2, AlertCircle, RefreshCw, Globe, Copy, X, Eye, Code2, ShieldCheck, Ban, Play, Users, ImagePlus,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
@@ -50,11 +51,43 @@ function useApi() {
 const fmtWhen = (iso) => iso ? new Date(iso).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : ''
 const pct = (n, d) => d ? `${Math.round((n / d) * 100)}%` : '0%'
 
+// Has this campaign been test-sent since its copy last changed? The server
+// gate in api/email/campaigns.js is the one that counts; this mirrors it so
+// the buttons can explain themselves instead of just failing.
+function testCurrent(c) {
+  if (!c?.last_test_sent_at) return false
+  if (!c.content_changed_at) return true
+  return new Date(c.last_test_sent_at).getTime() >= new Date(c.content_changed_at).getTime()
+}
+
+// Put an image where an inbox can fetch it. Two-phase, same endpoint the MCP
+// uses: mint a signed URL, then PUT the bytes straight to Supabase storage so
+// a big image never has to fit inside the serverless request body.
+async function uploadEmailImage({ profileId, token, file }) {
+  const r = await fetch('/api/email/assets?mode=init', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ profile_id: profileId, content_type: file.type, filename: file.name }),
+  })
+  const init = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(init.error || `Could not prepare the upload (${r.status})`)
+  const put = await fetch(init.signed_url, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${init.token}`, 'Content-Type': file.type, 'x-upsert': 'true' },
+    body: file,
+  })
+  if (!put.ok) throw new Error(`Upload failed (${put.status}). Try again.`)
+  return init
+}
+
 // ── Campaign card ──────────────────────────────────────────────────────────
 function CampaignCard({ c, onEdit, onSend, onCancel, onDelete }) {
   const s = STATUS[c.status] || STATUS.draft
   const total = c.total_recipients || 0
   const live = c.status === 'sending'
+  // Mirrors the server gate so Send is visibly blocked rather than failing on
+  // click. The fix lives in the composer, so point there.
+  const tested = testCurrent(c)
   return (
     <div className="card-flat" style={{ padding: 18, display: 'grid', gap: 12 }}>
       <div style={{ ...row, justifyContent: 'space-between', flexWrap: 'wrap' }}>
@@ -72,7 +105,13 @@ function CampaignCard({ c, onEdit, onSend, onCancel, onDelete }) {
         </div>
         <div style={{ ...row, gap: 6 }}>
           {['draft', 'failed', 'scheduled'].includes(c.status) && <button className="btn-ghost" onClick={() => onEdit(c)}><Pencil size={14} /> Edit</button>}
-          {['draft', 'failed'].includes(c.status) && <button className="btn-primary" onClick={() => onSend(c)}><Send size={14} /> Send</button>}
+          {['draft', 'failed'].includes(c.status) && (
+            tested
+              ? <button className="btn-primary" onClick={() => onSend(c)}><Send size={14} /> Send</button>
+              : <button className="btn-primary" onClick={() => onEdit(c)} title="Open it and send yourself a test first">
+                  <Send size={14} /> Test to send
+                </button>
+          )}
           {['scheduled', 'sending'].includes(c.status) && <button className="btn-secondary" onClick={() => onCancel(c)}><Ban size={14} /> {c.status === 'sending' ? 'Stop' : 'Unschedule'}</button>}
           {c.status !== 'sending' && <button className="btn-ghost" aria-label="Delete campaign" onClick={() => onDelete(c)} style={{ color: 'var(--muted)' }}><Trash2 size={14} /></button>}
         </div>
@@ -105,6 +144,7 @@ function CampaignCard({ c, onEdit, onSend, onCancel, onDelete }) {
 // ── Composer ───────────────────────────────────────────────────────────────
 function Composer({ profileId, campaign, tags, onClose, onSaved }) {
   const api = useApi()
+  const { session } = useAuth()
   const [subject, setSubject] = useState(campaign?.subject || '')
   const [preview, setPreview] = useState(campaign?.preview_text || '')
   const [html, setHtml] = useState(campaign?.html_body || '')
@@ -118,10 +158,27 @@ function Composer({ profileId, campaign, tags, onClose, onSaved }) {
   const [testTo, setTestTo] = useState('')
   const [schedAt, setSchedAt] = useState(campaign?.scheduled_at ? new Date(campaign.scheduled_at).toISOString().slice(0, 16) : '')
   const [showVars, setShowVars] = useState(false)
+  // Test-send state, tracked locally so the gate explains itself as you edit
+  // rather than only when the server refuses. Starts from the saved row; a
+  // test sets it, and editing the subject / body / preview clears it, exactly
+  // as api/email/campaigns.js decides it.
+  const [testedAt, setTestedAt] = useState(campaign?.last_test_sent_at || null)
+  const [testStale, setTestStale] = useState(campaign ? !testCurrent(campaign) : true)
+  const copyRef = useRef({ subject: campaign?.subject || '', html: campaign?.html_body || '', preview: campaign?.preview_text || '' })
+  useEffect(() => {
+    const base = copyRef.current
+    const moved = subject !== base.subject || html !== base.html || (preview || '') !== (base.preview || '')
+    if (moved) setTestStale(true)
+  }, [subject, html, preview])
+  const [uploading, setUploading] = useState(false)
+  const [dropping, setDropping] = useState(false)
+  const fileRef = useRef(null)
+  const bodyRef = useRef(null)
   // Recomputed as you type, from the same module the API gates on, so the
   // button state and the server's answer can never disagree.
   const check = useMemo(() => validateTemplate({ subject, html, previewText: preview }), [subject, html, preview])
   const previewTimer = useRef(null)
+  const sendable = check.ok && !testStale
 
   const audienceCount = useMemo(() => {
     if (!audience.length) return tags.contacts
@@ -172,8 +229,42 @@ function Composer({ profileId, campaign, tags, onClose, onSaved }) {
   const sendTest = () => run('test', async () => {
     if (!testTo.trim()) throw new Error('Enter an address for the test.')
     const c = await save()
-    await api('/api/email/campaigns?action=test', { method: 'POST', body: { id: c.id, to: testTo.trim() } })
-    toast({ kind: 'success', message: `Test sent to ${testTo.trim()}.` })
+    const r = await api('/api/email/campaigns?action=test', { method: 'POST', body: { id: c.id, to: testTo.trim() } })
+    // The saved row is now what was tested, so the gate is satisfied until
+    // the copy moves again.
+    copyRef.current = { subject, html, preview }
+    setTestedAt(r.last_test_sent_at || new Date().toISOString())
+    setTestStale(false)
+    onSaved?.()
+    toast({ kind: 'success', message: `Test sent to ${testTo.trim()}. Read it before you send this to the list.` })
+  })
+
+  // Images have to live at a public URL or they arrive as broken boxes, so
+  // the composer uploads and writes the <img> for you. Inserted at the cursor
+  // when the HTML tab is focused, appended otherwise.
+  const insertImages = (files) => run('image', async () => {
+    const list = [...files].filter((f) => f && f.type)
+    if (!list.length) return
+    setUploading(true)
+    try {
+      const snippets = []
+      for (const f of list) {
+        const up = await uploadEmailImage({ profileId, token: session?.access_token, file: f })
+        snippets.push(up.img_html || `<a href="${up.public_url}">${f.name}</a>`)
+      }
+      const block = snippets.join('\n')
+      setHtml((cur) => {
+        const el = bodyRef.current
+        const at = (tab === 'write' && el && typeof el.selectionStart === 'number') ? el.selectionStart : cur.length
+        const before = cur.slice(0, at)
+        const after = cur.slice(at)
+        return `${before}${before && !before.endsWith('\n') ? '\n' : ''}${block}\n${after}`
+      })
+      toast({ kind: 'success', message: `${list.length === 1 ? 'Image' : `${list.length} images`} uploaded and added to the body.` })
+    } finally {
+      setUploading(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
   })
 
   const sendNow = () => run('send', async () => {
@@ -240,13 +331,35 @@ function Composer({ profileId, campaign, tags, onClose, onSaved }) {
           <div style={{ ...row, justifyContent: 'space-between', marginBottom: 6 }}>
             <div style={label}>Body</div>
             <div style={{ ...row, gap: 4 }}>
+              <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,application/pdf" multiple hidden
+                onChange={(e) => e.target.files?.length && insertImages(e.target.files)} />
+              <button type="button" className="btn-ghost" onClick={() => fileRef.current?.click()} disabled={busy !== ''}
+                title="Upload an image and drop it into the body. Email clients cannot show an image that is not hosted, so this uploads it first."
+                style={{ padding: '4px 10px', fontSize: 12 }}>
+                {uploading ? <Loader2 size={13} className="spin" /> : <ImagePlus size={13} />} Image
+              </button>
               <button type="button" className={tab === 'write' ? 'btn-secondary' : 'btn-ghost'} onClick={() => setTab('write')} style={{ padding: '4px 10px', fontSize: 12 }}><Code2 size={13} /> HTML</button>
               <button type="button" className={tab === 'preview' ? 'btn-secondary' : 'btn-ghost'} onClick={() => setTab('preview')} style={{ padding: '4px 10px', fontSize: 12 }}><Eye size={13} /> Preview</button>
             </div>
           </div>
           {tab === 'write' ? (
-            <textarea className="textarea" rows={14} value={html} onChange={(e) => setHtml(e.target.value)} style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12.5 }}
-              placeholder={'Paste HTML, or just write plain paragraphs. Use {{first_name}} to personalize.\n\nThe unsubscribe footer is added automatically.'} />
+            <div
+              onDragOver={(e) => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); setDropping(true) } }}
+              onDragLeave={() => setDropping(false)}
+              onDrop={(e) => {
+                if (!e.dataTransfer?.files?.length) return
+                e.preventDefault(); setDropping(false); insertImages(e.dataTransfer.files)
+              }}
+              style={{ position: 'relative', borderRadius: 10, outline: dropping ? '2px dashed var(--red)' : 'none', outlineOffset: 2 }}
+            >
+              <textarea ref={bodyRef} className="textarea" rows={14} value={html} onChange={(e) => setHtml(e.target.value)} style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12.5 }}
+                placeholder={'Paste HTML, or just write plain paragraphs. Use {{first_name}} to personalize.\n\nDrop an image here to upload it and insert it.\n\nThe unsubscribe footer is added automatically.'} />
+              {dropping && (
+                <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(239,68,68,0.10)', borderRadius: 10, pointerEvents: 'none', fontSize: 13, fontWeight: 700, color: 'var(--red)' }}>
+                  Drop to upload and insert
+                </div>
+              )}
+            </div>
           ) : (
             <iframe title="Email preview" sandbox="" srcDoc={previewHtml} style={{ width: '100%', height: 440, border: '1px solid var(--border)', borderRadius: 10, background: '#f5f7fa' }} />
           )}
@@ -255,7 +368,7 @@ function Composer({ profileId, campaign, tags, onClose, onSaved }) {
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, alignItems: 'end' }}>
           <div>
-            <div style={label}>Send a test first</div>
+            <div style={label}>Send a test first <span style={{ fontWeight: 500, textTransform: 'none', letterSpacing: 0, color: 'var(--red)' }}>(required)</span></div>
             <div style={row}>
               <input className="input" type="email" value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="you@yourbusiness.com" />
               <button className="btn-secondary" onClick={sendTest} disabled={busy !== ''}>{busy === 'test' ? <Loader2 size={14} className="spin" /> : <Send size={14} />} Test</button>
@@ -265,9 +378,27 @@ function Composer({ profileId, campaign, tags, onClose, onSaved }) {
             <div style={label}>Or schedule</div>
             <div style={row}>
               <input className="input" type="datetime-local" value={schedAt} onChange={(e) => setSchedAt(e.target.value)} />
-              <button className="btn-secondary" onClick={schedule} disabled={busy !== '' || !check.ok}
-                title={check.ok ? '' : 'Fix the problems listed below first'}>{busy === 'schedule' ? <Loader2 size={14} className="spin" /> : <Clock size={14} />} Schedule</button>
+              <button className="btn-secondary" onClick={schedule} disabled={busy !== '' || !sendable}
+                title={testStale ? 'Send yourself a test first' : check.ok ? '' : 'Fix the problems listed below first'}>{busy === 'schedule' ? <Loader2 size={14} className="spin" /> : <Clock size={14} />} Schedule</button>
             </div>
+          </div>
+        </div>
+
+        {/* The test-send gate, explained where the decision is made. The
+            server refuses send and schedule without a current test; saying so
+            here beats a toast after the click. */}
+        <div style={{
+          display: 'flex', gap: 8, alignItems: 'baseline', padding: '10px 14px', borderRadius: 10, fontSize: 12.5, lineHeight: 1.55,
+          background: testStale ? 'rgba(245,158,11,0.10)' : 'rgba(34,197,94,0.10)',
+          border: `1px solid ${testStale ? 'var(--amber)' : '#22c55e'}`,
+        }}>
+          {testStale ? <AlertCircle size={15} style={{ color: 'var(--amber)', flexShrink: 0 }} /> : <CheckCircle2 size={15} style={{ color: '#22c55e', flexShrink: 0 }} />}
+          <div>
+            {testStale
+              ? (testedAt
+                ? <>You have edited this since the test on {fmtWhen(testedAt)}. Send another test and read it, then this can go to the list.</>
+                : <>Send yourself a test and read it in a real inbox before this can go to the list. It is the only check that catches an image that does not load or a layout that collapses in Gmail.</>)
+              : <>Tested {fmtWhen(testedAt)}. Ready to send or schedule.</>}
           </div>
         </div>
 
@@ -314,8 +445,8 @@ function Composer({ profileId, campaign, tags, onClose, onSaved }) {
           <div style={{ ...row, gap: 8 }}>
             <button className="btn-secondary" onClick={saveDraft} disabled={busy !== ''}>{busy === 'save' ? <Loader2 size={14} className="spin" /> : null} Save draft</button>
             <button className="btn-primary" onClick={sendNow}
-              disabled={busy !== '' || !!senderIssue || !check.ok}
-              title={check.ok ? '' : 'Fix the problems listed above first'}>
+              disabled={busy !== '' || !!senderIssue || !sendable}
+              title={testStale ? 'Send yourself a test first' : check.ok ? '' : 'Fix the problems listed above first'}>
               {busy === 'send' ? <Loader2 size={14} className="spin" /> : <Play size={14} />} Send now
             </button>
           </div>
@@ -649,7 +780,8 @@ function SenderTab({ profileId, canAdmin }) {
 export default function Email() {
   const api = useApi()
   const { session } = useAuth()
-  const { selectedProfileId, selectedProfile } = useProfile()
+  const { selectedProfileId, selectedProfile, setSelectedProfileId } = useProfile()
+  const [params, setParams] = useSearchParams()
   const [tab, setTab] = useState('campaigns')
   const [campaigns, setCampaigns] = useState([])
   const [tags, setTags] = useState({ tags: [], contacts: 0 })
@@ -670,6 +802,52 @@ export default function Email() {
   }, [api, session, selectedProfileId])
 
   useEffect(() => { setLoading(true); refresh() }, [refresh])
+
+  // Deep link: /email?campaign=<id> opens that campaign for review. This is
+  // what every email MCP tool hands back as review_url, and what the
+  // calendar's campaign cards link to, so an id in a chat window becomes
+  // something a human can actually read before approving.
+  //
+  // The campaign may belong to a brand other than the one selected, so switch
+  // first and open the composer only once the page is showing that brand:
+  // the composer asks the server for the preview and the audience counts per
+  // profile, and opening it early would render them against the wrong one.
+  const [pending, setPending] = useState(null)
+  const wantedId = params.get('campaign')
+  useEffect(() => {
+    if (!wantedId || !session) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const r = await api(`/api/email/campaigns?id=${encodeURIComponent(wantedId)}`)
+        if (cancelled || !r.campaign) return
+        setPending(r.campaign)
+        if (r.campaign.profile_id !== selectedProfileId) setSelectedProfileId(r.campaign.profile_id)
+      } catch (e) {
+        toast({ kind: 'error', message: `Could not open that campaign: ${e.message}` })
+      } finally {
+        // Clear the parameter either way, so a refresh does not reopen it and
+        // a failure does not retry forever.
+        if (!cancelled) {
+          const next = new URLSearchParams(params)
+          next.delete('campaign')
+          setParams(next, { replace: true })
+        }
+      }
+    })()
+    return () => { cancelled = true }
+    // Deliberately keyed on the id alone: re-running on selectedProfileId
+    // would refetch during the brand switch this effect just triggered.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantedId, session])
+
+  useEffect(() => {
+    if (!pending) return
+    if (pending.profile_id !== selectedProfileId) return
+    setTab('campaigns')
+    setComposing(pending)
+    setPending(null)
+  }, [pending, selectedProfileId])
 
   // Poll while something is sending so the counters move.
   const anySending = campaigns.some((c) => c.status === 'sending')

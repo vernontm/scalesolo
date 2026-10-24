@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   Sparkles, Library, Calendar, FileEdit, ClipboardCheck, X, Wand2,
   Check, Trash2, Edit3, Send, Eye, AlertCircle, Link2, Plus, ExternalLink,
-  Image as ImageIcon, Film, RotateCcw, Loader2, Copy, ChevronRight,
+  Image as ImageIcon, Film, RotateCcw, Loader2, Copy, ChevronRight, Mail,
 } from 'lucide-react'
 import BulkUploadView from '../components/BulkUploadView.jsx'
 import SocialAccountsPanel from '../components/SocialAccountsPanel.jsx'
@@ -1115,8 +1115,96 @@ function ItemList({ items, emptyHint, onOpen, selectMode, selected, onToggle, on
 //     resolved against the destination day at the same time of day,
 //     PATCH'd via the existing /api/content endpoint (which auto-
 //     resyncs the Upload-Post job behind the scenes).
+
+// ── Email campaigns on the calendar ───────────────────────────────────────
+// A brand's social posts and its email go out to the same audience in the
+// same week, and until now the only way to see both was to open two pages. These are read-only here: a campaign's time
+// is changed in the composer (a drag would have to re-run the audience count
+// and the sender snapshot that ?action=schedule does), so the cards are
+// deliberately not draggable and never register as drop targets. Clicking one
+// opens it at /email?campaign=<id>.
+const CAMPAIGN_COLOR = '#6366f1'
+
+// The instant a campaign appears on the grid: its send time while it is
+// pending, the time it actually went out once it has. A draft has neither and
+// stays off the calendar, exactly like an unscheduled post.
+function campaignWhen(c) {
+  if (['scheduled', 'sending'].includes(c.status)) return c.scheduled_at || null
+  if (['sent', 'partial'].includes(c.status)) return c.sent_at || c.scheduled_at || null
+  return null
+}
+
+function CampaignChip({ c, onOpen, compact = false }) {
+  const when = campaignWhen(c)
+  const done = ['sent', 'partial'].includes(c.status)
+  const time = when ? new Date(when).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : ''
+  return (
+    <div
+      onClick={() => onOpen(c)}
+      draggable={false}
+      title={`Email: ${c.subject || 'Untitled'}. Click to open it in the composer.`}
+      style={{
+        background: done
+          ? 'linear-gradient(135deg, rgba(99,102,241,0.08), rgba(99,102,241,0.03))'
+          : 'linear-gradient(135deg, rgba(99,102,241,0.16), rgba(99,102,241,0.06))',
+        border: `1px ${done ? 'solid' : 'dashed'} rgba(99,102,241,0.45)`,
+        borderLeft: `3px solid ${CAMPAIGN_COLOR}`,
+        borderRadius: 6, padding: compact ? 6 : 12,
+        cursor: 'pointer', display: 'flex', gap: compact ? 6 : 12, alignItems: compact ? 'flex-start' : 'center',
+        fontSize: compact ? 11.5 : 14, color: 'var(--text-soft)',
+      }}
+    >
+      <div style={{
+        width: compact ? 36 : 46, height: compact ? 36 : 46, borderRadius: compact ? 4 : 6, flexShrink: 0,
+        background: 'rgba(99,102,241,0.14)', border: '1px solid rgba(99,102,241,0.4)',
+        display: 'grid', placeItems: 'center', color: CAMPAIGN_COLOR,
+      }}>
+        <Mail size={compact ? 16 : 20} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontWeight: 600, color: 'var(--text)', fontSize: compact ? 11.5 : 14, lineHeight: 1.3,
+          overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+        }}>{c.subject || 'Untitled email'}</div>
+        <div style={{ fontSize: compact ? 10 : 11.5, color: CAMPAIGN_COLOR, marginTop: 2, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+          <span>{time}</span>
+          <span style={{
+            padding: '1px 5px', borderRadius: 999, background: 'rgba(99,102,241,0.18)',
+            fontSize: compact ? 9 : 10, letterSpacing: '0.04em', textTransform: 'uppercase',
+          }}>Email</span>
+          {!compact && (
+            <span style={{ color: 'var(--muted)', fontWeight: 400 }}>
+              {done ? `sent to ${c.sent_count || 0}` : `${c.total_recipients || 0} recipients`}
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function CalendarView({ items, onOpen, token, onChange, profileId }) {
   const isMobile = useIsMobile(760)
+  const navigate = useNavigate()
+
+  // Scheduled / sent email for this brand. Read-only, and a failure here must
+  // never take the post calendar with it, so errors are swallowed.
+  const [campaigns, setCampaigns] = useState([])
+  useEffect(() => {
+    if (!profileId || !token) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const r = await fetch(`/api/email/campaigns?profile_id=${profileId}`, { headers: { Authorization: `Bearer ${token}` } })
+        if (!r.ok) return
+        const b = await r.json()
+        if (cancelled) return
+        setCampaigns((b.campaigns || []).filter((c) => campaignWhen(c)))
+      } catch { /* the post calendar still works without email */ }
+    })()
+    return () => { cancelled = true }
+  }, [profileId, token])
+  const openCampaign = (c) => navigate(`/email?campaign=${encodeURIComponent(c.id)}`)
   // Monthly-generation modal. Lives here (not on the parent) so a
   // toolbar button on the calendar header can open it; the modal
   // handles its own multi-step flow + chunked /generate-month calls.
@@ -1200,6 +1288,25 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
   const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   const todayKey = dayKey(new Date())
 
+  // Kept in a map of its own rather than merged into byDay: byDay feeds
+  // openSlotsFor, which treats every entry as a taken posting slot, and an
+  // email at 9am must not consume the 9am social slot.
+  const campaignsByDay = useMemo(() => {
+    const m = new Map()
+    for (const c of campaigns) {
+      const when = campaignWhen(c)
+      if (!when) continue
+      const d = new Date(when)
+      const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      if (!m.has(k)) m.set(k, [])
+      m.get(k).push(c)
+    }
+    for (const arr of m.values()) {
+      arr.sort((a, b) => new Date(campaignWhen(a)) - new Date(campaignWhen(b)))
+    }
+    return m
+  }, [campaigns])
+
   // Mobile agenda: every scheduled/posted item from today forward, grouped
   // by day, chronological. A phone can't use a 7-column month grid, so this
   // is the primary schedule view there (tap a row to open + manage it).
@@ -1208,17 +1315,25 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
     const byId = new Map()
     for (const it of items) byId.set(it.id, it)
     for (const it of localItems) byId.set(it.id, it)
-    const rows = [...byId.values()].filter((it) => it.scheduled_datetime && new Date(it.scheduled_datetime) >= start)
-    rows.sort((a, b) => new Date(a.scheduled_datetime) - new Date(b.scheduled_datetime))
+    const rows = [...byId.values()]
+      .filter((it) => it.scheduled_datetime && new Date(it.scheduled_datetime) >= start)
+      .map((it) => ({ at: new Date(it.scheduled_datetime), post: it }))
+    // Email shares the agenda with posts: on a phone this list IS the
+    // schedule, so leaving campaigns out would hide half of what goes out.
+    for (const c of campaigns) {
+      const when = campaignWhen(c)
+      if (when && new Date(when) >= start) rows.push({ at: new Date(when), campaign: c })
+    }
+    rows.sort((a, b) => a.at - b.at)
     const groups = []
     let cur = null
-    for (const it of rows) {
-      const k = dayKey(new Date(it.scheduled_datetime))
-      if (!cur || cur.key !== k) { cur = { key: k, date: new Date(it.scheduled_datetime), items: [] }; groups.push(cur) }
-      cur.items.push(it)
+    for (const r of rows) {
+      const k = dayKey(r.at)
+      if (!cur || cur.key !== k) { cur = { key: k, date: r.at, items: [] }; groups.push(cur) }
+      cur.items.push(r)
     }
     return groups
-  }, [items, localItems])
+  }, [items, localItems, campaigns])
 
   // Drag state — we hold the dragging item id while it's in flight so
   // hover styling on drop targets shows up. dragKind distinguishes a
@@ -1555,7 +1670,11 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
                 {g.key === todayKey ? 'Today · ' : ''}{g.date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {g.items.map((item) => {
+                {g.items.map((entry) => {
+                  if (entry.campaign) {
+                    return <CampaignChip key={`campaign-${entry.campaign.id}`} c={entry.campaign} onOpen={openCampaign} />
+                  }
+                  const item = entry.post
                   const hasCover = !!item.cover_image_url
                   const thumb = hasCover ? item.cover_image_url : (Array.isArray(item.media_urls) && item.media_urls[0])
                   const thumbIsVideo = item.media_type === 'video' && !hasCover
@@ -1689,6 +1808,7 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
         {days.map((d) => {
           const k = dayKey(d)
           const dayItems = byDay.get(k) || []
+          const dayCampaigns = campaignsByDay.get(k) || []
           const isToday = k === todayKey
           const isCurrentMonth = d.getMonth() === viewMonth.getMonth()
           const isDropTarget = !!dragId
@@ -1718,11 +1838,11 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
                   {d.getDate()}
                 </div>
                 <div style={{ fontSize: 10, color: 'var(--muted)', marginLeft: 'auto' }}>
-                  {dayItems.length || ''}
+                  {(dayItems.length + dayCampaigns.length) || ''}
                 </div>
               </div>
 
-              {dayItems.length === 0 ? (
+              {dayItems.length === 0 && dayCampaigns.length === 0 ? (
                 <div style={{
                   fontSize: 11, color: 'var(--muted)',
                   textAlign: 'center', padding: '20px 6px',
@@ -1854,6 +1974,9 @@ function CalendarView({ items, onOpen, token, onChange, profileId }) {
                       </div>
                     )
                   })}
+                  {dayCampaigns.map((c) => (
+                    <CampaignChip key={`campaign-${c.id}`} c={c} onOpen={openCampaign} compact />
+                  ))}
                 </div>
               )}
 

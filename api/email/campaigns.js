@@ -10,6 +10,10 @@
 //   POST   ?action=test     { id, to }         one test message to `to`
 //   POST   ?action=send     { id }             send now (runs the worker inline, cron finishes)
 //   POST   ?action=schedule { id, scheduled_at }
+//
+// send and schedule are gated twice: validateTemplate (422) for merge tags
+// that will not resolve, and a current test send (428) so nobody mails a list
+// an email no human has read in an inbox. See migration 0081.
 //   POST   ?action=cancel   { id }             scheduled -> draft; sending -> stop (partial)
 //   DELETE ?id=<uuid>
 //
@@ -25,6 +29,31 @@ export const config = { maxDuration: 60 }
 
 const enc = encodeURIComponent
 const EDITABLE = ['draft', 'scheduled', 'failed']
+
+// The fields a test send actually proves. Changing one of these invalidates
+// the test; changing the audience, from name or reply-to does not, because
+// none of them changes what the subscriber reads. See migration 0081.
+const TESTED_FIELDS = ['subject', 'html_body', 'preview_text']
+
+// Has this campaign been test-sent since its copy last changed?
+function testIsCurrent(c) {
+  if (!c.last_test_sent_at) return false
+  if (!c.content_changed_at) return true
+  return new Date(c.last_test_sent_at).getTime() >= new Date(c.content_changed_at).getTime()
+}
+
+// One shared refusal so the UI, the API and the MCP all say the same thing
+// and all name the same fix.
+function testGateError(c) {
+  const verb = c.last_test_sent_at ? 'has been edited since its last test send' : 'has never been test-sent'
+  return {
+    error: `This campaign ${verb}. Send a test to yourself and read it in an inbox first, then send or schedule it.`,
+    code: 'test_send_required',
+    last_test_sent_at: c.last_test_sent_at || null,
+    content_changed_at: c.content_changed_at || null,
+    fix: 'POST /api/email/campaigns?action=test { id, to } with your own address, then retry.',
+  }
+}
 
 function sanitize(body) {
   const out = {}
@@ -105,6 +134,12 @@ export default async function handler(req, res) {
       if (!EDITABLE.includes(c.status)) return res.status(409).json({ error: `A ${c.status} campaign cannot be edited.` })
       const fields = sanitize(req.body || {})
       if (fields.subject !== undefined && !fields.subject) return res.status(400).json({ error: 'subject required' })
+      // Only stamp content_changed_at when the copy really moved. The
+      // composer saves on every test send and every schedule, so stamping on
+      // any PATCH would invalidate the test the user just ran and make the
+      // gate unpassable.
+      const copyMoved = TESTED_FIELDS.some((k) => fields[k] !== undefined && fields[k] !== c[k])
+      if (copyMoved) fields.content_changed_at = new Date().toISOString()
       return res.status(200).json({ campaign: await patch(c.id, fields) })
     }
 
@@ -155,7 +190,10 @@ export default async function handler(req, res) {
           subject: `[Test] ${mergeTags(c.subject, vars)}`, html, text: htmlToText(html),
           tags: { campaign_id: c.id, profile_id: c.profile_id, test: '1' }, configurationSet: configurationSetFor(sender.provider),
         }, sender.provider)
-        return res.status(200).json({ ok: true, message_id: messageId })
+        // Stamped only after the provider accepted it. A test that failed to
+        // leave the building proves nothing, so it must not open the gate.
+        const stamped = await patch(c.id, { last_test_sent_at: new Date().toISOString() })
+        return res.status(200).json({ ok: true, message_id: messageId, last_test_sent_at: stamped?.last_test_sent_at || null })
       } catch (e) {
         const msg = String(e?.message || e)
         let hint = ''
@@ -183,6 +221,12 @@ export default async function handler(req, res) {
           code: 'template_invalid',
         })
       }
+      // And refuse one nobody has read in a real inbox. The validator checks
+      // what it can parse; a test send is the only thing that catches a
+      // layout that collapses in Gmail or an image that does not load.
+      // Enforced HERE rather than in the composer so the API, the MCP and any
+      // future caller hit the same gate.
+      if (!testIsCurrent(c)) return res.status(428).json(testGateError(c))
     }
 
     if (action === 'schedule') {

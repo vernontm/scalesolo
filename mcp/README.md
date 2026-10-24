@@ -2,8 +2,11 @@
 
 Drive ScaleSolo's posting pipeline for any of your brands from an MCP client
 (Claude): **upload a video/image → auto-caption → pick a time slot → review →
-schedule**. Nothing is posted automatically — only `schedule_post` reaches
-Upload-Post, and it's meant to run only after you confirm.
+schedule**. Nothing is posted automatically: only `schedule_post` and
+`post_now` reach Upload-Post, and they're meant to run only after you confirm.
+
+Email campaigns work the same way, with `schedule_email_campaign` as the only
+tool that mails a real list. See [Email campaigns](#email-campaigns) below.
 
 ## Setup
 
@@ -71,6 +74,40 @@ Ray / ray@vernontm.com, who owns the 5 brand profiles).
 | `schedule_post` | Schedule to Upload-Post at a chosen slot | **YES** |
 | `post_now` | Publish immediately (no scheduler); Draft-mode brands land in the TikTok inbox now | **YES** |
 
+### Email campaigns
+
+Same shape as the posting tools: everything prepares a draft and hands back a
+`review_url` you open in ScaleSolo, and exactly one tool actually mails the
+list.
+
+| Tool | What it does | Mails anyone? |
+|------|--------------|:---:|
+| `list_email_campaigns` | Find a campaign by brand or status (use this to get a `campaign_id`) | no |
+| `create_email_campaign` | Create a draft email for a brand | no |
+| `update_email_campaign` | Edit a draft's subject, body, preview text or audience | no |
+| `upload_email_image` | Put an image at a public URL so it loads in an inbox, and return email-safe `<img>` markup | no |
+| `send_test_email` | Send ONE copy to an address you name | one test message |
+| `schedule_email_campaign` | Schedule the campaign to the brand's real list | **YES** |
+
+Three things are enforced server side, not just in these tools, so the web UI
+cannot slip past them either:
+
+1. **A test send is required.** `send` and `schedule` are refused (HTTP 428)
+   until a test has gone out for the copy *as it currently stands*. Editing the
+   subject, body or preview text voids the earlier test; changing the audience,
+   from name or reply-to does not.
+2. **Merge tags must resolve.** Only `{{first_name}}`, `{{name}}`, `{{email}}`,
+   `{{business}}` and `{{unsubscribe_url}}` work, double braces only. Anything
+   else is refused (HTTP 422) with the full list of problems and the legal
+   tags, because an unknown tag reaches the subscriber as literal braces.
+3. **Images must be absolute https URLs.** A relative path or an inline `data:`
+   URI looks right in the composer preview and arrives as a broken box in
+   Gmail, so both are refused. Run `upload_email_image` first.
+
+`schedule_email_campaign` will not guess a timezone: pass an offset
+(`2026-11-02T09:00:00-05:00`) or a bare local time plus
+`timezone: "America/Chicago"`.
+
 ## Example flow
 
 > "Schedule this video for RayvaughnCEO: /Users/ray/clips/tip.mp4"
@@ -78,6 +115,14 @@ Ray / ray@vernontm.com, who owns the 5 brand profiles).
 Claude runs `upload_media` → `autocaption` → shows the caption + `next_slots`,
 you tweak with `update_post` and pick a slot, and only after you say go does it
 call `schedule_post`.
+
+> "Draft Sanabreh an email about Friday lamb chops, with this photo:
+> /Users/ray/Desktop/lamb.jpg"
+
+Claude runs `upload_email_image` → `create_email_campaign` with the returned
+markup → gives you the `review_url`. You read it, it sends a test to your own
+address with `send_test_email`, and only after you confirm does it call
+`schedule_email_campaign`.
 
 ## Auth
 

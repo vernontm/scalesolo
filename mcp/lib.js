@@ -78,7 +78,15 @@ async function api(path, { method = 'GET', query, json, headers } = {}) {
   const text = await r.text()
   let body = null
   try { body = text ? JSON.parse(text) : null } catch { body = { raw: text } }
-  if (!r.ok) throw new Error(body?.error || `${method} ${path} failed (${r.status}): ${text.slice(0, 200)}`)
+  if (!r.ok) {
+    const err = new Error(body?.error || `${method} ${path} failed (${r.status}): ${text.slice(0, 200)}`)
+    // Keep the parsed body on the error. The email endpoints answer a failed
+    // validation with the full error list and the legal merge tags, and a
+    // caller that only gets the first line has to guess at the rest.
+    err.status = r.status
+    err.body = body
+    throw err
+  }
   return body
 }
 
@@ -107,6 +115,76 @@ function directDownloadUrl(raw) {
 }
 
 const ok = (obj) => ({ content: [{ type: 'text', text: JSON.stringify(obj, null, 2) }] })
+
+// ── Email campaigns ──────────────────────────────────────────────────
+// Where a human goes to read a draft before approving it. Ray asked for this
+// on every email tool: an id in a chat window is not reviewable, a link is.
+// Email.jsx picks ?campaign= up, switches to that brand and opens the
+// composer on the preview tab.
+const APP_BASE = (process.env.SCALESOLO_APP_BASE || API_BASE).replace(/\/$/, '')
+const campaignUrl = (id) => `${APP_BASE}/email?campaign=${encodeURIComponent(id)}`
+
+// The ONLY merge tags that resolve. Anything else is sent as literal braces,
+// which is why this string is repeated into every tool description that
+// accepts HTML rather than left to the caller to remember.
+const MERGE_TAG_HELP = 'Personalize with {{first_name}}, {{name}}, {{email}}, {{business}} or {{unsubscribe_url}}. Double braces only, nothing else resolves, and an unknown tag is sent to the subscriber as literal text.'
+const IMG_HELP = 'Images must be absolute https URLs: upload them with upload_email_image first. A relative path or an inline data: URI shows as a broken box in Gmail and Outlook and will be refused.'
+
+// Surface a 422 from the shared validator with its errors intact. A caller
+// told "validation failed" has to guess; a caller handed the list and the
+// legal tags can fix it in one turn.
+function emailApiError(e) {
+  const body = e?.body
+  if (body?.code === 'template_invalid') {
+    const lines = [
+      'This email cannot be sent yet:',
+      ...(body.errors || []).map((x) => `  - ${x}`),
+      ...(body.warnings?.length ? ['Worth a look:', ...body.warnings.map((x) => `  - ${x}`)] : []),
+      'Merge tags that actually resolve:',
+      ...(body.merge_variables || []).map((x) => `  ${x}`),
+    ]
+    return new Error(lines.join('\n'))
+  }
+  if (body?.code === 'test_send_required') {
+    return new Error(
+      `${body.error}\nUse send_test_email with your own address (never a client's), read it, then try again.`
+    )
+  }
+  return e
+}
+
+// One campaign, trimmed to the fields a reviewer needs. Never spread the raw
+// row: it carries from_email, the sender snapshot and per-contact counters.
+const campaignOut = (c, brandName) => ({
+  campaign_id: c.id,
+  ...(brandName ? { brand: brandName } : {}),
+  profile_id: c.profile_id,
+  subject: c.subject || null,
+  preview_text: c.preview_text || null,
+  status: c.status,
+  audience_tags: Array.isArray(c.tag_filter) ? c.tag_filter : [],
+  scheduled_at: c.scheduled_at || null,
+  sent_at: c.sent_at || null,
+  total_recipients: c.total_recipients ?? null,
+  last_test_sent_at: c.last_test_sent_at || null,
+  tested_since_last_edit: c.last_test_sent_at
+    ? (!c.content_changed_at || new Date(c.last_test_sent_at) >= new Date(c.content_changed_at))
+    : false,
+  review_url: campaignUrl(c.id),
+})
+
+// Load a campaign and the brand it belongs to, so every tool that takes a
+// campaign_id can report a brand name instead of a bare uuid.
+async function loadCampaign(campaignId) {
+  if (!campaignId) throw new Error('campaign_id is required')
+  const c = (await api('/api/email/campaigns', { query: { id: campaignId } }))?.campaign
+  if (!c) throw new Error('No email campaign with that id.')
+  let brandName = null
+  try {
+    brandName = ((await api('/api/profiles'))?.profiles || []).find((p) => p.id === c.profile_id)?.business_name || null
+  } catch { /* the name is a nicety, the campaign is the answer */ }
+  return { campaign: c, brandName }
+}
 
 // Normalize platform names to what the system stores ("x", not "twitter").
 const PLATFORM_ALIASES = { twitter: 'x' }
@@ -824,6 +902,223 @@ const impls = {
       note: 'Submitted to Upload-Post immediately. In TikTok Draft mode it lands in the app inbox/drafts now.',
     })
   },
+
+  // ── Email campaigns ────────────────────────────────────────────────
+
+  // Find a campaign without knowing its id, the way list_posts does for
+  // social. Returns a bare array so api/mcp.js can narrow it to a
+  // brand-scoped caller's own rows with one generic filter: this tool can
+  // span brands, so it MUST stay in SCOPE_FILTERED keyed on profile_id.
+  async list_email_campaigns({ brand, status, limit = 20 }) {
+    const STATUSES = ['draft', 'scheduled', 'sending', 'sent', 'partial', 'failed']
+    if (status && !STATUSES.includes(status)) {
+      throw new Error(`status must be one of: ${STATUSES.join(', ')}`)
+    }
+    const cap = Math.min(Math.max(Number(limit) || 20, 1), 100)
+    const targets = brand ? [await resolveBrand(brand)] : ((await api('/api/profiles'))?.profiles || [])
+    if (!targets.length) throw new Error('No brands are available to search.')
+
+    const fetchFor = async (p) => {
+      const r = await api('/api/email/campaigns', { query: { profile_id: p.id } })
+      return (r?.campaigns || []).map((c) => ({ brandName: p.business_name, c }))
+    }
+    // A named brand reports its own failure; a fan-out skips a brand that
+    // errors rather than losing the whole search to one bad profile.
+    const perBrand = brand
+      ? [await fetchFor(targets[0])]
+      : await Promise.all(targets.map((p) => fetchFor(p).catch(() => [])))
+
+    const hits = perBrand.flat()
+      .filter(({ c }) => !status || c.status === status)
+      .sort((a, b) => String(b.c.created_at || '').localeCompare(String(a.c.created_at || '')))
+      .slice(0, cap)
+
+    return ok(hits.map(({ brandName, c }) => campaignOut(c, brandName)))
+  },
+
+  async create_email_campaign({ brand, subject, html, preview_text, audience_tags }) {
+    const profile = await resolveBrand(brand)
+    if (!String(subject || '').trim()) throw new Error('subject is required')
+    if (!String(html || '').trim()) throw new Error('html is required (plain paragraphs are fine, they get wrapped)')
+    const created = await api('/api/email/campaigns', {
+      method: 'POST',
+      json: {
+        profile_id: profile.id,
+        subject,
+        html_body: html,
+        ...(preview_text !== undefined ? { preview_text } : {}),
+        ...(Array.isArray(audience_tags) ? { tag_filter: audience_tags } : {}),
+      },
+    }).catch((e) => { throw emailApiError(e) })
+    const c = created?.campaign
+    if (!c?.id) throw new Error('Campaign created but no id came back.')
+    return ok({
+      ...campaignOut(c, profile.business_name),
+      note: 'Draft saved. Nothing has been sent. Open review_url to read it, then send a test to yourself before scheduling.',
+    })
+  },
+
+  async update_email_campaign({ campaign_id, subject, html, preview_text, audience_tags }) {
+    const { campaign, brandName } = await loadCampaign(campaign_id)
+    const patch = {}
+    if (subject !== undefined) patch.subject = subject
+    if (html !== undefined) patch.html_body = html
+    if (preview_text !== undefined) patch.preview_text = preview_text
+    if (audience_tags !== undefined) {
+      if (!Array.isArray(audience_tags)) throw new Error('audience_tags must be a list of tags, e.g. ["vip"]')
+      patch.tag_filter = audience_tags
+    }
+    if (!Object.keys(patch).length) throw new Error('nothing to update')
+    const updated = await api('/api/email/campaigns', {
+      method: 'PATCH', query: { id: campaign.id }, json: patch,
+    }).catch((e) => { throw emailApiError(e) })
+    const c = updated?.campaign || { ...campaign, ...patch }
+    const changedCopy = ['subject', 'html_body', 'preview_text'].some((k) => patch[k] !== undefined)
+    return ok({
+      ...campaignOut(c, brandName),
+      ...(changedCopy && campaign.last_test_sent_at
+        ? { note: 'The copy changed, so the earlier test send no longer counts. Send a fresh test before scheduling.' }
+        : {}),
+    })
+  },
+
+  // CONFIRM GATE. Hands the campaign to the scheduler, which mails the real
+  // list at that time with no further human step. Call it only after the user
+  // has explicitly confirmed the copy, the audience and the time.
+  async schedule_email_campaign({ campaign_id, scheduled_at, timezone }) {
+    const { campaign, brandName } = await loadCampaign(campaign_id)
+    if (!scheduled_at) throw new Error('scheduled_at (ISO 8601) is required')
+    // An ISO string with an offset or a Z already pins the instant. A bare
+    // "2026-11-02T09:00" does not, and guessing a zone here is how a client
+    // email goes out five hours early, so make the caller be explicit.
+    const bare = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2})?$/.test(String(scheduled_at).trim())
+    if (bare && !timezone) {
+      throw new Error(`"${scheduled_at}" has no timezone, so the send time is ambiguous. Pass an offset (e.g. "${scheduled_at}-05:00") or set timezone to an IANA zone like "America/Chicago".`)
+    }
+    let when = new Date(scheduled_at)
+    if (bare && timezone) when = zonedToUtc(scheduled_at, timezone)
+    if (Number.isNaN(when.getTime())) throw new Error(`Could not read "${scheduled_at}" as a date.`)
+    const r = await api('/api/email/campaigns', {
+      method: 'POST', query: { action: 'schedule' },
+      json: { id: campaign.id, scheduled_at: when.toISOString() },
+    }).catch((e) => { throw emailApiError(e) })
+    const c = r?.campaign || campaign
+    return ok({
+      ...campaignOut(c, brandName),
+      note: `Scheduled. It mails ${c.total_recipients ?? 'the matching'} contact(s) at that time with no further confirmation.`,
+    })
+  },
+
+  // Sends ONE message, to the address given, with "[Test]" in front of the
+  // subject. This is the required gate before a campaign can reach a list:
+  // the API refuses send and schedule until a test has gone out for the
+  // current copy. Send it to yourself, never to a client or a subscriber.
+  async send_test_email({ campaign_id, to }) {
+    const { campaign, brandName } = await loadCampaign(campaign_id)
+    const addr = String(to || '').trim()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) throw new Error('to must be a single valid email address.')
+    await api('/api/email/campaigns', {
+      method: 'POST', query: { action: 'test' }, json: { id: campaign.id, to: addr },
+    }).catch((e) => { throw emailApiError(e) })
+    const after = (await api('/api/email/campaigns', { query: { id: campaign.id } }))?.campaign || campaign
+    return ok({
+      ...campaignOut(after, brandName),
+      test_sent_to: addr,
+      note: 'Read it in that inbox before scheduling: check that images load and the layout holds.',
+    })
+  },
+
+  // Put an image somewhere an inbox can actually fetch it. A mail client
+  // loads images over the public internet from a cold cache, so a relative
+  // path has nothing to resolve against and an inline data: URI is stripped
+  // by Gmail and Outlook. Returns the public URL plus email-safe <img> markup.
+  async upload_email_image({ brand, file_path, url, alt }) {
+    const profile = await resolveBrand(brand)
+    if (!file_path && !url) throw new Error('Pass file_path (a local file) or url (a direct link).')
+    if (file_path && url) throw new Error('Pass file_path or url, not both.')
+
+    let bytes
+    let contentType
+    let name
+    if (file_path) {
+      const ext = extname(file_path).slice(1).toLowerCase()
+      if (!IMAGE_EXT.has(ext) && ext !== 'pdf') {
+        throw new Error(`"${ext || 'that file'}" cannot go in an email. Use a jpg, png, gif or webp image, or a pdf.`)
+      }
+      contentType = ext === 'pdf' ? 'application/pdf' : MIME[ext]
+      name = basename(file_path)
+      bytes = await readFile(file_path)
+    } else {
+      const src = directDownloadUrl(url)
+      const r = await fetch(src, { redirect: 'follow' })
+      if (!r.ok) throw new Error(`Could not fetch that URL (${r.status}). Make sure it is a direct, publicly reachable link.`)
+      contentType = (r.headers.get('content-type') || '').toLowerCase().split(';')[0].trim()
+      if (contentType.includes('text/html')) {
+        throw new Error('That link returned a web page, not an image. Use a direct link to the file itself.')
+      }
+      bytes = Buffer.from(await r.arrayBuffer())
+      name = basename(src.split('?')[0].split('#')[0]) || 'image'
+    }
+    const MAX = 5 * 1024 * 1024
+    if (!bytes.length) throw new Error('That file is empty.')
+    // Not a Vercel limit (the bytes go straight to storage): a 5MB image in a
+    // newsletter is a slow load on a phone and a spam-filter signal.
+    if (bytes.length > MAX) {
+      throw new Error(`That file is ${(bytes.length / 1048576).toFixed(1)}MB. Keep email images under 5MB, ideally under 500KB.`)
+    }
+
+    const init = await api('/api/email/assets', {
+      method: 'POST', query: { mode: 'init' },
+      // alt goes to the server so the <img> is built in exactly one place.
+      json: { profile_id: profile.id, content_type: contentType, filename: name, ...(alt !== undefined ? { alt } : {}) },
+    })
+    const put = await fetch(init.signed_url, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${init.token}`, 'Content-Type': contentType, 'x-upsert': 'true' },
+      body: bytes,
+    })
+    if (!put.ok) throw new Error(`Storage upload failed (${put.status}): ${(await put.text()).slice(0, 200)}`)
+
+    return ok({
+      brand: profile.business_name,
+      kind: init.kind,
+      public_url: init.public_url,
+      bytes: bytes.length,
+      // Built by the API, not here: markup that renders at full intrinsic
+      // width in Outlook breaks the 600px shell, and one copy of that rule is
+      // enough.
+      img_html: init.img_html || null,
+      note: init.kind === 'image'
+        ? 'Paste img_html into the campaign HTML. The URL is public and permanent.'
+        : 'Link to public_url from the email. Do not attach files to a campaign.',
+    })
+  },
+}
+
+// Resolve a wall-clock time in an IANA zone to the real instant. Done by
+// probing the zone's offset at roughly that moment rather than trusting the
+// server's own zone, which on Vercel is UTC and would send a 9am Houston
+// email at 4am.
+function zonedToUtc(local, timeZone) {
+  const [datePart, timePart = '00:00'] = String(local).trim().split(/[T ]/)
+  const [y, mo, d] = datePart.split('-').map(Number)
+  const [h, mi, s = 0] = timePart.split(':').map(Number)
+  // Start from the naive UTC reading, then correct by the zone's offset
+  // there. Twice, so a time within an hour of a DST boundary lands right.
+  let guess = Date.UTC(y, mo - 1, d, h, mi, s)
+  for (let i = 0; i < 2; i++) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone, hour12: false,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    }).formatToParts(new Date(guess)).reduce((acc, p) => { acc[p.type] = p.value; return acc }, {})
+    const asSeen = Date.UTC(
+      Number(parts.year), Number(parts.month) - 1, Number(parts.day),
+      Number(parts.hour) % 24, Number(parts.minute), Number(parts.second),
+    )
+    guess += Date.UTC(y, mo - 1, d, h, mi, s) - asSeen
+  }
+  return new Date(guess)
 }
 
 // ── Tool schemas ─────────────────────────────────────────────────────
@@ -848,6 +1143,12 @@ const TOOLS = [
   { name: 'update_post', description: 'Apply edits to a post\'s title / caption / hashtags / first_comment before scheduling. Does NOT publish.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' }, title: { type: 'string' }, caption: { type: 'string' }, hashtags: { type: 'string' }, first_comment: { type: 'string' } }, required: ['content_id'] } },
   { name: 'set_platforms', description: 'Set which social platforms a post will go to. Does NOT publish.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' }, platforms: platformsSchema }, required: ['content_id', 'platforms'] } },
   { name: 'schedule_post', description: 'PUBLISHES/SCHEDULES the post to social via Upload-Post at the given time and platforms. Call it ONLY after the user has explicitly confirmed the caption, the platforms, and the slot. If platforms is omitted it uses the ones already on the post, else the brand\'s connected platforms.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' }, scheduled_datetime: { type: 'string', description: 'ISO 8601 datetime (use an iso value from next_slots).' }, platforms: platformsSchema }, required: ['content_id', 'scheduled_datetime'] } },
+  { name: 'list_email_campaigns', description: "Find an email campaign by brand or status instead of by id. Searches one brand, or every brand you can see when none is named, and returns each campaign's campaign_id, subject, status, audience, send time, whether it has been test-sent since its copy last changed, and a review_url that opens it in ScaleSolo. Use this first whenever you do not already have a campaign_id.", inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Optional brand name, handle or id. Omit to search every brand you can see.' }, status: { type: 'string', enum: ['draft', 'scheduled', 'sending', 'sent', 'partial', 'failed'], description: 'Optional status filter.' }, limit: { type: 'number', description: 'Max results, 1 to 100. Default 20.' } }, required: [] } },
+  { name: 'create_email_campaign', description: `Create a DRAFT marketing email for a brand. Sends nothing: it saves the draft and returns a review_url to read it in ScaleSolo. ${MERGE_TAG_HELP} ${IMG_HELP} The unsubscribe footer is added automatically, so only write your own if you point it at {{unsubscribe_url}}.`, inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, subject: { type: 'string', description: 'Subject line.' }, html: { type: 'string', description: `The email body. HTML, or plain paragraphs which get wrapped in the responsive shell. ${MERGE_TAG_HELP} ${IMG_HELP}` }, preview_text: { type: 'string', description: 'The line shown next to the subject in the inbox.' }, audience_tags: { type: 'array', items: { type: 'string' }, description: 'Only contacts carrying one of these tags. Omit to mean every active contact.' } }, required: ['brand', 'subject', 'html'] } },
+  { name: 'update_email_campaign', description: `Edit a draft or scheduled campaign's subject, body, preview text or audience. Sends nothing. Changing the subject or body invalidates any earlier test send, so a fresh send_test_email is needed before it can be scheduled again. ${MERGE_TAG_HELP} ${IMG_HELP}`, inputSchema: { type: 'object', properties: { campaign_id: { type: 'string', description: 'From list_email_campaigns.' }, subject: { type: 'string' }, html: { type: 'string', description: `The email body. ${MERGE_TAG_HELP} ${IMG_HELP}` }, preview_text: { type: 'string' }, audience_tags: { type: 'array', items: { type: 'string' }, description: 'Replaces the existing audience filter. An empty list means everyone.' } }, required: ['campaign_id'] } },
+  { name: 'send_test_email', description: 'Send ONE copy of a campaign to a single address, with "[Test]" in front of the subject. Send it to your own address, never to a client or a subscriber. This is required: ScaleSolo refuses to send or schedule a campaign until a test has gone out for the copy as it currently stands. Read the test in a real inbox and check that images load before scheduling.', inputSchema: { type: 'object', properties: { campaign_id: { type: 'string', description: 'From list_email_campaigns.' }, to: { type: 'string', description: 'One email address, your own.' } }, required: ['campaign_id', 'to'] } },
+  { name: 'schedule_email_campaign', description: 'CONFIRM GATE. Schedules the campaign to go to the brand\'s real contact list at the given time, with no further human step. Call it ONLY after the user has explicitly confirmed the copy, the audience and the time. Refused until the campaign has been test-sent since its copy last changed, and refused if any merge tag would not resolve (the error lists exactly what to fix).', inputSchema: { type: 'object', properties: { campaign_id: { type: 'string', description: 'From list_email_campaigns.' }, scheduled_at: { type: 'string', description: 'When to send. ISO 8601. Either carry an offset ("2026-11-02T09:00:00-05:00") or pass a bare local time plus timezone.' }, timezone: { type: 'string', description: 'IANA zone for a bare local scheduled_at, e.g. "America/Chicago". Required when scheduled_at has no offset, since guessing one sends the email at the wrong hour.' } }, required: ['campaign_id', 'scheduled_at'] } },
+  { name: 'upload_email_image', description: 'Upload an image (or a PDF to link to) so it works inside a campaign email. A mail client fetches images over the public internet, so a local path, a relative src or an inline data: URI all render as a broken box; this puts the file at a permanent public https URL. Returns public_url plus ready-to-paste img_html sized for the 600px email shell. Use it before create_email_campaign or update_email_campaign, and put img_html in the body.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, file_path: { type: 'string', description: 'Absolute path to a local jpg/png/gif/webp/pdf. Local only, so this does not work over the hosted MCP.' }, url: { type: 'string', description: 'Direct link to the image instead of a local file. Google Drive and Dropbox share links are converted automatically.' }, alt: { type: 'string', description: 'Alt text. Worth setting: a third of recipients read with images off.' } }, required: ['brand'] } },
   { name: 'post_now', description: 'PUBLISHES the post RIGHT NOW with no scheduler wait, submits to Upload-Post immediately (and cancels any pending scheduled job so it can\'t double-post). For a brand in TikTok Draft mode this lands in the TikTok inbox/drafts instantly. Call ONLY after the user has explicitly confirmed the caption and platforms. Use this instead of schedule_post when the user wants it out immediately rather than at a future slot.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' }, platforms: platformsSchema }, required: ['content_id'] } },
 ]
 

@@ -108,12 +108,37 @@ export function validateTemplate({ subject = '', html = '', previewText = '' } =
     )
   }
 
-  // 4. Obvious leftovers from a template.
+  // 4. Images that cannot load in an inbox. An email client fetches every
+  //    image over the public internet from a cold cache, so anything that is
+  //    not an absolute https URL renders as a broken box for the subscriber
+  //    while looking perfect in the composer preview (the browser resolves a
+  //    relative path against scalesolo.ai, and a data: URI survives the
+  //    preview iframe but is stripped by Gmail and Outlook).
+  for (const m of html.matchAll(/<img\b[^>]*?\ssrc\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/gi)) {
+    const src = String(m[2] ?? m[3] ?? m[4] ?? '').trim()
+    if (!src) {
+      errors.push('An <img> has an empty src, so it will show as a broken image. Upload the image and use the URL it gives you.')
+      continue
+    }
+    if (/^\{\{/.test(src)) continue            // a merge tag resolves later
+    if (/^https:\/\//i.test(src)) continue     // the only thing that works everywhere
+    if (/^data:/i.test(src)) {
+      errors.push('An <img> uses an inline data: URI. Gmail and Outlook strip those, so the image will not appear. Upload it instead and use the URL you get back.')
+    } else if (/^http:\/\//i.test(src)) {
+      errors.push(`An <img> loads over plain http (${src.slice(0, 60)}). Many clients block that as insecure, so use the https URL.`)
+    } else if (/^(cid|file):/i.test(src)) {
+      errors.push(`An <img> points at ${src.split(':')[0]}:, which only resolves on the machine that wrote the email. Upload the image and use its public URL.`)
+    } else {
+      errors.push(`An <img> has a relative src (${src.slice(0, 60)}). An inbox has no page to resolve that against, so upload the image and use the full https URL.`)
+    }
+  }
+
+  // 5. Obvious leftovers from a template.
   for (const m of all.matchAll(/\b(PASTE_[A-Z_]+|REPLACE_ME|YOUR_LINK_HERE|TODO)\b/g)) {
     errors.push(`"${m[1]}" is still a placeholder. Replace it with the real value.`)
   }
 
-  // 5. An href that never got a URL would be a dead call to action.
+  // 6. An href that never got a URL would be a dead call to action.
   for (const m of html.matchAll(/href\s*=\s*["']\s*(#|)\s*["']/gi)) {
     warnings.push('A link has an empty href, so clicking it does nothing.')
     break
