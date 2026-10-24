@@ -140,7 +140,26 @@ export default async function handler(req, res) {
       // gate unpassable.
       const copyMoved = TESTED_FIELDS.some((k) => fields[k] !== undefined && fields[k] !== c[k])
       if (copyMoved) fields.content_changed_at = new Date().toISOString()
-      return res.status(200).json({ campaign: await patch(c.id, fields) })
+      // Rewriting the copy of an ALREADY SCHEDULED campaign would otherwise
+      // defeat the gate entirely: the cron worker does not re-check it (and
+      // must not, or a campaign in flight could silently fail to send), so
+      // the edited, untested copy would go out at the scheduled time. Pull it
+      // back to draft instead. The status change is visible immediately on
+      // the card, which beats both silently sending untested copy and
+      // silently not sending at all.
+      let unscheduled = false
+      if (copyMoved && c.status === 'scheduled') {
+        fields.status = 'draft'
+        fields.scheduled_at = null
+        unscheduled = true
+      }
+      return res.status(200).json({
+        campaign: await patch(c.id, fields),
+        ...(unscheduled ? {
+          unscheduled: true,
+          notice: 'Editing the copy unscheduled this campaign. Send a fresh test, then schedule it again.',
+        } : {}),
+      })
     }
 
     if (req.method === 'DELETE') {

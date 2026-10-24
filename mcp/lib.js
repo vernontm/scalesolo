@@ -974,11 +974,16 @@ const impls = {
     }).catch((e) => { throw emailApiError(e) })
     const c = updated?.campaign || { ...campaign, ...patch }
     const changedCopy = ['subject', 'html_body', 'preview_text'].some((k) => patch[k] !== undefined)
+    // The API unschedules a campaign whose copy is rewritten, so say so
+    // plainly: a caller that thinks it is still scheduled will not re-send it.
+    const note = updated?.notice
+      || (changedCopy && campaign.last_test_sent_at
+        ? 'The copy changed, so the earlier test send no longer counts. Send a fresh test before scheduling.'
+        : null)
     return ok({
       ...campaignOut(c, brandName),
-      ...(changedCopy && campaign.last_test_sent_at
-        ? { note: 'The copy changed, so the earlier test send no longer counts. Send a fresh test before scheduling.' }
-        : {}),
+      ...(updated?.unscheduled ? { unscheduled: true } : {}),
+      ...(note ? { note } : {}),
     })
   },
 

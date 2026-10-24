@@ -247,6 +247,25 @@ test('update_email_campaign sends only the fields given, and warns the test is v
   assert.match(r.note, /earlier test send no longer counts/)
 })
 
+test('update_email_campaign reports that rewriting the copy unscheduled it', async () => {
+  // Editing a scheduled campaign's body would otherwise let the cron mail
+  // copy nobody tested, so the API pulls it back to draft. A caller that is
+  // not told this will believe the send is still booked.
+  routes['PATCH /api/email/campaigns'] = {
+    status: 200,
+    body: {
+      campaign: campaign({ status: 'draft', scheduled_at: null }),
+      unscheduled: true,
+      notice: 'Editing the copy unscheduled this campaign. Send a fresh test, then schedule it again.',
+    },
+  }
+  const r = out(await impls.update_email_campaign({ campaign_id: 'c-1', html: '<p>Rewritten</p>' }))
+  assert.equal(r.unscheduled, true)
+  assert.equal(r.status, 'draft')
+  assert.equal(r.scheduled_at, null)
+  assert.match(r.note, /unscheduled this campaign/)
+})
+
 test('update_email_campaign refuses an empty patch and a non-list audience', async () => {
   await assert.rejects(() => impls.update_email_campaign({ campaign_id: 'c-1' }), /nothing to update/)
   await assert.rejects(() => impls.update_email_campaign({ campaign_id: 'c-1', audience_tags: 'vip' }), /must be a list/)

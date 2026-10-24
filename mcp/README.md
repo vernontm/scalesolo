@@ -95,7 +95,8 @@ cannot slip past them either:
 1. **A test send is required.** `send` and `schedule` are refused (HTTP 428)
    until a test has gone out for the copy *as it currently stands*. Editing the
    subject, body or preview text voids the earlier test; changing the audience,
-   from name or reply-to does not.
+   from name or reply-to does not. Rewriting the copy of an already scheduled
+   campaign pulls it back to draft, so test it and schedule it again.
 2. **Merge tags must resolve.** Only `{{first_name}}`, `{{name}}`, `{{email}}`,
    `{{business}}` and `{{unsubscribe_url}}` work, double braces only. Anything
    else is refused (HTTP 422) with the full list of problems and the legal

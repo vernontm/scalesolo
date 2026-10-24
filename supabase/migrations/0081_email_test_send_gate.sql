@@ -20,6 +20,13 @@
 -- Campaigns that are already scheduled when this ships are unaffected: the
 -- gate runs at send/schedule time, not in the cron worker, so nothing in
 -- flight gets stranded.
+--
+-- The cron worker deliberately does NOT re-check the gate, or a campaign in
+-- flight could silently fail to send. So that editing a scheduled campaign
+-- cannot smuggle untested copy past it, the PATCH handler pulls such a
+-- campaign back to draft (status 'draft', scheduled_at null) when the copy
+-- changes, and says so. Visible beats both silently sending untested copy and
+-- silently sending nothing.
 
 alter table public.email_campaigns
   add column if not exists last_test_sent_at  timestamptz,

@@ -208,6 +208,13 @@ function Composer({ profileId, campaign, tags, onClose, onSaved }) {
     if (id) saved = await api(`/api/email/campaigns?id=${id}`, { method: 'PATCH', body })
     else saved = await api('/api/email/campaigns', { method: 'POST', body: { profile_id: profileId, ...body } })
     setId(saved.campaign.id)
+    // Rewriting the copy of a scheduled campaign pulls it back to draft, so
+    // the booked send is gone. Say so rather than letting the card quietly
+    // change status.
+    if (saved.unscheduled) {
+      setSchedAt('')
+      toast({ kind: 'info', message: saved.notice || 'That edit unscheduled the campaign. Test it, then schedule it again.' })
+    }
     return saved.campaign
   }
 
