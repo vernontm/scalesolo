@@ -1191,6 +1191,205 @@ function CampaignChip({ c, onOpen, compact = false, brandName }) {
   )
 }
 
+// "Waiting to schedule": posts that are ready but have no time yet. Drag one
+// onto an hour (week/day) or an open slot (month) to schedule it. Narrow on
+// purpose, because every pixel here is taken off the calendar beside it.
+function BacklogRail({ backlog, dragId, onDragStart, onDragEnd, onOpen, hoverBacklogId, setHoverBacklogId, deleteFromBacklog }) {
+  return (
+        <div style={{
+      width: 176, flexShrink: 0, background: 'var(--surface)',
+      border: '1px solid var(--border)', borderRadius: 10, padding: 10,
+      position: 'sticky', top: 12, maxHeight: 'calc(100vh - 200px)', overflowY: 'auto',
+    }}>
+      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 8 }}>
+        Waiting to schedule{backlog.length ? ` · ${backlog.length}` : ''}
+      </div>
+      {backlog.length === 0 ? (
+        <div style={{ fontSize: 12, color: 'var(--muted)', padding: '18px 8px', textAlign: 'center', border: '1px dashed var(--border)', borderRadius: 8 }}>
+          Nothing waiting. Everything ready is scheduled.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {backlog.map((it) => {
+            const thumb = it.cover_image_url || (Array.isArray(it.media_urls) && it.media_urls[0])
+            const isVid = it.media_type === 'video' && !it.cover_image_url
+            return (
+              <div key={it.id} draggable onDragStart={(e) => onDragStart(e, it, 'backlog')} onDragEnd={onDragEnd}
+                onClick={() => onOpen && onOpen(it)}
+                onMouseEnter={() => setHoverBacklogId(it.id)}
+                onMouseLeave={() => setHoverBacklogId((cur) => (cur === it.id ? null : cur))}
+                title="Click to edit · drag onto an open slot to schedule"
+                style={{
+                  position: 'relative',
+                  display: 'flex', gap: 8, alignItems: 'flex-start', padding: 7,
+                  background: 'var(--surface-2)', border: '1px solid var(--border)',
+                  borderLeft: `3px solid ${it.media_type === 'video' ? '#0ea5e9' : it.media_type === 'text' ? '#f59e0b' : '#a855f7'}`,
+                  borderRadius: 7, cursor: 'pointer', opacity: it.id === dragId ? 0.5 : 1,
+                }}>
+                {thumb ? (
+                  isVid
+                    ? <video src={thumb} muted playsInline preload="metadata" style={{ width: 34, height: 34, borderRadius: 4, objectFit: 'cover', background: '#000', flexShrink: 0 }} />
+                    : <img src={thumb} alt="" style={{ width: 34, height: 34, borderRadius: 4, objectFit: 'cover', background: 'var(--surface)', flexShrink: 0 }} />
+                ) : (
+                  <div style={{ width: 34, height: 34, borderRadius: 4, background: 'var(--surface)', border: '1px solid var(--border)', display: 'grid', placeItems: 'center', color: 'var(--muted)', fontWeight: 700, fontSize: 13, flexShrink: 0 }}>{it.media_type === 'text' ? '“”' : '?'}</div>
+                )}
+                <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)', lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', paddingRight: 16 }}>
+                  {it.title || 'Untitled'}
+                </div>
+                {hoverBacklogId === it.id && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); deleteFromBacklog(it) }}
+                    title="Delete from queue"
+                    style={{
+                      position: 'absolute', top: 4, right: 4, width: 20, height: 20,
+                      display: 'grid', placeItems: 'center', padding: 0,
+                      background: 'var(--surface)', border: '1px solid var(--border)',
+                      borderRadius: 5, color: '#ef4444', cursor: 'pointer',
+                    }}>
+                    <Trash2 size={12} />
+                  </button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const PLATFORM_SHORT = {
+  instagram: 'IG', tiktok: 'TT', youtube: 'YT', facebook: 'FB',
+  threads: 'TH', x: 'X', linkedin: 'LI', pinterest: 'PIN',
+}
+
+// One scheduled post, as it appears on the calendar. Shared by the month grid
+// and the week/day time grid so the two can never drift apart on styling.
+//
+// `roomy` is the week/day view, where a post owns an hour band instead of
+// sharing a 150px day cell: there is room for a longer title and the platform
+// targets. The month grid stays compact.
+function PostCard({ item, brandName, isDragging, onOpen, onDragStart, onDragEnd, roomy = false }) {
+  const hasCover = !!item.cover_image_url
+  const thumb = hasCover ? item.cover_image_url : (Array.isArray(item.media_urls) && item.media_urls[0])
+  const isVideo = item.media_type === 'video'
+  const isText = item.media_type === 'text'
+  const isPosted = item.status === 'posted'
+  const thumbIsVideo = isVideo && !hasCover
+  // Pending-approval rows hold a slot but are NOT submitted to Upload-Post:
+  // someone has to approve them in the drawer. Amber dashed border + pill.
+  const isPendingApproval = item.status === 'draft' && item.approval_status === 'pending'
+  const kindBorder = isPosted ? '#2ecc71'
+    : isPendingApproval ? '#f59e0b'
+    : isVideo ? '#0ea5e9'
+    : isText ? '#f59e0b'
+    : '#a855f7'
+  const thumbSize = roomy ? 20 : 22
+  const platforms = Array.isArray(item.platforms) ? item.platforms.filter(Boolean) : []
+  return (
+    <div
+      draggable={!isPosted}
+      onDragStart={(e) => onDragStart(e, item)}
+      onDragEnd={onDragEnd}
+      onClick={() => onOpen(item)}
+      title={[brandName, item.title || 'Untitled', isPosted ? 'posted' : isPendingApproval ? 'needs approval' : 'scheduled'].filter(Boolean).join(' · ')}
+      style={{
+        background: isPosted
+          ? 'linear-gradient(135deg, rgba(46,204,113,0.10), rgba(46,204,113,0.04))'
+          : isPendingApproval
+          ? 'linear-gradient(135deg, rgba(245,158,11,0.10), rgba(245,158,11,0.04))'
+          : 'var(--surface-2)',
+        border: isPosted
+          ? '1px solid rgba(46,204,113,0.35)'
+          : isPendingApproval
+          ? '1px dashed rgba(245,158,11,0.55)'
+          : '1px solid var(--border)',
+        borderLeft: `3px solid ${kindBorder}`,
+        borderRadius: 6, padding: roomy ? '6px 7px' : '5px 6px',
+        cursor: isPosted ? 'pointer' : 'grab',
+        opacity: isDragging ? 0.5 : isPosted ? 0.85 : 1,
+        fontSize: 11.5, color: 'var(--text-soft)',
+        display: 'flex', flexDirection: 'column', gap: 3,
+        position: 'relative',
+      }}
+    >
+      {brandName && (
+        <div style={{
+          fontSize: roomy ? 9 : 8.5, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase',
+          color: 'var(--muted)', lineHeight: 1.1,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>{brandName}</div>
+      )}
+      <div style={{ display: 'flex', gap: 5, alignItems: 'center', minWidth: 0 }}>
+        {thumb ? (
+          <div style={{ position: 'relative', width: thumbSize, height: thumbSize, flexShrink: 0 }}>
+            {thumbIsVideo
+              ? <video src={thumb} muted playsInline preload="metadata" style={{ width: thumbSize, height: thumbSize, borderRadius: 4, objectFit: 'cover', background: '#000', display: 'block' }} />
+              : <img src={thumb} alt="" style={{ width: thumbSize, height: thumbSize, borderRadius: 4, objectFit: 'cover', background: 'var(--surface)', display: 'block' }} />}
+            {/* "IG" pill when the generated Instagram cover is what is shown,
+                rather than a raw video frame. */}
+            {hasCover && (
+              <div style={{
+                position: 'absolute', bottom: -2, right: -3,
+                fontSize: 7.5, fontWeight: 800, letterSpacing: '0.04em',
+                padding: '1px 4px', borderRadius: 3,
+                background: 'rgba(14,165,233,0.92)', color: '#fff', lineHeight: 1.1,
+              }}>IG</div>
+            )}
+          </div>
+        ) : (
+          <div style={{
+            width: thumbSize, height: thumbSize, borderRadius: 4,
+            background: isText ? 'rgba(245,158,11,0.10)' : 'var(--surface)',
+            border: isText ? '1px solid rgba(245,158,11,0.4)' : '1px solid var(--border)',
+            display: 'grid', placeItems: 'center',
+            color: isText ? '#f59e0b' : 'var(--muted)',
+            fontFamily: 'var(--font-display)', fontWeight: 700,
+            fontSize: isText ? 13 : 10, flexShrink: 0,
+          }}>{isText ? '“”' : '?'}</div>
+        )}
+        <div style={{ fontSize: 10, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+          <span style={{ whiteSpace: 'nowrap' }}>{new Date(item.scheduled_datetime).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>
+          {isPosted && (
+            <span title="Posted" style={{
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              color: '#2ecc71', fontWeight: 800, fontSize: 12, lineHeight: 1,
+            }}>✓</span>
+          )}
+          {isPendingApproval && (
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 3,
+              padding: '1px 5px', borderRadius: 999,
+              background: 'rgba(245,158,11,0.18)', color: '#f59e0b',
+              fontWeight: 700, fontSize: 9, letterSpacing: '0.04em', textTransform: 'uppercase',
+            }}>Pending</span>
+          )}
+        </div>
+      </div>
+      {/* Full card width, so a real title is readable rather than clipped
+          after three words. */}
+      <div style={{
+        fontWeight: 650, color: 'var(--text)', fontSize: roomy ? 12 : 11.5, lineHeight: 1.25,
+        overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box',
+        WebkitLineClamp: roomy ? 3 : 2, WebkitBoxOrient: 'vertical',
+      }}>
+        {item.title || 'Untitled'}
+      </div>
+      {roomy && platforms.length > 0 && (
+        <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+          {platforms.map((pf) => (
+            <span key={pf} style={{
+              fontSize: 8.5, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
+              padding: '1px 5px', borderRadius: 999,
+              background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--muted)',
+            }}>{PLATFORM_SHORT[pf] || pf}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function CalendarView({ items, onOpen, token, onChange, profileId, brandName }) {
   const isMobile = useIsMobile(760)
   const navigate = useNavigate()
@@ -1217,6 +1416,12 @@ function CalendarView({ items, onOpen, token, onChange, profileId, brandName }) 
   // toolbar button on the calendar header can open it; the modal
   // handles its own multi-step flow + chunked /generate-month calls.
   const [showGenerate, setShowGenerate] = useState(false)
+  // Which calendar surface is showing. Week is the default: a month cell is
+  // about 150px tall no matter how much lands in it, so several posts on one
+  // day pile up, while in the time grid each one owns its hour band.
+  const [mode, setMode] = useState('week')
+  // The day the week/day views revolve around. Month keeps its own viewMonth.
+  const [anchor, setAnchor] = useState(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d })
   // viewMonth = first day of the month the calendar is currently
   // showing. Start at today's month; prev / next buttons step it ±1.
   const [viewMonth, setViewMonth] = useState(() => {
@@ -1254,13 +1459,6 @@ function CalendarView({ items, onOpen, token, onChange, profileId, brandName }) 
     d.setMonth(d.getMonth() + delta)
     setViewMonth(d)
   }
-  const goToday = () => {
-    const d = new Date()
-    d.setHours(0, 0, 0, 0)
-    d.setDate(1)
-    setViewMonth(d)
-  }
-
   // Optimistic overrides keyed by content id — a dropped post appears /
   // moves instantly without a full re-fetch. Declared before byDay because
   // the memo reads it.
@@ -1295,6 +1493,56 @@ function CalendarView({ items, onOpen, token, onChange, profileId, brandName }) 
 
   const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   const todayKey = dayKey(new Date())
+
+  // Columns for the week / day grid.
+  const gridDays = useMemo(() => {
+    if (mode === 'day') return [new Date(anchor)]
+    const start = new Date(anchor)
+    start.setDate(start.getDate() - start.getDay())   // back to Sunday
+    return Array.from({ length: 7 }, (_, i) => { const d = new Date(start); d.setDate(start.getDate() + i); return d })
+  }, [anchor, mode])
+
+  // The hours the grid spans. Anchored on the working day but widened to
+  // cover anything actually scheduled, so a 6am post is never off-grid.
+  const [hourFrom, hourTo] = useMemo(() => {
+    let lo = 8
+    let hi = 20
+    const keys = new Set(gridDays.map(dayKey))
+    const consider = (iso) => {
+      if (!iso) return
+      const d = new Date(iso)
+      if (!keys.has(dayKey(d))) return
+      lo = Math.min(lo, d.getHours())
+      hi = Math.max(hi, d.getHours())
+    }
+    for (const it of [...items, ...localItems]) consider(it.scheduled_datetime)
+    for (const c of campaigns) consider(campaignWhen(c))
+    return [lo, hi]
+  }, [items, localItems, campaigns, gridDays])
+  const hours = useMemo(
+    () => Array.from({ length: hourTo - hourFrom + 1 }, (_, i) => hourFrom + i),
+    [hourFrom, hourTo],
+  )
+
+  // Everything that falls in one day+hour cell, posts and email together.
+  const cellContent = (d, hour) => {
+    const k = dayKey(d)
+    const posts = (byDay.get(k) || []).filter((it) => new Date(it.scheduled_datetime).getHours() === hour)
+    const mails = (campaignsByDay.get(k) || []).filter((c) => new Date(campaignWhen(c)).getHours() === hour)
+    return { posts, mails }
+  }
+
+  const stepAnchor = (delta) => {
+    const d = new Date(anchor)
+    d.setDate(d.getDate() + delta * (mode === 'day' ? 1 : 7))
+    setAnchor(d)
+  }
+  const goToday = () => {
+    const d = new Date(); d.setHours(0, 0, 0, 0)
+    setAnchor(d)
+    const m = new Date(d); m.setDate(1)
+    setViewMonth(m)
+  }
 
   // Kept in a map of its own rather than merged into byDay: byDay feeds
   // openSlotsFor, which treats every entry as a taken posting slot, and an
@@ -1551,6 +1799,24 @@ function CalendarView({ items, onOpen, token, onChange, profileId, brandName }) 
     }
   }
 
+  // Drop onto an hour cell in the week / day grid. Unlike the month view's
+  // preset slots this accepts any hour, so the backlog path and the move path
+  // are the same gesture. Reuses the existing handlers so the Upload-Post
+  // side effects stay in exactly one place.
+  const onDropHour = async (e, dayDate, hour) => {
+    e.preventDefault(); e.stopPropagation()
+    const item = dragItemRef.current
+    if (!item) return
+    const when = new Date(dayDate)
+    when.setHours(hour, 0, 0, 0)
+    const label = when.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })
+    const slot = { iso: when.toISOString(), label, time: `${String(hour).padStart(2, '0')}:00`, ms: when.getTime() }
+    if (dragKind === 'calendar') { onDragEnd(); await rescheduleTo(item, slot.iso, label); return }
+    // A backlog drop has to go through onDropSlot: that is the path that sets
+    // the platforms and then approves, which is what actually submits it.
+    await onDropSlot(e, slot)
+  }
+
   const onDropDay = async (e, dayDate) => {
     e.preventDefault()
     const item = dragItemRef.current
@@ -1581,7 +1847,10 @@ function CalendarView({ items, onOpen, token, onChange, profileId, brandName }) 
             fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700,
             color: 'var(--text)', letterSpacing: '0.02em', lineHeight: 1.2,
           }}>
-            {isMobile ? 'Schedule' : viewMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
+            {isMobile ? 'Schedule'
+              : mode === 'month' ? viewMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+              : mode === 'day' ? anchor.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
+              : `${gridDays[0].toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} to ${gridDays[6].toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`}
           </div>
           {brandName && (
             <div style={{
@@ -1613,12 +1882,25 @@ function CalendarView({ items, onOpen, token, onChange, profileId, brandName }) 
         >
           <ClipboardCheck size={13} /> <span className="cal-header-queue-label">Review queue</span>
         </a>
-        {/* Month stepper is only meaningful in the grid view. */}
         {!isMobile && (
           <>
-            <button className="btn-ghost" onClick={goToday} style={{ padding: '5px 12px', fontSize: 12 }} title="Jump to the current month">Today</button>
-            <button className="btn-ghost" onClick={() => stepMonth(-1)} aria-label="Previous month" style={{ padding: '5px 10px', fontSize: 12 }} title="Previous month">‹</button>
-            <button className="btn-ghost" onClick={() => stepMonth(1)} aria-label="Next month" style={{ padding: '5px 10px', fontSize: 12 }} title="Next month">›</button>
+            {/* Day / Week / Month. Week is the default because a post gets its
+                own hour band there instead of queueing inside a day cell. */}
+            <div style={{ display: 'flex', gap: 2, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 8, padding: 2 }}>
+              {['day', 'week', 'month'].map((m) => (
+                <button key={m} onClick={() => setMode(m)}
+                  style={{
+                    padding: '4px 12px', fontSize: 12, fontWeight: 700, borderRadius: 6, cursor: 'pointer',
+                    textTransform: 'capitalize', border: 'none',
+                    background: mode === m ? 'var(--surface)' : 'transparent',
+                    color: mode === m ? 'var(--text)' : 'var(--muted)',
+                    boxShadow: mode === m ? '0 1px 3px rgba(0,0,0,0.25)' : 'none',
+                  }}>{m}</button>
+              ))}
+            </div>
+            <button className="btn-ghost" onClick={goToday} style={{ padding: '5px 12px', fontSize: 12 }} title="Jump to today">Today</button>
+            <button className="btn-ghost" onClick={() => (mode === 'month' ? stepMonth(-1) : stepAnchor(-1))} aria-label="Previous" style={{ padding: '5px 10px', fontSize: 12 }} title="Previous">‹</button>
+            <button className="btn-ghost" onClick={() => (mode === 'month' ? stepMonth(1) : stepAnchor(1))} aria-label="Next" style={{ padding: '5px 10px', fontSize: 12 }} title="Next">›</button>
           </>
         )}
       </div>
@@ -1743,71 +2025,94 @@ function CalendarView({ items, onOpen, token, onChange, profileId, brandName }) 
         </div>
       )}
 
+      {/* ── WEEK / DAY: a time grid ──────────────────────────────────────
+          Hours down the side, days across. The reason this exists: a month
+          cell is a fixed height however much lands in it, so two posts on one
+          day queue up inside it and the whole grid row stretches. Here each
+          post sits in its own hour band, several on a day cost nothing, and a
+          backlog card is dropped on the exact hour you want rather than on a
+          preset slot. */}
+      {!isMobile && mode !== 'month' && (
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+        <BacklogRail
+          backlog={backlog} dragId={dragId} onDragStart={onDragStart} onDragEnd={onDragEnd}
+          onOpen={onOpen} hoverBacklogId={hoverBacklogId} setHoverBacklogId={setHoverBacklogId}
+          deleteFromBacklog={deleteFromBacklog}
+        />
+        <div style={{ flex: 1, minWidth: 0, border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: 'var(--surface)' }}>
+          {/* The header and every hour row share this template so the columns
+              line up; minmax(0, ...) lets a long title shrink its column
+              instead of widening the grid. */}
+          {/* Day headings */}
+          <div style={{ display: 'grid', gridTemplateColumns: `56px repeat(${gridDays.length}, minmax(0, 1fr))`, borderBottom: '1px solid var(--border)' }}>
+            <div />
+            {gridDays.map((d) => {
+              const isToday = dayKey(d) === todayKey
+              return (
+                <div key={dayKey(d)} style={{ padding: '8px 6px', textAlign: 'center', borderLeft: '1px solid var(--border)', background: isToday ? 'rgba(239,68,68,0.07)' : 'transparent' }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--muted)' }}>
+                    {d.toLocaleDateString(undefined, { weekday: 'short' })}
+                  </div>
+                  <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 17, color: isToday ? 'var(--red)' : 'var(--text)', lineHeight: 1.2 }}>
+                    {d.getDate()}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+          {/* Hour rows */}
+          <div style={{ maxHeight: 'calc(100vh - 260px)', overflowY: 'auto' }}>
+            {hours.map((hour) => (
+              <div key={hour} style={{ display: 'grid', gridTemplateColumns: `56px repeat(${gridDays.length}, minmax(0, 1fr))`, borderBottom: '1px solid var(--border)', minHeight: 58 }}>
+                <div style={{ padding: '6px 8px', textAlign: 'right', fontSize: 10.5, color: 'var(--muted)', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                  {new Date(2000, 0, 1, hour).toLocaleTimeString(undefined, { hour: 'numeric' })}
+                </div>
+                {gridDays.map((d) => {
+                  const { posts, mails } = cellContent(d, hour)
+                  const cellKey = `${dayKey(d)}|${hour}`
+                  const hot = hoverSlot === cellKey && !!dragId
+                  const cellDate = new Date(d); cellDate.setHours(hour, 0, 0, 0)
+                  const isPast = cellDate.getTime() < Date.now()
+                  return (
+                    <div key={cellKey}
+                      onDragOver={(e) => { if (dragId) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (hoverSlot !== cellKey) setHoverSlot(cellKey) } }}
+                      onDragLeave={() => { if (hoverSlot === cellKey) setHoverSlot(null) }}
+                      onDrop={(e) => onDropHour(e, d, hour)}
+                      style={{
+                        borderLeft: '1px solid var(--border)', padding: 4,
+                        display: 'flex', flexDirection: 'column', gap: 4,
+                        background: hot ? 'rgba(239,68,68,0.12)' : isPast ? 'rgba(0,0,0,0.12)' : 'transparent',
+                        boxShadow: hot ? 'inset 0 0 0 2px var(--red)' : 'none',
+                        transition: 'background 0.1s',
+                      }}>
+                      {posts.map((item) => (
+                        <PostCard key={item.id} item={item} brandName={brandName} roomy
+                          isDragging={item.id === dragId}
+                          onOpen={onOpen} onDragStart={onDragStart} onDragEnd={onDragEnd} />
+                      ))}
+                      {mails.map((c) => (
+                        <CampaignChip key={`campaign-${c.id}`} c={c} onOpen={openCampaign} compact brandName={brandName} />
+                      ))}
+                    </div>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      )}
+
       {/* Backlog (left) + calendar (right). The backlog holds posts that
           are ready but have no time yet; drag one onto an open slot on a
-          day to schedule it. Desktop only — mobile uses the agenda above. */}
-      {!isMobile && (
+          day to schedule it. Desktop only, mobile uses the agenda above. */}
+      {!isMobile && mode === 'month' && (
       <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-        <div style={{
-          width: 176, flexShrink: 0, background: 'var(--surface)',
-          border: '1px solid var(--border)', borderRadius: 10, padding: 10,
-          position: 'sticky', top: 12, maxHeight: 'calc(100vh - 200px)', overflowY: 'auto',
-        }}>
-          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 8 }}>
-            Waiting to schedule{backlog.length ? ` · ${backlog.length}` : ''}
-          </div>
-          {backlog.length === 0 ? (
-            <div style={{ fontSize: 12, color: 'var(--muted)', padding: '18px 8px', textAlign: 'center', border: '1px dashed var(--border)', borderRadius: 8 }}>
-              Nothing waiting. Everything ready is scheduled.
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {backlog.map((it) => {
-                const thumb = it.cover_image_url || (Array.isArray(it.media_urls) && it.media_urls[0])
-                const isVid = it.media_type === 'video' && !it.cover_image_url
-                return (
-                  <div key={it.id} draggable onDragStart={(e) => onDragStart(e, it, 'backlog')} onDragEnd={onDragEnd}
-                    onClick={() => onOpen && onOpen(it)}
-                    onMouseEnter={() => setHoverBacklogId(it.id)}
-                    onMouseLeave={() => setHoverBacklogId((cur) => (cur === it.id ? null : cur))}
-                    title="Click to edit · drag onto an open slot to schedule"
-                    style={{
-                      position: 'relative',
-                      display: 'flex', gap: 8, alignItems: 'flex-start', padding: 7,
-                      background: 'var(--surface-2)', border: '1px solid var(--border)',
-                      borderLeft: `3px solid ${it.media_type === 'video' ? '#0ea5e9' : it.media_type === 'text' ? '#f59e0b' : '#a855f7'}`,
-                      borderRadius: 7, cursor: 'pointer', opacity: it.id === dragId ? 0.5 : 1,
-                    }}>
-                    {thumb ? (
-                      isVid
-                        ? <video src={thumb} muted playsInline preload="metadata" style={{ width: 34, height: 34, borderRadius: 4, objectFit: 'cover', background: '#000', flexShrink: 0 }} />
-                        : <img src={thumb} alt="" style={{ width: 34, height: 34, borderRadius: 4, objectFit: 'cover', background: 'var(--surface)', flexShrink: 0 }} />
-                    ) : (
-                      <div style={{ width: 34, height: 34, borderRadius: 4, background: 'var(--surface)', border: '1px solid var(--border)', display: 'grid', placeItems: 'center', color: 'var(--muted)', fontWeight: 700, fontSize: 13, flexShrink: 0 }}>{it.media_type === 'text' ? '“”' : '?'}</div>
-                    )}
-                    <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)', lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', paddingRight: 16 }}>
-                      {it.title || 'Untitled'}
-                    </div>
-                    {hoverBacklogId === it.id && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); deleteFromBacklog(it) }}
-                        title="Delete from queue"
-                        style={{
-                          position: 'absolute', top: 4, right: 4, width: 20, height: 20,
-                          display: 'grid', placeItems: 'center', padding: 0,
-                          background: 'var(--surface)', border: '1px solid var(--border)',
-                          borderRadius: 5, color: '#ef4444', cursor: 'pointer',
-                        }}>
-                        <Trash2 size={12} />
-                      </button>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-
+        <BacklogRail
+          backlog={backlog} dragId={dragId} onDragStart={onDragStart} onDragEnd={onDragEnd}
+          onOpen={onOpen} hoverBacklogId={hoverBacklogId} setHoverBacklogId={setHoverBacklogId}
+          deleteFromBacklog={deleteFromBacklog}
+        />
         <div style={{ flex: 1, minWidth: 0 }}>
       {/* Weekday labels — show once at the top, aligned with the grid below */}
       <div style={{
@@ -1885,134 +2190,13 @@ function CalendarView({ items, onOpen, token, onChange, profileId, brandName }) 
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {shownItems.map((item) => {
-                    const isDragging = item.id === dragId
-                    // Prefer the generated Instagram cover when one is set —
-                    // that's what'll actually appear in the feed, so showing
-                    // the source video here was misleading on covered posts.
-                    // Fall back to the source media when no cover exists.
-                    const hasCover = !!item.cover_image_url
-                    const thumb = hasCover ? item.cover_image_url
-                      : (Array.isArray(item.media_urls) && item.media_urls[0])
-                    const isVideo = item.media_type === 'video'
-                    const isText = item.media_type === 'text'
-                    const isPosted = item.status === 'posted'
-                    // Cover thumbs are always static images regardless of
-                    // the source media_type. Only render <video> if we're
-                    // showing the source video itself.
-                    const thumbIsVideo = isVideo && !hasCover
-                    // Pending-approval rows live on the calendar with a
-                    // reserved slot but are NOT submitted to Upload-Post.
-                    // The user has to click → Approve in the detail
-                    // drawer to actually fire them. Visual treatment:
-                    // amber dashed border + "PENDING" pill.
-                    const isPendingApproval = item.status === 'draft' && item.approval_status === 'pending'
-                    // Posted (delivered) rows get a green left-border so they
-                    // pop visually as "shipped" alongside still-queued items
-                    // that show the post-kind color (video/text/image).
-                    const kindBorder = isPosted
-                      ? '#2ecc71'
-                      : isPendingApproval
-                      ? '#f59e0b'
-                      : isVideo ? '#0ea5e9'
-                      : isText ? '#f59e0b'
-                      : '#a855f7'
-                    return (
-                      <div
-                        key={item.id}
-                        draggable={!isPosted}
-                        onDragStart={(e) => onDragStart(e, item)}
-                        onDragEnd={onDragEnd}
-                        onClick={() => onOpen(item)}
-                        title={[brandName, item.title || 'Untitled', isPosted ? 'posted' : isPendingApproval ? 'needs approval' : 'scheduled'].filter(Boolean).join(' · ')}
-                        style={{
-                          background: isPosted
-                            ? 'linear-gradient(135deg, rgba(46,204,113,0.10), rgba(46,204,113,0.04))'
-                            : isPendingApproval
-                            ? 'linear-gradient(135deg, rgba(245,158,11,0.10), rgba(245,158,11,0.04))'
-                            : 'var(--surface-2)',
-                          border: isPosted
-                            ? '1px solid rgba(46,204,113,0.35)'
-                            : isPendingApproval
-                            ? '1px dashed rgba(245,158,11,0.55)'
-                            : '1px solid var(--border)',
-                          borderLeft: `3px solid ${kindBorder}`,
-                          borderRadius: 6, padding: '5px 6px',
-                          cursor: isPosted ? 'pointer' : 'grab',
-                          opacity: isDragging ? 0.5 : isPosted ? 0.85 : 1,
-                          fontSize: 11.5, color: 'var(--text-soft)',
-                          display: 'flex', flexDirection: 'column', gap: 3,
-                          position: 'relative',
-                        }}
-                      >
-                       {brandName && (
-                         <div style={{
-                           fontSize: 8.5, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase',
-                           color: 'var(--muted)', lineHeight: 1.1,
-                           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                         }}>{brandName}</div>
-                       )}
-                       <div style={{ display: 'flex', gap: 5, alignItems: 'center', minWidth: 0 }}>
-                        {thumb ? (
-                          <div style={{ position: 'relative', width: 22, height: 22, flexShrink: 0 }}>
-                            {thumbIsVideo
-                              ? <video src={thumb} muted playsInline preload="metadata" style={{ width: 22, height: 22, borderRadius: 4, objectFit: 'cover', background: '#000', display: 'block' }} />
-                              : <img src={thumb} alt="" style={{ width: 22, height: 22, borderRadius: 4, objectFit: 'cover', background: 'var(--surface)', display: 'block' }} />}
-                            {/* Small "COVER" pill when we're showing the
-                                generated thumbnail rather than the raw
-                                video frame. Helps the user tell at a
-                                glance which posts have a cover staged. */}
-                            {hasCover && (
-                              <div style={{
-                                position: 'absolute', bottom: -2, right: -3,
-                                fontSize: 7.5, fontWeight: 800, letterSpacing: '0.04em',
-                                padding: '1px 4px', borderRadius: 3,
-                                background: 'rgba(14,165,233,0.92)',
-                                color: '#fff',
-                                lineHeight: 1.1,
-                              }}>IG</div>
-                            )}
-                          </div>
-                        ) : (
-                          <div style={{
-                            width: 22, height: 22, borderRadius: 4,
-                            background: isText ? 'rgba(245,158,11,0.10)' : 'var(--surface)',
-                            border: isText ? '1px solid rgba(245,158,11,0.4)' : '1px solid var(--border)',
-                            display: 'grid', placeItems: 'center',
-                            color: isText ? '#f59e0b' : 'var(--muted)',
-                            fontFamily: 'var(--font-display)', fontWeight: 700,
-                            fontSize: isText ? 13 : 10,
-                            flexShrink: 0,
-                          }}>{isText ? '“”' : '?'}</div>
-                        )}
-                          <div style={{ fontSize: 10, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
-                            <span style={{ whiteSpace: 'nowrap' }}>{new Date(item.scheduled_datetime).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>
-                            {isPosted && (
-                              <span title="Posted" style={{
-                                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                                color: '#2ecc71', fontWeight: 800, fontSize: 12, lineHeight: 1,
-                              }}>✓</span>
-                            )}
-                            {isPendingApproval && (
-                              <span style={{
-                                display: 'inline-flex', alignItems: 'center', gap: 3,
-                                padding: '1px 5px', borderRadius: 999,
-                                background: 'rgba(245,158,11,0.18)',
-                                color: '#f59e0b',
-                                fontWeight: 700, fontSize: 9,
-                                letterSpacing: '0.04em', textTransform: 'uppercase',
-                              }}>Pending</span>
-                            )}
-                          </div>
-                       </div>
-                       {/* Full card width, so a real title is readable rather
-                           than clipped after three words. */}
-                       <div style={{ fontWeight: 650, color: 'var(--text)', fontSize: 11.5, lineHeight: 1.25, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-                         {item.title || 'Untitled'}
-                       </div>
-                      </div>
-                    )
-                  })}
+                  {shownItems.map((item) => (
+                    <PostCard
+                      key={item.id} item={item} brandName={brandName}
+                      isDragging={item.id === dragId}
+                      onOpen={onOpen} onDragStart={onDragStart} onDragEnd={onDragEnd}
+                    />
+                  ))}
                   {shownCampaigns.map((c) => (
                     <CampaignChip key={`campaign-${c.id}`} c={c} onOpen={openCampaign} compact brandName={brandName} />
                   ))}
