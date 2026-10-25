@@ -1523,6 +1523,9 @@ function CalendarView({ items, onOpen, token, onChange, profileId, brandName }) 
     () => Array.from({ length: hourTo - hourFrom + 1 }, (_, i) => hourFrom + i),
     [hourFrom, hourTo],
   )
+  // One column template for the heading row and every hour row. minmax(0, ...)
+  // lets a long title shrink its column rather than widen the grid.
+  const WEEK_GRID_COLUMNS = `56px repeat(${gridDays.length}, minmax(0, 1fr))`
 
   // Everything that falls in one day+hour cell, posts and email together.
   const cellContent = (d, hour) => {
@@ -2040,11 +2043,13 @@ function CalendarView({ items, onOpen, token, onChange, profileId, brandName }) 
           deleteFromBacklog={deleteFromBacklog}
         />
         <div style={{ flex: 1, minWidth: 0, border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: 'var(--surface)' }}>
-          {/* The header and every hour row share this template so the columns
-              line up; minmax(0, ...) lets a long title shrink its column
-              instead of widening the grid. */}
-          {/* Day headings */}
-          <div style={{ display: 'grid', gridTemplateColumns: `56px repeat(${gridDays.length}, minmax(0, 1fr))`, borderBottom: '1px solid var(--border)' }}>
+          {/* Header and hour rows live in the SAME scrolling box. When the
+              header sat outside it, the scrollbar took its width off the rows
+              only, so every column divider below the header was a few pixels
+              to the left of the one above it. Being in one scroll context
+              also lets the header stay pinned while you scroll the day. */}
+          <div style={{ maxHeight: 'calc(100vh - 260px)', overflowY: 'auto' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: WEEK_GRID_COLUMNS, borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, zIndex: 2, background: 'var(--surface)' }}>
             <div />
             {gridDays.map((d) => {
               const isToday = dayKey(d) === todayKey
@@ -2060,10 +2065,8 @@ function CalendarView({ items, onOpen, token, onChange, profileId, brandName }) 
               )
             })}
           </div>
-          {/* Hour rows */}
-          <div style={{ maxHeight: 'calc(100vh - 260px)', overflowY: 'auto' }}>
             {hours.map((hour) => (
-              <div key={hour} style={{ display: 'grid', gridTemplateColumns: `56px repeat(${gridDays.length}, minmax(0, 1fr))`, borderBottom: '1px solid var(--border)', minHeight: 58 }}>
+              <div key={hour} style={{ display: 'grid', gridTemplateColumns: WEEK_GRID_COLUMNS, borderBottom: '1px solid var(--border)', minHeight: 58 }}>
                 <div style={{ padding: '6px 8px', textAlign: 'right', fontSize: 10.5, color: 'var(--muted)', fontWeight: 600, whiteSpace: 'nowrap' }}>
                   {new Date(2000, 0, 1, hour).toLocaleTimeString(undefined, { hour: 'numeric' })}
                 </div>
