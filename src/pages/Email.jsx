@@ -173,9 +173,24 @@ function Composer({ profileId, campaign, tags, onClose, onSaved }) {
   const [dropping, setDropping] = useState(false)
   const fileRef = useRef(null)
   const bodyRef = useRef(null)
+  // The footer's business address lives on the brand, not on the campaign, so
+  // the composer reads it to refuse exactly what the API refuses. Stays null
+  // while it loads, which keeps the gate quiet rather than flashing an error
+  // the moment the composer opens.
+  const [postal, setPostal] = useState(null)
+  useEffect(() => {
+    let alive = true
+    api(`/api/email/config?profile_id=${profileId}`)
+      .then((r) => { if (alive) setPostal(r.config?.postal_address || '') })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [profileId, api])
   // Recomputed as you type, from the same module the API gates on, so the
   // button state and the server's answer can never disagree.
-  const check = useMemo(() => validateTemplate({ subject, html, previewText: preview }), [subject, html, preview])
+  const check = useMemo(
+    () => validateTemplate({ subject, html, previewText: preview, postalAddress: postal ?? undefined }),
+    [subject, html, preview, postal],
+  )
   const previewTimer = useRef(null)
   const sendable = check.ok && !testStale
 

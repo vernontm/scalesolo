@@ -12,8 +12,9 @@
 //   POST   ?action=schedule { id, scheduled_at }
 //
 // send and schedule are gated twice: validateTemplate (422) for merge tags
-// that will not resolve, and a current test send (428) so nobody mails a list
-// an email no human has read in an inbox. See migration 0081.
+// that will not resolve and a missing footer address, and a current test send
+// (428) so nobody mails a list an email no human has read in an inbox. See
+// migration 0081.
 //   POST   ?action=cancel   { id }             scheduled -> draft; sending -> stop (partial)
 //   DELETE ?id=<uuid>
 //
@@ -230,7 +231,13 @@ export default async function handler(req, res) {
     // Refuse to send or schedule a template whose merge tags will not
     // resolve. The failure is invisible until it is in a subscriber's inbox.
     if (['send', 'schedule'].includes(action)) {
-      const check = validateTemplate({ subject: c.subject, html: c.html_body, previewText: c.preview_text })
+      // The footer's postal address is a brand setting rather than part of the
+      // campaign, so it has to be read before the template can be judged.
+      const cfgRow = (await supaFetch(`email_config?profile_id=eq.${enc(c.profile_id)}&select=postal_address&limit=1`))?.[0] || {}
+      const check = validateTemplate({
+        subject: c.subject, html: c.html_body, previewText: c.preview_text,
+        postalAddress: cfgRow.postal_address || '',
+      })
       if (!check.ok) {
         return res.status(422).json({
           error: check.errors[0],

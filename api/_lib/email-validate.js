@@ -57,10 +57,13 @@ function distance(a, b) {
 
 /**
  * Check a campaign's subject + body before it can be sent or scheduled.
+ * @param {string} [postalAddress] The brand's saved business address. Passing
+ *   it turns on the footer check below; leaving it out skips that check, for
+ *   callers that only have the campaign and not the brand's settings.
  * @returns {{ ok: boolean, errors: string[], warnings: string[] }}
  *   errors block sending; warnings are shown but do not block.
  */
-export function validateTemplate({ subject = '', html = '', previewText = '' } = {}) {
+export function validateTemplate({ subject = '', html = '', previewText = '', postalAddress } = {}) {
   const errors = []
   const warnings = []
   const all = `${subject}\n${previewText}\n${html}`
@@ -142,6 +145,31 @@ export function validateTemplate({ subject = '', html = '', previewText = '' } =
   for (const m of html.matchAll(/href\s*=\s*["']\s*(#|)\s*["']/gi)) {
     warnings.push('A link has an empty href, so clicking it does nothing.')
     break
+  }
+
+  // 7. The postal address every commercial email has to carry. It is not part
+  //    of the campaign: renderCampaignEmail prints it in the footer from the
+  //    brand's saved settings, so an empty setting means every send goes out
+  //    without one. That is a CAN-SPAM violation, and the complaints it earns
+  //    are what gets a sending account throttled or shut off, which would
+  //    stop every brand at once rather than just the one that sent it.
+  if (postalAddress !== undefined) {
+    if (!String(postalAddress).trim()) {
+      errors.push(
+        'This brand has no business address saved, so every email would go out with no address in the footer. ' +
+        'Marketing email has to carry a real postal address by law (CAN-SPAM). ' +
+        'Add it under Sender, in "Business address (printed in the footer)".'
+      )
+    } else if (/<!DOCTYPE|<html[\s>]/i.test(html) && mentionsUnsub) {
+      // renderCampaignEmail leaves a full document that already mentions
+      // unsubscribe entirely alone, footer included, so the saved address is
+      // never printed on this one. A warning rather than a refusal: the
+      // author has taken the footer over, and their own may well carry it.
+      warnings.push(
+        'This is a full HTML document with its own unsubscribe link, so ScaleSolo does not add its footer. ' +
+        'The business address will only appear if your own footer prints it.'
+      )
+    }
   }
 
   return { ok: errors.length === 0, errors: [...new Set(errors)], warnings: [...new Set(warnings)] }

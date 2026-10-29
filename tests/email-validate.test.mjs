@@ -16,6 +16,42 @@ const base = { subject: 'Sunday only', html: '<p>Hi {{first_name}}</p>' }
 const run = (over) => validateTemplate({ ...base, ...over })
 const errs = (over) => run(over).errors.join(' | ')
 
+// The brand's business address. Passed in by the API and the composer, left
+// out by callers that only hold the campaign, so both paths need covering.
+test('a send is refused when the brand has no business address', () => {
+  const r = run({ postalAddress: '' })
+  assert.equal(r.ok, false)
+  assert.match(r.errors.join(' '), /CAN-SPAM/)
+  assert.match(r.errors.join(' '), /Business address/)
+})
+
+test('a saved business address satisfies the footer check', () => {
+  const r = run({ postalAddress: '487 Bay Area Blvd, Houston, TX 77058' })
+  assert.equal(r.ok, true, r.errors.join(' | '))
+})
+
+test('whitespace is not an address', () => {
+  assert.equal(run({ postalAddress: '   ' }).ok, false)
+})
+
+test('the address check is skipped when the caller does not pass one', () => {
+  const r = run({})
+  assert.equal(r.ok, true, r.errors.join(' | '))
+  assert.equal(r.errors.join(' ').includes('CAN-SPAM'), false)
+})
+
+test('a full document with its own unsubscribe warns that the footer is skipped', () => {
+  const html = '<!DOCTYPE html><html><body><p>Hi</p><a href="{{unsubscribe_url}}">Unsubscribe</a></body></html>'
+  const r = run({ html, postalAddress: '487 Bay Area Blvd, Houston, TX 77058' })
+  assert.equal(r.ok, true, r.errors.join(' | '))
+  assert.match(r.warnings.join(' '), /does not add its footer/)
+})
+
+test('a fragment body gets no footer warning: the footer is always appended', () => {
+  const r = run({ postalAddress: '487 Bay Area Blvd, Houston, TX 77058' })
+  assert.equal(r.warnings.join(' ').includes('does not add its footer'), false)
+})
+
 test('a sound template passes', () => {
   const r = run({})
   assert.equal(r.ok, true, r.errors.join(' | '))
