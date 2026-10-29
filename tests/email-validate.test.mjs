@@ -191,3 +191,17 @@ test('a pale brand colour does not become an unreadable link on white', () => {
   const t = brandTheme({ brand_primary_color: '#f5edd8', brand_secondary_color: '#ffcf00' })
   assert.equal(t.link, '#2563eb', 'neither pale colour is legible as link text, so the default is kept')
 })
+
+test('resolveSender selects every column the brand theme reads', async () => {
+  // The shell reading a field is not enough: the query that loads the profile
+  // has to select it. It did not, so branding silently fell back to the plain
+  // look in production while every local test passed, because those tests
+  // hand renderCampaignEmail a full profile object.
+  const src = await import('node:fs').then((m) => m.promises.readFile('api/_lib/email-render.js', 'utf8'))
+  const sel = src.match(/profiles\?id=eq\.\$\{[^}]+\}&select=([^`'"]+)/)
+  assert.ok(sel, 'could not find the profile select in resolveSender')
+  const cols = sel[1].split(',').map((s) => s.trim())
+  for (const needed of ['business_name', 'website_url', 'logo_url', 'brand_primary_color', 'brand_secondary_color']) {
+    assert.ok(cols.includes(needed), `brandTheme reads ${needed}, so resolveSender must select it`)
+  }
+})

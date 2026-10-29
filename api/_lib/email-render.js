@@ -34,7 +34,10 @@ export function sharedLocalPart(businessName) {
 // domains. Returns { ok, config, profile, reason }.
 export async function resolveSender(profileId) {
   const [profiles, configs] = await Promise.all([
-    supaFetch(`profiles?id=eq.${encodeURIComponent(profileId)}&select=id,business_name,website_url,location`),
+    // logo_url and the brand colours are read by brandTheme to style the
+    // shell. They have to be selected here or every email silently falls back
+    // to the unbranded look, which is exactly what happened the first time.
+    supaFetch(`profiles?id=eq.${encodeURIComponent(profileId)}&select=id,business_name,website_url,location,logo_url,brand_primary_color,brand_secondary_color`),
     supaFetch(`email_config?profile_id=eq.${encodeURIComponent(profileId)}&select=*&limit=1`),
   ])
   const profile = profiles?.[0] || null
