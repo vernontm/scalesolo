@@ -39,6 +39,16 @@ function withRecords(row, provider) {
   }
 }
 
+// Which provider a brand's domains live on. Every branch that touches a
+// provider has to ask: a domain is created, verified and deleted at whichever
+// one the brand is configured for, and defaulting silently created SES brands'
+// domains on Mailgun and then rendered the Mailgun records through the SES
+// formatter, which produced "[object Object]" where the DKIM host should be.
+async function providerForProfile(profileId) {
+  const rows = await supaFetch(`email_config?profile_id=eq.${enc(profileId)}&select=email_provider&limit=1`)
+  return providerNameFor(rows?.[0]?.email_provider)
+}
+
 async function refresh(row, provider) {
   const identity = await getDomainIdentity(row.domain, provider)
   const status = statusFrom(identity)
@@ -69,7 +79,7 @@ export default async function handler(req, res) {
       const profileId = req.query.profile_id
       if (!isUuid(profileId)) return res.status(400).json({ error: 'profile_id required' })
       await assertProfileAccess(userId, profileId)
-      const provider = providerNameFor((await supaFetch(`email_config?profile_id=eq.${enc(profileId)}&select=email_provider&limit=1`))?.[0]?.email_provider)
+      const provider = await providerForProfile(profileId)
       let rows = await supaFetch(`email_domains?profile_id=eq.${enc(profileId)}&select=*&order=created_at.asc`) || []
       if (isConfigured(provider)) {
         rows = await Promise.all(rows.map(async (r) => {
@@ -85,7 +95,8 @@ export default async function handler(req, res) {
       const body = req.body || {}
       if (!isUuid(body.profile_id)) return res.status(400).json({ error: 'profile_id required' })
       await assertMinRole(userId, body.profile_id, 'admin')
-      if (!isConfigured()) return res.status(503).json({ error: 'Email sending is not configured on the server yet.' })
+      const provider = await providerForProfile(body.profile_id)
+      if (!isConfigured(provider)) return res.status(503).json({ error: `${provider} is not configured on the server yet.` })
       let domain
       try { domain = normalizeDomain(body.domain) } catch (e) { return res.status(400).json({ error: e.message }) }
       if (RESERVED.has(domain) || domain.endsWith('.scalesolo.ai')) return res.status(400).json({ error: 'That domain is reserved. Use your own business domain.' })
@@ -94,7 +105,7 @@ export default async function handler(req, res) {
         if (taken[0].profile_id === body.profile_id) return res.status(409).json({ error: 'That domain is already on this brand.' })
         return res.status(409).json({ error: 'That domain is already claimed by another brand. Contact support if it is yours.' })
       }
-      const identity = await createDomainIdentity(domain)
+      const identity = await createDomainIdentity(domain, provider)
       const created = await supaFetch('email_domains', {
         method: 'POST',
         body: {
@@ -105,7 +116,7 @@ export default async function handler(req, res) {
         },
       })
       const row = Array.isArray(created) ? created[0] : created
-      return res.status(201).json({ domain: withRecords(row) })
+      return res.status(201).json({ domain: withRecords(row, provider) })
     }
 
     if (req.method === 'POST' && action === 'verify') {
@@ -115,9 +126,10 @@ export default async function handler(req, res) {
       const row = rows?.[0]
       if (!row) return res.status(404).json({ error: 'Not found' })
       await assertProfileAccess(userId, row.profile_id)
-      if (!isConfigured()) return res.status(503).json({ error: 'Email sending is not configured on the server yet.' })
-      const fresh = await refresh(row)
-      return res.status(200).json({ domain: withRecords(fresh) })
+      const provider = await providerForProfile(row.profile_id)
+      if (!isConfigured(provider)) return res.status(503).json({ error: `${provider} is not configured on the server yet.` })
+      const fresh = await refresh(row, provider)
+      return res.status(200).json({ domain: withRecords(fresh, provider) })
     }
 
     if (req.method === 'DELETE') {
@@ -127,7 +139,8 @@ export default async function handler(req, res) {
       const row = rows?.[0]
       if (!row) return res.status(404).json({ error: 'Not found' })
       await assertMinRole(userId, row.profile_id, 'admin')
-      if (isConfigured()) await deleteDomainIdentity(row.domain).catch((e) => console.warn('[email/domains] SES delete failed', e?.message))
+      const provider = await providerForProfile(row.profile_id)
+      if (isConfigured(provider)) await deleteDomainIdentity(row.domain, provider).catch((e) => console.warn(`[email/domains] ${provider} delete failed`, e?.message))
       await supaFetch(`email_domains?id=eq.${enc(id)}`, { method: 'DELETE', prefer: 'return=minimal' })
       return res.status(204).end()
     }
