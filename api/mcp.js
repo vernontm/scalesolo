@@ -41,9 +41,16 @@ const REMOTE_TOOLS = TOOLS.filter((t) => !REMOTE_EXCLUDE.has(t.name))
 // Results that must be narrowed to a brand-scoped caller's own brands,
 // mapped to the field on each row that carries the brand id.
 // Any new tool that can list across brands belongs here or it leaks.
-const SCOPE_FILTERED = { list_brands: 'id', list_posts: 'profile_id', list_email_campaigns: 'profile_id' }
+const SCOPE_FILTERED = {
+  list_brands: 'id',
+  list_posts: 'profile_id',
+  list_email_campaigns: 'profile_id',
+  list_email_automations: 'profile_id',
+  list_email_contacts: 'profile_id',
+}
 
-const READONLY = ['list_brands', 'get_brand', 'get_post', 'list_posts', 'next_slots', 'list_email_campaigns']
+const READONLY = ['list_brands', 'get_brand', 'get_post', 'list_posts', 'next_slots', 'list_email_campaigns',
+  'list_email_automations', 'list_email_contacts']
 const ROLE_TOOLS = {
   readonly: new Set(READONLY),
   // draft = can prepare anything, can publish nothing. A test send is part of

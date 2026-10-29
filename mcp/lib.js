@@ -909,6 +909,124 @@ const impls = {
   // social. Returns a bare array so api/mcp.js can narrow it to a
   // brand-scoped caller's own rows with one generic filter: this tool can
   // span brands, so it MUST stay in SCOPE_FILTERED keyed on profile_id.
+  // Read-only view of a brand's drip sequences. The useful part is `blockers`:
+  // an automation cannot be switched on until every step has copy and has been
+  // test-sent, so this answers "what is still waiting on me" without clicking
+  // through every brand.
+  //
+  // Switching one on is deliberately NOT exposed here. That action can start
+  // mailing a real list, and it belongs on a screen a human is looking at.
+  async list_email_automations({ brand, limit = 50 }) {
+    const cap = Math.min(Math.max(Number(limit) || 50, 1), 100)
+    const targets = brand ? [await resolveBrand(brand)] : ((await api('/api/profiles'))?.profiles || [])
+    if (!targets.length) throw new Error('No brands are available to search.')
+
+    const fetchFor = async (p) => {
+      const r = await api('/api/email/automations', { query: { profile_id: p.id } })
+      return (r?.automations || []).map((a) => ({ p, a, senderOk: r?.sender_ok !== false, senderReason: r?.sender_reason || null }))
+    }
+    // A named brand reports its own failure; a fan-out skips a brand that
+    // errors rather than losing the whole search to one bad profile.
+    const perBrand = brand
+      ? [await fetchFor(targets[0])]
+      : await Promise.all(targets.map((p) => fetchFor(p).catch(() => [])))
+
+    const rows = perBrand.flat().slice(0, cap).map(({ p, a, senderOk, senderReason }) => {
+      const blockers = (a.blockers || []).map((b) => (typeof b === 'string' ? b : b.reason)).filter(Boolean)
+      return {
+        automation_id: a.id,
+        brand: p.business_name,
+        // Required by the brand-scope filter in api/mcp.js. Do not remove.
+        profile_id: p.id,
+        name: a.name,
+        trigger_tag: a.trigger_tag,
+        status: a.status,
+        // The API returns steps as an array and the enrolment split under
+        // `counts` ({active, done, skipped, cancelled, capped}).
+        steps: Array.isArray(a.steps) ? a.steps.length : null,
+        step_delays_hours: Array.isArray(a.steps) ? a.steps.map((s) => s.delay_hours) : null,
+        enrolled_active: a.counts?.active ?? null,
+        completed: a.counts?.done ?? null,
+        // People who already carried the trigger tag when it was switched on.
+        // They are deliberately NOT mailed; see migration 0082.
+        held_back_as_already_tagged: a.counts?.skipped ?? null,
+        cancelled: a.counts?.cancelled ?? null,
+        ...(a.counts?.capped ? { note: 'Enrolment counts are capped, so these are a floor rather than exact.' } : {}),
+        can_be_switched_on: blockers.length === 0 && senderOk,
+        blockers: senderOk ? blockers : [...blockers, senderReason || 'This brand has no verified sender yet.'],
+        last_error: a.last_error || null,
+        manage_url: `${APP_BASE}/email`,
+      }
+    })
+    return ok(rows)
+  },
+
+  // Who is on a brand's list, and who carries a given tag. Tag search is the
+  // point: an automation triggers on a tag, so this is how you check who a
+  // sequence would reach before anyone switches it on.
+  async list_email_contacts({ brand, tag, status, search, limit = 25 }) {
+    const cap = Math.min(Math.max(Number(limit) || 25, 1), 100)
+    const targets = brand ? [await resolveBrand(brand)] : ((await api('/api/profiles'))?.profiles || [])
+    if (!targets.length) throw new Error('No brands are available to search.')
+
+    const COUNT_CAP = 200   // the contacts endpoint's own ceiling
+
+    const fetchFor = async (p) => {
+      const filters = {
+        ...(tag ? { tag } : {}),
+        ...(status ? { status } : {}),
+        ...(search ? { q: search } : {}),
+      }
+      const r = await api('/api/email/contacts', { query: { profile_id: p.id, limit: cap, ...filters } })
+
+      // `total` from the endpoint is the whole list, ignoring the filters, and
+      // the rows come back capped by `limit`. Neither answers "how many match",
+      // which is the question this tool exists for ("how many loyalty members
+      // would that sequence reach?"). So when a filter is in play, count them
+      // in a second pass rather than reporting the sample size as the answer.
+      const filtered = Object.keys(filters).length > 0
+      let matched = (r?.contacts || []).length
+      let matchedCapped = false
+      if (!filtered) {
+        // Nothing to narrow by, so the honest answer is the whole list rather
+        // than however many rows the sample happened to return.
+        matched = r?.total ?? matched
+      } else if (matched >= cap) {
+        const full = await api('/api/email/contacts', { query: { profile_id: p.id, limit: COUNT_CAP, ...filters } })
+        matched = (full?.contacts || []).length
+        matchedCapped = matched >= COUNT_CAP
+      }
+      return { p, contacts: r?.contacts || [], total: r?.total ?? null, counts: r?.counts || {}, matched, matchedCapped }
+    }
+    const perBrand = brand
+      ? [await fetchFor(targets[0])]
+      : await Promise.all(targets.map((p) => fetchFor(p).catch(() => ({ p, contacts: [], total: null, counts: {}, matched: 0, matchedCapped: false }))))
+
+    // One row per brand rather than per contact: the question is almost always
+    // "how many and which tags", and a flat list of 300 addresses buries that.
+    // Still an array, because the brand-scope filter needs to filter rows.
+    return ok(perBrand.map(({ p, contacts, total, counts, matched, matchedCapped }) => ({
+      brand: p.business_name,
+      // Required by the brand-scope filter in api/mcp.js. Do not remove.
+      profile_id: p.id,
+      matching_the_filters: matched,
+      ...(matchedCapped ? { matching_capped_at: 200 } : {}),
+      shown_below: contacts.length,
+      total_on_list: total,
+      by_status: counts,
+      ...(tag ? { tag_searched: String(tag).toLowerCase() } : {}),
+      contacts: contacts.map((c) => ({
+        email: c.email,
+        name: c.name || null,
+        tags: Array.isArray(c.tags) ? c.tags : [],
+        status: c.status,
+        source: c.source || null,
+        signed_up_at: c.signed_up_at || c.created_at || null,
+      })),
+      subscribers_url: `${APP_BASE}/email`,
+    })))
+  },
+
   async list_email_campaigns({ brand, status, limit = 20 }) {
     const STATUSES = ['draft', 'scheduled', 'sending', 'sent', 'partial', 'failed']
     if (status && !STATUSES.includes(status)) {
@@ -1149,6 +1267,8 @@ const TOOLS = [
   { name: 'set_platforms', description: 'Set which social platforms a post will go to. Does NOT publish.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' }, platforms: platformsSchema }, required: ['content_id', 'platforms'] } },
   { name: 'schedule_post', description: 'PUBLISHES/SCHEDULES the post to social via Upload-Post at the given time and platforms. Call it ONLY after the user has explicitly confirmed the caption, the platforms, and the slot. If platforms is omitted it uses the ones already on the post, else the brand\'s connected platforms.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' }, scheduled_datetime: { type: 'string', description: 'ISO 8601 datetime (use an iso value from next_slots).' }, platforms: platformsSchema }, required: ['content_id', 'scheduled_datetime'] } },
   { name: 'list_email_campaigns', description: "Find an email campaign by brand or status instead of by id. Searches one brand, or every brand you can see when none is named, and returns each campaign's campaign_id, subject, status, audience, send time, whether it has been test-sent since its copy last changed, and a review_url that opens it in ScaleSolo. Use this first whenever you do not already have a campaign_id.", inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Optional brand name, handle or id. Omit to search every brand you can see.' }, status: { type: 'string', enum: ['draft', 'scheduled', 'sending', 'sent', 'partial', 'failed'], description: 'Optional status filter.' }, limit: { type: 'number', description: 'Max results, 1 to 100. Default 20.' } }, required: [] } },
+  { name: 'list_email_automations', description: "List a brand's drip sequences (the automations that start when a contact picks up a tag). Returns each sequence's trigger tag, how many steps it has and their waits, how many people are enrolled, and crucially `blockers`: the reasons it cannot be switched on yet, usually a step with no copy or one that has not been test-sent. Use it to answer what is still waiting to be written. Read only: it cannot create, edit or switch on a sequence, because activating one starts mailing a real list.", inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Optional brand name, handle or id. Omit to see every brand you can see.' }, limit: { type: 'number', description: 'Max results, 1 to 100. Default 50.' } }, required: [] } },
+  { name: 'list_email_contacts', description: "Look at a brand's email list: how many subscribers it has, the split by status, and who carries a given tag. Search by `tag` to see exactly who a drip sequence would reach before anyone switches it on, since a sequence triggers on a tag. Returns one summary per brand with a sample of matching contacts. Read only: it cannot add, edit or remove anyone.", inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Optional brand name, handle or id. Omit to cover every brand you can see.' }, tag: { type: 'string', description: 'Only contacts carrying this tag, e.g. "bizio:loyalty". This is how you check a sequence\'s audience.' }, status: { type: 'string', enum: ['active', 'unsubscribed', 'bounced', 'complained'], description: 'Optional status filter. Only active contacts can be mailed.' }, search: { type: 'string', description: 'Match part of an email address or name.' }, limit: { type: 'number', description: 'Max contacts per brand, 1 to 100. Default 25.' } }, required: [] } },
   { name: 'create_email_campaign', description: `Create a DRAFT marketing email for a brand. Sends nothing: it saves the draft and returns a review_url to read it in ScaleSolo. ${MERGE_TAG_HELP} ${IMG_HELP} The unsubscribe footer is added automatically, so only write your own if you point it at {{unsubscribe_url}}.`, inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, subject: { type: 'string', description: 'Subject line.' }, html: { type: 'string', description: `The email body. HTML, or plain paragraphs which get wrapped in the responsive shell. ${MERGE_TAG_HELP} ${IMG_HELP}` }, preview_text: { type: 'string', description: 'The line shown next to the subject in the inbox.' }, audience_tags: { type: 'array', items: { type: 'string' }, description: 'Only contacts carrying one of these tags. Omit to mean every active contact.' } }, required: ['brand', 'subject', 'html'] } },
   { name: 'update_email_campaign', description: `Edit a draft or scheduled campaign's subject, body, preview text or audience. Sends nothing. Changing the subject or body invalidates any earlier test send, so a fresh send_test_email is needed before it can be scheduled again. ${MERGE_TAG_HELP} ${IMG_HELP}`, inputSchema: { type: 'object', properties: { campaign_id: { type: 'string', description: 'From list_email_campaigns.' }, subject: { type: 'string' }, html: { type: 'string', description: `The email body. ${MERGE_TAG_HELP} ${IMG_HELP}` }, preview_text: { type: 'string' }, audience_tags: { type: 'array', items: { type: 'string' }, description: 'Replaces the existing audience filter. An empty list means everyone.' } }, required: ['campaign_id'] } },
   { name: 'send_test_email', description: 'Send ONE copy of a campaign to a single address, with "[Test]" in front of the subject. Send it to your own address, never to a client or a subscriber. This is required: ScaleSolo refuses to send or schedule a campaign until a test has gone out for the copy as it currently stands. Read the test in a real inbox and check that images load before scheduling.', inputSchema: { type: 'object', properties: { campaign_id: { type: 'string', description: 'From list_email_campaigns.' }, to: { type: 'string', description: 'One email address, your own.' } }, required: ['campaign_id', 'to'] } },
