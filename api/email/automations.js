@@ -61,7 +61,7 @@ async function stepsWithEmails(automationId) {
   const ids = steps.map((s) => s.campaign_id)
   const list = `in.(${ids.map((v) => `"${String(v).replace(/"/g, '')}"`).join(',')})`
   const campaigns = await supaFetch(
-    `email_campaigns?id=${list}&select=id,subject,preview_text,html_body,last_test_sent_at,content_changed_at,sent_count,failed_count,opened_at`,
+    `email_campaigns?id=${list}&select=id,subject,preview_text,html_body,last_test_sent_at,content_changed_at,sent_count,failed_count,opened_count`,
   ).catch(() => [])
   const byId = new Map((campaigns || []).map((c) => [c.id, c]))
   return steps.map((s) => ({ ...s, campaign: byId.get(s.campaign_id) || null }))

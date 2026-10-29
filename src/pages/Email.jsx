@@ -717,6 +717,7 @@ function StepRow({ step, index, canEdit, onEdit, onWait, onDelete }) {
             <div style={muted}>
               Sent {HUMAN_WAIT(step.delay_hours)}
               {c?.sent_count ? ` · ${c.sent_count} sent` : ''}
+              {c?.opened_count ? ` · ${c.opened_count} opened` : ''}
               {c?.failed_count ? ` · ${c.failed_count} failed` : ''}
             </div>
           </div>
