@@ -52,6 +52,18 @@ const campaign = (over = {}) => ({
   ...over,
 })
 
+// A 2400px photo-like PNG, well over both the width ceiling and the size
+// target, built once so the shrink test does not depend on a file on disk.
+const { default: _sharp } = await import('sharp')
+// Genuinely incompressible noise at 1600px, so the source really is heavy and
+// the reduction being measured comes from the resize rather than from the
+// fixture happening to compress well.
+const { randomBytes: _rand } = await import('node:crypto')
+const bigPng = await _sharp(_rand(1600 * 1600 * 3), { raw: { width: 1600, height: 1600, channels: 3 } })
+  .png()
+  .toBuffer()
+const tinyGif = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64')
+
 let server
 let base
 let requests = []
@@ -85,6 +97,16 @@ before(async () => {
       // An explicit override wins, so a test can force a 422 / 428.
       if (routes[key]) return reply(res, routes[key].status, routes[key].body)
 
+      // A deliberately oversized image, so the shrink path can be exercised
+      // end to end rather than by calling sharp directly.
+      if (url.pathname === '/big-image.png') {
+        res.writeHead(200, { 'Content-Type': 'image/png' })
+        return res.end(bigPng)
+      }
+      if (url.pathname === '/tiny.gif') {
+        res.writeHead(200, { 'Content-Type': 'image/gif' })
+        return res.end(tinyGif)
+      }
       // The image a upload_email_image({ url }) test points at.
       if (url.pathname === '/fake-image.png') {
         res.writeHead(200, { 'Content-Type': 'image/png' })
@@ -598,4 +620,42 @@ test('both new tools are declared read-only and brand-scoped in api/mcp.js', asy
     assert.match(scope, new RegExp(`${name}:\\s*'profile_id'`), `${name} must be in SCOPE_FILTERED`)
     assert.match(readonly, new RegExp(name), `${name} must be callable by a readonly token`)
   }
+})
+
+// ── email image weight ─────────────────────────────────────────────────────
+//
+// An image straight out of a generator is routinely 4K and several MB. The
+// email shell renders at 536px, so that is weight the recipient pays for and
+// never sees, and it used to be a hard refusal the caller could not act on
+// over the hosted MCP, where there is no local tool to resize with.
+
+test('an oversized image is shrunk before it is uploaded, not refused', async () => {
+  const r = out(await impls.upload_email_image({ brand: 'RayvaughnCEO', url: `${base}/big-image.png` }))
+  const put = requests.find((x) => x.path === '/storage-put')
+  assert.ok(put, 'it still reaches storage')
+  assert.ok(put.bytes < bigPng.length / 2, `uploaded ${put.bytes} of ${bigPng.length}, expected a large reduction`)
+  assert.ok(r.resized, 'the caller is told it was resized rather than it happening invisibly')
+  assert.match(r.resized, /-> .*KB at 1200px/)
+  assert.equal(r.bytes, put.bytes, 'the reported size is what actually went to storage')
+})
+
+test('shrinking re-encodes an opaque image to jpeg, and says so to the storage API', async () => {
+  await impls.upload_email_image({ brand: 'RayvaughnCEO', url: `${base}/big-image.png` })
+  const init = sent('POST /api/email/assets')
+  assert.equal(init.body.content_type, 'image/jpeg', 'a photo with no alpha belongs in jpeg, which is far smaller')
+  assert.match(init.body.filename, /\.jpg$/, 'the stored name must match the bytes actually sent')
+})
+
+test('a small image is left exactly as it is', async () => {
+  const r = out(await impls.upload_email_image({ brand: 'RayvaughnCEO', url: `${base}/fake-image.png` }))
+  assert.equal(r.resized, undefined, 'nothing to gain, so it is not re-encoded')
+  const init = sent('POST /api/email/assets')
+  assert.equal(init.body.content_type, 'image/png', 'format is preserved')
+})
+
+test('a gif is passed through untouched so an animation cannot be flattened', async () => {
+  const r = out(await impls.upload_email_image({ brand: 'RayvaughnCEO', url: `${base}/tiny.gif` }))
+  assert.equal(r.resized, undefined)
+  const init = sent('POST /api/email/assets')
+  assert.equal(init.body.content_type, 'image/gif')
 })

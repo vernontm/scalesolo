@@ -124,6 +124,16 @@ const ok = (obj) => ({ content: [{ type: 'text', text: JSON.stringify(obj, null,
 const APP_BASE = (process.env.SCALESOLO_APP_BASE || API_BASE).replace(/\/$/, '')
 const campaignUrl = (id) => `${APP_BASE}/email?campaign=${encodeURIComponent(id)}`
 
+// Email images: the shell renders at 536px, so 1200 is 2x for retina and
+// anything wider is weight nobody sees. 600KB is the point past which it is
+// worth re-encoding a photo.
+const EMAIL_IMG_MAX_W = 1200
+const EMAIL_IMG_TARGET = 600 * 1024
+// GIF is skipped so an animated one cannot be silently flattened; PDFs are
+// not images at all.
+const shouldShrinkForEmail = (contentType, bytes) =>
+  bytes.length > 0 && ['image/jpeg', 'image/png', 'image/webp'].includes(String(contentType || '').toLowerCase())
+
 // The ONLY merge tags that resolve. Anything else is sent as literal braces,
 // which is why this string is repeated into every tool description that
 // accepts HTML rather than left to the caller to remember.
@@ -1184,10 +1194,51 @@ const impls = {
     }
     const MAX = 5 * 1024 * 1024
     if (!bytes.length) throw new Error('That file is empty.')
-    // Not a Vercel limit (the bytes go straight to storage): a 5MB image in a
-    // newsletter is a slow load on a phone and a spam-filter signal.
+
+    // Shrink it rather than refusing it.
+    //
+    // The email shell renders at 536px, so anything beyond 1200px wide (2x for
+    // retina) is weight the recipient pays for and never sees. An image
+    // straight out of an image generator is routinely 4K and several MB, which
+    // used to hit a hard "keep it under 5MB" refusal and leave the caller
+    // stuck: over the hosted MCP there is no local tool to resize with, so the
+    // whole flow dead-ended there.
+    //
+    // GIFs are passed through untouched, because re-encoding an animated one
+    // here is a good way to silently drop the animation. PDFs are not images.
+    const original = bytes.length
+    let resizedFrom = null
+    if (shouldShrinkForEmail(contentType, bytes)) {
+      try {
+        const sharp = (await import('sharp')).default
+        const img = sharp(bytes, { failOn: 'none' })
+        const meta = await img.metadata()
+        const tooWide = (meta.width || 0) > EMAIL_IMG_MAX_W
+        if (tooWide || bytes.length > EMAIL_IMG_TARGET) {
+          const pipeline = tooWide ? img.resize({ width: EMAIL_IMG_MAX_W, withoutEnlargement: true }) : img
+          // Transparency only survives PNG, so keep it when the source has an
+          // alpha channel and use JPEG for everything else, which is far
+          // smaller for photographs.
+          const out = meta.hasAlpha
+            ? await pipeline.png({ compressionLevel: 9, palette: true }).toBuffer()
+            : await pipeline.jpeg({ quality: 82, mozjpeg: true }).toBuffer()
+          if (out.length < bytes.length) {
+            resizedFrom = { bytes: original, width: meta.width || null }
+            bytes = out
+            contentType = meta.hasAlpha ? 'image/png' : 'image/jpeg'
+            name = name.replace(/\.[^.]+$/, '') + (meta.hasAlpha ? '.png' : '.jpg')
+          }
+        }
+      } catch {
+        // Shrinking is an optimisation. If sharp cannot read it, fall through
+        // to the size check below and let that speak.
+      }
+    }
+
+    // Still too heavy after shrinking (or not shrinkable), so refuse rather
+    // than put a slow load and a spam-filter signal in someone's inbox.
     if (bytes.length > MAX) {
-      throw new Error(`That file is ${(bytes.length / 1048576).toFixed(1)}MB. Keep email images under 5MB, ideally under 500KB.`)
+      throw new Error(`That file is ${(bytes.length / 1048576).toFixed(1)}MB even after resizing. Keep email images under 5MB, ideally under 500KB.`)
     }
 
     const init = await api('/api/email/assets', {
@@ -1207,6 +1258,10 @@ const impls = {
       kind: init.kind,
       public_url: init.public_url,
       bytes: bytes.length,
+      ...(resizedFrom ? {
+        resized: `${(resizedFrom.bytes / 1048576).toFixed(2)}MB${resizedFrom.width ? ` at ${resizedFrom.width}px` : ''}`
+          + ` -> ${(bytes.length / 1024).toFixed(0)}KB at ${EMAIL_IMG_MAX_W}px, so it loads fast in an inbox`,
+      } : {}),
       // Built by the API, not here: markup that renders at full intrinsic
       // width in Outlook breaks the 600px shell, and one copy of that rule is
       // enough.
