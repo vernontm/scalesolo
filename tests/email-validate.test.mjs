@@ -131,3 +131,63 @@ test('mergeVarHelp lists exactly the five tags that resolve', () => {
     assert.ok(help.some((h) => h.startsWith(`{{${tag}}}`)), `${tag} missing from the help`)
   }
 })
+
+// ── brand theming ──────────────────────────────────────────────────────────
+//
+// One shell reads the brand rather than one template per brand. The data is
+// hand-entered and already wrong three ways in production, so these cover the
+// real values rather than tidy ones.
+
+import { safeHex, readableOn, contrastRatio, emailSafeUrl, brandTheme } from '../api/_lib/email-render.js'
+
+test('a colour saved with a leading space is sanitised, not pasted into CSS', () => {
+  // LUL Fitness really has " #ffcf00" saved. Used raw it silently breaks the
+  // declaration it lands in.
+  assert.equal(safeHex(' #ffcf00'), '#ffcf00')
+  assert.equal(safeHex('#ABC'), '#aabbcc', 'short hex is expanded so luminance maths has one shape')
+})
+
+test('anything that is not a hex colour is rejected so it cannot reach a style attribute', () => {
+  for (const bad of ['red', 'rgb(1,2,3)', '#12', '#12345', 'url(x)', '#ff0000; background:url(javascript:1)', '', null]) {
+    assert.equal(safeHex(bad), null, `${JSON.stringify(bad)} must not pass`)
+  }
+})
+
+test('text colour is chosen by contrast, not by a luminance guess', () => {
+  // Gold sits in the middle of the range where a threshold gets it wrong:
+  // white on it is about 2.3, dark ink about 7.5. Two brands here are gold.
+  assert.equal(readableOn('#c9a84c'), '#1a1a2e')
+  assert.equal(readableOn('#C6A252'), '#1a1a2e')
+  assert.equal(readableOn('#030303'), '#ffffff')
+  assert.equal(readableOn('#ffcf00'), '#1a1a2e')
+})
+
+test('every real brand colour clears WCAG AA against the text picked for it', () => {
+  for (const c of ['#D71920', '#30a8a8', '#030303', '#ffcf00', '#123D2B', '#C6A252', '#c9a84c', '#f5edd8', '#ef4444']) {
+    const ratio = contrastRatio(c, readableOn(c))
+    assert.ok(ratio >= 4.5, `${c} only reaches ${ratio.toFixed(2)}:1`)
+  }
+})
+
+test('a site URL with no scheme is made absolute, or it is a dead link in an inbox', () => {
+  // lisa v green and LUL Fitness both have scheme-less URLs saved. In an
+  // email a bare host is a RELATIVE href, which goes nowhere.
+  assert.equal(emailSafeUrl('lisavgreeninspires.com'), 'https://lisavgreeninspires.com')
+  assert.equal(emailSafeUrl('bizio.link/b/level-up-life-llc'), 'https://bizio.link/b/level-up-life-llc')
+  assert.equal(emailSafeUrl('https://x.com'), 'https://x.com')
+  assert.equal(emailSafeUrl('not a url'), null)
+  assert.equal(emailSafeUrl(''), null)
+})
+
+test('a brand with nothing configured keeps the plain shell rather than an empty coloured bar', () => {
+  const t = brandTheme({ business_name: 'Nobody', brand_primary_color: null, logo_url: '', website_url: '' })
+  assert.equal(t.band, null)
+  assert.equal(t.logo, null)
+  assert.equal(t.site, null)
+  assert.equal(t.link, '#2563eb', 'links fall back to a readable default')
+})
+
+test('a pale brand colour does not become an unreadable link on white', () => {
+  const t = brandTheme({ brand_primary_color: '#f5edd8', brand_secondary_color: '#ffcf00' })
+  assert.equal(t.link, '#2563eb', 'neither pale colour is legible as link text, so the default is kept')
+})

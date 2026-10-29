@@ -116,11 +116,119 @@ export function htmlToText(html) {
     .replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
 }
 
+// ── brand theming ──────────────────────────────────────────────────────────
+//
+// One shell that reads the brand rather than one template per brand. Eight
+// copies of a template drift apart and every new brand needs another file;
+// this way a brand is styled the moment someone fills in its profile.
+//
+// Everything here is defensive because the data is hand-entered and already
+// wrong in three ways in production: a colour saved as " #ffcf00" with a
+// leading space (silently breaks the CSS value it is pasted into), a brand
+// with no colours at all, and website URLs with no scheme.
+
+// Accept only a real hex colour. Anything else returns null and the caller
+// falls back, so a typo cannot inject into a style attribute either.
+export function safeHex(v) {
+  const s = String(v ?? '').trim()
+  if (!/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(s)) return null
+  if (s.length !== 4) return s.toLowerCase()
+  // Expand #abc so downstream luminance maths has one shape to deal with.
+  return ('#' + s[1] + s[1] + s[2] + s[2] + s[3] + s[3]).toLowerCase()
+}
+
+export const DARK_INK = '#1a1a2e'
+
+// Relative luminance, WCAG definition.
+export function luminance(hex) {
+  const h = safeHex(hex)
+  if (!h) return null
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255)
+  const lin = (c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+}
+
+export function contrastRatio(a, b) {
+  const la = luminance(a)
+  const lb = luminance(b)
+  if (la === null || lb === null) return 1
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
+}
+
+// Pick the text colour that is actually more readable on a background, by
+// comparing contrast ratios rather than guessing at a luminance cutoff.
+//
+// A threshold gets this wrong in the middle of the range: gold (#c9a84c) sits
+// just dark enough to look like it wants white text, but white on it is a
+// ratio of about 2.3 against roughly 9 for dark ink. Two of these brands are
+// gold or teal, so the middle of the range is exactly where they live.
+export function readableOn(hex) {
+  if (!safeHex(hex)) return DARK_INK
+  return contrastRatio(hex, '#ffffff') >= contrastRatio(hex, DARK_INK) ? '#ffffff' : DARK_INK
+}
+
+// A URL an inbox can actually follow. A scheme-less value like
+// "lisavgreeninspires.com" becomes a RELATIVE href in an email client, which
+// is a dead link, so it gets https:// put in front of it.
+export function emailSafeUrl(v) {
+  const s = String(v ?? '').trim()
+  if (!s) return null
+  if (/^https?:\/\//i.test(s)) return s
+  if (/^(mailto|tel):/i.test(s)) return s
+  if (/^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(s)) return `https://${s}`
+  return null
+}
+
+export function brandTheme(profile) {
+  const primary = safeHex(profile?.brand_primary_color)
+  const secondary = safeHex(profile?.brand_secondary_color)
+  // The header band only appears when the brand actually has a colour or a
+  // logo. Without either, the email stays on the neutral shell rather than
+  // inventing a look for a brand nobody has set up.
+  const band = primary || null
+  return {
+    primary,
+    secondary,
+    band,
+    onBand: band ? readableOn(band) : '#1a1a2e',
+    // Links pick the darker of the two brand colours so they stay legible on
+    // the white body; a pale brand colour falls back to the default blue.
+    link: [primary, secondary].find((c) => c && readableOn(c) === '#ffffff') || '#2563eb',
+    logo: emailSafeUrl(profile?.logo_url),
+    site: emailSafeUrl(profile?.website_url),
+  }
+}
+
+// The masthead. A logo if the brand has one, otherwise its name set on the
+// brand colour. Returns '' when the brand has neither, so an unconfigured
+// brand keeps the plain shell instead of getting an empty coloured bar.
+//
+// Height is capped rather than set, because logos here range from a square
+// mark to a wide wordmark and a fixed height distorts one of them. Outlook
+// ignores max-height on images, hence the explicit height:auto and the band
+// being a table cell rather than a div.
+function brandHeader(theme, profile, fromName) {
+  const name = profile?.business_name || fromName || ''
+  if (!theme.logo && !theme.band) return ''
+  const bg = theme.band || '#ffffff'
+  const fg = theme.band ? theme.onBand : '#1a1a2e'
+  const content = theme.logo
+    ? `<img src="${escapeHtml(theme.logo)}" alt="${escapeHtml(name)}" height="40" style="display:block;margin:0 auto;height:40px;width:auto;max-height:40px;border:0;outline:none;text-decoration:none;" />`
+    : `<span style="font-size:19px;font-weight:700;letter-spacing:-0.01em;color:${fg};">${escapeHtml(name)}</span>`
+  return `<tr>
+            <td align="center" style="background:${bg};padding:22px 32px;">
+              ${content}
+            </td>
+          </tr>`
+}
+
 // Wrap a body (plain text, an HTML fragment, or a full document) in the
 // responsive shell and append the footer. The footer is always appended,
 // even to full documents, because the unsubscribe link is not optional.
 export function renderCampaignEmail({ subject, previewText, body, fromName, profile, config, vars }) {
   const raw = mergeTags(body || '', vars)
+  const theme = brandTheme(profile)
+  const header = brandHeader(theme, profile, fromName)
   const preheader = previewText
     ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#f5f7fa;opacity:0;">${escapeHtml(mergeTags(previewText, vars))}</div>`
     : ''
@@ -128,7 +236,7 @@ export function renderCampaignEmail({ subject, previewText, body, fromName, prof
   const footerLines = [
     escapeHtml(profile?.business_name || fromName || ''),
     config?.postal_address ? escapeHtml(config.postal_address) : '',
-    profile?.website_url ? `<a href="${escapeHtml(profile.website_url)}" style="color:#8e8ea0;">${escapeHtml(profile.website_url.replace(/^https?:\/\//, ''))}</a>` : '',
+    theme.site ? `<a href="${escapeHtml(theme.site)}" style="color:#8e8ea0;">${escapeHtml(theme.site.replace(/^https?:\/\//, ''))}</a>` : '',
   ].filter(Boolean).join('<br>')
   const footer = `<div style="font-size:11px;line-height:1.6;color:#8e8ea0;padding:18px 10px 0;text-align:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
   ${footerLines}${footerLines ? '<br>' : ''}
@@ -163,11 +271,13 @@ export function renderCampaignEmail({ subject, previewText, body, fromName, prof
     <tr>
       <td align="center">
         <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:12px;box-shadow:0 2px 8px rgba(10,20,40,0.06);overflow:hidden;">
+          ${header}
           <tr>
-            <td style="padding:36px 32px;font-size:15px;line-height:1.65;color:#1a1a2e;">
+            <td style="padding:${header ? '28px' : '36px'} 32px;font-size:15px;line-height:1.65;color:#1a1a2e;">
               ${inner}
             </td>
           </tr>
+          ${theme.band ? `<tr><td style="height:6px;background:${theme.band};font-size:0;line-height:0;">&nbsp;</td></tr>` : ''}
         </table>
         ${footer}
       </td>
