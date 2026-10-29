@@ -126,7 +126,7 @@ must not sit next to password resets and board invites.
 | `MAILGUN_WEBHOOK_SIGNING_KEY` | Webhook signing key, NOT the sending key. Without it the webhook rejects everything with 401. |
 | `MAILGUN_SHARED_DOMAIN` | Defaults to `mg.scalesolo.ai`. |
 | `MAILGUN_BASE_URL` | Defaults to `https://api.mailgun.net`. Use the EU host for the EU region. |
-| `EMAIL_PROVIDER` | Default for brands with nothing saved. Defaults to `mailgun`. |
+| `EMAIL_PROVIDER` | Default for brands with nothing saved. Defaults to `ses` (changed from `mailgun` on 2026-10-29, once SES production access was granted). |
 
 ### Two things that fail silently, both covered by tests
 
@@ -138,3 +138,60 @@ forever. Both sides go through `normalizeMessageId`.
 The webhook verifies Mailgun's HMAC and rejects anything older than 15
 minutes. Without the signing key set, anyone who learns the URL could mark a
 brand's whole list as bounced.
+
+
+## Adding leads from outside ScaleSolo
+
+`POST /api/email/subscribe` puts a lead or customer onto one brand's list.
+Use it from a website backend, a Zapier or Make automation, or a webhook from
+Shopify, Calendly or Stripe.
+
+```bash
+curl -X POST https://www.scalesolo.ai/api/email/subscribe \
+  -H "x-api-key: ssk_live_..." \
+  -H "content-type: application/json" \
+  -d '{"email":"jane@example.com","name":"Jane","phone":"+15551234567",
+       "tags":["funnel:lead-opt-in"],"source":"website-footer"}'
+```
+
+Returns `200 {"ok":true,"contact_id":"...","created":true}`. Issue and revoke
+keys on the Email page, Sender tab, as a brand admin.
+
+**Send a tag.** A drip automation triggers on a tag, so a lead posted with
+`tags:["funnel:lead-opt-in"]` starts that brand's sequence on the next runner
+tick, within a minute. With no tag the contact just lands on the list and
+waits for a broadcast.
+
+**The key is scoped to one brand**, which is why this endpoint exists at all.
+The only credential that could previously add a tagged contact was
+`WORKFLOW_INTERNAL_SECRET`, and that impersonates a user across every brand on
+the account, so it could never be given to a client or a third-party tool.
+
+**Keep it server side.** There is deliberately no CORS header, so a browser
+cannot call it. A key that writes to a client's mailing list is a secret, and
+anything pasted into a public page is not. Website forms do not need a key:
+the Forms and Landing Pages tabs already capture leads publicly, and both now
+tag what they capture as `form:<slug>` and `landing:<slug>`.
+
+Only the SHA-256 of a key is stored. The UI shows a new key once and it
+cannot be read back, so a lost key is replaced rather than recovered.
+
+### What it refuses, and why that is not an error
+
+| Response | Meaning |
+|---|---|
+| `{"ok":true,"skipped":"suppressed"}` | The address bounced or reported spam before. It is not added. |
+| `{"ok":true,"skipped":"unsubscribed"}` | That person opted out. Their tags still update, but they stay unsubscribed. |
+| `{"ok":true,"skipped":"unchanged"}` | Already on the list with these details. |
+| `401 {"code":"bad_key"}` | Unknown, malformed or revoked key. The same message for all three, so a caller learns nothing about which keys exist. |
+| `429 {"code":"rate_limited"}` | Over 600 per hour on one key. |
+
+These come back as `ok: true` rather than an error because the caller did
+nothing wrong and a retry will not change the outcome.
+
+Refusing to reactivate someone who unsubscribed is the rule worth keeping. A
+sync pointed at a stale export would otherwise quietly re-subscribe everyone
+who had opted out, which is the fastest route to a complaint, and complaints
+are measured against the one SES account that every brand sends through.
+Someone who genuinely re-subscribes is reactivated by hand on the Subscribers
+tab, which is a deliberate act and leaves a trail.
