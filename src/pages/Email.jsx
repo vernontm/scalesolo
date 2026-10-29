@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
-  Mail, Plus, Send, Clock, Pencil, Trash2, Loader2, CheckCircle2, AlertCircle, RefreshCw, Globe, Copy, X, Eye, Code2, ShieldCheck, Ban, Play, Pause, Users, ImagePlus, Zap,
+  Mail, Plus, Send, Clock, Pencil, Trash2, Loader2, CheckCircle2, AlertCircle, RefreshCw, Globe, Copy, X, Eye, Code2, ShieldCheck, Ban, Play, Pause, Users, ImagePlus, Zap, KeyRound,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
@@ -968,6 +968,144 @@ function AutomationsTab({ profileId, tags, canEdit }) {
   )
 }
 
+// Ingest keys. One key writes to one brand's list and nothing else, which is
+// what makes it safe to paste into a zap or hand to a client's developer.
+// The key is shown exactly once, because only its hash is stored.
+function ApiKeysPanel({ profileId, canAdmin }) {
+  const api = useApi()
+  const [keys, setKeys] = useState([])
+  const [pending, setPending] = useState(false)   // migration 0084 not applied
+  const [name, setName] = useState('')
+  const [fresh, setFresh] = useState(null)        // the one-time reveal
+  const [busy, setBusy] = useState('')
+
+  const load = useCallback(async () => {
+    try {
+      const r = await api(`/api/email/api-keys?profile_id=${profileId}`)
+      setKeys(r.keys || []); setPending(false)
+    } catch (e) {
+      if (/migration/i.test(e.message || '')) setPending(true)
+    }
+  }, [api, profileId])
+  useEffect(() => { if (canAdmin) load() }, [load, canAdmin])
+
+  if (!canAdmin) return null
+
+  const create = async () => {
+    setBusy('create')
+    try {
+      const r = await api('/api/email/api-keys', { method: 'POST', body: { profile_id: profileId, name } })
+      setFresh(r.key); setName(''); load()
+    } catch (e) { toast({ kind: 'error', message: e.message }) } finally { setBusy('') }
+  }
+  const revoke = async (k) => {
+    const ok = await confirmDialog({
+      title: `Revoke "${k.name}"?`,
+      message: 'Anything still sending leads with this key stops working immediately. This cannot be undone, you would issue a new key instead.',
+      confirmText: 'Revoke', destructive: true,
+    })
+    if (!ok) return
+    setBusy(`revoke:${k.id}`)
+    try { await api(`/api/email/api-keys?id=${k.id}`, { method: 'DELETE' }); load() }
+    catch (e) { toast({ kind: 'error', message: e.message }) } finally { setBusy('') }
+  }
+
+  const live = keys.filter((k) => k.active)
+
+  return (
+    <div style={{ display: 'grid', gap: 12 }}>
+      <div>
+        <div style={{ ...row, gap: 8 }}>
+          <KeyRound size={15} />
+          <strong style={{ fontFamily: 'var(--font-display)' }}>Add leads from anywhere</strong>
+        </div>
+        <div style={{ ...muted, marginTop: 4 }}>
+          A key lets another system put people straight onto this brand&apos;s list: your website,
+          a Zapier or Make automation, a Shopify or Calendly webhook. Each key works for this brand only.
+          Send a tag with each lead and a matching automation starts their sequence within a minute.
+        </div>
+      </div>
+
+      {pending ? (
+        <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 14, ...muted }}>
+          Keys need migration 0084 applied to the database first. The code is deployed and waiting.
+        </div>
+      ) : (
+        <>
+          {fresh && (
+            <div style={{ border: '1px solid var(--accent)', borderRadius: 12, padding: 14, display: 'grid', gap: 8 }}>
+              <strong style={{ fontSize: 13 }}>Copy this key now. It cannot be shown again.</strong>
+              <div style={{ ...row, gap: 8 }}>
+                <code style={{
+                  flex: 1, fontSize: 12, padding: '8px 10px', borderRadius: 8,
+                  background: 'var(--surface-2)', overflowX: 'auto', whiteSpace: 'nowrap',
+                }}>{fresh}</code>
+                <button className="btn-secondary" onClick={() => {
+                  navigator.clipboard?.writeText(fresh)
+                  toast({ kind: 'success', message: 'Key copied.' })
+                }}><Copy size={14} /> Copy</button>
+                <button className="btn-ghost" onClick={() => setFresh(null)}><X size={14} /></button>
+              </div>
+              <div style={muted}>
+                Only a hash of it is stored, so nobody can read it back later, us included.
+                If it is lost or leaks, revoke it and issue another.
+              </div>
+            </div>
+          )}
+
+          <div style={row}>
+            <input
+              className="input" value={name} onChange={(e) => setName(e.target.value)}
+              placeholder="What will use it? e.g. Squarespace footer form"
+              style={{ maxWidth: 340 }}
+            />
+            <button className="btn-secondary" onClick={create} disabled={busy !== '' || !name.trim()}>
+              {busy === 'create' ? <Loader2 size={14} className="spin" /> : <Plus size={14} />} Create key
+            </button>
+          </div>
+
+          {live.map((k) => (
+            <div key={k.id} style={{
+              ...row, justifyContent: 'space-between', flexWrap: 'wrap',
+              border: '1px solid var(--border)', borderRadius: 12, padding: '10px 14px',
+            }}>
+              <div style={{ display: 'grid', gap: 2 }}>
+                <div style={row}>
+                  <strong style={{ fontSize: 13 }}>{k.name}</strong>
+                  <code style={{ ...muted, fontSize: 11.5 }}>{k.key_prefix}…</code>
+                </div>
+                <span style={muted}>
+                  {k.last_used_at ? `Last used ${new Date(k.last_used_at).toLocaleString()}` : 'Never used yet'}
+                </span>
+              </div>
+              <button className="btn-ghost" onClick={() => revoke(k)} disabled={busy !== ''} style={{ color: 'var(--muted)' }}>
+                {busy === `revoke:${k.id}` ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
+              </button>
+            </div>
+          ))}
+
+          {live.length > 0 && (
+            <details>
+              <summary style={{ ...muted, cursor: 'pointer' }}>How to send a lead</summary>
+              <pre style={{
+                fontSize: 11.5, background: 'var(--surface-2)', padding: 12, borderRadius: 8,
+                overflowX: 'auto', marginTop: 8,
+              }}>{`curl -X POST ${window.location.origin}/api/email/subscribe \\
+  -H "x-api-key: YOUR_KEY" \\
+  -H "content-type: application/json" \\
+  -d '{"email":"jane@example.com","name":"Jane","tags":["newsletter"]}'`}</pre>
+              <div style={{ ...muted, marginTop: 6 }}>
+                Keep the key on a server, not in a web page: anyone who can read the page can read the key.
+                Website forms built on the Forms or Landing Pages tabs need no key and are tagged automatically.
+              </div>
+            </details>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 function SenderTab({ profileId, canAdmin }) {
   const api = useApi()
   const [data, setData] = useState(null)
@@ -1073,6 +1211,12 @@ function SenderTab({ profileId, canAdmin }) {
           </div>
         ))}
       </div>
+
+      {canAdmin && (
+        <div className="card" style={{ padding: 18 }}>
+          <ApiKeysPanel profileId={profileId} canAdmin={canAdmin} />
+        </div>
+      )}
     </div>
   )
 }

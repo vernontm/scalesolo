@@ -4,13 +4,15 @@
 // - Looks up the form (must be is_published=true).
 // - Honeypot check: if payload contains a non-empty 'hp' field, drop silently.
 // - Rate limit (per-IP per-form): up to spam.rate_limit submissions per hour.
-// - Upserts an email_contacts row (dedup on email).
+// - Upserts an email_contacts row (dedup on email), tagged form:<slug> so a
+//   drip automation can trigger on it, and refusing suppressed addresses.
 // - Inserts form_submissions and a contact_activity event.
 // - Runs the form's confirmation action (return message / redirect URL).
 
 import { setCors, supaFetch } from '../_lib/supabase.js'
+import { upsertContact } from '../_lib/email-contacts.js'
 
-// in-memory rate limit per-instance — best-effort; real solution in M8
+// in-memory rate limit per-instance, best-effort; real solution in M8
 const rateMap = new Map()
 function rateAllowed(key, perHour) {
   const now = Date.now()
@@ -66,28 +68,25 @@ export default async function handler(req, res) {
       return res.status(429).json({ error: 'Too many submissions, slow down.' })
     }
 
-    // Upsert email contact (dedup by email)
+    // Upsert email contact (dedup by email) through the shared intake, which
+    // checks the suppression list. This path used to add any address it was
+    // given, so a hard bounce re-submitting a form went straight back onto
+    // the list and onto the bounce rate every brand's SES sending shares.
+    //
+    // The form's slug also becomes a tag, not just the source string, because
+    // a drip automation triggers on a tag: set an automation's trigger to
+    // "form:<slug>" and submitting this form starts that sequence.
     const email = emailish(payload)
     let contactId = null
     if (email) {
-      const existing = await supaFetch(
-        `email_contacts?profile_id=eq.${form.profile_id}&email=eq.${encodeURIComponent(email)}&select=id,tags`
-      )
-      if (existing && existing.length) {
-        contactId = existing[0].id
-      } else {
-        const created = await supaFetch('email_contacts', {
-          method: 'POST',
-          body: {
-            profile_id: form.profile_id,
-            email,
-            name: nameish(payload),
-            source: `form:${form.slug}`,
-            signed_up_at: new Date().toISOString(),
-          },
-        })
-        contactId = (Array.isArray(created) ? created[0] : created).id
-      }
+      const up = await upsertContact({
+        profileId: form.profile_id,
+        email,
+        name: nameish(payload),
+        tags: [`form:${form.slug}`],
+        source: `form:${form.slug}`,
+      })
+      contactId = up.contact_id
     }
 
     // Insert submission
@@ -120,7 +119,7 @@ export default async function handler(req, res) {
     }
 
     // Confirmation action
-    const confirmation = form.confirmation || { kind: 'message', message: 'Thanks — we got it.' }
+    const confirmation = form.confirmation || { kind: 'message', message: 'Thanks, we got it.' }
     return res.status(200).json({ ok: true, confirmation, submission_id: submission.id })
   } catch (err) {
     return res.status(err.status || 500).json({ error: err.message })
