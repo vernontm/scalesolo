@@ -1,14 +1,18 @@
 // Picks the email provider for a brand.
 //
-// Two are wired up and both work. SES is roughly ten times cheaper but its
-// production access was denied on 2026-10-22, so that account can only reach
-// verified addresses. Mailgun delivers to real inboxes today. Rather than rip
-// one out, every brand carries email_config.email_provider and this module
-// hands the callers whichever it names, so a brand can be moved back to SES
-// one at a time if the appeal lands.
+// Two are wired up and both work. SES is roughly ten times cheaper, and its
+// production access was granted on 2026-10-29, so it is what a brand with
+// nothing saved gets. Mailgun stays wired up rather than ripped out: every
+// brand carries email_config.email_provider and this module hands the callers
+// whichever it names, so one brand can be moved without touching the rest.
+//
+// The default matters more than it looks. A brand created with no row at all
+// falls through to it, and on 2026-10-29 that silently built a client's
+// sending domain at the wrong provider, which would have handed them DNS
+// records that could never verify.
 //
 // Env:
-//   EMAIL_PROVIDER   default for brands with nothing saved ('mailgun' or 'ses')
+//   EMAIL_PROVIDER   default for brands with nothing saved ('ses' or 'mailgun')
 
 import * as ses from './ses.js'
 import * as mailgun from './mailgun.js'
@@ -20,7 +24,7 @@ const PROVIDERS = { ses, mailgun }
 export const PROVIDER_NAMES = Object.keys(PROVIDERS)
 export const DEFAULT_PROVIDER = PROVIDERS[(process.env.EMAIL_PROVIDER || '').toLowerCase()]
   ? (process.env.EMAIL_PROVIDER || '').toLowerCase()
-  : 'mailgun'
+  : 'ses'
 
 // Falls back rather than throwing: a typo in one brand's row must not take
 // down sending for every other brand.
