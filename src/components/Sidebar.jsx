@@ -58,7 +58,11 @@ const navGroups = [
       { to: '/payouts', label: 'Payouts',  icon: DollarSign, beta: true, adminAlways: true },
       { to: '/avatars', label: 'Avatars',  icon: UserCircle2 },
       { to: '/library', label: 'Library',  icon: LibraryIcon },
-      { to: '/email',   label: 'Email',    icon: Mail, beta: true },
+      // adminAlways for the same reason as Board and Payouts: this is now a
+      // team-ops page (eight brands send through it, with drip sequences and
+      // real client lists behind it), and leaving it on the per-browser beta
+      // flag meant it vanished on any fresh device.
+      { to: '/email',   label: 'Email',    icon: Mail, beta: true, adminAlways: true },
       { to: '/landing', label: 'Landing',  icon: LayoutTemplate, beta: true },
     ],
   },

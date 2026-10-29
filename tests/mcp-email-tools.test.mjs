@@ -58,6 +58,9 @@ let requests = []
 // Per-test overrides: { 'POST /api/email/campaigns': { status, body } }
 let routes = {}
 let campaignsFor = {}
+let automationsFor = {}
+let contactsFor = {}
+let senderOk = true
 let includeBroken = false
 
 function reply(res, status, body) {
@@ -130,6 +133,36 @@ before(async () => {
         if (req.method === 'POST') return reply(res, 201, { campaign: campaign({ id: 'c-new', ...body, html_body: body?.html_body }) })
         if (req.method === 'PATCH') return reply(res, 200, { campaign: campaign({ ...body, id: url.searchParams.get('id') }) })
       }
+
+      // Shaped exactly like the real GET: steps is an ARRAY and the enrolment
+      // split lives under `counts`. Both are easy to mis-read as a count and a
+      // flat field, which is the bug these fixtures exist to catch.
+      if (url.pathname === '/api/email/automations' && req.method === 'GET') {
+        const pid = url.searchParams.get('profile_id')
+        if (pid === BROKEN_PROFILE.id) return reply(res, 500, { error: 'this brand is broken' })
+        return reply(res, 200, {
+          automations: automationsFor[pid] || [],
+          sender_ok: senderOk,
+          sender_reason: senderOk ? null : 'This brand has no verified sending domain yet.',
+        })
+      }
+
+      if (url.pathname === '/api/email/contacts' && req.method === 'GET') {
+        const pid = url.searchParams.get('profile_id')
+        if (pid === BROKEN_PROFILE.id) return reply(res, 500, { error: 'this brand is broken' })
+        const all = contactsFor[pid] || []
+        const tag = (url.searchParams.get('tag') || '').toLowerCase()
+        const status = url.searchParams.get('status') || ''
+        const limit = Number(url.searchParams.get('limit')) || 50
+        let rows = all
+        if (tag) rows = rows.filter((c) => (c.tags || []).includes(tag))
+        if (status) rows = rows.filter((c) => c.status === status)
+        const counts = {}
+        for (const c of all) counts[c.status || 'active'] = (counts[c.status || 'active'] || 0) + 1
+        // The real endpoint's `total` is the WHOLE list, ignoring the filters.
+        return reply(res, 200, { contacts: rows.slice(0, limit), total: all.length, counts, limit, offset: 0 })
+      }
+
       return reply(res, 404, { error: `unhandled ${key}` })
     })
   })
@@ -143,7 +176,10 @@ before(async () => {
 })
 
 after(() => new Promise((r) => server.close(r)))
-beforeEach(() => { requests = []; routes = {}; campaignsFor = {}; includeBroken = false })
+beforeEach(() => {
+  requests = []; routes = {}; campaignsFor = {}; includeBroken = false
+  automationsFor = {}; contactsFor = {}; senderOk = true
+})
 
 const { impls, TOOLS } = await import('../mcp/lib.js')
 const out = (r) => JSON.parse(r.content[0].text)
@@ -409,5 +445,157 @@ test('every email tool is declared, and the ones taking HTML list the merge tags
       assert.ok(t.description.includes(`{{${tag}}}`), `${n} description must name {{${tag}}}`)
     }
     assert.ok(t.inputSchema.properties.html.description.includes('{{first_name}}'), `${n} html field must name the tags too`)
+  }
+})
+
+// ── list_email_automations ─────────────────────────────────────────────────
+//
+// The shape of the API response is the trap here. `steps` is an array and the
+// enrolment split is nested under `counts`, so reading them as a number and as
+// flat fields yields null everywhere while still "working". Each of these
+// asserts a real value rather than merely that a key exists.
+
+const automation = (over = {}) => ({
+  id: 'a-1',
+  profile_id: 'p-sana',
+  name: 'Bizio: new lead',
+  trigger_tag: 'bizio:lead',
+  status: 'draft',
+  steps: [
+    { id: 's-1', position: 1, delay_hours: 0 },
+    { id: 's-2', position: 2, delay_hours: 48 },
+  ],
+  counts: { active: 3, done: 1, skipped: 190, cancelled: 2, capped: false },
+  blockers: [{ step_id: 's-1', reason: 'Step 1: The email body is empty.' }],
+  last_error: null,
+  ...over,
+})
+
+test('list_email_automations reports the step COUNT and the nested enrolment split', async () => {
+  automationsFor = { 'p-sana': [automation()] }
+  const rows = out(await impls.list_email_automations({ brand: 'Sanabreh' }))
+  assert.equal(rows.length, 1)
+  const r = rows[0]
+  assert.equal(r.steps, 2, 'steps is an array in the API, so this must be its length')
+  assert.deepEqual(r.step_delays_hours, [0, 48])
+  assert.equal(r.enrolled_active, 3, 'comes from counts.active, not a flat field')
+  assert.equal(r.completed, 1)
+  assert.equal(r.held_back_as_already_tagged, 190, 'the "from now on" backlog must be visible')
+  assert.equal(r.cancelled, 2)
+})
+
+test('list_email_automations surfaces the blockers as readable reasons', async () => {
+  automationsFor = { 'p-sana': [automation()] }
+  const [r] = out(await impls.list_email_automations({ brand: 'Sanabreh' }))
+  assert.equal(r.can_be_switched_on, false)
+  assert.deepEqual(r.blockers, ['Step 1: The email body is empty.'])
+})
+
+test('list_email_automations treats a clean sequence as ready only when the sender is too', async () => {
+  automationsFor = { 'p-sana': [automation({ blockers: [] })] }
+  let [r] = out(await impls.list_email_automations({ brand: 'Sanabreh' }))
+  assert.equal(r.can_be_switched_on, true)
+
+  senderOk = false
+  ;[r] = out(await impls.list_email_automations({ brand: 'Sanabreh' }))
+  assert.equal(r.can_be_switched_on, false, 'no verified sender means it cannot go live')
+  assert.match(r.blockers.join(' '), /verified sending domain/)
+})
+
+test('list_email_automations carries profile_id on every row, or the brand scope filter fails closed', async () => {
+  automationsFor = { 'p-ray': [automation({ id: 'a-ray', profile_id: 'p-ray' })], 'p-sana': [automation()] }
+  const rows = out(await impls.list_email_automations({}))
+  assert.ok(rows.length >= 2)
+  assert.ok(rows.every((r) => typeof r.profile_id === 'string' && r.profile_id), 'api/mcp.js filters rows by profile_id')
+  assert.ok(Array.isArray(rows), 'the scope filter calls .filter on the parsed output')
+})
+
+test('list_email_automations skips a brand that errors instead of losing the whole search', async () => {
+  includeBroken = true
+  automationsFor = { 'p-sana': [automation()] }
+  const rows = out(await impls.list_email_automations({}))
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].brand, 'Sanabreh')
+})
+
+test('list_email_automations never exposes a way to switch one on', () => {
+  const names = TOOLS.map((t) => t.name)
+  for (const forbidden of ['activate_email_automation', 'pause_email_automation', 'create_email_automation']) {
+    assert.ok(!names.includes(forbidden), `${forbidden} must stay out of the MCP: it can start mailing a real list`)
+  }
+})
+
+// ── list_email_contacts ────────────────────────────────────────────────────
+
+const contact = (over = {}) => ({
+  id: 'ct-1', email: 'a@example.com', name: 'A', tags: ['bizio:loyalty'],
+  status: 'active', source: 'bizio', created_at: '2026-10-29T00:00:00.000Z',
+  signed_up_at: '2026-10-29T00:00:00.000Z', ...over,
+})
+
+test('list_email_contacts counts the matches rather than reporting the sample size', async () => {
+  // 30 loyalty members, 5 leads. A limit of 2 must still say 30.
+  contactsFor = {
+    'p-sana': [
+      ...Array.from({ length: 30 }, (_, i) => contact({ id: `l-${i}`, email: `l${i}@x.com` })),
+      ...Array.from({ length: 5 }, (_, i) => contact({ id: `d-${i}`, email: `d${i}@x.com`, tags: ['bizio:lead'] })),
+    ],
+  }
+  const [r] = out(await impls.list_email_contacts({ brand: 'Sanabreh', tag: 'bizio:loyalty', limit: 2 }))
+  assert.equal(r.matching_the_filters, 30, 'the whole point of the tool is this number being right')
+  assert.equal(r.shown_below, 2, 'the sample respects the limit')
+  assert.equal(r.contacts.length, 2)
+  assert.equal(r.total_on_list, 35, 'the list total ignores the filter')
+  assert.equal(r.tag_searched, 'bizio:loyalty')
+})
+
+test('list_email_contacts falls back to the list total when nothing is being filtered', async () => {
+  contactsFor = { 'p-sana': Array.from({ length: 12 }, (_, i) => contact({ id: `c-${i}`, email: `c${i}@x.com` })) }
+  const [r] = out(await impls.list_email_contacts({ brand: 'Sanabreh', limit: 3 }))
+  assert.equal(r.matching_the_filters, 12, 'with no filter, 3 would be a lie')
+  assert.equal(r.shown_below, 3)
+})
+
+test('list_email_contacts filters by tag and by status, passing both to the API', async () => {
+  contactsFor = {
+    'p-sana': [
+      contact({ id: 'x1', tags: ['bizio:loyalty'], status: 'active' }),
+      contact({ id: 'x2', tags: ['bizio:loyalty'], status: 'unsubscribed' }),
+    ],
+  }
+  const [r] = out(await impls.list_email_contacts({ brand: 'Sanabreh', tag: 'bizio:loyalty', status: 'active' }))
+  assert.equal(r.matching_the_filters, 1)
+  const q = requests.find((x) => x.path === '/api/email/contacts').query
+  assert.equal(q.tag, 'bizio:loyalty')
+  assert.equal(q.status, 'active')
+})
+
+test('list_email_contacts carries profile_id and stays an array for the scope filter', async () => {
+  contactsFor = { 'p-ray': [contact({ id: 'r1' })], 'p-sana': [contact()] }
+  const rows = out(await impls.list_email_contacts({}))
+  assert.ok(Array.isArray(rows))
+  assert.ok(rows.every((r) => typeof r.profile_id === 'string' && r.profile_id))
+})
+
+test('list_email_contacts returns a brand with an empty list rather than dropping it', async () => {
+  includeBroken = true
+  contactsFor = { 'p-sana': [contact()] }
+  const rows = out(await impls.list_email_contacts({}))
+  const broken = rows.find((r) => r.brand === 'Broken Brand')
+  assert.ok(broken, 'a failing brand is still listed, so it is not mistaken for having no contacts')
+  assert.equal(broken.matching_the_filters, 0)
+})
+
+test('both new tools are declared read-only and brand-scoped in api/mcp.js', async () => {
+  const src = await import('node:fs').then((m) => m.promises.readFile('api/mcp.js', 'utf8'))
+  const scope = src.match(/const SCOPE_FILTERED = \{[\s\S]*?\n\}/)[0]
+  const readonly = src.match(/const READONLY = \[[\s\S]*?\]/)[0]
+  for (const name of ['list_email_automations', 'list_email_contacts']) {
+    assert.ok(TOOLS.some((t) => t.name === name), `${name} is declared`)
+    // A cross-brand list tool that is not scope filtered hands a brand-scoped
+    // token someone else's client data. api/mcp.js says so in a comment; this
+    // makes it fail the build instead of a review.
+    assert.match(scope, new RegExp(`${name}:\\s*'profile_id'`), `${name} must be in SCOPE_FILTERED`)
+    assert.match(readonly, new RegExp(name), `${name} must be callable by a readonly token`)
   }
 })
