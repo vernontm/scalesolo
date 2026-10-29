@@ -15,6 +15,7 @@ import { resolveSender, renderCampaignEmail, mergeVarsFor, mergeTags, htmlToText
 const PAGE = 100
 const SEND_RATE = Math.max(1, Number(process.env.SES_SEND_RATE) || 8)   // messages per second
 const STALE_QUEUED_MIN = 10
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const enc = encodeURIComponent
@@ -63,6 +64,80 @@ async function sweepStaleQueued(campaignId) {
     { method: 'PATCH', body: { status: 'failed', error: 'worker timed out before SES confirmed the send', updated_at: new Date().toISOString() } },
   ).catch(() => [])
   if (Array.isArray(stale) && stale.length) await bump(campaignId, 'failed_count', stale.length)
+}
+
+/**
+ * Send one campaign email to one contact, once.
+ *
+ * This is the only place anything writes a send row, and that is deliberate:
+ * post-once lives here and nowhere else. The row is claimed (status queued)
+ * BEFORE SES is called, and the UNIQUE index on (campaign_id, contact_id)
+ * turns a second caller's claim into a 409 rather than a duplicate email.
+ * The campaign worker calls this in a loop over a tag filter; the automation
+ * runner calls it for one contact at a time. Both inherit the same guarantee.
+ *
+ * Counters on the campaign row are bumped here too, so a drip step's stats
+ * add up the same way a broadcast's do.
+ *
+ * `suppressed` is passed in rather than looked up, because the worker already
+ * checks a whole page of addresses against email_suppressions in one query.
+ *
+ * @returns {{ outcome: 'sent'|'skipped'|'failed'|'throttled'|'paused', messageId?: string, error?: string, kind?: string }}
+ *   skipped   nothing was sent and nothing is owed: a bad address, a
+ *             suppressed address, or a recipient already claimed
+ *   throttled nothing was accepted and the claim was released; retry later
+ *   paused    the provider is refusing everything; stop the run
+ */
+export async function sendCampaignToContact({ campaign, contact, sender, fromName, fromEmail, replyTo, suppressed = false }) {
+  const { profile, config } = sender
+  const email = String(contact.email || '').trim().toLowerCase()
+  const base = { campaign_id: campaign.id, profile_id: campaign.profile_id, contact_id: contact.id, email }
+
+  if (!email || !EMAIL_RE.test(email) || suppressed) {
+    const reason = suppressed ? 'suppressed (unsubscribed, bounced or complained)' : 'invalid address'
+    await supaFetch('email_sends', { method: 'POST', body: { ...base, status: 'failed', error: reason }, prefer: 'return=minimal' }).catch(() => {})
+    await bump(campaign.id, 'failed_count')
+    return { outcome: 'skipped', error: reason }
+  }
+
+  // Claim the recipient. 409 means this contact already has this email.
+  let claimed
+  try {
+    claimed = await supaFetch('email_sends', { method: 'POST', body: { ...base, status: 'queued' } })
+  } catch (e) {
+    if (e?.status === 409) return { outcome: 'skipped', error: 'already sent' }
+    throw e
+  }
+  const sendRow = Array.isArray(claimed) ? claimed[0] : claimed
+
+  const vars = mergeVarsFor({ contact, profile, campaignId: campaign.id })
+  const html = renderCampaignEmail({
+    subject: campaign.subject, previewText: campaign.preview_text, body: campaign.html_body,
+    fromName, profile, config, vars,
+  })
+  const subject = mergeTags(campaign.subject, vars)
+
+  try {
+    const messageId = await sendEmail({
+      from: fromEmail, fromName, to: email, replyTo, subject, html, text: htmlToText(html),
+      headers: listUnsubscribeHeaders(vars.unsubscribe_url),
+      tags: { campaign_id: campaign.id, profile_id: campaign.profile_id },
+      configurationSet: configurationSetFor(sender.provider),
+    }, sender.provider)
+    await patchSend(sendRow.id, { status: 'sent', ses_message_id: messageId, sent_at: new Date().toISOString() })
+    await bump(campaign.id, 'sent_count')
+    return { outcome: 'sent', messageId }
+  } catch (e) {
+    const kind = classifySendError(e, sender.provider)
+    const error = String(e?.message || e)
+    if (kind === 'throttled' || kind === 'paused') {
+      await supaFetch(`email_sends?id=eq.${enc(sendRow.id)}`, { method: 'DELETE', prefer: 'return=minimal' }).catch(() => {})
+      return { outcome: kind, kind, error }
+    }
+    await patchSend(sendRow.id, { status: 'failed', error: error.slice(0, 500) })
+    await bump(campaign.id, 'failed_count')
+    return { outcome: 'failed', kind, error }
+  }
 }
 
 // Process one campaign for up to budgetMs. Returns { done, sent, failed, skipped, stopped }.
@@ -116,57 +191,27 @@ export async function processCampaign(campaignId, { budgetMs = 45000 } = {}) {
         if (fresh?.[0]?.status !== 'sending') { stats.stopped = 'cancelled'; break }
       }
 
-      const email = String(contact.email || '').trim().toLowerCase()
-      const base = { campaign_id: campaign.id, profile_id: campaign.profile_id, contact_id: contact.id, email }
-
-      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || suppressedEmails.has(email)) {
-        const reason = suppressedEmails.has(email) ? 'suppressed (unsubscribed, bounced or complained)' : 'invalid address'
-        await supaFetch('email_sends', { method: 'POST', body: { ...base, status: 'failed', error: reason }, prefer: 'return=minimal' }).catch(() => {})
-        await bump(campaign.id, 'failed_count')
-        stats.skipped++
-        continue
-      }
-
-      // Claim the recipient. 409 means another worker already has it.
-      let claimed
-      try {
-        claimed = await supaFetch('email_sends', { method: 'POST', body: { ...base, status: 'queued' } })
-      } catch (e) {
-        if (e?.status === 409) { stats.skipped++; continue }
-        throw e
-      }
-      const sendRow = Array.isArray(claimed) ? claimed[0] : claimed
-
-      const vars = mergeVarsFor({ contact, profile, campaignId: campaign.id })
-      const html = renderCampaignEmail({
-        subject: campaign.subject, previewText: campaign.preview_text, body: campaign.html_body,
-        fromName, profile, config, vars,
+      const r = await sendCampaignToContact({
+        campaign, contact, sender, fromName, fromEmail, replyTo,
+        suppressed: suppressedEmails.has(String(contact.email || '').trim().toLowerCase()),
       })
-      const subject = mergeTags(campaign.subject, vars)
 
-      try {
-        const messageId = await sendEmail({
-          from: fromEmail, fromName, to: email, replyTo, subject, html, text: htmlToText(html),
-          headers: listUnsubscribeHeaders(vars.unsubscribe_url),
-          tags: { campaign_id: campaign.id, profile_id: campaign.profile_id },
-          configurationSet: configurationSetFor(sender.provider),
-        }, sender.provider)
-        await patchSend(sendRow.id, { status: 'sent', ses_message_id: messageId, sent_at: new Date().toISOString() })
-        await bump(campaign.id, 'sent_count')
-        stats.sent++
-      } catch (e) {
-        const kind = classifySendError(e, sender.provider)
-        if (kind === 'throttled' || kind === 'paused') {
-          // Nothing was accepted. Release the claim and let the next tick resume.
-          await supaFetch(`email_sends?id=eq.${enc(sendRow.id)}`, { method: 'DELETE', prefer: 'return=minimal' }).catch(() => {})
-          if (kind === 'paused') await patchCampaign(campaign.id, { last_error: `${sender.provider} sending is paused: ${e.message}` })
-          stats.stopped = kind
-          break
-        }
-        await patchSend(sendRow.id, { status: 'failed', error: String(e?.message || e).slice(0, 500) })
-        await bump(campaign.id, 'failed_count')
+      // An unusable address and a recipient another worker already claimed
+      // both cost nothing, so neither spends a slot in the rate limit.
+      if (r.outcome === 'skipped') { stats.skipped++; continue }
+
+      if (r.outcome === 'throttled' || r.outcome === 'paused') {
+        // Nothing was accepted, and the claim has been released, so the next
+        // tick resumes from the same recipient.
+        if (r.outcome === 'paused') await patchCampaign(campaign.id, { last_error: `${sender.provider} sending is paused: ${r.error}` })
+        stats.stopped = r.outcome
+        break
+      }
+
+      if (r.outcome === 'sent') stats.sent++
+      else {
         stats.failed++
-        if (kind === 'unverified') {
+        if (r.kind === 'unverified') {
           // Sandbox account: every unverified recipient will fail the same
           // way. Surface it once instead of burning through the list.
           await patchCampaign(campaign.id, { last_error: 'SES is still in sandbox mode: only verified recipient addresses can receive mail until AWS grants production access.' })

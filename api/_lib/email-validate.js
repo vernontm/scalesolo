@@ -175,6 +175,21 @@ export function validateTemplate({ subject = '', html = '', previewText = '', po
   return { ok: errors.length === 0, errors: [...new Set(errors)], warnings: [...new Set(warnings)] }
 }
 
+// The fields a test send actually proves. Changing one of these invalidates
+// the test; changing the audience, from name or reply-to does not, because
+// none of them changes what the subscriber reads. See migration 0081.
+export const TESTED_FIELDS = ['subject', 'html_body', 'preview_text']
+
+// Has this campaign been test-sent since its copy last changed? Lives here
+// rather than in the campaigns route because the automations route gates on
+// it too: switching a sequence on must not be a way around the rule that a
+// human reads an email in an inbox before a list does.
+export function testIsCurrent(c) {
+  if (!c?.last_test_sent_at) return false
+  if (!c.content_changed_at) return true
+  return new Date(c.last_test_sent_at).getTime() >= new Date(c.content_changed_at).getTime()
+}
+
 // One-line reference for error messages and MCP tool output.
 export function mergeVarHelp() {
   return MERGE_VARS.map((v) => `{{${v.tag}}} ${v.what}`)

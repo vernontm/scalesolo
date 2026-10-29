@@ -24,24 +24,12 @@ import { setCors, requireUser, supaFetch, assertProfileAccess, assertMinRole, is
 import { resolveSender, renderCampaignEmail, mergeVarsFor, mergeTags, htmlToText } from '../_lib/email-render.js'
 import { sendEmail, isConfigured, configurationSetFor } from '../_lib/email-provider.js'
 import { processCampaign, countRecipients } from '../_lib/email-send-worker.js'
-import { validateTemplate, mergeVarHelp } from '../_lib/email-validate.js'
+import { validateTemplate, mergeVarHelp, testIsCurrent, TESTED_FIELDS } from '../_lib/email-validate.js'
 
 export const config = { maxDuration: 60 }
 
 const enc = encodeURIComponent
 const EDITABLE = ['draft', 'scheduled', 'failed']
-
-// The fields a test send actually proves. Changing one of these invalidates
-// the test; changing the audience, from name or reply-to does not, because
-// none of them changes what the subscriber reads. See migration 0081.
-const TESTED_FIELDS = ['subject', 'html_body', 'preview_text']
-
-// Has this campaign been test-sent since its copy last changed?
-function testIsCurrent(c) {
-  if (!c.last_test_sent_at) return false
-  if (!c.content_changed_at) return true
-  return new Date(c.last_test_sent_at).getTime() >= new Date(c.content_changed_at).getTime()
-}
 
 // One shared refusal so the UI, the API and the MCP all say the same thing
 // and all name the same fix.
@@ -111,7 +99,12 @@ export default async function handler(req, res) {
         return res.status(200).json({ tags, contacts: (rows || []).length })
       }
 
-      const rows = await supaFetch(`email_campaigns?profile_id=eq.${enc(profileId)}&order=created_at.desc&limit=200&select=*`)
+      // Broadcasts only. An automation step is also a campaign row (see
+      // migration 0082), and those belong to their sequence, not to this list.
+      const rows = await supaFetch(
+        `email_campaigns?profile_id=eq.${enc(profileId)}&or=(trigger_type.is.null,trigger_type.eq.broadcast)` +
+        '&order=created_at.desc&limit=200&select=*',
+      )
       return res.status(200).json({ campaigns: rows || [] })
     }
 

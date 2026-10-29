@@ -1,7 +1,9 @@
 // Email: campaigns sent through Amazon SES, plus the brand's sender setup.
 //
-//   Campaigns tab   list, composer (AI draft + HTML + preview), test send,
+//   Campaigns tab   list, composer (HTML + preview), test send,
 //                   send now / schedule, live counters
+//   Automations tab linear drip sequences: a trigger tag, then emails with a
+//                   wait between them. Each step reuses the composer.
 //   Sender tab      from name + address, reply-to, postal address, and the
 //                   brand's own sending domains with the DNS records to add
 //
@@ -10,7 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
-  Mail, Plus, Send, Clock, Pencil, Trash2, Loader2, CheckCircle2, AlertCircle, RefreshCw, Globe, Copy, X, Eye, Code2, ShieldCheck, Ban, Play, Users, ImagePlus,
+  Mail, Plus, Send, Clock, Pencil, Trash2, Loader2, CheckCircle2, AlertCircle, RefreshCw, Globe, Copy, X, Eye, Code2, ShieldCheck, Ban, Play, Pause, Users, ImagePlus, Zap,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useProfile } from '../context/ProfileContext.jsx'
@@ -142,7 +144,11 @@ function CampaignCard({ c, onEdit, onSend, onCancel, onDelete }) {
 }
 
 // ── Composer ───────────────────────────────────────────────────────────────
-function Composer({ profileId, campaign, tags, onClose, onSaved }) {
+// `mode` is 'campaign' or 'step'. A step has no audience of its own (the
+// automation's trigger tag decides who gets it) and is never sent or
+// scheduled by hand, so those controls are hidden rather than left dead.
+function Composer({ profileId, campaign, tags, onClose, onSaved, mode = 'campaign' }) {
+  const isStep = mode === 'step'
   const api = useApi()
   const { session } = useAuth()
   const [subject, setSubject] = useState(campaign?.subject || '')
@@ -307,7 +313,7 @@ function Composer({ profileId, campaign, tags, onClose, onSaved }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-card modal-card-xl" onClick={(e) => e.stopPropagation()} style={{ display: 'grid', gap: 16, alignContent: 'start' }}>
         <div style={{ ...row, justifyContent: 'space-between' }}>
-          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, margin: 0 }}>{id ? 'Edit campaign' : 'New campaign'}</h3>
+          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, margin: 0 }}>{isStep ? 'Edit this email' : id ? 'Edit campaign' : 'New campaign'}</h3>
           <button aria-label="Close" onClick={onClose} className="btn-ghost" style={{ padding: 6 }}><X size={18} /></button>
         </div>
 
@@ -316,6 +322,7 @@ function Composer({ profileId, campaign, tags, onClose, onSaved }) {
           <div><div style={label}>Preview text</div><input className="input" value={preview} onChange={(e) => setPreview(e.target.value)} placeholder="Shown next to the subject in the inbox" /></div>
         </div>
 
+        {!isStep && (
         <div>
           <div style={label}>Audience <span style={{ fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}>({audienceCount} contact{audienceCount === 1 ? '' : 's'})</span></div>
           <div style={{ ...row, flexWrap: 'wrap', gap: 6 }}>
@@ -328,6 +335,7 @@ function Composer({ profileId, campaign, tags, onClose, onSaved }) {
             {!tags.tags.length && <span style={muted}>Tag contacts to target a segment. No tags yet, so this goes to everyone.</span>}
           </div>
         </div>
+        )}
 
         <div>
           <div style={{ ...row, justifyContent: 'space-between', marginBottom: 6 }}>
@@ -368,7 +376,7 @@ function Composer({ profileId, campaign, tags, onClose, onSaved }) {
           {senderIssue && <div style={{ ...row, color: 'var(--red)', fontSize: 12.5, marginTop: 6 }}><AlertCircle size={13} /> {senderIssue}</div>}
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, alignItems: 'end' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isStep ? '1fr' : '1fr 1fr', gap: 12, alignItems: 'end' }}>
           <div>
             <div style={label}>Send a test first <span style={{ fontWeight: 500, textTransform: 'none', letterSpacing: 0, color: 'var(--red)' }}>(required)</span></div>
             <div style={row}>
@@ -376,6 +384,7 @@ function Composer({ profileId, campaign, tags, onClose, onSaved }) {
               <button className="btn-secondary" onClick={sendTest} disabled={busy !== ''}>{busy === 'test' ? <Loader2 size={14} className="spin" /> : <Send size={14} />} Test</button>
             </div>
           </div>
+          {!isStep && (
           <div>
             <div style={label}>Or schedule</div>
             <div style={row}>
@@ -384,6 +393,7 @@ function Composer({ profileId, campaign, tags, onClose, onSaved }) {
                 title={testStale ? 'Send yourself a test first' : check.ok ? '' : 'Fix the problems listed below first'}>{busy === 'schedule' ? <Loader2 size={14} className="spin" /> : <Clock size={14} />} Schedule</button>
             </div>
           </div>
+          )}
         </div>
 
         {/* The test-send gate, explained where the decision is made. The
@@ -445,12 +455,20 @@ function Composer({ profileId, campaign, tags, onClose, onSaved }) {
         <div style={{ ...row, justifyContent: 'space-between', borderTop: '1px solid var(--border)', paddingTop: 14 }}>
           <button className="btn-ghost" onClick={onClose}>Cancel</button>
           <div style={{ ...row, gap: 8 }}>
-            <button className="btn-secondary" onClick={saveDraft} disabled={busy !== ''}>{busy === 'save' ? <Loader2 size={14} className="spin" /> : null} Save draft</button>
-            <button className="btn-primary" onClick={sendNow}
-              disabled={busy !== '' || !!senderIssue || !sendable}
-              title={testStale ? 'Send yourself a test first' : check.ok ? '' : 'Fix the problems listed above first'}>
-              {busy === 'send' ? <Loader2 size={14} className="spin" /> : <Play size={14} />} Send now
-            </button>
+            {isStep ? (
+              // A step goes out when the automation reaches it, so saving is
+              // the only action here.
+              <button className="btn-primary" onClick={saveDraft} disabled={busy !== ''}>{busy === 'save' ? <Loader2 size={14} className="spin" /> : null} Save this email</button>
+            ) : (
+              <>
+                <button className="btn-secondary" onClick={saveDraft} disabled={busy !== ''}>{busy === 'save' ? <Loader2 size={14} className="spin" /> : null} Save draft</button>
+                <button className="btn-primary" onClick={sendNow}
+                  disabled={busy !== '' || !!senderIssue || !sendable}
+                  title={testStale ? 'Send yourself a test first' : check.ok ? '' : 'Fix the problems listed above first'}>
+                  {busy === 'send' ? <Loader2 size={14} className="spin" /> : <Play size={14} />} Send now
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -666,6 +684,286 @@ function DomainRecords({ d }) {
         ))}
       </tbody>
     </table>
+  )
+}
+
+// ── Automations tab ────────────────────────────────────────────────────────
+// A linear sequence: a trigger tag, then emails with a wait before each one.
+// Branching is deliberately not here yet. The two things worth understanding
+// on this screen are both safety rails rather than features:
+//   - every step has to be test-sent before the automation can be switched on
+//   - switching on does NOT mail the people already carrying the tag, unless
+//     you ask for it on the button that says how many that is
+const HUMAN_WAIT = (h) => {
+  const n = Number(h) || 0
+  if (n === 0) return 'straight away'
+  if (n < 24) return `after ${n} hour${n === 1 ? '' : 's'}`
+  const d = Math.round((n / 24) * 10) / 10
+  return `after ${d} day${d === 1 ? '' : 's'}`
+}
+
+function StepRow({ step, index, canEdit, onEdit, onWait, onDelete }) {
+  const c = step.campaign
+  const tested = c ? testCurrent(c) : false
+  return (
+    <div className="card-flat" style={{ padding: '10px 12px', display: 'grid', gap: 8 }}>
+      <div style={{ ...row, justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+        <div style={{ ...row, gap: 10, minWidth: 0 }}>
+          <span style={{ ...label, marginBottom: 0, color: 'var(--muted)' }}>{index + 1}</span>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 600, fontSize: 13.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {c?.subject || 'No subject yet'}
+            </div>
+            <div style={muted}>
+              Sent {HUMAN_WAIT(step.delay_hours)}
+              {c?.sent_count ? ` · ${c.sent_count} sent` : ''}
+              {c?.failed_count ? ` · ${c.failed_count} failed` : ''}
+            </div>
+          </div>
+        </div>
+        <div style={{ ...row, gap: 6 }}>
+          <span className={tested ? 'pill-success' : 'pill-warning'} style={{ fontSize: 11 }}>
+            {tested ? 'tested' : 'needs a test send'}
+          </span>
+          {canEdit && <button className="btn-ghost" onClick={() => onEdit(step)} title="Edit this email"><Pencil size={14} /></button>}
+          {canEdit && <button className="btn-ghost" onClick={() => onDelete(step)} title="Delete this email" style={{ color: 'var(--muted)' }}><Trash2 size={14} /></button>}
+        </div>
+      </div>
+      {canEdit && (
+        <div style={{ ...row, gap: 8 }}>
+          <span style={muted}>Wait</span>
+          <input className="input" type="number" min="0" max="8760" defaultValue={step.delay_hours}
+            onBlur={(e) => { const v = Number(e.target.value); if (v !== step.delay_hours) onWait(step, v) }}
+            style={{ width: 90, height: 30, fontSize: 12.5 }} />
+          <span style={muted}>hours before sending it</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AutomationsTab({ profileId, tags, canEdit }) {
+  const api = useApi()
+  const [list, setList] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [openId, setOpenId] = useState(null)
+  const [step, setStep] = useState(null)       // { campaign } open in the composer
+  const [adding, setAdding] = useState(false)
+  const [name, setName] = useState('')
+  const [trigger, setTrigger] = useState('')
+  const [busy, setBusy] = useState('')
+
+  const load = useCallback(async () => {
+    try {
+      const r = await api(`/api/email/automations?profile_id=${profileId}`)
+      setList(r.automations || [])
+    } catch (e) { toast({ message: e.message, kind: 'error' }) } finally { setLoading(false) }
+  }, [api, profileId])
+  useEffect(() => { setLoading(true); load() }, [load])
+
+  const run = async (key, fn, okMsg) => {
+    setBusy(key)
+    try { await fn(); if (okMsg) toast({ kind: 'success', message: okMsg }); await load() }
+    catch (e) { toast({ message: e.message, kind: 'error' }) }
+    finally { setBusy('') }
+  }
+
+  const taggedCount = (tag) => tags.tags.find((t) => t.tag === tag)?.count || 0
+
+  const create = () => run('create', async () => {
+    await api('/api/email/automations', { method: 'POST', body: { profile_id: profileId, name, trigger_tag: trigger } })
+    setAdding(false); setName(''); setTrigger('')
+  }, 'Automation created. Add its first email.')
+
+  const addStep = (a) => run(`add:${a.id}`, async () => {
+    const r = await api('/api/email/automations?action=add-step', { method: 'POST', body: { automation_id: a.id } })
+    setStep({ campaign: r.campaign })
+  })
+
+  const activate = (a, enrollExisting) => run(`on:${a.id}`, async () => {
+    const already = taggedCount(a.trigger_tag)
+    const ok = await confirmDialog(enrollExisting ? {
+      title: `Mail the ${already} people already on this list?`,
+      message: `Everyone tagged ${a.trigger_tag} starts the sequence now, so ${already} contact${already === 1 ? '' : 's'} will begin receiving it within a minute. There is no undo once it starts.`,
+      confirmText: `Switch on and mail ${already}`,
+    } : {
+      title: 'Switch this automation on?',
+      message: `From now on, anyone newly tagged ${a.trigger_tag} starts the sequence. The ${already} contact${already === 1 ? '' : 's'} already carrying that tag will not be mailed.`,
+      confirmText: 'Switch on',
+    })
+    if (!ok) return
+    const r = await api('/api/email/automations?action=activate', { method: 'POST', body: { id: a.id, enroll_existing: !!enrollExisting } })
+    toast({ kind: 'success', message: r.enrolled ? `On. ${r.enrolled} contacts enrolled.` : `On. ${r.skipped} already on the list were left alone.` })
+  })
+
+  const pause = (a) => run(`off:${a.id}`, async () => {
+    await api('/api/email/automations?action=pause', { method: 'POST', body: { id: a.id } })
+  }, 'Paused. Nobody loses their place.')
+
+  const remove = (a) => run(`del:${a.id}`, async () => {
+    const ok = await confirmDialog({
+      title: 'Delete this automation?',
+      message: `"${a.name}", its ${a.steps.length} email${a.steps.length === 1 ? '' : 's'} and their send history are removed. Contacts and tags are untouched.`,
+      confirmText: 'Delete',
+    })
+    if (!ok) return
+    await api(`/api/email/automations?id=${a.id}`, { method: 'DELETE' })
+  })
+
+  const setWait = (s, hours) => run(`wait:${s.id}`, async () => {
+    await api(`/api/email/automations?action=step&id=${s.id}`, { method: 'PATCH', body: { delay_hours: hours } })
+  })
+
+  const delStep = (s) => run(`delstep:${s.id}`, async () => {
+    const ok = await confirmDialog({
+      title: 'Delete this email?',
+      message: 'It is removed from the sequence along with its send history. Anyone currently waiting on it finishes the sequence instead.',
+      confirmText: 'Delete',
+    })
+    if (!ok) return
+    await api(`/api/email/automations?action=step&id=${s.id}`, { method: 'DELETE' })
+  })
+
+  if (loading) return <div className="card-flat" style={{ padding: 30, textAlign: 'center', color: 'var(--muted)' }}><Loader2 size={16} className="spin" /> Loading automations</div>
+
+  return (
+    <div style={{ display: 'grid', gap: 12 }}>
+      {step && (
+        <Composer
+          profileId={profileId}
+          campaign={step.campaign}
+          tags={tags}
+          mode="step"
+          onClose={() => { setStep(null); load() }}
+          onSaved={() => { setStep(null); load() }}
+        />
+      )}
+
+      <div style={{ ...row, justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+        <div style={muted}>
+          A sequence starts when a contact picks up a tag. Taking the tag off stops it.
+        </div>
+        {canEdit && <button className="btn-primary" onClick={() => setAdding((v) => !v)}><Plus size={14} /> New automation</button>}
+      </div>
+
+      {adding && canEdit && (
+        <div className="card-flat" style={{ padding: 14, display: 'grid', gap: 12 }}>
+          <div>
+            <div style={label}>Name</div>
+            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Welcome sequence" />
+          </div>
+          <div>
+            <div style={label}>Starts when a contact is tagged</div>
+            {tags.tags.length ? (
+              <div style={{ ...row, flexWrap: 'wrap', gap: 6 }}>
+                {tags.tags.map((t) => (
+                  <button type="button" key={t.tag} className={trigger === t.tag ? 'btn-secondary' : 'btn-ghost'}
+                    onClick={() => setTrigger(t.tag)} style={{ padding: '5px 10px', fontSize: 12.5 }}>
+                    {t.tag} <span style={muted}>({t.count})</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <input className="input" value={trigger} onChange={(e) => setTrigger(e.target.value)} placeholder="welcome" />
+            )}
+            {!!tags.tags.length && (
+              <input className="input" value={trigger} onChange={(e) => setTrigger(e.target.value)} placeholder="or type a new tag"
+                style={{ marginTop: 8, maxWidth: 260 }} />
+            )}
+          </div>
+          <div style={{ ...row, gap: 8 }}>
+            <button className="btn-primary" onClick={create} disabled={busy !== '' || !name.trim() || !trigger.trim()}>
+              {busy === 'create' ? <Loader2 size={14} className="spin" /> : null} Create
+            </button>
+            <button className="btn-ghost" onClick={() => setAdding(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {!list.length && !adding && (
+        <div className="card-flat" style={{ padding: 36, textAlign: 'center', color: 'var(--muted)' }}>
+          <Zap size={20} style={{ marginBottom: 8 }} />
+          <div>No automations yet. One is enough to start: a welcome email the moment somebody joins a list.</div>
+        </div>
+      )}
+
+      {list.map((a) => {
+        const open = openId === a.id
+        const already = taggedCount(a.trigger_tag)
+        const stops = a.blockers || []
+        const ready = !stops.length
+        return (
+          <div key={a.id} className="card-flat" style={{ padding: 14, display: 'grid', gap: 10 }}>
+            <div style={{ ...row, justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ ...row, gap: 8 }}>
+                  <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15 }}>{a.name}</span>
+                  <span className={a.status === 'active' ? 'pill-success' : a.status === 'paused' ? 'pill-warning' : 'pill'} style={{ fontSize: 11 }}>{a.status}</span>
+                </div>
+                <div style={muted}>
+                  Starts on <code style={{ background: 'var(--surface-2)', padding: '1px 5px', borderRadius: 4 }}>{a.trigger_tag}</code>
+                  {' · '}{a.steps.length} email{a.steps.length === 1 ? '' : 's'}
+                  {' · '}{a.counts.active} in progress, {a.counts.done} finished
+                  {a.counts.skipped ? `, ${a.counts.skipped} left alone` : ''}
+                </div>
+              </div>
+              <div style={{ ...row, gap: 6 }}>
+                <button className="btn-ghost" onClick={() => setOpenId(open ? null : a.id)}>{open ? 'Hide' : 'Emails'}</button>
+                {canEdit && a.status === 'active' && (
+                  <button className="btn-secondary" onClick={() => pause(a)} disabled={busy !== ''}><Pause size={14} /> Pause</button>
+                )}
+                {canEdit && a.status !== 'active' && (
+                  <button className="btn-primary" onClick={() => activate(a, false)} disabled={busy !== '' || !ready}
+                    title={ready ? 'New contacts only' : stops[0].reason}>
+                    {busy === `on:${a.id}` ? <Loader2 size={14} className="spin" /> : <Play size={14} />} Switch on
+                  </button>
+                )}
+                {canEdit && <button className="btn-ghost" onClick={() => remove(a)} disabled={busy !== ''} style={{ color: 'var(--muted)' }}><Trash2 size={14} /></button>}
+              </div>
+            </div>
+
+            {a.last_error && (
+              <div style={{ ...row, color: 'var(--red)', fontSize: 12.5 }}><AlertCircle size={13} /> {a.last_error}</div>
+            )}
+
+            {a.status !== 'active' && !!stops.length && (
+              <div style={{ display: 'grid', gap: 4, fontSize: 12.5, color: 'var(--muted)' }}>
+                {stops.map((b, i) => (
+                  <div key={i} style={{ ...row, gap: 6, alignItems: 'flex-start' }}>
+                    <AlertCircle size={13} style={{ color: 'var(--red)', flexShrink: 0, marginTop: 2 }} />
+                    <span>{b.reason}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {open && (
+              <div style={{ display: 'grid', gap: 8, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+                {a.steps.map((s, i) => (
+                  <StepRow key={s.id} step={s} index={i} canEdit={canEdit}
+                    onEdit={(x) => setStep({ campaign: x.campaign })}
+                    onWait={setWait}
+                    onDelete={delStep} />
+                ))}
+                {canEdit && (
+                  <div style={{ ...row, gap: 8, flexWrap: 'wrap' }}>
+                    <button className="btn-secondary" onClick={() => addStep(a)} disabled={busy !== ''}>
+                      {busy === `add:${a.id}` ? <Loader2 size={14} className="spin" /> : <Plus size={14} />} Add an email
+                    </button>
+                    {a.status !== 'active' && !!a.steps.length && already > 0 && ready && (
+                      <button className="btn-ghost" onClick={() => activate(a, true)} disabled={busy !== ''}
+                        title="Everyone already carrying the tag starts the sequence now">
+                        Switch on and also mail the {already} already on this list
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
   )
 }
 
@@ -886,12 +1184,14 @@ export default function Email() {
         <div style={{ ...row, gap: 4 }}>
           <button className={tab === 'campaigns' ? 'btn-secondary' : 'btn-ghost'} onClick={() => setTab('campaigns')}><Mail size={14} /> Campaigns</button>
           <button className={tab === 'subscribers' ? 'btn-secondary' : 'btn-ghost'} onClick={() => setTab('subscribers')}><Users size={14} /> Subscribers</button>
+          <button className={tab === 'automations' ? 'btn-secondary' : 'btn-ghost'} onClick={() => setTab('automations')}><Zap size={14} /> Automations</button>
           <button className={tab === 'sender' ? 'btn-secondary' : 'btn-ghost'} onClick={() => setTab('sender')}><Globe size={14} /> Sender</button>
         </div>
         {tab === 'campaigns' && <button className="btn-primary" onClick={() => setComposing({})}><Plus size={14} /> New campaign</button>}
       </div>
 
       {tab === 'subscribers' ? <SubscribersTab profileId={selectedProfileId} canEdit={canAdmin} />
+        : tab === 'automations' ? <AutomationsTab profileId={selectedProfileId} tags={tags} canEdit={canAdmin} />
         : tab === 'sender' ? <SenderTab profileId={selectedProfileId} canAdmin={canAdmin} /> : loading ? (
         <div style={{ padding: 40, textAlign: 'center' }}><span className="spinner" /></div>
       ) : error ? (
