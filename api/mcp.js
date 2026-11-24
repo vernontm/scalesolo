@@ -56,7 +56,7 @@ const ROLE_TOOLS = {
   // draft = can prepare anything, can publish nothing. A test send is part of
   // preparing: it is one message to an address the caller names, and the API
   // will not let a campaign reach a list without one.
-  draft: new Set([...READONLY, 'autocaption', 'update_post', 'set_platforms', 'generate_image', 'generate_video', 'add_from_url', 'get_connect_link',
+  draft: new Set([...READONLY, 'autocaption', 'update_post', 'set_platforms', 'generate_image', 'generate_video', 'add_from_url', 'add_text_post', 'get_connect_link',
     'create_email_campaign', 'update_email_campaign', 'send_test_email', 'upload_email_image']),
   publish: new Set(REMOTE_TOOLS.map((t) => t.name)),
 }

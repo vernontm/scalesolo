@@ -490,6 +490,42 @@ const impls = {
     })
   },
 
+  // A words-only post (no image or video), left UNSCHEDULED in the brand's
+  // backlog. LinkedIn, X, Threads and Facebook take these; TikTok, Instagram,
+  // YouTube and Pinterest need media, so they are refused here instead of
+  // failing later at publish time. Never posts or schedules anything.
+  async add_text_post({ brand, text, title, hashtags, platforms }) {
+    const body = String(text || '').trim()
+    if (!body) throw new Error('text is required: the words of the post, exactly as they should appear.')
+    if (body.length > 3000) throw new Error(`That post is ${body.length} characters. LinkedIn allows 3,000 and the others less.`)
+    const chosen = normPlatforms(platforms)
+    if (!chosen.length) throw new Error(`platforms is required for a text post. Choose from: ${TEXT_PLATFORMS.join(', ')}.`)
+    const bad = chosen.filter((p) => !TEXT_PLATFORMS.includes(p))
+    if (bad.length) throw new Error(`A text-only post cannot go to ${bad.join(', ')}: those need an image or video. Text posts can go to: ${TEXT_PLATFORMS.join(', ')}.`)
+    const profile = await resolveBrand(brand)
+    const firstLine = body.split('\n').find((l) => l.trim()) || 'Text post'
+    const created = await api('/api/content', {
+      method: 'POST',
+      json: {
+        profile_id: profile.id,
+        title: String(title || firstLine).trim().slice(0, 80),
+        caption: body,
+        hashtags: hashtags ? String(hashtags).trim() : null,
+        media_urls: [], media_type: 'text', post_type: 'post',
+        status: 'draft', generated_by: 'mcp',
+        platforms: chosen,
+      },
+    })
+    const row = Array.isArray(created) ? created[0] : (created?.item || created)
+    if (!row?.id) throw new Error('The draft row came back without an id.')
+    return ok({
+      content_id: row.id, brand: profile.business_name, media_type: 'text',
+      title: row.title, characters: body.length, platforms: chosen,
+      status: 'waiting to schedule (in the calendar backlog)',
+      next: 'Review with get_post, edit the words with update_post (caption), then schedule_post once it is approved.',
+    })
+  },
+
   // One-shot: upload + auto-caption, then STOP (no scheduling). The post
   // lands in the calendar's "Waiting to schedule" backlog for that brand,
   // where the user drags it onto an open slot. This never posts anything.
@@ -1301,6 +1337,8 @@ function zonedToUtc(local, timeZone) {
 
 // ── Tool schemas ─────────────────────────────────────────────────────
 const PLATFORM_VALUES = ['instagram', 'facebook', 'tiktok', 'youtube', 'threads', 'x', 'linkedin', 'pinterest']
+// Platforms that accept a post with words only (no image or video).
+const TEXT_PLATFORMS = ['linkedin', 'x', 'threads', 'facebook']
 const platformsSchema = { type: 'array', items: { type: 'string', enum: PLATFORM_VALUES }, description: 'Which social platforms to post to (use "x" for Twitter/X). Only ones the brand is connected to will actually publish.' }
 
 const TOOLS = [
@@ -1311,6 +1349,7 @@ const TOOLS = [
   { name: 'add_from_url', description: 'Import a video or image into ScaleSolo straight from a URL (direct link, Google Drive, or Dropbox share link) and create a draft post for the brand, auto-captioned by default. Use this instead of upload_media when the file is not on this machine. Returns the content_id to review and schedule.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, url: { type: 'string', description: 'Direct link to the video/image. Google Drive and Dropbox share links are converted automatically; the file must be shared publicly.' }, title: { type: 'string', description: 'Optional title. Defaults to the filename.' }, autocaption: { type: 'boolean', description: 'Generate title/caption/hashtags right away (default true).' }, platforms: platformsSchema }, required: ['brand', 'url'] } },
   { name: 'autocaption', description: 'Run ScaleSolo autopilot on an uploaded post: analyze the media and generate a title, caption, and hashtags. Returns them for review. Does NOT publish.', inputSchema: { type: 'object', properties: { content_id: { type: 'string' } }, required: ['content_id'] } },
   { name: 'add_to_backlog', description: 'Upload a local video/image AND auto-caption it in one step, then leave it UNSCHEDULED in the calendar\'s "Waiting to schedule" backlog for that brand. Use this when the user wants a post prepared to drag onto the calendar later. Never posts or schedules anything.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id (e.g. "RayvaughnCEO").' }, file_path: { type: 'string', description: 'Absolute path to the local video/image file.' }, platforms: platformsSchema }, required: ['brand', 'file_path'] } },
+  { name: 'add_text_post', description: 'Create a WORDS-ONLY post (no image or video) for a brand and leave it UNSCHEDULED in the calendar backlog. Use this for LinkedIn, X, Threads or Facebook text posts. `text` is the post exactly as it should appear. Never posts or schedules anything: review it, then schedule_post after approval.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, text: { type: 'string', description: 'The words of the post, exactly as they should appear (up to 3,000 characters).' }, title: { type: 'string', description: 'Optional short internal name for the calendar. Defaults to the first line.' }, hashtags: { type: 'string', description: 'Optional hashtags, added after the text.' }, platforms: { type: 'array', items: { type: 'string', enum: ['linkedin', 'x', 'threads', 'facebook'] }, description: 'Required. Where it will go. TikTok, Instagram, YouTube and Pinterest cannot take text-only posts.' } }, required: ['brand', 'text', 'platforms'] } },
   { name: 'batch_add_to_backlog', description: 'Upload MANY local files at once, each becoming its OWN separate post (upload + auto-caption), all left UNSCHEDULED in the brand\'s "Waiting to schedule" backlog. Pass file_paths (a list) and/or folder (a directory whose video/image files are all uploaded). Runs one at a time, continues past failures, and returns a per-file result list. Use this to prep a batch of posts to schedule later. Never posts or schedules anything. (For ONE post made of multiple images, use upload_carousel instead.)', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, file_paths: { type: 'array', items: { type: 'string' }, description: 'Absolute paths to local video/image files, each becomes its own post.' }, folder: { type: 'string', description: 'Optional absolute path to a directory; all video/image files inside are uploaded (in filename order).' }, platforms: platformsSchema }, required: ['brand'] } },
   { name: 'upload_carousel', description: 'Make ONE carousel post from several local images (2-35), auto-caption it, and leave it UNSCHEDULED in the calendar backlog for that brand. Posts as a photo carousel (including TikTok photo mode) when scheduled. Images only. Never posts or schedules anything.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, file_paths: { type: 'array', items: { type: 'string' }, description: 'Absolute paths to 2-35 local image files, in slide order.' }, platforms: platformsSchema }, required: ['brand', 'file_paths'] } },
   { name: 'generate_image', description: 'Generate AI image(s) for a brand via KIE.ai (nano-banana / GPT-Image). Billed to the brand owner\'s ScaleSolo credits (~4,000 ai_tokens per image); returns an insufficient-credits error if the balance is too low, so it can never overspend. Returns the finished image URLs. Set add_to_backlog to also drop them into the calendar backlog as a captioned draft post.', inputSchema: { type: 'object', properties: { brand: { type: 'string', description: 'Brand name, Upload-Post handle, or profile id.' }, prompt: { type: 'string', description: 'What to generate.' }, count: { type: 'number', description: '1-8 images (default 1).' }, aspect: { type: 'string', description: 'Aspect ratio, e.g. "1:1", "9:16", "16:9", "4:5" (default "1:1").' }, model: { type: 'string', description: 'nano-banana (default), nano-banana-pro, gpt-2, or seedream. For images of a PERSON, use model:"seedream" with the person\'s photos in reference_urls to nail likeness, then call generate_image AGAIN with model:"nano-banana" or "gpt-2" and reference_urls:[that seedream image] to compose the final graphic (the RayvaughnCEO pipeline).' }, reference_urls: { type: 'array', items: { type: 'string' }, description: 'Reference image URLs for image-to-image / likeness (the person photos for seedream, or the seedream portrait for the compose step).' }, enhance_prompt: { type: 'boolean', description: 'Let Claude expand the prompt with composition/lighting first.' }, add_to_backlog: { type: 'boolean', description: 'Also create a captioned draft post from the generated images in the calendar backlog.' }, platforms: platformsSchema }, required: ['brand', 'prompt'] } },
