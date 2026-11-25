@@ -83,7 +83,7 @@ list.
 
 | Tool | What it does | Mails anyone? |
 |------|--------------|:---:|
-| `list_email_campaigns` | Find a campaign by brand or status (use this to get a `campaign_id`) | no |
+| `list_email_campaigns` | Find a campaign by brand or status (use this to get a `campaign_id`); a sent campaign carries its `results` (delivered, opened, clicked, unsubscribed) | no |
 | `create_email_campaign` | Create a draft email for a brand | no |
 | `update_email_campaign` | Edit a draft's subject, body, preview text or audience | no |
 | `upload_email_image` | Put an image at a public URL so it loads in an inbox, and return email-safe `<img>` markup | no |
